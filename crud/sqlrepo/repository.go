@@ -27,6 +27,9 @@ type repository[M any, ID comparable, U any] struct {
 	insertGen  string
 	insertFull string
 	upsertTail string
+
+	writeScope      crud.Predicate
+	upsertTargetsPK bool
 }
 
 type preparedWrite struct {
@@ -64,6 +67,8 @@ func newRepository[M any, ID comparable, U any](source crud.Source, bp *Blueprin
 		upd = append(upd, f.Column)
 	}
 	r.upsertTail = d.Upsert(m.PK.Column, upd)
+	r.writeScope = bp.writeScope
+	r.upsertTargetsPK = crud.UpsertTargetsPrimaryKey(d)
 	return r
 }
 
@@ -159,9 +164,12 @@ func (this *repository[M, ID, U]) executePrepared(ctx context.Context, plan []pr
 
 func (this *repository[M, ID, U]) GetByID(ctx context.Context, id ID, options ...crud.Option) (M, error) {
 	var zero M
-	o := crud.Build(append([]crud.Option{
+	o, err := crud.ReadOptions.Build(this.meta.Name, append([]crud.Option{
 		crud.Where(crud.Eq(this.meta.PK.Name, id)), crud.Limit(1), crud.Unsorted(),
 	}, options...)...)
+	if err != nil {
+		return zero, err
+	}
 	items, _, err := this.find(ctx, o, 1, 0)
 	if err != nil {
 		return zero, err
@@ -175,7 +183,10 @@ func (this *repository[M, ID, U]) GetByID(ctx context.Context, id ID, options ..
 // Get uses one extra row for an honest NoTotal result and replaces offset with
 // a cursor boundary. Combining the two would skip rows past that boundary.
 func (this *repository[M, ID, U]) Get(ctx context.Context, options ...crud.Option) (crud.PaginatedResponse[M], error) {
-	o := crud.Build(options...)
+	o, err := crud.ReadOptions.Build(this.meta.Name, options...)
+	if err != nil {
+		return crud.PaginatedResponse[M]{}, err
+	}
 	limit, offset, page := o.Resolved(this.bp.set.defaultLimit, this.bp.set.maxLimit)
 
 	_, back, cursoring := o.Cursor()
@@ -274,7 +285,10 @@ func (this *repository[M, ID, U]) setCursors(response *crud.PaginatedResponse[M]
 }
 
 func (this *repository[M, ID, U]) GetAll(ctx context.Context, options ...crud.Option) ([]M, error) {
-	o := crud.Build(options...)
+	o, err := crud.ReadOptions.Build(this.meta.Name, options...)
+	if err != nil {
+		return nil, err
+	}
 	if o.Limit == 0 && o.Page == 0 && o.Offset == 0 && !o.Unpaged {
 		items, _, err := this.find(ctx, o, 0, 0)
 		return items, err
@@ -286,7 +300,10 @@ func (this *repository[M, ID, U]) GetAll(ctx context.Context, options ...crud.Op
 
 func (this *repository[M, ID, U]) First(ctx context.Context, options ...crud.Option) (M, error) {
 	var zero M
-	o := crud.Build(options...)
+	o, err := crud.ReadOptions.Build(this.meta.Name, options...)
+	if err != nil {
+		return zero, err
+	}
 	o.Page, o.Limit, o.Offset = 0, 1, 0
 	o.After, o.Before = "", ""
 	o.Unpaged, o.NoTotal = false, true
@@ -524,7 +541,10 @@ func (this *repository[M, ID, U]) sortOf(o *crud.Options, paged bool) []crud.Ord
 }
 
 func (this *repository[M, ID, U]) Count(ctx context.Context, options ...crud.Option) (int64, error) {
-	o := crud.Build(options...)
+	o, err := crud.ReadOptions.Build(this.meta.Name, options...)
+	if err != nil {
+		return 0, err
+	}
 	b := crud.NewSQL(this.d, this.meta).RelationScopes(this.relScopes(o))
 	if o.Distinct {
 		cols, err := this.projection(o)
@@ -547,7 +567,10 @@ func (this *repository[M, ID, U]) Count(ctx context.Context, options ...crud.Opt
 }
 
 func (this *repository[M, ID, U]) Exists(ctx context.Context, options ...crud.Option) (bool, error) {
-	o := crud.Build(options...)
+	o, err := crud.ReadOptions.Build(this.meta.Name, options...)
+	if err != nil {
+		return false, err
+	}
 	b := crud.NewSQL(this.d, this.meta).RelationScopes(this.relScopes(o)).
 		Raw("SELECT 1 FROM ").Table().Where(this.scoped(o)).Raw(" LIMIT 1")
 	q, args, err := b.Done()
@@ -566,7 +589,10 @@ func (this *repository[M, ID, U]) Exists(ctx context.Context, options ...crud.Op
 }
 
 func (this *repository[M, ID, U]) ExistsUnscoped(ctx context.Context, options ...crud.Option) (bool, error) {
-	o := crud.Build(options...)
+	o, err := crud.ReadOptions.Build(this.meta.Name, options...)
+	if err != nil {
+		return false, err
+	}
 	b := crud.NewSQL(this.d, this.meta).RelationScopes(this.relScopes(o)).
 		Raw("SELECT 1 FROM ").Table().Where(o.Predicate()).Raw(" LIMIT 1")
 	q, args, err := b.Done()
@@ -585,17 +611,52 @@ func (this *repository[M, ID, U]) ExistsUnscoped(ctx context.Context, options ..
 }
 
 func (this *repository[M, ID, U]) Save(ctx context.Context, m *M) (M, error) {
+	conditional, err := this.needsConditionalUpsert(m, "Save")
+	if err != nil {
+		var zero M
+		return zero, err
+	}
+	if conditional {
+		return this.conditionalSave(ctx, m, nil, false)
+	}
+	return this.write(ctx, m, true)
+}
+
+func (this *repository[M, ID, U]) Create(ctx context.Context, m *M) (M, error) {
+	return this.write(ctx, m, false)
+}
+
+func (this *repository[M, ID, U]) Replace(ctx context.Context, m *M) (M, error) {
+	var zero M
+	if m == nil {
+		return zero, &crud.SchemaError{Model: this.meta.Name, Reason: "Replace called with a nil model"}
+	}
+	hasID, err := this.meta.HasID(m)
+	if err != nil {
+		return zero, err
+	}
+	if !hasID {
+		return zero, crud.ErrMissingID
+	}
+	guard, err := this.versionCheck(m)
+	if err != nil {
+		return zero, err
+	}
+	return this.conditionalSave(ctx, m, guard, true)
+}
+
+func (this *repository[M, ID, U]) write(ctx context.Context, m *M, upsert bool) (M, error) {
 	var zero M
 	if this.d.SupportsReturning() {
-		return this.saveReturning(ctx, m)
+		return this.saveReturning(ctx, m, upsert)
 	}
 	if _, ok := crud.ExecutorFor(ctx, this.source); ok {
-		return this.saveWithoutReturning(ctx, m)
+		return this.saveWithoutReturning(ctx, m, upsert)
 	}
 	var saved M
 	err := crud.InNewTx(ctx, this.source, func(tx context.Context) error {
 		var err error
-		saved, err = this.saveWithoutReturning(tx, m)
+		saved, err = this.saveWithoutReturning(tx, m, upsert)
 		return err
 	})
 	if err != nil {
@@ -605,7 +666,16 @@ func (this *repository[M, ID, U]) Save(ctx context.Context, m *M) (M, error) {
 }
 
 func (this *repository[M, ID, U]) SaveOnly(ctx context.Context, m *M) error {
-	stmt, args, _, err := this.saveStatement(m)
+	conditional, err := this.needsConditionalUpsert(m, "SaveOnly")
+	if err != nil {
+		return err
+	}
+	if conditional {
+		return this.inWriteTx(ctx, func(tx context.Context) error {
+			return this.upsertByPrimaryKey(tx, m, nil, false)
+		})
+	}
+	stmt, args, _, err := this.saveStatement(m, true)
 	if err != nil {
 		return err
 	}
@@ -843,7 +913,7 @@ func (this *repository[M, ID, U]) saveScopedUpdateOnly(ctx context.Context, m, p
 	if response.RowsAffected != 0 {
 		return nil
 	}
-	if changed || this.d.Name() != "mysql" {
+	if changed || !crud.UpdateCountsChangedRowsOnly(this.d) {
 		return crud.ErrNotFound
 	}
 
@@ -904,7 +974,7 @@ func (this *repository[M, ID, U]) scopedSaveChanged(previous, next *M) (bool, er
 	return false, nil
 }
 
-func (this *repository[M, ID, U]) saveStatement(m *M) (string, []any, bool, error) {
+func (this *repository[M, ID, U]) saveStatement(m *M, upsert bool) (string, []any, bool, error) {
 	if m == nil {
 		return "", nil, false, &crud.SchemaError{Model: this.meta.Name, Reason: "Save called with a nil model"}
 	}
@@ -921,23 +991,24 @@ func (this *repository[M, ID, U]) saveStatement(m *M) (string, []any, bool, erro
 	case !hasID:
 		return "", nil, false, crud.ErrMissingID
 	default:
-		stmt, fields = this.insertFull+this.upsertTail, this.meta.Insert
+		stmt, fields = this.insertFull, this.meta.Insert
+		if upsert {
+			stmt += this.upsertTail
+		}
 	}
 	args, err := this.meta.Values(m, fields)
 	if err != nil {
 		return "", nil, false, err
 	}
-	if limit := crud.BindLimit(this.d); len(args) > limit {
-		return "", nil, false, &crud.SchemaError{Model: this.meta.Name, Reason: fmt.Sprintf(
-			"Save needs %d bound values, but dialect %q permits at most %d; use a narrower persistence model or a driver bulk capability",
-			len(args), this.d.Name(), limit)}
+	if err := this.checkBindBudget(len(args), "Save"); err != nil {
+		return "", nil, false, err
 	}
 	return stmt, args, generatedPK, nil
 }
 
-func (this *repository[M, ID, U]) saveReturning(ctx context.Context, m *M) (M, error) {
+func (this *repository[M, ID, U]) saveReturning(ctx context.Context, m *M, upsert bool) (M, error) {
 	var zero M
-	stmt, args, _, err := this.saveStatement(m)
+	stmt, args, _, err := this.saveStatement(m, upsert)
 	if err != nil {
 		return zero, err
 	}
@@ -956,9 +1027,9 @@ func (this *repository[M, ID, U]) saveReturning(ctx context.Context, m *M) (M, e
 	return saved, nil
 }
 
-func (this *repository[M, ID, U]) saveWithoutReturning(ctx context.Context, m *M) (M, error) {
+func (this *repository[M, ID, U]) saveWithoutReturning(ctx context.Context, m *M, upsert bool) (M, error) {
 	var zero M
-	stmt, args, generatedPK, err := this.saveStatement(m)
+	stmt, args, generatedPK, err := this.saveStatement(m, upsert)
 	if err != nil {
 		return zero, err
 	}
@@ -982,7 +1053,7 @@ func (this *repository[M, ID, U]) saveWithoutReturning(ctx context.Context, m *M
 		}
 		refreshID = id
 	}
-	if err := this.refreshByID(ctx, &saved, refreshID, nil, this.bp.relScopes); err != nil {
+	if err := this.refreshByID(ctx, &saved, refreshID, this.writeScope, this.bp.relScopes); err != nil {
 		return zero, err
 	}
 	return saved, nil
@@ -1021,7 +1092,10 @@ func (this *repository[M, ID, U]) Update(ctx context.Context, id ID, dataTransfe
 	var zero M
 
 	byID := crud.Where(crud.Eq(this.meta.PK.Name, id))
-	o := crud.Build(options...)
+	o, err := crud.MutationOptions.Build(this.meta.Name, options...)
+	if err != nil {
+		return zero, err
+	}
 	within := this.scoped(o)
 
 	cur, err := this.mutationRead(ctx, byID, o)
@@ -1148,7 +1222,10 @@ func (this *repository[M, ID, U]) missedRow(ctx context.Context, id ID, within c
 }
 
 func (this *repository[M, ID, U]) UpdateAll(ctx context.Context, dataTransferObject any, options ...crud.Option) (int64, error) {
-	o := crud.Build(options...)
+	o, err := crud.MutationOptions.Build(this.meta.Name, options...)
+	if err != nil {
+		return 0, err
+	}
 	changes, err := this.bp.plan.Writes(dataTransferObject)
 	if err != nil {
 		return 0, err
@@ -1486,7 +1563,10 @@ func (this *repository[M, ID, U]) deletePlan(ids []ID, scope crud.Predicate, rel
 }
 
 func (this *repository[M, ID, U]) DeleteAll(ctx context.Context, options ...crud.Option) (int64, error) {
-	o := crud.Build(options...)
+	o, err := crud.MutationOptions.Build(this.meta.Name, options...)
+	if err != nil {
+		return 0, err
+	}
 	if this.bp.softDelete != nil {
 		return this.stamp(ctx, this.scoped(o), this.relScopes(o))
 	}
@@ -1589,7 +1669,10 @@ func (this *repository[M, ID, U]) scalar(ctx context.Context, ex crud.Executor, 
 var _ crud.Core[struct{}, int] = (*repository[struct{}, int, struct{}])(nil)
 
 func (this *repository[M, ID, U]) Aggregate(ctx context.Context, options ...crud.Option) ([]crud.AggregateRow, error) {
-	o := crud.Build(options...)
+	o, err := crud.AggregateOptions.Build(this.meta.Name, options...)
+	if err != nil {
+		return nil, err
+	}
 	if err := o.Agg.Validate(this.meta); err != nil {
 		return nil, err
 	}
@@ -1675,6 +1758,16 @@ func (this *repository[M, ID, U]) SaveAll(ctx context.Context, models []*M) erro
 	fields, generated, err := this.batchInsertFields(models, "SaveAll")
 	if err != nil {
 		return err
+	}
+	if !generated && (this.writeScope != nil || !this.upsertTargetsPK) {
+		return this.inWriteTx(ctx, func(tx context.Context) error {
+			for _, model := range models {
+				if err := this.upsertByPrimaryKey(tx, model, nil, false); err != nil {
+					return err
+				}
+			}
+			return nil
+		})
 	}
 	tail := this.upsertTail
 	if generated {

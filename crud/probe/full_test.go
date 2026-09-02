@@ -246,7 +246,7 @@ func TestAnUpsertSkipsTheConflictsItsOwnTargetSwallows(t *testing.T) {
 	}{
 		{"postgres", crudtest.Postgres(), true, 5},
 
-		{"mysql", crudtest.MySQL(), false, 2},
+		{"mysql", crudtest.MySQL(), true, 5},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cells := make([]any, tc.cells)
@@ -262,7 +262,8 @@ func TestAnUpsertSkipsTheConflictsItsOwnTargetSwallows(t *testing.T) {
 			}
 			got := contains(lastSQL(tc.rec), tc.rec.Dialect().Quote("email"))
 			if got != tc.wantsEmail {
-				t.Fatalf("%s probed email = %v, want %v: %s", tc.name, got, tc.wantsEmail, lastSQL(tc.rec))
+				t.Fatalf("%s probed email = %v, want %v: a statement only absorbs the conflict it targets, and a dialect that cannot target the key gets no statement to absorb anything: %s",
+					tc.name, got, tc.wantsEmail, lastSQL(tc.rec))
 			}
 		})
 	}

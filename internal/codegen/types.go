@@ -632,6 +632,8 @@ func (this *generator) columnField(name, rendered string, typ types.Type, databa
 			item.Generated = true
 		case "serverowned", "server_owned":
 			item.ServerOwned = true
+		case "secret":
+			item.Secret = true
 		case "tombstone", "softdelete", "soft_delete":
 			item.ServerOwned = true
 			item.Tombstone = true

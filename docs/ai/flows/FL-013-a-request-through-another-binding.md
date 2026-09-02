@@ -327,7 +327,7 @@ exactly that rather than hiding it.
 
 | File | Role |
 |---|---|
-| `crud/http/crudgin/handler.go` | routes, `Mount`/`Register`, query-string reading, body decoding, the four constructors |
+| `crud/http/crudgin/handler.go` | routes, `Mount`/`Register`, query-string reading, body decoding, the six constructors |
 | `crud/http/crudgin/options.go` | the transport-shaped options, `collect`, `rendererFor`, `Status`, `DefaultErrorHandler`, `writeJSON` — the rest is `port.Rules` |
 | `crud/http/crudnet/handler.go` | the same for `net/http`: `Mount`, the pattern set, and the root-path choice |
 | `crud/http/crudnet/options.go` | the same set again; all three carry a `writeJSON` of their own, and that is the point of it ([[D-063]]) |
@@ -340,7 +340,7 @@ exactly that rather than hiding it.
 | `port/porthttp/render.go` | the `Renderer` seam and `EnvelopeRenderer` — the status, the envelope and the header, which is the HTTP half |
 | `port/porthttp/body.go` | `DecodeJSON`, `DecodeJSONKeep`, `DecodeJSONKeepLimit`, `MaxBody`, `MaxKeptBody`, `KeepBody`, `MalformedBody`, `TooLarge`, `WithBody`/`BodyFrom`, `WithLocale`/`LocaleFrom` |
 | `crud/rpc/crudgrpc/doc.go` | the method table and the four stated limits |
-| `crud/rpc/crudgrpc/handler.go` | the eight methods, the four constructors, `build`, the hooks and the scope |
+| `crud/rpc/crudgrpc/handler.go` | the eight methods, the six constructors, `build`, the hooks and the scope |
 | `crud/rpc/crudgrpc/service.go` | `ServiceName`, `ServicePrefix`, `Desc`, `Register`, and the hand-built `grpc.ServiceDesc` |
 | `crud/rpc/crudgrpc/message.go` | `google.protobuf.Struct` ⇄ Go: `toStruct`, `fromStruct`, `sub`, `queryOf`, `queryIn`, `idOf`, `idsOf`, `countDoc`, `deletedDoc` |
 | `crud/rpc/crudgrpc/status.go` | `Renderer`, `StatusRenderer`, `Code`, `CodeFor`, `KindForCode`, the five `RenderOption`s, and the details |
@@ -401,6 +401,11 @@ Everything the request touches after `compile` is in [[FL-001]]'s file table.
 - `TestADistinctInputDTOReachesTheModelThroughTheMapper` —
   `crud/http/crudgin/handler_test.go` — the mapper, with the control that the same
   body through `New` means nothing.
+- `TestThePublicPatchBodyIsNotThePersistenceUpdate` and
+  `TestTheAnswerIsWhatThePresenterMade` — `crud/http/crudgin/handler_test.go` —
+  the `NewWire` half, with the mapperless mount as the control. `crudgrpc`
+  carries both names too: the seam is `port`-shaped rather than HTTP-shaped, so
+  there is nothing to spell differently there ([[FL-029]]).
 - `TestNewForInfersItsInputFromTheMapper`,
   `TestTheHookStillRunsAfterTheServerOwnedFieldsAreCleared` and
   `TestAServiceShapedOptionOnServingIsRefusedAtDeclaration` —

@@ -54,7 +54,7 @@ POST /articles/query
 httprouter can register them one by one instead of calling `Mount`. That is worth
 knowing even if your router is not `ServeMux`.
 
-## The four constructors
+## The six constructors
 
 ```go
 crudnet.New(repo, opts...)                  // a repository; the model is the wire shape
@@ -62,6 +62,19 @@ crudnet.NewFor(repo, mapper, opts...)       // …with a request body of its own
 crudnet.Serving(svc, opts...)               // a port.Service — your business rules
 crudnet.ServingFor(svc, mapper, opts...)    // both
 ```
+
+`NewWire` and `ServingWire` are the explicit form under the four above. They
+take the create mapper, a `wire.PatchMapper` and a `wire.Presenter`, so the
+public PATCH body and the answer body are types of their own rather than the
+persistence DTO and the model ([[D-105]]):
+
+```go
+crudnet.ServingWire(svc, ArticleInputMapper{}, ArticlePatchMapper{}, ArticlePresenter{})
+```
+
+The four short constructors fill in `wire.IdentityPatch` and
+`wire.IdentityPresenter`, which is why nothing about them changed. See
+[wire](wire.md).
 
 `New` takes an **interface**, not a concrete repository, so your own service type
 satisfies it ([[D-022]]):

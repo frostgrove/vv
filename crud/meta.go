@@ -30,6 +30,7 @@ type Field struct {
 	Generated   bool
 	ServerOwned bool
 	Tombstone   bool
+	Secret      bool
 	Version     bool
 	Optional    bool
 
@@ -459,6 +460,8 @@ func collectFields(s *Schema, t reflect.Type, base uintptr, seen []reflect.Type)
 			case "tombstone", "softdelete", "soft_delete":
 				f.ServerOwned = true
 				f.Tombstone = true
+			case "secret":
+				f.Secret = true
 			case "version", "lock":
 				f.Version = true
 			case "":

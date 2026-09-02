@@ -19,6 +19,15 @@ func (this *generator) render() ([]byte, error) {
 
 	for _, name := range this.order {
 		m := this.models[name]
+		if this.wireOnly {
+			s, mu, err := this.renderWire(m)
+			if err != nil {
+				return nil, err
+			}
+			body.WriteString(s)
+			u.also(mu)
+			continue
+		}
 		if this.withDTO {
 			s, mu := this.renderDTO(m)
 			body.WriteString(s)
@@ -49,6 +58,10 @@ func (this *generator) render() ([]byte, error) {
 	if this.withDTO {
 		body.WriteString(this.renderCoverage())
 		u.port = true
+	}
+	if this.wireOnly {
+		body.WriteString(this.renderWireCoverage())
+		u.wire = true
 	}
 
 	var out bytes.Buffer
@@ -117,6 +130,15 @@ func (this *generator) render() ([]byte, error) {
 			return nil, err
 		}
 	}
+	if u.wire {
+		pkg := this.wirePkg
+		if pkg == "" {
+			pkg = DefaultWirePkg
+		}
+		if err := addImport("wire", pkg, pkg == DefaultWirePkg); err != nil {
+			return nil, err
+		}
+	}
 	if u.specs {
 		if err := addImport("specs", this.specsPkg, this.specsPkg == DefaultSpecsPkg); err != nil {
 			return nil, err
@@ -163,7 +185,7 @@ func (this *generator) render() ([]byte, error) {
 	return source, nil
 }
 
-type used struct{ crud, utils, specs, sqlrepo, time, port, errs, context, http, net bool }
+type used struct{ crud, utils, specs, sqlrepo, time, port, errs, context, http, net, wire bool }
 
 func (this *used) also(o used) {
 	this.crud = this.crud || o.crud
@@ -176,6 +198,7 @@ func (this *used) also(o used) {
 	this.context = this.context || o.context
 	this.http = this.http || o.http
 	this.net = this.net || o.net
+	this.wire = this.wire || o.wire
 }
 
 func (this *generator) renderRepository(m *model) (string, used, error) {
@@ -227,16 +250,24 @@ func (this *generator) extraImports(body string) map[string]string {
 	return need
 }
 
+func updateFields(m *model) []field {
+	var out []field
+	for _, f := range m.Fields {
+		if f.Skip || f.isRelation() || f.PK || f.Generated || f.Immutable || f.ServerOwned || f.Tombstone || f.Version {
+			continue
+		}
+		out = append(out, f)
+	}
+	return out
+}
+
 func (this *generator) renderDTO(m *model) (string, used) {
 	var b strings.Builder
 	var u used
 
 	fmt.Fprintf(&b, "type %sUpdate struct {\n", m.Name)
 
-	for _, f := range m.Fields {
-		if f.Skip || f.isRelation() || f.PK || f.Generated || f.Immutable || f.ServerOwned || f.Tombstone || f.Version {
-			continue
-		}
+	for _, f := range updateFields(m) {
 		typ := dtoType(f.Type)
 		json := lowerFirst(f.Name)
 		omit := "omitempty"

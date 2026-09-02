@@ -202,12 +202,15 @@ approximate rather than guessed.
 
 ## Traps
 
-- **PATCH has no mapper.** `Mapper[In, M]` covers the entity body only; a
-  transport-specific patch shape would be a fifth type parameter. The generated
-  DTO already *is* the transport shape ([[D-018]]), so it costs nothing today. It
-  is a stated limit and `port/doc.go` states it. It is also why `<Model>Input`
-  and `<Model>Update` share one naming rule: two rules would mean one resource
-  needed two inverse maps, and only one of them would have an owner ([[D-050]]).
+- **`port` has no patch mapper, and the binding does.** `Mapper[In, M]` covers
+  the entity body only: the service takes a model, so the create hop is `port`'s.
+  A patch never reaches the service as anything but `U`, so the hop from the
+  public body to `U` belongs above it — `wire.PatchMapper`, applied by the
+  transport binding ([[D-105]], [[FL-029]]). `New` and `Serving` fill in the
+  identity, so a resource mounted on the model still decodes `U` straight.
+  `<Model>Input` and `<Model>Update` still share one naming rule: two rules would
+  mean one resource needed two inverse maps, and only one of them would have an
+  owner ([[D-050]]).
 - **A generated resource has a wire shape of its own.** `<Model>Input` uses
   `lowerFirst(FieldName)`, which is not necessarily the model's own `json` tag.
   A consumer who wants the model's shape mounts with `New` and generates no

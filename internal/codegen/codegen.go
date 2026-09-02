@@ -42,6 +42,7 @@ type field struct {
 	Generated   bool
 	ServerOwned bool
 	Tombstone   bool
+	Secret      bool
 
 	Version bool
 
@@ -89,15 +90,19 @@ type generator struct {
 	withMeta bool
 	withRepo bool
 	adapter  bool
+	wireOnly bool
+	check    bool
 	binding  string
 	specsPkg string
 	crudPkg  string
 	utilsPkg string
+	wirePkg  string
 	portPkg  string
 	errsPkg  string
 	netPkg   string
 
 	models     map[string]*model
+	bodies     map[string]resourceBodies
 	order      []string
 	skip       map[string]bool
 	readonly   map[string]bool
@@ -124,8 +129,10 @@ type generator struct {
 }
 
 func (this *generator) run(outPath string) error {
-	if err := validateGeneratedTarget(outPath); err != nil {
-		return err
+	if !this.check {
+		if err := validateGeneratedTarget(outPath); err != nil {
+			return err
+		}
 	}
 	if err := this.load(outPath); err != nil {
 		return err
@@ -157,6 +164,9 @@ func (this *generator) run(outPath string) error {
 	}
 	if err := this.validateRenderedImports(outPath, source); err != nil {
 		return err
+	}
+	if this.check {
+		return checkArtifacts([]artifact{{outPath, source}})
 	}
 	if err := writeGenerated(outPath, source); err != nil {
 		return err
@@ -197,8 +207,12 @@ func validateGeneratedTarget(path string) error {
 	return nil
 }
 
-func writeGenerated(path string, source []byte) (err error) {
-	if err := validateGeneratedTarget(path); err != nil {
+func writeGenerated(path string, source []byte) error {
+	return writeArtifact(path, source, validateGeneratedTarget)
+}
+
+func writeArtifact(path string, source []byte, validate func(string) error) (err error) {
+	if err := validate(path); err != nil {
 		return err
 	}
 	dir := filepath.Dir(path)
@@ -229,7 +243,7 @@ func writeGenerated(path string, source []byte) (err error) {
 		return fmt.Errorf("codegen: close temporary output: %w", err)
 	}
 
-	if err := validateGeneratedTarget(path); err != nil {
+	if err := validate(path); err != nil {
 		return err
 	}
 	if err := os.Rename(tmpPath, path); err != nil {
@@ -594,6 +608,17 @@ func (this *generator) validateDeclarations(outPath string) error {
 		if this.withRepo {
 			for _, declaration := range []string{model.Name + "Repo", model.Name + "Repository", "New" + model.Name + "Repository"} {
 				if err := add(declaration, "model "+model.Name+" repository"); err != nil {
+					return err
+				}
+			}
+		}
+		if this.wireOnly {
+			for _, declaration := range []string{
+				model.Name + "Input", model.Name + "InputMapper",
+				model.Name + "Patch", model.Name + "PatchMapper",
+				model.Name + "Response", model.Name + "Presenter",
+			} {
+				if err := add(declaration, "model "+model.Name+" wire bodies"); err != nil {
 					return err
 				}
 			}
@@ -1491,6 +1516,7 @@ type Options struct {
 	NoRepo bool
 
 	Recursive bool
+	Check     bool
 	Adapter   bool
 	Binding   string
 	SpecsPkg  string
@@ -1532,17 +1558,29 @@ func Run(o *Options) error {
 		if err != nil {
 			return err
 		}
+		var stale []string
 		for _, dir := range dirs {
 			one := *o
 			one.Dir = dir
 			one.Out = outName
 			one.Recursive = false
-			if err := Run(&one); err != nil {
-				if strings.Contains(err.Error(), "no models found in ") {
-					continue
-				}
-				return err
+			err := Run(&one)
+			if err == nil {
+				continue
 			}
+			var drift *DriftError
+			if errors.As(err, &drift) {
+				stale = append(stale, drift.Paths...)
+				continue
+			}
+			if strings.Contains(err.Error(), "no models found in ") {
+				continue
+			}
+			return err
+		}
+		if len(stale) != 0 {
+			sort.Strings(stale)
+			return &DriftError{Paths: stale}
 		}
 		return nil
 	}
@@ -1561,6 +1599,7 @@ func Run(o *Options) error {
 		withMeta: o.WithMeta,
 		withRepo: !o.NoRepo,
 		adapter:  o.Adapter,
+		check:    o.Check,
 		binding:  binding,
 		specsPkg: cmpOr(o.SpecsPkg, DefaultSpecsPkg),
 		crudPkg:  cmpOr(o.CrudPkg, DefaultCrudPkg),

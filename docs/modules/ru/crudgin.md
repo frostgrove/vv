@@ -53,7 +53,7 @@ r.Run(":8080")
 Каждый маршрут — это ещё и метод `gin.HandlerFunc`, так что их можно
 регистрировать по одному.
 
-## Четыре конструктора
+## Шесть конструкторов
 
 ```go
 crudgin.New(repo, opts...)                  // репозиторий; модель — форма для передачи
@@ -61,6 +61,19 @@ crudgin.NewFor(repo, mapper, opts...)       // …со своей формой �
 crudgin.Serving(svc, opts...)               // port.Service — ваши бизнес-правила
 crudgin.ServingFor(svc, mapper, opts...)    // оба вместе
 ```
+
+`NewWire` и `ServingWire` — явная форма под этими четырьмя. Они принимают маппер
+создания, `wire.PatchMapper` и `wire.Presenter`, так что публичное тело PATCH и
+тело ответа становятся отдельными типами, а не persistence-DTO и моделью
+([[D-105]]):
+
+```go
+crudgin.ServingWire(svc, ArticleInputMapper{}, ArticlePatchMapper{}, ArticlePresenter{})
+```
+
+Четыре коротких конструктора подставляют `wire.IdentityPatch` и
+`wire.IdentityPresenter` — поэтому в них ничего не изменилось. См.
+[wire](wire.md).
 
 `New` принимает **интерфейс** ([[D-022]]), так что ему удовлетворяет и ваш
 собственный тип сервиса:

@@ -187,6 +187,31 @@ func TestOnlyADialectThatSaysSoRollsBackTheStatementAlone(t *testing.T) {
 	}
 }
 
+func TestTheTwoWriteQuestionsDefaultToTheAnswerThatCostsAStatementNotARow(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		d           crud.Dialect
+		targetsKey  bool
+		changedOnly bool
+	}{
+		{"postgres", crud.Postgres{}, true, false},
+		{"sqlite", crud.SQLite{}, true, false},
+		{"mysql", crud.MySQL{}, false, true},
+		{"a dialect that never heard of either question", other{}, false, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := crud.UpsertTargetsPrimaryKey(tc.d); got != tc.targetsKey {
+				t.Fatalf("upsert targets the primary key = %v, want %v: a dialect that has not said so must be given the key-targeted sequence instead of a clause that reaches rows nobody named",
+					got, tc.targetsKey)
+			}
+			if got := crud.UpdateCountsChangedRowsOnly(tc.d); got != tc.changedOnly {
+				t.Fatalf("an update counts changed rows only = %v, want %v: a dialect that has not said so must be probed, or a no-op update is read as a missing row and inserted twice",
+					got, tc.changedOnly)
+			}
+		})
+	}
+}
+
 type other struct{}
 
 func (other) Name() string                   { return "other" }

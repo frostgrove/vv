@@ -1,7 +1,7 @@
 # D-011 — `Save` is JPA-shaped: no key inserts, a key upserts
 
 **Status:** accepted
-**Invariant:** `Save` must insert when the primary key is unset and the key is database-generated, upsert when the key is set, and return `crud.ErrMissingID` when the key is unset and is not database-generated.
+**Invariant:** `Save` must insert when the primary key is unset and the key is database-generated, upsert when the key is set, and return `crud.ErrMissingID` when the key is unset and is not database-generated. The upsert must reach the row the key names and no other, and no row the repository's declared `Scope` hides.
 
 ## The decision
 
@@ -12,6 +12,7 @@ One method, three branches:
 | key unset, `auto` key | `INSERT` without the key column |
 | key unset, `noauto` key | no statement; `crud.ErrMissingID` |
 | key set | `INSERT … ON CONFLICT (pk) DO UPDATE` |
+| key set, and the dialect's upsert is not key-targeted, or a `Scope` is declared | `UPDATE … WHERE pk = ? [AND scope]`, then a probe, then `INSERT` — one transaction |
 
 Columns tagged `immutable` are in the insert list and out of the conflict
 clause, so they are written once and survive every later upsert. Columns tagged
@@ -19,6 +20,27 @@ clause, so they are written once and survive every later upsert. Columns tagged
 after every write.
 
 ## Why
+
+**Why the fourth row exists.** The first three rows are the contract; the fourth
+is what it costs to keep the contract true on an engine that cannot express it in
+one statement, or on a repository that narrowed itself.
+
+- MySQL and MariaDB have no key-targeted upsert. `ON DUPLICATE KEY UPDATE` fires
+  on *every* unique index, so `Save(&User{ID: 1, Email: "a@b"})` rewrites whichever
+  row already holds `a@b` — a different row, in place of the one the caller named,
+  with a 200. `crud.UpsertTargetsPrimaryKey` is the switch, and it reads the
+  `UpsertScope` capability the probe already relied on ([[D-042]]).
+- `sqlrepo.Scope` is a permanent narrowing. A repository declared for one tenant
+  had protected reads and an unprotected upsert: a key from another tenant
+  overwrote their row, because an upsert has no `WHERE` clause. Rather than grow
+  `Save` an option ([[D-060]] is the same argument one layer up), the declaration
+  gives up the single statement and the write becomes an `UPDATE` that carries the
+  scope.
+
+The insert half of the fourth row is **not** narrowed, and that is deliberate: a
+scope decides which existing row a write may reach, not which values a new row may
+hold. Refusing an insert whose values fall outside the scope is `security.Gate`'s
+`Inspect`, and it needs the request to decide.
 
 **Why one method.** This is JPA's `save`, and it is what the owner asked for.
 The point is that a caller holding a model does not have to know whether the row
@@ -60,26 +82,67 @@ immutable, the conflict clause degenerates to `DO NOTHING`, `RETURNING` yields n
 row, and the model would be stale. The insert path detects the empty result and
 re-reads.
 
-**Why `Save` has no options.** It is an upsert; there is no `WHERE` clause for a
-predicate to narrow. That is documented on `sqlrepo.Scope`, and it is why
-`security.Gate` has to refuse rather than filter — see [[D-008]].
+**Why `Save` has no options.** A caller does not get to narrow a write: the
+repository's own declaration does. `security.Gate` still refuses rather than
+filters, because its narrowing is per-principal and arrives with the request —
+see [[D-008]].
+
+## The explicit verbs under Save
+
+`Save` is the default and stays a facade. Beside it, and only for a caller who
+names them, sit two explicit verbs:
+
+| verb | statement | what it refuses |
+| --- | --- | --- |
+| `Create` | `INSERT` only, never a conflict tail | an existing key is the engine's duplicate-key 409 |
+| `Replace` | the fourth row's sequence with `AND version = ?` on the update and `version = version + 1` in the `SET` | a row somebody else advanced is `crud.ErrStaleVersion` |
+
+`Patch` was **not** added: `Update` already is it — load, diff, write only what
+changed, version-checked ([[D-010]]). A second spelling of one verb is how a
+codebase ends up with two of everything.
+
+Both are optional capabilities (`crud.Creator`, `crud.Replacer`), resolved on the
+**exact outer Core** the way `InsertBatch` is ([[D-083]]) rather than by walking
+the decorator chain. Walking it would step past `security.Gate` and turn an
+explicit verb into a way around authorisation; refusing with
+`ErrNoCreateSupport` / `ErrNoReplaceSupport` says so out loud instead. A
+decorator that wants to offer them forwards them deliberately.
+
+This is not the split this decision forbids. Nothing routes through `Create` or
+`Replace` unless the caller wrote the word: `port`, the HTTP bindings and the gate
+all still call `Save`.
 
 ## What it forbids
 
 - Do not split `Save` into `Insert` and `Update` "for clarity". The single
-  method is the contract.
+  method is the contract, and it is what every transport calls. `Create` and
+  `Replace` are additions beside it, reachable only by name.
 - Do not add immutable columns to the conflict clause. That is the whole
   protection for `tenant_id`.
 - Do not make an unset `noauto` key insert a zero value.
 - Do not skip the read-back on a dialect without `RETURNING`.
 - Do not add options to `Save` and imply they narrow anything. If a write needs
-  a row-level rule, it belongs in `security.Gate` or a service method.
+  a *per-request* row-level rule, it belongs in `security.Gate` or a service method.
+- Do not emit a targetless upsert from `Save` on a dialect that has no
+  key-targeted one. `crud.UpsertTargetsPrimaryKey` is the question to ask.
+- Do not narrow the insert half of a scoped `Save` with the scope. The row does
+  not exist yet, so there is nothing to protect and a great deal to break.
+- Do not reach `Create` or `Replace` by walking the decorator chain.
 
 ## Where it lives
 
-- `crud/sqlrepo/repository.go:repository.Save` — the three branches.
-- `crud/sqlrepo/repository.go:repository.insert` — `RETURNING` path, `LastInsertID`
-  path, the `DO NOTHING` re-read, and the unconditional refresh.
+- `crud/sqlrepo/repository.go:repository.Save` — the three branches and the fork
+  into the fourth; `:Create` and `:Replace` — the explicit verbs.
+- `crud/sqlrepo/upsert.go:repository.upsertByPrimaryKey` — the fourth row's
+  sequence; `:needsConditionalUpsert` — when it is taken.
+- `crud/sqlrepo/blueprint.go:Blueprint.writeScope` — the scope as declared, before
+  soft delete adds its own predicate to the read scope.
+- `crud/write.go` — `Creator`, `Replacer`, `CreateOf`, `ReplaceOf` and the two
+  `Repo` methods that refuse when a decorator swallowed them.
+- `crud/dialect.go:UpsertTargetsPrimaryKey`, `:UpdateCountsChangedRowsOnly` — the
+  two dialect questions the fourth row asks.
+- `crud/sqlrepo/repository.go:repository.saveReturning` / `:saveWithoutReturning` —
+  the `RETURNING` path, the `LastInsertID` path and the unconditional refresh.
 - `crud/sqlrepo/repository.go:repository.refresh` — re-reads through the narrowing,
   so a write that was allowed to touch only some rows cannot read back a row it
   was not allowed to touch.
@@ -89,9 +152,10 @@ predicate to narrow. That is documented on `sqlrepo.Scope`, and it is why
 - `crud/meta.go:buildSchema` — which field lands in which list; `generated` is in
   none of them, `immutable` and `version` are out of `Update`.
 - `crud/meta.go:TagKey` — `pk`, `auto`, `noauto`, `immutable`, `generated`.
-- `crud/dialect.go:Postgres.Upsert` / `crud/dialect.go:MySQL.Upsert` — the two
-  conflict spellings, including the `DO NOTHING` and the MySQL no-op assignment
-  for an empty update list ([[D-019]]).
+- `crud/dialect.go:Postgres.Upsert` — the conflict spelling `Save` uses, including
+  the `DO NOTHING` degenerate form. `crud/dialect.go:MySQL.Upsert` still renders
+  `ON DUPLICATE KEY UPDATE` for a dialect that declares the key-targeted
+  capability, and `Save` no longer reaches it ([[D-019]], [[D-042]]).
 - `crud/errors.go:ErrMissingID` — maps to 400 over HTTP.
 - `port/service.go:DefaultService.Create` — on `POST`, `port.Sanitize` clears a
   generated key and every `generated` column before anything reaches `Save`. It
@@ -117,11 +181,34 @@ predicate to narrow. That is documented on `sqlrepo.Scope`, and it is why
   `TestASaveCannotWindTheLockBack` in `test/integration/dialect_edge_test.go`.
 - `TestSaveJudgesAFrozenFieldByItsValue` in
   `crud/decorators/security/edge_test.go`.
-- `TestScopeCannotReachSave` in `crud/sqlrepo/blueprint_edge_test.go` — pins the
-  documented gap rather than leaving it to be discovered.
+- `TestScopeNarrowsTheRowASaveMayReachButNotTheRowItCreates` in
+  `crud/sqlrepo/blueprint_edge_test.go` — the half the scope deliberately does not
+  reach.
+- `TestSaveNeverReachesARowByAKeyTheCallerDidNotName`,
+  `TestSaveInsertsWhenNoRowCarriesTheKeyOnADialectThatCannotTargetTheKey`,
+  `TestSaveLeavesAChangelessRowAloneRatherThanInsertingASecondOne` and
+  `TestSaveOnlyRunsItsWholeSequenceUnderOneTransaction` in
+  `crud/sqlrepo/upsert_test.go` — the fourth row on a dialect that cannot target
+  the key.
+- `TestSaveCannotOverwriteARowOutsideTheDeclaredScope`,
+  `TestSaveAllCannotOverwriteARowOutsideTheDeclaredScope` and
+  `TestSaveReadsTheRowBackThroughTheDeclaredScope` in
+  `crud/sqlrepo/upsert_test.go` — the fourth row on a repository that narrowed
+  itself, and the read-back that follows it.
+- `TestADialectThatTargetsThePrimaryKeyKeepsTheSingleStatementUpsert` in
+  `crud/sqlrepo/upsert_test.go` — the control: nothing was given up where nothing
+  was wrong.
+- `TestAConditionalSaveIsRefusedOverBudgetBeforeAnyStatement` in
+  `crud/sqlrepo/upsert_test.go` — [[D-079]] still bites on the multi-statement branch.
+- `TestCreateInsertsAndLetsAnExistingKeyCollide`,
+  `TestReplaceRefusesAWriteAgainstARowSomebodyElseAdvanced`,
+  `TestReplaceCreatesTheRowWhenNobodyHoldsTheKey`,
+  `TestReplaceRequiresTheKeyItIsReplacing` and
+  `TestADecoratorThatDoesNotForwardTheExplicitVerbsRefusesThemOutLoud` in
+  `crud/sqlrepo/upsert_test.go` — the explicit verbs.
 - `TestCreateRefusesAClientChosenKeyAndGeneratedColumns` in
   `crud/http/crudfiber/handler_test.go`.
 
 ## See also
 
-[[D-010]] [[D-012]] [[D-008]] [[D-017]] [[D-019]]
+[[D-010]] [[D-012]] [[D-008]] [[D-017]] [[D-019]] [[D-042]] [[D-079]] [[D-083]]

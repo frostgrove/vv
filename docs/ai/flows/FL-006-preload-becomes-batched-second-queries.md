@@ -142,6 +142,7 @@ structs.
 | File | Role |
 |---|---|
 | `crud/preload.go` | the whole mechanism: tree, batching, fetch, assignment, key normalisation |
+| `crud/optiongroup.go` | `PreloadOptions` — the closed option set `validatePreloadOptions` walks, shared with the other verbs ([[D-087]]) |
 | `crud/scope.go` | `At` for this hop, `under` for the hops below it |
 | `crud/relation.go` | `Resolve`, join-table columns, `Relation.fieldValue` |
 | `crud/access.go` | `Pointers` — scan destinations by offset |

@@ -62,6 +62,20 @@ type UpsertScope interface {
 	UpsertSwallowsPrimaryKeyOnly() bool
 }
 
+func UpsertTargetsPrimaryKey(d Dialect) bool {
+	scope, ok := d.(UpsertScope)
+	return ok && scope.UpsertSwallowsPrimaryKeyOnly()
+}
+
+type UpdateRowCount interface {
+	UpdateCountsChangedRowsOnly() bool
+}
+
+func UpdateCountsChangedRowsOnly(d Dialect) bool {
+	counter, ok := d.(UpdateRowCount)
+	return !ok || counter.UpdateCountsChangedRowsOnly()
+}
+
 type StatementRollback interface {
 	RollsBackStatementOnly() bool
 }
@@ -78,6 +92,7 @@ func (Postgres) SupportsReturning() bool { return true }
 func (Postgres) MaxBindValues() int { return 65_535 }
 
 func (Postgres) UpsertSwallowsPrimaryKeyOnly() bool { return true }
+func (Postgres) UpdateCountsChangedRowsOnly() bool  { return false }
 func (Postgres) LockClause() string                 { return " FOR UPDATE" }
 func (Postgres) LikeEscapeClause() string           { return ` ESCAPE '\'` }
 
@@ -120,6 +135,8 @@ func (MySQL) Quote(ident string) string {
 func (MySQL) LimitAll() string { return " LIMIT 18446744073709551615" }
 
 func (MySQL) RollsBackStatementOnly() bool { return true }
+
+func (MySQL) UpdateCountsChangedRowsOnly() bool { return true }
 
 func (this MySQL) Upsert(pk string, cols []string) string {
 	var b strings.Builder
@@ -166,6 +183,8 @@ func (SQLite) LimitAll() string { return " LIMIT -1" }
 
 func (SQLite) UpsertSwallowsPrimaryKeyOnly() bool { return true }
 
+func (SQLite) UpdateCountsChangedRowsOnly() bool { return false }
+
 func (SQLite) RollsBackStatementOnly() bool { return true }
 func (this SQLite) Quote(ident string) string {
 	return `"` + strings.ReplaceAll(ident, `"`, `""`) + `"`
@@ -182,6 +201,9 @@ var (
 	_ DefaultValuesInserter = MySQL{}
 	_ UpsertScope           = Postgres{}
 	_ UpsertScope           = SQLite{}
+	_ UpdateRowCount        = Postgres{}
+	_ UpdateRowCount        = MySQL{}
+	_ UpdateRowCount        = SQLite{}
 	_ StatementRollback     = MySQL{}
 	_ StatementRollback     = SQLite{}
 )

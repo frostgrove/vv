@@ -54,7 +54,7 @@ POST /articles/query
 gorilla/mux и httprouter могут регистрировать их по одному вместо вызова
 `Mount`. Это стоит знать даже если ваш роутер не `ServeMux`.
 
-## Четыре конструктора
+## Шесть конструкторов
 
 ```go
 crudnet.New(repo, opts...)                  // репозиторий; модель и есть wire-формат
@@ -62,6 +62,19 @@ crudnet.NewFor(repo, mapper, opts...)       // …со своим телом з�
 crudnet.Serving(svc, opts...)               // port.Service — ваши бизнес-правила
 crudnet.ServingFor(svc, mapper, opts...)    // и то, и другое
 ```
+
+`NewWire` и `ServingWire` — явная форма под этими четырьмя. Они принимают маппер
+создания, `wire.PatchMapper` и `wire.Presenter`, так что публичное тело PATCH и
+тело ответа становятся отдельными типами, а не persistence-DTO и моделью
+([[D-105]]):
+
+```go
+crudnet.ServingWire(svc, ArticleInputMapper{}, ArticlePatchMapper{}, ArticlePresenter{})
+```
+
+Четыре коротких конструктора подставляют `wire.IdentityPatch` и
+`wire.IdentityPresenter` — поэтому в них ничего не изменилось. См.
+[wire](wire.md).
 
 `New` принимает **интерфейс**, а не конкретный репозиторий, поэтому ему
 удовлетворяет и ваш собственный тип сервиса ([[D-022]]):

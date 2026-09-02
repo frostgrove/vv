@@ -53,10 +53,19 @@ rather than about the database.
 **Because the skip set is per dialect and not per rule.** `Save` *is* the upsert
 path ([[D-011]]), and an upsert swallows the conflicts its own target covers.
 PostgreSQL emits `ON CONFLICT (pk) DO UPDATE`, which swallows the primary key
-only; MySQL emits `ON DUPLICATE KEY UPDATE`, which swallows *every* unique key.
-The probe derives its skip set from `crud.Dialect`'s upsert form, never from a
-hard-coded rule — and the resulting difference is observable, so [[D-019]] names
-it.
+only. The probe derives its skip set from `crud.Dialect`'s upsert form, never
+from a hard-coded rule — and the resulting difference is observable, so [[D-019]]
+names it.
+
+`MySQL.Upsert` still renders `ON DUPLICATE KEY UPDATE`, which swallows *every*
+unique key, and `crud.UpsertScope` is still how that is asked about. What changed
+is who asks: `Save` no longer emits that clause at all, because a targetless
+upsert reaches rows the caller did not name ([[D-011]]'s fourth row). The
+capability is therefore two answers to two questions —
+`UpsertSwallowsPrimaryKeyOnly` tells the probe which conflicts a statement
+already absorbed, and `crud.UpsertTargetsPrimaryKey` tells `sqlrepo` whether a
+statement may be emitted in the first place. A dialect that answers false gets a
+key-targeted sequence from `sqlrepo` and no skipped constraints from the probe.
 
 **Because the oracle is real and is not closed by this decision.** The probe
 queries rows the caller may not be allowed to see, and a unique-violation

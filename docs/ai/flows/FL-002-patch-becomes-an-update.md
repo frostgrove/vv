@@ -1,7 +1,7 @@
 # FL-002 — A PATCH becomes an UPDATE
 
 **Entry point:** `crud/http/crudfiber/handler.go:Update` (and `crud/http/crudgin/handler.go:Update`)
-**Implements:** [[UC-003]] [[UC-009]] · **Governed by:** [[D-002]] [[D-010]] [[D-019]]
+**Implements:** [[UC-003]] [[UC-009]] · **Governed by:** [[D-002]] [[D-010]] [[D-019]] [[D-087]] [[D-105]]
 
 The read-modify-write that most hand-written handlers get wrong. Three states in
 the body, a diff against the stored row, one statement, and a read-back that
@@ -9,15 +9,21 @@ differs by dialect.
 
 ## The path
 
-1. **`HandlerFor.Update`** — `crud/http/crudfiber/handler.go:Update`,
+1. **`ResourceFor.Update`** — `crud/http/crudfiber/handler.go:Update`,
    `crud/http/crudgin/handler.go:Update`
    `h.id(c)` coerces the path parameter to `ID` (via `port.CoerceID` and
-   `query.Coerce`), then the body is decoded into `U`. The binding closes
-   `BeforeUpdate` over the request and the path key and puts it on the command
-   (`crud/http/crudfiber/options.go:BeforeUpdate`); the service runs it. PATCH is the
-   one route with no mapper: the body decodes straight into `U`, because the
-   generated DTO already is the transport shape ([[D-018]], and `port/doc.go`
-   states the limit).
+   `query.Coerce`), then the body is decoded into `P`, the **public** patch body,
+   and `this.patcher.Update(patch)` turns it into the persistence `U` that goes
+   on the command. The binding closes `BeforeUpdate` over the request and the
+   path key and puts it on the command
+   (`crud/http/crudfiber/options.go:BeforeUpdate`); the service runs it.
+   `New`, `NewFor`, `Serving` and `ServingFor` fill `P = U` and
+   `wire.IdentityPatch[U]()`, so a resource mounted straight onto the model
+   still decodes the generated DTO itself and nothing about those call sites
+   changed. `NewWire` and `ServingWire` are where the two part company, and
+   [[D-105]] is why they must: what an `UPDATE` may write and what a client may
+   send are not one list. `port` still knows only `Mapper[In, M]` — the patch
+   mapper is `crud/wire`'s and is applied by the binding ([[FL-029]]).
    **The trap:** the service's call is `repo.Update(ctx, id, dto)` — no options.
    A `WithScope` narrowing reaches every read and *nothing* on this path.
    Row-level rules on writes belong in `security.Gate`, whose scope does reach
@@ -32,15 +38,21 @@ differs by dialect.
    When the repository was bound with a gate. Frozen-field check, a scoped load,
    `Inspect`, then the scope goes into the options it forwards — see [[FL-008]].
 
-4. **`repository.Update`** — `crud/sqlrepo/repository.go:531`
-   The whole write lives here. In order:
+4. **`repository.Update`** — `crud/sqlrepo/repository.go:Update`
+   The whole write lives here. First the option list is resolved through
+   `crud.MutationOptions` (`crud/optiongroup.go`), which keeps `Where`,
+   `NarrowRelations`, `ForUpdate` and `PrimaryOnly` and refuses anything that would shape a
+   response — projection, sorting, paging, cursors, preloads, aggregation — with
+   a `*crud.SchemaError` naming the option the caller wrote, before a statement
+   exists ([[D-087]]). Then, in order:
 
 5. **The mutation read** — `repository.mutationRead`
    This is deliberately not a replay of the caller's response shape. It keeps
    only the caller predicates and relation narrowings, adds `PK = id`, forces a
-   full projection, the primary datasource, no sort, and a one-row limit.
-   Projection, cursor/paging, aggregation and preloads are discarded: none may
-   change the model used for a diff or omit its version. Then:
+   full projection, the primary datasource, no sort, and a one-row limit. The
+   options that could have shaped it never got this far: they were refused one
+   step earlier, because none of them may change the model used for a diff or
+   omit its version. Then:
    ```go
    if _, inTx := crud.ExecutorFor(ctx, r.src); inTx {
        loadOpts = append(loadOpts, crud.ForUpdate())
@@ -112,8 +124,10 @@ differs by dialect.
     again and reapply). `ErrStaleVersion` wraps `ErrConflict`, so a transport
     answers 409 without knowing versions exist (`crud/errors.go:36`).
 
-12. **`HandlerFor.entity`** — `handler.go:entity` — 200 with the refreshed model,
-    or the `WithTransform` presenter's view of it.
+12. **`ResourceFor.entity`** — `handler.go:entity` — 200 with the refreshed model
+    through `this.presenter.Response`, or the `WithTransform` closure's view of
+    it when one was given. The default presenter is the identity, so a resource
+    mounted with `New` answers the model itself.
 
 ## Where the decisions bite
 
@@ -124,14 +138,19 @@ differs by dialect.
   from touching columns a trigger or another writer owns. `UpdateAll` is the
   deliberate exception — no single row to diff against, so it uses
   `UpdatePlan.Writes` (`crud/update.go:219`) instead.
-- **A response shape cannot become a mutation shape.** `mutationRead` keeps the
-  predicates and relation scopes because they are security boundaries, while
-  projection, preloads, cursor/paging and aggregation are response concerns.
-  It always reads the complete row from the primary.
+- **A response shape cannot become a mutation shape.** The predicates and
+  relation scopes are kept because they are security boundaries; projection,
+  preloads, cursor/paging and aggregation are response concerns and are refused
+  rather than dropped, so a caller who asks for one is told. `mutationRead`
+  always reads the complete row from the primary.
 - **The narrowing is in the WHERE, not only in the load.** Both halves, always.
   This is the invariant a decorator relies on; `gate.Update` passes its scope as
   an option precisely because `repository.Update` puts options into the
   statement (`repository.go:540`, `repository.go:584`).
+- **The public body is not the persistence DTO.** The binding decodes `P` and
+  maps it; the repository only ever sees `U`. A column an internal writer needs
+  therefore stays in `U` without becoming something a client may send, which is
+  the whole of [[D-105]].
 - **The version column is never the caller's.** It is excluded from
   `Schema.Update` (`crud/meta.go:293`) and an update DTO that names it is
   refused at `Define` time (`crud/update.go:119`).
@@ -151,12 +170,14 @@ differs by dialect.
 | row changed by somebody else (version) | `missedRow` → `ErrStaleVersion` | 409 |
 | a `NOT NULL` / FK / unique violation from the SET | adapter `conflict()` | 409 — [[FL-011]] |
 | DTO of the wrong type reaches `Changes` | `UpdatePlan.dtoValue` (`update.go:174`) | 400 (`SchemaError`) |
+| an option the write cannot honour — `Select`, `OrderBy`, `Limit`, `Preload`, a cursor | `crud.MutationOptions.Build` before the load | 400 (`SchemaError`) naming the option |
 
 ## Files
 
 | File | Role |
 |---|---|
-| `crud/http/crudfiber/handler.go`, `crud/http/crudgin/handler.go`, `crud/http/crudnet/handler.go` | `Update`, id coercion, the hook closure, response |
+| `crud/http/crudfiber/handler.go`, `crud/http/crudgin/handler.go`, `crud/http/crudnet/handler.go` | `Update`, id coercion, the patch mapper hop, the hook closure, response |
+| `crud/wire/wire.go` | `PatchMapper` and `IdentityPatch` — the public body's road to `U`, and the default that keeps it the same type |
 | `crud/http/crudfiber/options.go`, `crud/http/crudgin/options.go`, `crud/http/crudnet/options.go` | `BeforeUpdate`, and the `WithScope` asymmetry |
 | `port/command.go` | `UpdateCommand` — the key, the patch and the hook |
 | `port/service.go` | `DefaultService.Update` — where the hook runs and the repository is called |
@@ -166,6 +187,7 @@ differs by dialect.
 | `crud/opt.go` | the three states themselves |
 | `crud/meta.go` | `Field.comparableOf`, `Schema.Update`, `checkVersion` |
 | `crud/sqlrepo/repository.go` | `Update`, `versionCheck`, `missedRow`, `refresh` |
+| `crud/optiongroup.go` | `MutationOptions` — which options a write reads, and how the rest are refused |
 | `crud/dialect.go` | `SupportsReturning`, `LockClause` |
 | `crud/executor.go` | `ExecutorFor` — the "are we in a transaction" question the `FOR UPDATE` branch asks |
 | `crud/decorators/security/security.go` | the gated variant |
@@ -177,10 +199,12 @@ Both below have an identical twin in `crud/http/crudgin/handler_test.go` and
 
 - `TestUpdateForwardsOnlyTheFieldsTheBodyCarried` — `crud/http/crudfiber/handler_test.go` — the wire half.
 - `TestUpdateCarriesAnExplicitNullThrough` — `crud/http/crudfiber/handler_test.go` — `null` is not absence.
+- `TestThePublicPatchBodyIsNotThePersistenceUpdate` — `crud/http/crudfiber/handler_test.go` — the mapper hop, with the mapperless mount as its control.
 - `TestUpdateWritesOnlyChangedFields` — `crud/sqlrepo/repository_test.go` — the diff.
 - `TestUpdateWithNothingToDoSkipsTheWrite` — `crud/sqlrepo/repository_test.go` — no statement at all.
-- `TestUpdateUsesAFullMutationReadAndKeepsOnlyItsNarrowing` — response options
-  cannot corrupt the diff, while the caller narrowing remains in the SQL.
+- `TestUpdateUsesAFullMutationReadAndKeepsOnlyItsNarrowing` — the caller
+  narrowing remains in the SQL and the read is complete.
+- `TestAFilteredWriteRefusesTheOptionsItWouldNotApply` — `crud/sqlrepo/optiongroup_test.go` — a response option cannot corrupt the diff because it never arrives.
 - `TestUpdateDistinguishesUndefinedFromNull` — `crud/sqlrepo/repository_test.go` — the three states in SQL.
 - `TestUpdateOnADialectWithoutRETURNINGReadsTheRowBack` — `crud/sqlrepo/repository_test.go` — the MySQL re-read.
 - `TestUpdateOfARowThatVanishedIsNotFoundOnEveryDialect` — `crud/sqlrepo/repository_test.go` — pins the fabricated-model regression.
@@ -196,4 +220,4 @@ Both below have an identical twin in `crud/http/crudgin/handler_test.go` and
 
 ## See also
 
-[[FL-003]] [[FL-004]] [[FL-008]] [[FL-009]] [[FL-011]] [[FL-013]]
+[[FL-003]] [[FL-004]] [[FL-008]] [[FL-009]] [[FL-011]] [[FL-013]] [[FL-029]]

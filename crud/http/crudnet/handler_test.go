@@ -11,6 +11,8 @@ import (
 
 	"github.com/frostgrove/vv/crud"
 	"github.com/frostgrove/vv/crud/query"
+	"github.com/frostgrove/vv/crud/wire"
+	"github.com/frostgrove/vv/port"
 )
 
 func TestRoutesMountEveryDocumentedEndpoint(t *testing.T) {
@@ -525,6 +527,85 @@ func TestADistinctInputDTOReachesTheModelThroughTheMapper(t *testing.T) {
 
 		if got := fake.only(t, "Save").Model; got.Name != "" {
 			t.Fatalf("a body in the input type's shape bound onto the model as %+v; the mapper is not what carried it", got)
+		}
+	})
+}
+
+func TestThePublicPatchBodyIsNotThePersistenceUpdate(t *testing.T) {
+	t.Run("the public body becomes an update through its mapper", func(t *testing.T) {
+		fake := newFake()
+		app := mountHandler(NewWire(fake, port.Identity[Widget](), widgetPatchMapper{}, wire.IdentityPresenter[Widget]()))
+
+		ok(t, app, http.MethodPatch, "/widgets/42", `{"label":"renamed","price":999}`, http.StatusOK)
+
+		call := fake.only(t, "Update")
+		if call.DTO.Name == nil || *call.DTO.Name != "renamed" {
+			t.Fatalf("the public field never became a column: %+v", call.DTO)
+		}
+		if call.DTO.Price != nil {
+			t.Fatalf("a column the public body does not carry was written anyway: price = %d", *call.DTO.Price)
+		}
+	})
+
+	t.Run("and the control: without a patch mapper the body is the persistence DTO", func(t *testing.T) {
+		app, fake := mount(t)
+
+		ok(t, app, http.MethodPatch, "/widgets/42", `{"label":"renamed","price":999}`, http.StatusOK)
+
+		call := fake.only(t, "Update")
+		if call.DTO.Price == nil || *call.DTO.Price != 999 {
+			t.Fatalf("the request wrote no column, so the separated body proves nothing: %+v", call.DTO)
+		}
+		if call.DTO.Name != nil {
+			t.Fatalf("the public field name meant something without a mapper: %+v", call.DTO)
+		}
+	})
+}
+
+func TestTheAnswerIsWhatThePresenterMade(t *testing.T) {
+	t.Run("on one entity", func(t *testing.T) {
+		fake := newFake()
+		app := mountHandler(NewWire(fake, port.Identity[Widget](), wire.IdentityPatch[WidgetUpdate](), widgetPresenter{}))
+
+		r := ok(t, app, http.MethodGet, "/widgets/42", "", http.StatusOK)
+
+		var body map[string]any
+		r.decode(t, &body)
+		if _, leaked := body["secret"]; leaked {
+			t.Fatalf("a column the response body leaves out reached the client: %s", r.body)
+		}
+		if body["name"] != "bolt" {
+			t.Fatalf("the answer lost a field the response body does carry: %s", r.body)
+		}
+	})
+
+	t.Run("on the collection", func(t *testing.T) {
+		fake := newFake()
+		app := mountHandler(NewWire(fake, port.Identity[Widget](), wire.IdentityPatch[WidgetUpdate](), widgetPresenter{}))
+
+		r := ok(t, app, http.MethodGet, "/widgets", "", http.StatusOK)
+
+		var page struct {
+			Items []map[string]any `json:"items"`
+		}
+		r.decode(t, &page)
+		if len(page.Items) == 0 {
+			t.Fatalf("the page came back empty, so nothing was presented: %s", r.body)
+		}
+		if _, leaked := page.Items[0]["secret"]; leaked {
+			t.Fatalf("the collection answered the model instead of the response body: %s", r.body)
+		}
+	})
+
+	t.Run("and the control: without a presenter the model is the answer", func(t *testing.T) {
+		app, _ := mount(t)
+
+		r := ok(t, app, http.MethodGet, "/widgets/42", "", http.StatusOK)
+
+		var body map[string]any
+		r.decode(t, &body)
+		if _, present := body["secret"]; !present {
+			t.Fatalf("the model itself no longer answers the column, so the presented answer proves nothing: %s", r.body)
 		}
 	})
 }

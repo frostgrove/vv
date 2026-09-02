@@ -33,7 +33,7 @@ SQL здесь никто не выполняет — этим занимает�
 |---|---|
 | **Метаданные модели** | теги `db` и `rel` превращаются в `Schema`, `Meta` и граф связей, вычисляемый один раз |
 | **`utils.Opt[T]`** | три состояния — undefined, null, set — чтобы PATCH мог отличить "оставить как есть" от "очистить" |
-| **Опции** | `Page`, `Limit`, `Where`, `OrderBy`, `Preload`, `Select`, `Distinct`, `Aggregate` и ещё четырнадцать |
+| **Опции** | `Page`, `Limit`, `Where`, `OrderBy`, `Preload`, `Select`, `Distinct`, `Aggregate` и ещё четырнадцать — каждый глагол читает свой набор и отказывает остальным по имени |
 | **Предикаты** | замкнутый AST: 26 конструкторов, среди них `And`/`Or`/`Not`, пути через связи на любую глубину |
 | **Пагинация** | `PaginatedResponse[T]`, постраничная пагинация по offset и по курсору поверх кортежа сортировки |
 | **Связи** | `belongs_to`, `has_one`, `has_many`, `many_to_many` — выводятся автоматически, переопределяемы |
@@ -134,6 +134,26 @@ o.Ptr()       // *T
 
 `crud.Where` **добавляет через AND**. Именно это позволяет декоратору внедрить
 фильтр, который вызывающий код не может снять обратно ([[D-004]]).
+
+### Какой глагол какую опцию читает
+
+Тип опции один, контрактов четыре. Каждый глагол собирает опции вызывающего
+через `OptionGroup`, который перечисляет, что читает его оператор, и отказывает
+остальным **тем именем, которое написал вызывающий**: `*crud.SchemaError` ещё
+до того, как появится SQL. Опция никогда не принимается и не выбрасывается
+молча ([[D-087]]).
+
+| Группа | Глаголы | Отказывает |
+|---|---|---|
+| `crud.ReadOptions` | `Get` `GetAll` `First` `GetByID` `Count` `Exists` | `Aggregate`, `GroupBy` — чтение отвечает строками |
+| `crud.MutationOptions` | `Update` `UpdateAll` `DeleteAll` | всё, кроме `Where`, `NarrowRelations`, `ForUpdate` и `PrimaryOnly`: запись по фильтру не пагинируется, не сортируется, не проецируется и не подгружает связи |
+| `crud.AggregateOptions` | `Aggregate` | курсоры, `Select`, `Preload`, `SkipTotal`, `ForUpdate`, `Distinct` |
+| `crud.PreloadOptions` | `PreloadWhere`, `PreloadCap` | всё, кроме `Where`, `OrderBy` и `PreloadRows` ([[D-006]]) |
+
+То есть `users.UpdateAll(ctx, patch, crud.Where(p), crud.Limit(10))` — это
+ошибка с именем `Limit`, а не обновление десяти строк и не обновление всех
+подошедших. `group.Build(model, options...)` — та же проверка отдельно, для
+собственной реализации репозитория.
 
 Без явного запроса происходят три вещи: размер страницы обрезается до
 `MaxLimit` репозитория — в том числе когда запрос говорит `Unpaged`, а это
@@ -302,6 +322,8 @@ rows, err := orders.Aggregate(ctx,
 группы незаметно. Явные `Limit`, `Page`, `Offset` или `Unpaged` по-прежнему
 подчиняются `MaxLimit` репозитория. Обычный `OrderBy` может ссылаться только на
 колонки группировки; остальные колонки модель отклоняет до отправки SQL.
+Курсор, `Select`, `Preload`, `SkipTotal`, `ForUpdate` и `Distinct` отклоняются
+по той же причине: агрегат отвечает группами ([[D-087]]).
 
 Имена полей тоже принимают метамодель — `crud.GroupBy(Order_.Status.Name())`,
 `crud.Sum("total", Order_.Amount.Name())`. Имя самого агрегата — это ключ, под
@@ -334,6 +356,24 @@ err := users.InsertBatch(ctx, rows, crud.PortableBatch())
 Low-level capability называется `BatchInserter[M]` и оставлена вне `Core` ради
 source compatibility. Repository-декоратор обязан форвардить её явно; opaque-
 декоратор закрывается с `ErrNoBatchInsertSupport`, а не пропускается насквозь.
+
+## Явные глаголы под Save
+
+```go
+stored, err := users.Create(ctx, &u)   // только INSERT; занятый ключ — 409
+stored, err := users.Replace(ctx, &u)  // upsert, привязанный к u.Version
+```
+
+`Save` остаётся магией и остаётся тем, что вызывают все транспорты ([[D-011]]).
+`Create` и `Replace` — явный API под ней, для вызывающего, которому нужен
+названный отказ: `Create` никогда не поглощает конфликт, а `Replace` возвращает
+`ErrStaleVersion`, если строку уже сдвинули. `Patch` не добавлен — им является
+`Update`.
+
+`Creator[M]` и `Replacer[M]` ищутся на точном внешнем `Core`, ровно как
+`BatchInserter[M]`, поэтому opaque-декоратор закрывается с
+`ErrNoCreateSupport` / `ErrNoReplaceSupport`, а не позволяет явному глаголу
+пройти мимо `security.Gate`.
 
 ## Шов исполнителя
 
@@ -388,8 +428,17 @@ events.Save(ctx, &e)   // привязан к analyticsDB — выполняет
 **Опциональные интерфейсы**, которые может реализовать адаптер: они ищутся, а
 не требуются, чтобы сторонний адаптер компилировался и без них: `Beginner`
 (savepoint'ы), `UnsafeBulkInserter` (нативный bulk), `OffsetLimiter`,
-`ReadSourcer`, `Identified`, `Sourced`, `UpsertScope`, `StatementRollback`,
-`Tabler`.
+`ReadSourcer`, `Identified`, `Sourced`, `Tabler`.
+
+**Опциональные интерфейсы `Dialect`**, у каждого есть пакетная функция-читатель,
+отвечающая и за диалект, который его не реализует: `UpsertScope` /
+`UpsertTargetsPrimaryKey` (целится ли upsert-хвост только в первичный ключ или
+срабатывает на любом unique-индексе), `UpdateRowCount` /
+`UpdateCountsChangedRowsOnly` (значит ли нулевое число строк от `UPDATE` «такой
+строки нет» или ещё и «нашли, но менять было нечего»; диалект, который не
+ответил, считается вторым, поэтому получает пробу), `StatementRollback`,
+`OffsetLimiter`, `BindBudget`, `DefaultValuesInserter`, `LikeEscaper`. Первые два
+решают, может ли `Save` быть одним statement ([[D-011]]).
 
 Raw-выполнение доступно без потери ambient-транзакции:
 
@@ -465,6 +514,19 @@ db := crud.ReadWrite(primary, replica)
 всегда выполняются на основной базе, потому что решение о записи по
 отстающей реплике — это способ молча перезаписать строку.
 
+## Действия
+
+`crud.Action` называет то, что операция делает со строкой: `ActionRead`,
+`ActionCreate`, `ActionUpdate`, `ActionDelete`, `ActionRestore`; весь список
+отдаёт `crud.Actions()`, слово — `String()`.
+
+Сам пакет ничего по этому типу не решает. Он здесь потому, что два пакета,
+которым нельзя импортировать друг друга, обязаны называть один и тот же глагол:
+политика [security](security.md) объявляет, что требует каждое действие, а
+маршрут [crudhttp](crudhttp.md) говорит, какое действие он выполняет, — и
+декларация доступа маршрута читается из гейта, который её проверяет ([[D-107]]).
+`security.Action` — алиас этого типа.
+
 ## Сигнальные ошибки
 
 Сравнивайте через `errors.Is`, никогда по строке ([[D-015]]).
@@ -473,7 +535,8 @@ db := crud.ReadWrite(primary, replica)
 crud.ErrNotFound       crud.ErrConflict       crud.ErrForbidden
 crud.ErrStaleVersion   crud.ErrReadOnly       crud.ErrMissingID
 crud.ErrNoTxSupport    crud.ErrExecutorScope   crud.ErrNoBatchInsertSupport
-crud.ErrNoBulkInsertSupport
+crud.ErrNoBulkInsertSupport               crud.ErrNoCreateSupport
+crud.ErrNoReplaceSupport
 ```
 
 Каждая из них переживает обёртывание в `errs.Fault`, поэтому вызывающий код,

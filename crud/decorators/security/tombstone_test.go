@@ -162,3 +162,30 @@ func TestInspectedLifecycleNormalisesWrappedIDsAndSQLNullSnapshots(t *testing.T)
 		})
 	}
 }
+
+func TestASaveCarryingAHiddenRowsKeyIsRefusedInsteadOfPassingAsACreate(t *testing.T) {
+	recorder := crudtest.Postgres().Push(crudtest.Rows(), crudtest.Rows([]any{int64(1)}))
+	seen := security.Read
+	repository := archivedBlueprint(t).Bind(recorder, security.Gate(security.Policy[archivedDocument, int64]{
+		Scope: func(context.Context) (crud.Predicate, error) { return crud.Eq("TenantID", int64(7)), nil },
+		Inspect: func(_ context.Context, action security.Action, _ *archivedDocument) error {
+			seen = action
+			return nil
+		},
+	}))
+
+	_, err := repository.Save(context.Background(), &archivedDocument{ID: 1, TenantID: 7, Title: "signed up again"})
+	if !errors.Is(err, crud.ErrNotFound) {
+		t.Fatalf("Save over an archived key = %v, want the refusal a hidden row deserves", err)
+	}
+	if seen == security.Create {
+		t.Fatal("the tombstone read as absent, so the write was authorised as a fresh create")
+	}
+	statements := recorder.SQL()
+	if len(statements) != 2 {
+		t.Fatalf("statements = %v, want the scoped load and the unscoped presence probe", statements)
+	}
+	if probe := crudtest.Normalize(statements[1]); strings.Contains(probe, "deleted_at") {
+		t.Fatalf("the presence probe went through the soft-delete rule, so a tombstone reads as absent: %s", probe)
+	}
+}

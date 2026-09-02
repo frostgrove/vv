@@ -3,6 +3,7 @@ package security_test
 import (
 	"context"
 	"errors"
+	"slices"
 	"testing"
 
 	"github.com/frostgrove/vv/auth"
@@ -246,4 +247,128 @@ func TestEveryPrincipalPolicyFailsClosedWithoutOne(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestTheDeclaredRequirementIsTheOneTheGateEnforces(t *testing.T) {
+	policy := security.PerAction[Doc, int64](map[security.Action]auth.Permission{
+		security.Read:   "doc:read",
+		security.Delete: "doc:purge",
+	})
+
+	t.Run("the declaration a route would carry is the permission the gate asks for", func(t *testing.T) {
+		need, declared := policy.RequiredFor(security.Delete)
+		if !declared {
+			t.Fatal("the policy denies an undeclared delete at request time and declares nothing for it, so a route declaration cannot be derived")
+		}
+		if len(need) != 1 || need[0] != "doc:purge" {
+			t.Fatalf("the policy declares %v for delete, and a route declaration built from it would guard the delete route with that", need)
+		}
+	})
+
+	t.Run("a caller without the declared permission is refused", func(t *testing.T) {
+		rec := crudtest.Postgres()
+		if _, err := bound(rec, policy).Delete(as(editor), 1); !errors.Is(err, crud.ErrForbidden) {
+			t.Fatalf("a caller holding no doc:purge deleted anyway: %v", err)
+		}
+		if len(rec.Statements()) != 0 {
+			t.Fatal("a refused delete still reached the database")
+		}
+	})
+
+	t.Run("control: a caller holding the declared permission is let through", func(t *testing.T) {
+		purger := editor
+		purger.Permissions = append([]auth.Permission{"doc:purge"}, editor.Permissions...)
+		rec := crudtest.Postgres()
+		if _, err := bound(rec, policy).Delete(as(purger), 1); err != nil {
+			t.Fatalf("the caller holding exactly what the policy declares was refused: %v", err)
+		}
+	})
+
+	t.Run("an action nobody declared carries no declaration either", func(t *testing.T) {
+		if _, declared := policy.RequiredFor(security.Create); declared {
+			t.Fatal("the gate refuses a create nobody declared, and the declaration says a permission guards it")
+		}
+	})
+}
+
+func TestRequiringIsTheExplicitFormPerActionWraps(t *testing.T) {
+	explicit := security.Requiring[Doc, int64](map[security.Action][]auth.Permission{
+		security.Read: {"doc:read", "doc:admin"},
+	})
+
+	t.Run("every named permission is required, not one of them", func(t *testing.T) {
+		rec := crudtest.Postgres()
+		if _, err := bound(rec, explicit).GetAll(as(editor)); !errors.Is(err, crud.ErrForbidden) {
+			t.Fatalf("a caller holding doc:read but not doc:admin read anyway: %v", err)
+		}
+	})
+
+	t.Run("control: a caller holding both reads", func(t *testing.T) {
+		admin := editor
+		admin.Permissions = append([]auth.Permission{"doc:admin"}, editor.Permissions...)
+		rec := crudtest.Postgres().Push(crudtest.Rows())
+		if _, err := bound(rec, explicit).GetAll(as(admin)); err != nil {
+			t.Fatalf("a caller holding both named permissions was refused: %v", err)
+		}
+	})
+
+	t.Run("the wrapper declares what the explicit form declares", func(t *testing.T) {
+		wrapped := security.PerAction[Doc, int64](map[security.Action]auth.Permission{security.Read: "doc:read"})
+		one := security.Requiring[Doc, int64](map[security.Action][]auth.Permission{security.Read: {"doc:read"}})
+		got, declared := wrapped.RequiredFor(security.Read)
+		want, _ := one.RequiredFor(security.Read)
+		if !declared || !slices.Equal(got, want) {
+			t.Fatalf("PerAction declares %v where the explicit constructor declares %v", got, want)
+		}
+	})
+}
+
+func TestADeclarationThatNamesNoActionRefusesEveryOne(t *testing.T) {
+	empty := security.Requiring[Doc, int64](nil)
+
+	rec := crudtest.Postgres()
+	if _, err := bound(rec, empty).GetAll(as(editor)); !errors.Is(err, crud.ErrForbidden) {
+		t.Fatalf("a policy that declares no action let a read through: %v", err)
+	}
+	if len(rec.Statements()) != 0 {
+		t.Fatal("a refused read still reached the database")
+	}
+}
+
+func TestCombiningDeclarationsKeepsOnlyWhatEveryDeclarationAllows(t *testing.T) {
+	combined := security.Combine(
+		security.PerAction[Doc, int64](map[security.Action]auth.Permission{
+			security.Read:   "doc:read",
+			security.Delete: "doc:purge",
+		}),
+		security.PerAction[Doc, int64](map[security.Action]auth.Permission{
+			security.Read:    "doc:admin",
+			security.Restore: "doc:restore",
+		}),
+	)
+
+	t.Run("an action both declare needs both permissions", func(t *testing.T) {
+		need, declared := combined.RequiredFor(security.Read)
+		if !declared || !slices.Equal(need, []auth.Permission{"doc:read", "doc:admin"}) {
+			t.Fatalf("the combined policy declares %v for read, want both halves", need)
+		}
+		rec := crudtest.Postgres()
+		if _, err := bound(rec, combined).GetAll(as(editor)); !errors.Is(err, crud.ErrForbidden) {
+			t.Fatalf("a caller holding only the first half read anyway: %v", err)
+		}
+	})
+
+	t.Run("an action only one of them declares is declared by neither", func(t *testing.T) {
+		for _, action := range []security.Action{security.Delete, security.Restore} {
+			if _, declared := combined.RequiredFor(action); declared {
+				t.Fatalf("the combined policy declares %s, and the gate refuses it: the declaration would guard a route the repository never serves", action)
+			}
+		}
+		purger := editor
+		purger.Permissions = append([]auth.Permission{"doc:purge"}, editor.Permissions...)
+		rec := crudtest.Postgres()
+		if _, err := bound(rec, combined).Delete(as(purger), 1); !errors.Is(err, crud.ErrForbidden) {
+			t.Fatalf("the half that declares nothing for delete stopped refusing it: %v", err)
+		}
+	})
 }

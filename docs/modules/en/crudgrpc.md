@@ -52,7 +52,7 @@ are two ways in. gRPC has one request message, so there is one of each.
 `ReadOnly()` registers the three reads and leaves the five writes unregistered —
 gRPC then answers `Unimplemented` on its own.
 
-## The four constructors
+## The six constructors
 
 ```go
 crudgrpc.New(repo, opts...)                  // a repository; the model is the wire shape
@@ -60,6 +60,19 @@ crudgrpc.NewFor(repo, mapper, opts...)       // …with a request document of it
 crudgrpc.Serving(svc, opts...)               // a port.Service — your business rules
 crudgrpc.ServingFor(svc, mapper, opts...)    // both
 ```
+
+`NewWire` and `ServingWire` are the explicit form under the four above. They
+take the create mapper, a `wire.PatchMapper` and a `wire.Presenter`, so the
+public PATCH body and the answer body are types of their own rather than the
+persistence DTO and the model ([[D-105]]):
+
+```go
+crudgrpc.ServingWire(svc, ArticleInputMapper{}, ArticlePatchMapper{}, ArticlePresenter{})
+```
+
+The four short constructors fill in `wire.IdentityPatch` and
+`wire.IdentityPresenter`, which is why nothing about them changed. See
+[wire](wire.md).
 
 `crudgrpc.Repository` and `crudgrpc.Service` are **aliases** for the `port`
 types, so one value serves all four transports:

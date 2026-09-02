@@ -53,7 +53,7 @@ Fiber и которого нет у других биндингов. `Register(r
 `GetByID`, `Create`, `Update`, `Replace`, `Delete`, `BulkDelete` — так что их
 можно регистрировать по одному.
 
-## Четыре конструктора
+## Шесть конструкторов
 
 ```go
 crudfiber.New(repo, opts...)                  // репозиторий; модель и есть wire-формат
@@ -61,6 +61,19 @@ crudfiber.NewFor(repo, mapper, opts...)       // …с собственным т
 crudfiber.Serving(svc, opts...)               // port.Service — ваши бизнес-правила
 crudfiber.ServingFor(svc, mapper, opts...)    // и то, и другое
 ```
+
+`NewWire` и `ServingWire` — явная форма под этими четырьмя. Они принимают маппер
+создания, `wire.PatchMapper` и `wire.Presenter`, так что публичное тело PATCH и
+тело ответа становятся отдельными типами, а не persistence-DTO и моделью
+([[D-105]]):
+
+```go
+crudfiber.ServingWire(svc, ArticleInputMapper{}, ArticlePatchMapper{}, ArticlePresenter{})
+```
+
+Четыре коротких конструктора подставляют `wire.IdentityPatch` и
+`wire.IdentityPresenter` — поэтому в них ничего не изменилось. См.
+[wire](wire.md).
 
 `New` принимает **интерфейс** ([[D-022]]), так что ему удовлетворяет и ваш
 собственный тип сервиса:

@@ -140,8 +140,6 @@ func TestMutationReadKeepsPerRequestRelationNarrowing(t *testing.T) {
 		PostUpdate{Title: ptr("visible")},
 		crud.Where(crud.Eq("Remarks.Body", "allowed")),
 		crud.NarrowRelations(requestScope),
-		crud.Select("Title"),
-		crud.Preload("Remarks"),
 	)
 	if err != nil {
 		t.Fatal(err)

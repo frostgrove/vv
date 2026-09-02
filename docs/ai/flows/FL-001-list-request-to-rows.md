@@ -184,6 +184,7 @@ filter that works on `GET /articles?f=…` has to mean the same thing on
 | an `in`/`notIn` list past `MaxInValues`, or more than `MaxSort` sort terms | `compiler.countValues` / `Compile` | 400 naming the path and the cap ([[D-060]]) |
 | `unpaged` on an endpoint that did not declare it | `Compile` | 400 at the spelling the client sent — `unpaged` or `all` — and the repository is never asked |
 | `select` crossing a relation | `Compile` (`compile.go:174`) | 400 "use preload instead" |
+| `crud.Aggregate` / `crud.GroupBy` handed to a row read in Go | `crud.ReadOptions.Build` in the repository | 400 (`SchemaError`) naming `Aggregate`; no wire path reaches this ([[D-029]]) |
 | `DISTINCT` + a sort it cannot project | `distinctSort` (`repository.go:330`) | 400 (`SchemaError`) |
 | `DISTINCT` + a preload | `find` (`repository.go:206`) | 400 (`SchemaError`) |
 | driver or connection failure | `queryCols` | 500, body says nothing — [[FL-011]] |
@@ -202,6 +203,7 @@ filter that works on `GET /articles?f=…` has to mean the same thing on
 | `crud/query/compile.go` | `Compile`, the allow-lists, budgets, path resolution |
 | `crud/query/filter.go` | the structured filter document → predicates |
 | `crud/options.go` | `Options`, `Where`, `Resolved` |
+| `crud/optiongroup.go` | `ReadOptions` — a read consults every option but an aggregate spec, which it refuses ([[D-087]]) |
 | `crud/sqlrepo/repository.go` | `Get`, `find`, `projection`, `sortOf`, `Count` |
 | `crud/render.go` | statement assembly |
 | `crud/relation.go` | `WalkPath` — the single source of truth for paths |

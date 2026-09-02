@@ -757,6 +757,86 @@ every check and is wrong only in a production error body.
 resource without it, which is what to use when you mount on Fiber or Gin: build
 the service, then `crudfiber.ServingFor(svc, store.MemberMapper{})`.
 
+
+### The public bodies: what a client may send
+
+`MemberUpdate` is the **persistence** patch: every column an `UPDATE` may write,
+including the ones only your own code writes. Hand that type to a public PATCH
+binder and each of them becomes something a client may send; take them out of it
+and your own code loses them. The way out is a second set of types.
+
+`vv generate resource` writes the public half beside it:
+
+```bash
+go run github.com/frostgrove/vv/cmd/vv generate resource \
+    -dir ../models -types Member,Team -readonly CreatedAt,UpdatedAt,DeletedAt \
+    -import myapp/models -into . -recursive=false
+```
+
+`-into`, `-import` and `-types` mean here exactly what they mean for the DTO —
+the model lives in your models package and the generated file lives beside the
+store. `-recursive` is on by default and writes beside each model package, so
+naming a destination turns it off.
+
+```go
+type MemberInput struct{ … }          // the create body
+type MemberInputMapper struct{}       // port.Mapper[MemberInput, Member]
+
+type MemberPatch struct{ … }          // the PATCH body
+type MemberPatchMapper struct{}       // wire.PatchMapper[MemberPatch, MemberUpdate]
+
+type MemberResponse struct{ … }       // the answer body
+type MemberPresenter struct{}         // wire.Presenter[Member, MemberResponse]
+
+func init() {
+    wire.MustCoverCreate[Member, MemberInput]("CreatedAt", "DeletedAt", "UpdatedAt")
+    wire.MustCoverPatch[MemberUpdate, MemberPatch]()
+    wire.MustCoverResponse[Member, MemberResponse]()
+}
+```
+
+Mount them with `ServingWire`, the explicit form under `Serving`:
+
+```go
+crudfiber.ServingWire(svc, store.MemberInputMapper{}, store.MemberPatchMapper{}, store.MemberPresenter{})
+```
+
+`New`, `NewFor`, `Serving` and `ServingFor` are unchanged: they still take the
+model and `MemberUpdate`, so nothing you already mounted moves.
+
+**`gorm.Model` is where this bites first.** `DeletedAt` is a column, so it is in
+`MemberResponse`, and every client can see which rows were soft-deleted and when.
+`-readonly` does not help: it takes a column out of the DTO and the metamodel,
+not out of the answer. The manifest is where you say it —
+`resource.manifest.yml` sits beside the package:
+
+```json
+{
+  "model": "Member",
+  "response": {
+    "narrowed": ["Age", "CreatedAt", "DeletedAt", "ID", "Name", "UpdatedAt"],
+    "fields": ["Age", "CreatedAt", "ID", "Name", "UpdatedAt"],
+    "widened": [],
+    "derivation_fingerprint": "e70695…",
+    "confirmed": false
+  }
+}
+```
+
+Regenerate and `DeletedAt` is gone from the answer body, while the
+`sqlrepo.Scope` that hides the rows keeps working. The generated
+`MustCoverResponse` line grows `"DeletedAt"` as a declared omission, so a column
+that quietly reappears is a start-up refusal rather than a leak.
+
+Putting a name **back** is the direction that costs something: it lands in
+`widened` and generation stops, naming `Member response`, until `confirmed: true`
+sits beside it. The confirmation is bound to the derivation it was given for, so
+adding a column to the model asks the question again.
+
+Put `vv generate resource -check` in CI. It renders both artefacts, compares
+them with what is checked in, writes nothing, and names every package that is
+behind its models ([[D-105]]).
+
 ## 11. Mount it
 
 The database itself is a configuration file rather than a constant. `vvdb` takes

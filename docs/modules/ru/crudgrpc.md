@@ -52,7 +52,7 @@ srv.Serve(lis)
 `ReadOnly()` регистрирует три чтения и оставляет пять записей
 незарегистрированными — gRPC сам отвечает на них `Unimplemented`.
 
-## Четыре конструктора
+## Шесть конструкторов
 
 ```go
 crudgrpc.New(repo, opts...)                  // репозиторий; модель и есть wire-формат
@@ -60,6 +60,19 @@ crudgrpc.NewFor(repo, mapper, opts...)       // …со своим докуме�
 crudgrpc.Serving(svc, opts...)               // port.Service — ваша бизнес-логика
 crudgrpc.ServingFor(svc, mapper, opts...)    // и то, и другое
 ```
+
+`NewWire` и `ServingWire` — явная форма под этими четырьмя. Они принимают маппер
+создания, `wire.PatchMapper` и `wire.Presenter`, так что публичное тело PATCH и
+тело ответа становятся отдельными типами, а не persistence-DTO и моделью
+([[D-105]]):
+
+```go
+crudgrpc.ServingWire(svc, ArticleInputMapper{}, ArticlePatchMapper{}, ArticlePresenter{})
+```
+
+Четыре коротких конструктора подставляют `wire.IdentityPatch` и
+`wire.IdentityPresenter` — поэтому в них ничего не изменилось. См.
+[wire](wire.md).
 
 `crudgrpc.Repository` и `crudgrpc.Service` — это **алиасы** типов `port`, так
 что одно значение обслуживает все четыре транспорта:

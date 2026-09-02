@@ -1,7 +1,7 @@
 # FL-008 — A write through the security gate
 
 **Entry point:** the write methods on `crud/decorators/security/security.go:gate`, including `InsertBatch`
-**Implements:** [[UC-004]] [[UC-008]] · **Governed by:** [[D-008]] [[D-004]] [[D-011]] [[D-030]] [[D-079]] [[D-083]]
+**Implements:** [[UC-004]] [[UC-008]] · **Governed by:** [[D-008]] [[D-004]] [[D-011]] [[D-026]] [[D-030]] [[D-079]] [[D-083]] [[D-087]]
 
 Reads have one shape. Writes have several, and each has a different reason it
 cannot simply AND a predicate into a statement.
@@ -89,11 +89,17 @@ selects native COPY or portable SQL ([[D-083]]).
    (`security.go:102-110`): rewriting every row in a table is not something a
    policy should inherit from having been allowed to empty it.
 2. **The victim scan.** When `Inspect` is set, both methods fetch the rows the
-   statement is about to hit — through `g.whole(true, scoped)`, so `Inspect`
-   sees whole rows — and run `Inspect` on each before issuing the write. With no
-   id in the call there is nothing else that could stand for consent.
+   statement is about to hit — through `g.whole(true, append(scoped,
+   crud.PrimaryOnly(), inspectionRead()))`, so `Inspect` sees whole rows, from
+   the primary, and *all* of them: `inspectionRead` zeroes the paging and the
+   cursors so the scan cannot see a page of what the statement will write
+   ([[D-026]]). Then `Inspect` runs on each row before the write is issued. With
+   no id in the call there is nothing else that could stand for consent.
 3. Then the statement, with the scope in it: `Core.UpdateAll(dto, scoped…)` /
-   `Core.DeleteAll(scoped…)`.
+   `Core.DeleteAll(scoped…)`. The caller's own paging never got a second chance
+   to matter: the repository refuses it there ([[D-087]]), so a caller who
+   passed `crud.Limit(1)` gets a `*crud.SchemaError` rather than a whole-table
+   write.
 
 ## Delete — by id, but not by `Delete`
 
@@ -125,6 +131,10 @@ scope are simply not matched, so the reported count is honest.
 - **Delete is re-expressed as DeleteAll.** Anything that "simplifies" it back to
   `Core.Delete(ids…)` drops the policy scope from the statement while keeping the
   check in front of it — a row hidden from reads becomes deletable by id.
+- **A filtered write is all-or-nothing, and says so.** The scan sees every
+  matching row and the statement writes every matching row; an option that
+  suggests otherwise is refused by the repository rather than dropped
+  ([[D-026]], [[D-087]]).
 - **Storage chunking repeats the declaration-time scope.** The gate's direct
   fast path may become several statements only at a dialect bind boundary; the
   repository preflights all of them and shares one transaction ([[D-079]]).
@@ -159,6 +169,7 @@ scope are simply not matched, so the reported count is honest.
 | `crud/access.go` | `HasID`, `ID`, `Values`, `ElemValue` |
 | `crud/sqlrepo/repository.go` | `Update` (options in both halves), `Delete`, `DeleteAll`, `UpdateAll` |
 | `crud/options.go` | `Where` accumulating, which is what makes a prepended scope unremovable |
+| `crud/optiongroup.go` | `MutationOptions` — what a filtered write reads, and what it refuses |
 | `crud/batch.go` | exact optional-verb dispatch and fail-closed error |
 
 ## Tests that walk this flow
@@ -173,6 +184,7 @@ scope are simply not matched, so the reported count is honest.
 - `TestTheGateScopeIsInTheUpdatesOwnWhereClause` — `crud/decorators/security/gate_edge_test.go`.
 - `TestAnUpdateOfARowThatLeftTheScopeIsNotFound` — `crud/decorators/security/gate_edge_test.go`.
 - `TestUpdateIsScopedAndFreezesTheScopeField` — `crud/decorators/security/security_test.go`.
+- `TestAGatedFilteredWriteRefusesPagingRatherThanWritingEveryRowItShowedTheRule` — `crud/decorators/security/updateall_test.go` — the caller's `Limit` on a gated `UpdateAll` and `DeleteAll`, with a control that the same write without it goes through and `Inspect` saw both rows.
 - `TestDeleteIsScoped` — `crud/decorators/security/security_test.go` — Delete re-expressed as DeleteAll.
 - `TestDeleteChunksAfterChargingScopeAndSoftDeleteBinds` —
   `crud/sqlrepo/bind_budget_test.go` — declaration scope, tombstone and ids all

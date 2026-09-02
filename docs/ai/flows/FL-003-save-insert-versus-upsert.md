@@ -1,10 +1,11 @@
 # FL-003 — Save: insert versus upsert
 
-**Entry point:** `crud/sqlrepo/repository.go:Save` (reached from `DefaultService.Create` and `:Replace`, whichever binding built the command) and `crud.Repo.InsertBatch`
+**Entry point:** `crud/sqlrepo/repository.go:Save` (reached from `DefaultService.Create` and `:Replace`, whichever binding built the command), `crud.Repo.InsertBatch`, and the two explicit verbs beside `Save` — `crud.Repo.Create` and `crud.Repo.Replace`
 **Implements:** [[UC-001]] [[UC-008]] [[UC-009]] · **Governed by:** [[D-011]] [[D-012]] [[D-019]] [[D-079]] [[D-083]]
 
 One method, two statements, and a fork decided entirely by whether the model's
-primary key holds a value.
+primary key holds a value — plus a second fork, decided at bind time, for the
+cases where a single-statement upsert cannot be made to mean what `Save` means.
 
 ## The path
 
@@ -35,8 +36,8 @@ primary key holds a value.
 2. **(optional) `gate.Save`** — `crud/decorators/security/security.go:337`
    The unscoped-existence probe and the immutable-field check — [[FL-008]].
 
-3. **`repository.Save`** — `crud/sqlrepo/repository.go:442`
-   The fork, in full:
+3. **`repository.Save`** — `crud/sqlrepo/repository.go:Save` → `:saveStatement`
+   The key fork, in full:
    ```go
    hasID, err := r.meta.HasID(m)          // crud/access.go:53 — is the PK non-zero
    switch {
@@ -45,24 +46,60 @@ primary key holds a value.
    default:                        insert(insertFull+upsertTail, meta.Insert, false)
    }
    ```
+   Before that, `needsConditionalUpsert` (`crud/sqlrepo/upsert.go`) asks whether the
+   third branch may be written as one statement at all. It may not when either
+   holds:
+   - the dialect's upsert does not target the primary key —
+     `crud.UpsertTargetsPrimaryKey(d)` is false, which is MySQL and MariaDB:
+     `ON DUPLICATE KEY UPDATE` fires on *every* unique index, so a `Save` naming
+     id 1 would rewrite whichever row happens to share an email;
+   - the blueprint declared `sqlrepo.Scope`, and an upsert has no `WHERE` for it,
+     so a keyed `Save` would overwrite a row this repository may not even read.
+   Either way the write goes to `upsertByPrimaryKey` instead ([[D-011]]).
    `ErrMissingID` is the `noauto` case: a model whose key the application owns
    (uuid, slug, natural key) and which arrived at zero. An integer primary key
    gets `Auto` by default (`crud/meta.go:428`); `db:",noauto"` opts out
    (`crud/meta.go:405`), and from then on an unset key is a 400, not an insert
    of `0`.
 
-4. **The statements were assembled once** — `newRepository`, `repository.go:27`
+4. **`upsertByPrimaryKey` — the conditional branch** — `crud/sqlrepo/upsert.go`
+   One transaction (`inWriteTx` joins the ambient one or opens a new one) and up
+   to three statements:
+   ```
+   UPDATE t SET <meta.Update> WHERE pk = ? AND <writeScope> [AND <version guard>]
+   -- 0 rows and the engine counts changed rows rather than matched ones:
+   SELECT 1 FROM t WHERE pk = ? AND <writeScope> [AND <version guard>] LIMIT 1
+   -- still nothing:
+   INSERT INTO t (<meta.Insert>) VALUES (…)
+   ```
+   The probe exists for `crud.UpdateCountsChangedRowsOnly(d)` — MySQL reports zero
+   affected rows for an update that found its row and wrote the same values back,
+   and reading that as "no such row" would insert a duplicate key. PostgreSQL
+   reports matched rows, so the probe is skipped and the branch costs two
+   statements, not three. It is also mandatory when `meta.Update` is empty, because
+   then no `UPDATE` was issued at all.
+   The insert half is deliberately **not** narrowed: a scope decides which existing
+   row a write may reach, not what a new row may hold. A concurrent insert of the
+   same key between the probe and the insert surfaces as the engine's duplicate-key
+   error, which is the honest answer — a locking read would take a gap lock that two
+   inserts into the same gap deadlock on rather than serialise.
+   The statement-wide bind budget ([[D-079]]) is checked before the first statement,
+   from `len(meta.Insert)`, so an oversized model is refused without reaching the
+   datasource here too.
+
+5. **The statements were assembled once** — `newRepository`, `repository.go`
    At `Bind` time, not per call:
    - `insertGen` = `INSERT INTO t (every insertable column except the PK) VALUES …`
    - `insertFull` = `INSERT INTO t (every insertable column, PK included) VALUES …`
-   - `upsertTail` = `d.Upsert(PK.Column, meta.Update)` (`repository.go:49`)
+   - `upsertTail` = `d.Upsert(PK.Column, meta.Update)` (`newRepository`), used only where `crud.UpsertTargetsPrimaryKey` holds
    - `returning` = `" RETURNING <all columns>"`, or empty
    The three column lists come from `crud/meta.go:281-297`:
    `Insert` excludes `generated`; `InsertGen` additionally excludes the PK;
    `Update` additionally excludes `immutable` and `version`.
 
-5. **The conflict clause** — `crud/dialect.go:47` (Postgres/SQLite),
-   `crud/dialect.go:89` (MySQL)
+6. **The conflict clause** — `crud/dialect.go:Postgres.Upsert` (Postgres/SQLite),
+   `crud/dialect.go:MySQL.Upsert` (MySQL, reached only by a dialect that declares
+   `UpsertSwallowsPrimaryKeyOnly`, so not by `Save`)
    `ON CONFLICT (pk) DO UPDATE SET c = EXCLUDED.c, …` / `ON DUPLICATE KEY UPDATE
    c = VALUES(c)` (or `new.c` with `MySQL{RowAlias: true}`).
    **The immutable columns are not in that list.** Neither is the version
@@ -73,7 +110,7 @@ primary key holds a value.
    When `meta.Update` is empty the clause degrades — Postgres to `DO NOTHING`,
    MySQL to a no-op `pk = pk` assignment — so the statement stays valid.
 
-6. **`saveReturning` / `saveWithoutReturning`** — `crud/sqlrepo/repository.go`
+7. **`saveReturning` / `saveWithoutReturning`** — `crud/sqlrepo/repository.go`
    `meta.Values` (`crud/access.go:31`) reads the bind arguments by field offset.
    Then the dialect fork:
    - **RETURNING**: `Query(stmt + returning)` and `scanOne` into a separate zero
@@ -85,14 +122,17 @@ primary key holds a value.
      `Schema.SetID`: MySQL reports generated keys as `int64` even for unsigned
      columns, while `SetID` correctly refuses signed-to-unsigned assignment.
 
-7. **The read-back** — `saveWithoutReturning` → `refreshByID`
+8. **The read-back** — `saveWithoutReturning` → `refreshByID`
    On a dialect without RETURNING this is unconditional. Skipping it when the
    model declares no `generated` column saved a round trip and cost correctness:
    the conflict clause leaves out every immutable column, so the caller was left
    holding values the database had refused, and a handler serialised a different
    document on MySQL than on PostgreSQL. `refreshByID` reads by the retained
-   primary key through the repository's relation scopes and scans the complete
-   row into a zero result. The ordinary database scanner therefore assigns an
+   primary key through the repository's relation scopes **and through the declared
+   `sqlrepo.Scope`**, and scans the complete row into a zero result. Whatever a write
+   was allowed to touch is what it is allowed to read back; the soft-delete predicate
+   is not part of that narrowing, because it is a read-visibility rule owned by
+   delete/restore rather than an ownership boundary ([[D-031]]). The ordinary database scanner therefore assigns an
    unsigned generated key using driver semantics without weakening `SetID`.
    It returns `ErrNotFound` if the row is not there.
 
@@ -102,6 +142,13 @@ primary key holds a value.
 whole batch first, chooses `Meta.Insert` plus the upsert tail for assigned keys
 or `Meta.InsertGen` with no tail for generated keys, and passes that fixed row
 width to `batchInsertPlan`.
+
+An assigned-key batch takes the conditional branch under exactly the same two
+conditions as `Save`, and then it is `upsertByPrimaryKey` per row inside one
+transaction rather than one multi-row statement. That is the price of not
+overwriting a row nobody named: a batch upsert is still an upsert, and a
+multi-row `ON DUPLICATE KEY UPDATE` misaims once per row instead of once. A
+generated-key batch is a plain insert and is unaffected.
 
 `batchInsertPlan` divides `crud.BindLimit(dialect)` by the row width and renders
 contiguous chunks in caller order. Every model value and every statement is
@@ -143,10 +190,11 @@ owned `DEFAULT VALUES` / `() VALUES ()` statements under one atomic boundary.
   zero-ness of the primary key. Anything that zeroes or fills the key before
   `Save` changes the statement: that is exactly what `port.Sanitize` and
   `DefaultService.Replace` are doing, deliberately.
-- **`Save` has no WHERE clause, so no scope can narrow it.** `sqlrepo.Scope`
-  cannot apply (`crud/sqlrepo/blueprint.go:71`) and `security.Gate` therefore has
-  to probe for the target row and refuse — [[FL-008]]. Do not "fix" this by
-  adding options to `Save`; there is nowhere in an upsert for them to go.
+- **`Save` still takes no options, and the scope is not one.** A caller cannot
+  narrow a `Save`; the repository's own declaration can, and does, by giving up
+  the single statement rather than by growing a parameter ([[D-011]]).
+  `security.Gate` still probes for the target row and refuses, because its scope
+  is per-principal and arrives with the request — [[FL-008]].
 - **Immutable and version columns stay out of the conflict clause.** That is
   what `immutable` means. The compensating read-back is what keeps the returned
   model honest, so the two changes travel together.
@@ -165,12 +213,16 @@ owned `DEFAULT VALUES` / `() VALUES ()` statements under one atomic boundary.
 
 | What goes wrong | Where it is caught | What the caller sees |
 |---|---|---|
-| `nil` model | `Save` (`repository.go:443`) | 400 (`SchemaError`) |
-| `noauto` key left at zero | `Save` (`repository.go:454`) | 400 `ErrMissingID` |
+| `nil` model | `Save` → `needsConditionalUpsert` / `saveStatement` | 400 (`SchemaError`) |
+| `noauto` key left at zero | `Save` → `saveStatement` | 400 `ErrMissingID` |
 | PUT to an unused id with a generated key | `DefaultService.Replace`'s probe (`port/service.go`) | 404 |
 | duplicate key / FK / NOT NULL / CHECK | the adapters' `Executor.conflict` → `sqlfault.Wrap` ([[FL-014]]) | 409. The code is the fault's — `unique`, `foreign_key` — where the source named its engine, and the coarse `conflict` where it did not. The driver's own sentence reaches neither body ([[D-044]]) |
-| `ON CONFLICT DO NOTHING` matched an existing row and RETURNING produced none | `saveReturning` | 404 `ErrNotFound`; the legacy full-row upsert contract is tracked by AUDIT `FW-CORE-030` before release |
-| the row disappears between the write and the read-back | `refresh` (`repository.go:525`) | 404 |
+| `ON CONFLICT DO NOTHING` matched an existing row and RETURNING produced none | `saveReturning` | 404 `ErrNotFound` |
+| a keyed `Save` on MySQL/MariaDB, or on any repository with a declared `Scope` | `needsConditionalUpsert` → `upsertByPrimaryKey` | the row the caller named, or a duplicate-key 409 — never somebody else's row |
+| `Replace` against a row whose `version` moved on | `upsertByPrimaryKey`'s reachable-row probe | 409 `ErrStaleVersion` |
+| `Create` against a key that is already taken | the engine's duplicate-key error → `sqlfault.Wrap` | 409 |
+| `Create` / `Replace` through a decorator that did not forward the capability | `CreateOf` / `ReplaceOf` on the exact outer Core | `ErrNoCreateSupport` / `ErrNoReplaceSupport`, no I/O |
+| the row disappears between the write and the read-back, or lands outside the declared scope | `refreshByID` | 404 |
 | gate refuses an overwrite of a hidden row | `gate.saveTarget` (`security.go:423`) | 403 |
 | an unknown decorator did not preserve `InsertBatch` | exact `InsertBatchOf` check | `ErrNoBatchInsertSupport`, no I/O |
 | native bulk is unavailable before I/O | `nativeInsertBatch` | portable INSERT fallback |
@@ -183,11 +235,14 @@ owned `DEFAULT VALUES` / `() VALUES ()` statements under one atomic boundary.
 | `crud/http/crudfiber/handler.go`, `crud/http/crudgin/handler.go`, `crud/http/crudnet/handler.go` | `Create`, `Replace` |
 | `port/model.go` | `Sanitize`, `ClearGenerated` — what a client may not dictate, in one place for every binding and every transport ([[D-045]]). `crudhttp.Sanitize` and `:ClearGenerated` forward to it |
 | `port/service.go` | `DefaultService.Create` / `:Replace` — where the clearing runs, and the one place the hook order is decided ([[FL-015]]) |
-| `crud/sqlrepo/repository.go` | `Save`, `insert`, `refresh`, statement assembly in `newRepository` |
+| `crud/sqlrepo/repository.go` | `Save`, `Create`, `Replace`, `saveStatement`, `saveReturning`, `saveWithoutReturning`, `refresh`, statement assembly in `newRepository` |
+| `crud/sqlrepo/upsert.go` | `needsConditionalUpsert`, `upsertByPrimaryKey`, `updateFullRow`, `rowIsPresent`, `insertFullRow`, `inWriteTx`, `checkBindBudget` |
+| `crud/sqlrepo/blueprint.go` | `Scope`, and `Blueprint.writeScope` — the declared scope before soft delete adds its own predicate |
+| `crud/write.go` | `Creator`, `Replacer`, `CreateOf`, `ReplaceOf`, `Repo.Create`, `Repo.Replace` |
 | `crud/batch.go` | `Repo.InsertBatch`, the optional exact capability and portable option |
 | `crud/meta.go` | `Insert` / `InsertGen` / `Update` column lists, tag options |
 | `crud/access.go` | `HasID`, `ID`, `SetID`, `Values` |
-| `crud/dialect.go` | `Upsert`, `SupportsReturning` |
+| `crud/dialect.go` | `Upsert`, `SupportsReturning`, `UpsertScope` / `UpsertTargetsPrimaryKey`, `UpdateRowCount` / `UpdateCountsChangedRowsOnly` |
 | `crud/dialect.go`, `crud/render.go` | the statement-wide bind ceiling and its typed preflight ([[D-079]]) |
 | `crud/errors.go` | `ErrMissingID`, `ErrConflict` |
 | `crud/adapter/crudsql/conflict.go`, `crud/adapter/crudpgx/conflict.go` | `Executor.conflict` — integrity errors → `ErrConflict`, and a fault where the engine was declared. The gate and the assembly are `sqlfault`'s ([[FL-014]]) |
@@ -203,6 +258,29 @@ owned `DEFAULT VALUES` / `() VALUES ()` statements under one atomic boundary.
   with MySQL's signed `LastInsertId` and an unsigned model key; the key remains
   a query value until the row scanner assigns the stored representation.
 - `TestSaveOnADialectWithoutRETURNINGReadsTheRowBack` — `crud/sqlrepo/repository_test.go` — pins the unconditional refresh.
+- `TestSaveNeverReachesARowByAKeyTheCallerDidNotName`,
+  `TestSaveInsertsWhenNoRowCarriesTheKeyOnADialectThatCannotTargetTheKey`,
+  `TestSaveLeavesAChangelessRowAloneRatherThanInsertingASecondOne` and
+  `TestSaveOnlyRunsItsWholeSequenceUnderOneTransaction` —
+  `crud/sqlrepo/upsert_test.go` — the MySQL branch: no targetless upsert, the
+  update/probe/insert sequence, and its single transaction.
+- `TestADialectThatTargetsThePrimaryKeyKeepsTheSingleStatementUpsert` —
+  `crud/sqlrepo/upsert_test.go` — the control: PostgreSQL still pays one statement.
+- `TestSaveCannotOverwriteARowOutsideTheDeclaredScope`,
+  `TestSaveAllCannotOverwriteARowOutsideTheDeclaredScope` and
+  `TestSaveReadsTheRowBackThroughTheDeclaredScope` —
+  `crud/sqlrepo/upsert_test.go` — the scope reaches the write and the read-back.
+- `TestScopeNarrowsTheRowASaveMayReachButNotTheRowItCreates` —
+  `crud/sqlrepo/blueprint_edge_test.go` — the half the scope deliberately does not reach.
+- `TestCreateInsertsAndLetsAnExistingKeyCollide`,
+  `TestReplaceRefusesAWriteAgainstARowSomebodyElseAdvanced`,
+  `TestReplaceCreatesTheRowWhenNobodyHoldsTheKey`,
+  `TestReplaceRequiresTheKeyItIsReplacing` and
+  `TestADecoratorThatDoesNotForwardTheExplicitVerbsRefusesThemOutLoud` —
+  `crud/sqlrepo/upsert_test.go` — the explicit verbs under `Save`.
+- `TestAConditionalSaveIsRefusedOverBudgetBeforeAnyStatement` —
+  `crud/sqlrepo/upsert_test.go` — the bind budget still bites on the branch that
+  issues several statements.
 - `TestSaveRequiresAssignedKeyWhenNotGenerated` — `crud/sqlrepo/repository_test.go` — `ErrMissingID`.
 - `TestSaveNeverWindsTheVersionBack` — `crud/sqlrepo/version_test.go` — the version stays out of the conflict clause.
 - `TestDialectUpsert` — `crud/dialect_test.go` — the clause each dialect renders.

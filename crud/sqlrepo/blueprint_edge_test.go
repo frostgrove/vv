@@ -689,7 +689,7 @@ func TestUpdateLoadsThroughTheScopeSoAnOutsideRowIsNotFound(t *testing.T) {
 	}
 }
 
-func TestScopeCannotReachSave(t *testing.T) {
+func TestScopeNarrowsTheRowASaveMayReachButNotTheRowItCreates(t *testing.T) {
 	rec := crudtest.Postgres().Push(crudtest.Rows(userRow(9, "n@x", "New", 18, 3)))
 	u := User{Email: "n@x", Name: "New", TenantID: 3}
 
@@ -701,6 +701,6 @@ func TestScopeCannotReachSave(t *testing.T) {
 		`INSERT INTO "users" ("email", "name", "age", "tenant_id") VALUES ($1, $2, $3, $4) `+
 			`RETURNING "id", "email", "name", "age", "tenant_id", "created_at"`)
 	if got := st.Args[3]; got != int64(3) {
-		t.Fatalf("the insert wrote tenant %#v; if the scope now reaches Save, say so out loud", got)
+		t.Fatalf("the insert wrote tenant %#v; a scope decides which existing row a write may reach, not what a new row may hold", got)
 	}
 }

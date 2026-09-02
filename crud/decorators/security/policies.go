@@ -5,6 +5,7 @@ import (
 	"reflect"
 	"strings"
 
+	"github.com/frostgrove/vv/auth"
 	"github.com/frostgrove/vv/crud"
 )
 
@@ -187,6 +188,7 @@ func Combine[M any, ID comparable](ps ...Policy[M, ID]) Policy[M, ID] {
 	var relScopes []relationScopeRule
 	var authz []func(context.Context, Action) error
 	var inspect []func(context.Context, Action, *M) error
+	var declared []map[Action][]auth.Permission
 	allowUnscopedScope := true
 	allowUnscopedRelationScopes := true
 
@@ -198,6 +200,9 @@ func Combine[M any, ID comparable](ps ...Policy[M, ID]) Policy[M, ID] {
 		if p.RelationScopes != nil {
 			relScopes = append(relScopes, relationScopeRule{fn: p.RelationScopes, allow: p.AllowUnscopedRelationScopes})
 			allowUnscopedRelationScopes = allowUnscopedRelationScopes && p.AllowUnscopedRelationScopes
+		}
+		if p.Requires != nil {
+			declared = append(declared, p.Requires)
 		}
 		if p.Authorize != nil {
 			authz = append(authz, p.Authorize)
@@ -249,6 +254,9 @@ func Combine[M any, ID comparable](ps ...Policy[M, ID]) Policy[M, ID] {
 			return merged, nil
 		}
 	}
+	if len(declared) > 0 {
+		out.Requires = intersectRequirements(declared)
+	}
 	if len(authz) > 0 {
 		out.Authorize = func(ctx context.Context, a Action) error {
 			for _, f := range authz {
@@ -267,6 +275,26 @@ func Combine[M any, ID comparable](ps ...Policy[M, ID]) Policy[M, ID] {
 				}
 			}
 			return nil
+		}
+	}
+	return out
+}
+
+func intersectRequirements(sets []map[Action][]auth.Permission) map[Action][]auth.Permission {
+	out := map[Action][]auth.Permission{}
+	for action, first := range sets[0] {
+		permissions := append([]auth.Permission{}, first...)
+		everywhere := true
+		for _, other := range sets[1:] {
+			also, declared := other[action]
+			if !declared {
+				everywhere = false
+				break
+			}
+			permissions = unionPermissions(permissions, also)
+		}
+		if everywhere {
+			out[action] = permissions
 		}
 	}
 	return out

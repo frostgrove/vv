@@ -71,23 +71,31 @@ the probe.
    answers. That is the column's business, not the library's — and it is exactly
    why `LikeIgnoreCase` and the `…IgnoreCase` literal helpers exist as the
    portable spellings.
-5. **An upsert swallows a different set of conflicts per engine, and this is the
-   worst one on the list.** `Save` is the upsert path ([[D-011]]). PostgreSQL
-   emits `ON CONFLICT (pk) DO UPDATE`, which swallows the primary key only;
-   MySQL and MariaDB emit `ON DUPLICATE KEY UPDATE`, which fires on **any**
-   unique key. Measured with a table keyed on `id` and unique on `email`, saving
+5. **An upsert used to swallow a different set of conflicts per engine, and this
+   was the worst one on the list. It is closed.** `Save` is the upsert path
+   ([[D-011]]). PostgreSQL emits `ON CONFLICT (pk) DO UPDATE`, which swallows the
+   primary key only; MySQL and MariaDB have no per-unique-key conflict target in
+   their grammar at all, and `ON DUPLICATE KEY UPDATE` fires on **any** unique
+   key. Measured with a table keyed on `id` and unique on `email`, saving
    `{id: 3, email: "a@x.io"}` where `a@x.io` belongs to row 1:
 
-   | | PostgreSQL 17 | MySQL 8.4 |
-   |---|---|---|
-   | result | 409, nothing written | success |
-   | table after | rows 1 and 2, untouched | **row 1 overwritten**; row 3 never created |
+   | | PostgreSQL 17 | MySQL 8.4, before | MySQL 8.4, now |
+   |---|---|---|---|
+   | result | 409, nothing written | success | 409, nothing written |
+   | table after | rows 1 and 2, untouched | **row 1 overwritten**; row 3 never created | rows 1 and 2, untouched |
 
-   So the same call is a refusal on one engine and a silent write to a row the
-   caller never named on the other. There is nothing to normalise against: a
-   per-unique-key conflict target is not in MySQL's grammar, and emulating
-   PostgreSQL would mean a read before every save. An application that upserts
-   on a table with a second unique key has to know which engine it is on.
+   The same call was a refusal on one engine and a silent write to a row the
+   caller never named on the other. What was said to be impossible to normalise
+   was the *clause*, and that was true; the *behaviour* normalises by not emitting
+   a clause. A dialect whose upsert is not key-targeted
+   (`crud.UpsertTargetsPrimaryKey`) gets `UPDATE … WHERE pk = ?`, a presence probe
+   and an `INSERT`, in one transaction ([[D-011]]'s fourth row). The cost is one
+   or two extra round trips on MySQL and MariaDB for a keyed `Save`, paid only
+   there; PostgreSQL and SQLite still emit the one statement they always did. The
+   read before the write is what the earlier version of this paragraph refused as
+   too expensive — the price of the alternative was a caller having to know which
+   engine they were on for a write to mean what it says, and that is not a price
+   this decision is allowed to charge.
 6. **A declared width, a declared range and a declared type are not enforced on
    SQLite.** `VARCHAR(8)` stores a 27-character value; a column that MySQL and
    PostgreSQL refuse a 99999 into accepts it; `'abc'` into an integer column is
@@ -200,14 +208,16 @@ the probe.
     *miss* one, because equal whole values are equal in their first n characters
     too.
 
-    The upsert skip set follows difference 5 and is the sharpest of these. `Save`
+    The upsert skip set follows difference 5, and it narrowed with it. `Save`
     with a key is the upsert path ([[D-011]]): PostgreSQL and SQLite emit
     `ON CONFLICT (pk) DO UPDATE` and swallow the primary key only, so a second
-    unique key still refuses and the probe reports it; MySQL and MariaDB emit
-    `ON DUPLICATE KEY UPDATE` and swallow every unique key, so the same payload
-    succeeds there and there is nothing to report. The probe asks
-    `crud.UpsertScope` rather than the engine's name, and a dialect that does not
-    implement it is treated as swallowing everything — the narrowing default.
+    unique key still refuses and the probe reports it. MySQL and MariaDB now emit
+    no conflict clause at all, so they swallow nothing and the probe reports every
+    unique key, the primary one included. The probe asks the dialect through
+    `crud.UpsertScope` rather than by the engine's name, and a dialect that does
+    not implement it now swallows nothing rather than everything — which is both
+    the safe default and the truth, since `sqlrepo` gives such a dialect the
+    key-targeted sequence instead of a clause.
 
     (b) *Whether it runs inside a transaction at all.* PostgreSQL aborts the
     whole transaction on a constraint error, so a write inside one reports a
@@ -280,15 +290,19 @@ the probe.
   the portable spellings.
 - `crud/sqlrepo/repository.go:newRepository` — `returning` is empty when the
   dialect has none, which is what makes the two write paths diverge.
-- `crud/sqlrepo/repository.go:repository.insert` and
-  `crud/sqlrepo/repository.go:repository.Update` — the two paths.
+- `crud/sqlrepo/repository.go:repository.saveReturning` /
+  `:saveWithoutReturning` and `crud/sqlrepo/repository.go:repository.Update` —
+  the two paths.
+- `crud/sqlrepo/upsert.go:repository.upsertByPrimaryKey` — what difference 5
+  normalises to, and `crud/dialect.go:UpsertTargetsPrimaryKey` /
+  `:UpdateCountsChangedRowsOnly` — the two questions it asks the dialect.
 - `crud/sqlrepo/repository.go:repository.Count` — the derived table for a DISTINCT
   count.
 - `crud/repo.go:Repo.UpdateAll` — documents observable difference 2.
 - `crud/batch.go`, `crud/sqlrepo/repository.go:InsertBatch` — observable
   difference 12 and its explicit portable override.
 - `crud/dialect.go:Postgres.Upsert` / `crud/dialect.go:MySQL.Upsert` — where
-  difference 5 comes from.
+  difference 5 came from; `Save` reaches the first and no longer the second.
 - `crud/catalog/postgres.go`, `crud/catalog/mysql.go`, `crud/catalog/mariadb.go`,
   `crud/catalog/sqlite.go` — difference 9, one file per engine, each naming what its
   server cannot answer.
@@ -385,10 +399,15 @@ accidentally *hides* one is also caught:
   — difference 10(a): what each engine's violation can say about itself, and
   what only the catalog can add.
 - `TestAnUpsertSkipsTheConflictsItsOwnTargetSwallows` in `crud/probe/full_test.go` —
-  difference 11(a)'s sharpest half, asserted from both sides in one table: the
-  same keyed `Save` probes the second unique key on PostgreSQL and does not on
-  MySQL. Its control is `TestAKeylessSaveProbesEveryKeyOnEveryEngine`, where the
-  statement carries no conflict clause and both engines probe everything.
+  difference 11(a), asserted from both sides in one table: the same keyed `Save`
+  now probes the second unique key on both engines, because MySQL's statement no
+  longer absorbs anything. Its control is
+  `TestAKeylessSaveProbesEveryKeyOnEveryEngine`, where the statement carries no
+  conflict clause and both engines probe everything.
+- `TestTheTwoWriteQuestionsDefaultToTheAnswerThatCostsAStatementNotARow` in
+  `crud/dialect_test.go` — the two readers difference 5 now turns on, each with a
+  dialect implementing neither as the control that the defaults are the narrowing
+  ones.
 - `TestOnlyADialectThatSaysSoSwallowsThePrimaryKeyOnly` and
   `TestOnlyADialectThatSaysSoRollsBackTheStatementAlone` in `crud/dialect_test.go`
   — both halves at the seam, each with a dialect implementing neither interface

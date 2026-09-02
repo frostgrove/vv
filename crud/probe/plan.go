@@ -209,11 +209,7 @@ func modeFor(request *Request) mode {
 }
 
 func (this *full) swallowed(d crud.Dialect, c candidate) bool {
-	if us, ok := d.(crud.UpsertScope); ok && us.UpsertSwallowsPrimaryKeyOnly() {
-		return c.pkOnly
-	}
-
-	return true
+	return crud.UpsertTargetsPrimaryKey(d) && c.pkOnly
 }
 
 func (this *full) bind(c candidate, row Row, m mode, idx int) (term, bool) {

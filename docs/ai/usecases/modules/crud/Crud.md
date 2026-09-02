@@ -166,30 +166,29 @@ The hole in (2): an `Update` whose DTO diffs to nothing returns the loaded row w
 4. Where an option does replace rather than add — the sort, the projection — that is a different call from the one that adds, so a default and a user's choice do not silently stack.
 5. An option a call cannot honour is refused, not accepted and dropped.
 
-**Today:** 🟡 partial — (1)-(4) hold; (5) fails on six of the eleven seam verbs
+**Today:** 🟡 partial — (1)-(4) hold; (5) holds wherever the statement kind differs, and still fails on `Count` and `Exists`
 **Evidence:** `Option` is `func(*Options)` (`crud/options.go:57`) and every read is variadic, so a `[]crud.Option` is the natural shape. `Build` skips a nil option (`:68`) and `Where` skips a nil predicate (`:88`), so a conditional term needs no guard. `Where` appends and there is no option in the package that unsets a predicate — [[D-004]], pinned by `TestWhereAccumulates` at `crud/options_test.go:60`. (4) is the honest half of (3): `OrderBy` appends and `SortBy` replaces (`:146`, `:151`, pinned at `crud/options_test.go:81`), and `Select` appends while `SelectAll` sets `o.Fields = nil` (`:157`, `:165`). Both replacements are deliberate and neither can widen a *row set* — `SelectAll` widens a projection, which is why a row-level check calls it: reading a column the client did not select would compare against a zero value and believe it (`crud/options.go:161`).
 
 (1) `With(*Options)` replays a stored shape (`:207`) and carries the relation narrowings with it, for the reason the comment at `:196` gives — a `With` that dropped them once produced a page narrowed by the gate beside a `Total` counted over rows the gate hides. Pinned by `TestWithReplaysAStoredShape` at `crud/options_test.go:99`, and the narrowing half by `TestEveryStatementAGatedCallIssuesCarriesTheNarrowing` at `crud/decorators/security/relscope_test.go:367`.
 
 (3) is worth stating precisely, because the stronger version is false. `Options` is an exported struct with an exported `Filter []Predicate` — deliberately, so decorators can inspect it (`crud/options.go:7-10`) — and `Option` is a function over `*Options` (`:57`). Any package can therefore write an option that clears the filter, and the gate applies the caller's options *after* its own scope (`crud/decorators/security/security.go:237`, `:633`; options run left to right, `crud/options.go:67-73`), so such an option would run last and win. What holds is that no such option exists in the vocabulary and [[D-004]] forbids adding one. That is a rule for authors, not a property the type enforces, and a consumer auditing this should know which of the two they have.
 
-(5) is the gap, and it is a property of the vocabulary rather than of any one method: one option list applied to eleven seam verbs with eleven different honoured subsets, and nothing anywhere states them.
+(5) is now four written contracts rather than eleven undocumented subsets. Each verb resolves the caller's list through a `crud.OptionGroup` that names the fields of `Options` its statement reads and refuses the rest by the name the caller wrote, before any SQL exists ([[D-087]]).
 
-| verb | silently drops |
-|---|---|
-| `Get`, `GetByID` | `Agg` |
-| `GetAll` | `Agg` — and see H-CRUD-07 (7) for what `Unpaged()` does here |
-| `Count` | `Sort`, `Preloads`, paging, `After`/`Before`, `ForUpdate` |
-| `Exists` | everything but `Filter`, `RelScopes` and `Primary` |
-| `UpdateAll`, `DeleteAll` | `Limit`, `Page`, `Offset`, `Sort`, `Preloads`, `Fields` ([[D-026]], status open) |
-| `Aggregate` | `Fields`, `Preloads`, `Distinct`, `ForUpdate`, `After`, `Before`, `Primary` |
-| a `PreloadWhere` option list | none silently: filter, sort and `PreloadRows` are honoured; every other resolved field is refused ([[D-006]]) |
-| `Save`, `SaveAll`, `Delete` | take no options at all ([[D-011]]) |
+| verb | refuses | silently drops |
+|---|---|---|
+| `Get`, `GetAll`, `GetByID`, `First` | `Agg` | nothing — and see H-CRUD-07 (7) for what `Unpaged()` does here |
+| `Count` | `Agg` | `Sort`, `Preloads`, paging, `After`/`Before`, `ForUpdate` |
+| `Exists` | `Agg` | everything but `Filter`, `RelScopes` and `Primary` |
+| `Update`, `UpdateAll`, `DeleteAll` | everything but `Where`, `NarrowRelations`, `ForUpdate` and `PrimaryOnly` ([[D-026]], [[D-087]]) | nothing |
+| `Aggregate` | `Fields`, `Preloads`, `PreloadRows`, `Distinct`, `ForUpdate`, `After`, `Before`, `NoTotal` | nothing |
+| a `PreloadWhere` option list | every resolved field but filter, sort and `PreloadRows` ([[D-006]]) | nothing |
+| `Save`, `SaveAll`, `Delete` | take no options at all ([[D-011]]) | — |
 
-`UpdateAll` at `crud/sqlrepo/repository.go:834-871` and `DeleteAll` at `:903-918` never read `o.Limit`; `Aggregate` at `:1028-1055` reads only `o.Agg`, `o.Sort`, `o.NoSort` and the paging. "Delete the ten oldest" is therefore a filtered write that silently does more than it was asked, and it is the same shape as the preload drops.
+"Delete the ten oldest" is therefore a `*crud.SchemaError` naming `Limit`, not a filtered write that does more than it was asked. What is left is `Count` and `Exists`: both are reads, so they accept the whole read vocabulary while consulting less of it. Closing them is not the same edit — `Get` computes its total by calling `Count` with the read's own options (`crud/sqlrepo/repository.go:Get`), so a narrower group there needs the total to stop going through the public verb first.
 
 Two edges worth knowing before storing a shape: a bundle is a `*Options`, so reuse is `crud.With(crud.Build(…))` rather than one value; and `With` deliberately does not replay `After`/`Before`/`Agg` (`:203`). "Stored" in the persistent sense — a saved search, a scheduled report — is `crud.MarshalPredicate` (`crud/document.go:31`), which covers the predicate only and refuses `Raw`, `EqField` and `False` by name ([[D-054]]): the sort, the preloads and the projection do not survive that round trip.
-**If not ready:** For (5) there is nothing to write by hand — a consumer cannot discover the subset from any document, so they find out from a row count. The cheap close is symmetry with the one refusal that already exists (a preload refuses paging, `crud/preload.go:193`): every verb refuses the options it cannot honour, at `Build` time or at the top of the method. The expensive close is honouring them.
+**If not ready:** the remaining half of (5) is `Count` and `Exists`, where a consumer still cannot discover the honoured subset from a row count. The close is the same mechanism one step further — a group for each, and an internal total inside `Get` so the public `Count` no longer has to accept a full read's options.
 
 ### H-CRUD-07 — A page a frontend can render, and the number on it
 **Who:** the engineer wiring an admin table with a pager
@@ -213,7 +212,7 @@ Two edges worth knowing before storing a shape: a bundle is a `*Options`, so reu
 
 (7) fails in both directions, and the second is created by the fix for the first.
 - **The cap is off by default.** `Options.Resolved` clamps `Unpaged` down to `maxLimit` (`crud/options.go:241`) and the doc comment says why — a flag arriving from the wire must not talk a repository out of its own cap. But `maxLimit` comes from `sqlrepo.MaxLimit`, whose own comment reads "Zero disables the cap" (`crud/sqlrepo/blueprint.go:54`), and `Define` defaults only `defaultLimit` (`:175`). On a stock `Define`, `crud.Unpaged()` returns the whole table and `crud.Limit(1000000)` is honoured verbatim. [[D-060]] says this in as many words. What is armed is one door up — `query.Config.AllowUnpaged` is closed by default — which is a different module.
-- **Once the cap is on, `GetAll(ctx, crud.Unpaged())` returns exactly `MaxLimit` rows while `GetAll(ctx)` returns every row.** The fast path is entered only when `Limit`, `Page` and `Offset` are all zero *and* `Unpaged` is false (`crud/sqlrepo/repository.go:271-284`); adding the most emphatic way a caller can say "yes, all of them" routes through `Resolved` and truncates, with no flag and no error. The doc comment promising "GetAll's contract is every matching row" sits four lines above it, and the only test pinning that contract uses the no-options call. This reaches past a short list: `security.gate` fetches the rows it will inspect through `g.Core.GetAll(ctx, g.whole(true, scoped)...)` and `whole` adds only `SelectAll()` (`crud/decorators/security/security.go:247-253`, `:703`, `:728`), so a caller who passes `Unpaged()` into a gated `DeleteAll` has `Inspect` see `MaxLimit` rows and the `DELETE` take every match. [[D-026]] is open over the `Limit` shape of exactly this and does not list the `Unpaged` one.
+- **Once the cap is on, `GetAll(ctx, crud.Unpaged())` returns exactly `MaxLimit` rows while `GetAll(ctx)` returns every row.** The fast path is entered only when `Limit`, `Page` and `Offset` are all zero *and* `Unpaged` is false (`crud/sqlrepo/repository.go:271-284`); adding the most emphatic way a caller can say "yes, all of them" routes through `Resolved` and truncates, with no flag and no error. The doc comment promising "GetAll's contract is every matching row" sits four lines above it, and the only test pinning that contract uses the no-options call. This reaches past a short list: `security.gate` fetches the rows it will inspect through `g.Core.GetAll(ctx, g.whole(true, ...)...)` and `whole` adds only `SelectAll()` (`crud/decorators/security/security.go:247-253`, `:703`, `:728`). The `Limit` shape of this was [[D-026]] and is settled — the fetch strips paging and the write refuses the option ([[D-087]]) — but `Unpaged` is not paging: `inspectionRead` clears it, so the fetch is unclamped there, while a caller who reaches `GetAll` directly with `Unpaged()` still gets `MaxLimit` rows silently. That half is this entry, not D-026's.
 
 Pinned: the clamp itself by `TestResolved` rows at `crud/options_test.go:164-165` and `crud/edge_test.go:447-448`, with the control that makes the point at `crud/options_test.go:151` — "no maximum means no clamp".
 **If not ready:** For (6) a consumer either ignores `Total` on cursor endpoints or calls `Count` separately, and finds out from a screenshot. For (7) they pass `sqlrepo.MaxLimit(…)` at every `Define`, once they know to, and then must never write `Unpaged()` against `GetAll`. Whether `MaxLimit` should default non-zero is [[D-060]]'s question, answered there for the wire and not for the in-process caller; the `GetAll` half is a two-line fix — treat `Unpaged` as the fast path rather than as paging — and needs a test beside `TestGetAllIsNotCappedByMaxLimit`.
@@ -288,8 +287,10 @@ partial relation.
 
 (6) is closed at the option boundary. Each `PreloadSpec` resolves its option
 list exactly once and in isolation. `validatePreloadOptions` permits only
-`Filter`, `Sort` and `PreloadRows`; reflection over the whole `Options` value
-makes every other non-zero field fail closed, including fields added later.
+`Filter`, `Sort` and `PreloadRows` — the `crud.PreloadOptions` group, the same
+table every other verb is now checked against ([[D-087]]); reflection over the
+whole `Options` value makes every other non-zero field fail closed, including
+fields added later.
 Projection, nested preloads, `NarrowRelations`, aggregate state, cursor and
 page controls, datasource selection, sort/total flags, locks and `DISTINCT`
 are all refused before child SQL. `BuildPreloadOptions` gives remote and other
@@ -802,9 +803,11 @@ becomes a refusal.
   to zero. Do not open `AllowUnpaged` without changing that default — and note
   that arming the clamp is what turns `GetAll(ctx, crud.Unpaged())` into a silent
   truncation (H-CRUD-07 (7)), so the two have to move together.
-- [[D-026]] — status **open**. `UpdateAll` and `DeleteAll` emit no `LIMIT`, and
-  the gated versions inspect a set the write then exceeds. The `Unpaged()` shape
-  of that mismatch is not in the decision and should be added to it.
+- [[D-026]] — settled by [[D-087]]: `UpdateAll` and `DeleteAll` still emit no
+  `LIMIT`, and now refuse one instead of dropping it, while the gated victim
+  fetch strips paging before it reads. The `Unpaged()` shape of the mismatch is
+  the leftover — `Unpaged` is refused on a write, but a gated fetch that passes
+  it to `GetAll` is still clamped by `MaxLimit` (H-CRUD-07 (7)).
 - [[D-031]] — soft delete is a statement, not a decorator: declaring the delete
   behaviour is what declares the read behaviour. Nothing proposed here may let
   the two be declared apart.
@@ -834,7 +837,7 @@ becomes a refusal.
 | A wrong mapping is never silent | True for the column checks; false for two — a `db` tag on a struct-shaped field and on an embedded struct are dropped without a word — and **not attempted for relations**, which resolve lazily and fail on the first request that crosses them | small (the two) · medium (relations) |
 | Three states in one type — model, DTO, JSON, SQL | `crud.Opt[T]` does all four. The reference names three accessors that do not exist and omits the two that matter (`IsNull`, `MustGet`); `omitempty` instead of `omitzero` turns "leave it" into "clear it"; a plain `T` field's "always applied" is only in the README | none (code) · small (docs) |
 | A query is a list of values you can build up | 22 `Option`s, 26 `Predicate`s, 4 `Order` constructors, 7 `Aggregation`s, 11 `sqlrepo.Setting`s — variadic and nil-tolerant at both levels. The one place the vocabulary is not flat is paging: four call-site options resolve against two declaration settings in `Resolved`, and two of the outcomes are silent | none (shape) · small (paging) |
-| An option a call cannot honour is refused | Six of the eleven seam verbs drop options silently, with six different subsets and no document naming any of them | large |
+| An option a call cannot honour is refused | Four written contracts — `ReadOptions`, `MutationOptions`, `AggregateOptions`, `PreloadOptions` — refuse by the name the caller wrote, and the module reference names them. `Count` and `Exists` still accept the whole read vocabulary while consulting less of it | small (`Count`, `Exists`) |
 | A reusable named filter | `func(...) crud.Option` works, and type-checks against every model in the service — the mismatch is an `UnknownFieldError` at request time. `specs.Specification[M]` is the typed shape and changes the call site with it | small |
 | A filter that can be persisted and replayed | `MarshalPredicate` covers the predicate, refuses three nodes by name; the sort, preloads and projection do not survive | small |
 | A field-name typo caught before the request runs | Runtime `UnknownFieldError` for a hand-written path; build-time only through the metamodel, which skips cross-package relations silently. An empty `In` never resolves the name at all | small · large if you never generate |
@@ -889,12 +892,12 @@ closes all four.
 | — | **Pointer — Sqlrepo E-SQLREPO-14 / edge blocker 3 owns stale full-model `Save`/`Replace`.** `Save` is the core repository verb whose version-tag semantics [[D-011]] make a consumer expect, but its SQL/upsert and `Replace` route live in Sqlrepo. | pointer, not a second blocker | Follow the canonical Sqlrepo finding and its integration matrix (`docs/ai/usecases/modules/sqlrepo/Sqlrepo.md:1741-1748`). Crud retains the decision tension only: either versioned full writes carry a predicate or the core contract must say that `Save` is outside optimistic locking. |
 | 4 | A filter value held in a `crud.Opt` binds NULL and matches nothing (`crud/predicate.go:154-157`, `crud/opt.go:105`) | serious | The predicate path is the only path that never calls `ElemValue`, and `crud.Eq("Age", dto.Age)` is the line [[D-002]] leads a consumer to write. Silently empty result, no error |
 | ~~5~~ | ~~Eleven options inside `PreloadWhere` were accepted and dropped~~ | **closed by [[D-006]]** | only filter, sort and per-hop refusal caps are accepted; the exhaustive validator rejects every other resolved field before child SQL, with direct/remote parity regressions |
-| 6 | Six seam verbs silently drop options, with six different subsets and no document naming any of them (H-CRUD-06's table) | serious | `UpdateAll`/`DeleteAll` take a `Limit` and emit none ([[D-026]], open); `Aggregate` drops seven. A filtered write does more than it was asked and reports the count as if that were the answer |
+| 6 | `Count` and `Exists` accept the whole read vocabulary while consulting a fraction of it (H-CRUD-06's table) | sharp edge | The writes and `Aggregate` now refuse what they cannot honour ([[D-026]], [[D-087]]); these two remain because `Get` computes its total through the public `Count` |
 | 7 | An aggregate read is silently truncated to the repository's default page size (`crud/sqlrepo/repository.go:1051`, `crud/sqlrepo/blueprint.go:26`) | serious | A dashboard over 21 statuses shows 20, with no total, no flag and no error. **= Sqlrepo blocker 8, one fix** — kept here because `crud.Unpaged()` is the escape and it is this package's option |
 | 8 | `missedRow`'s existence check goes to the replica (`crud/sqlrepo/repository.go:817`) | serious | It decides retry-or-stop after an optimistic-lock miss. On a lagging replica a deleted row retries forever and a live conflict reports as vanished. [[D-032]] names this class explicitly. **= Sqlrepo blocker 3, one fix** |
 | 9 | An aggregate sort over a real column that is not in the `GROUP BY` is rendered straight through (`crud/aggregate.go:87-140` never sees `o.Sort`; `repository.go:1048`) | serious | PostgreSQL answers 42803 — a 500 for a statement this package built, on the one verb whose whole justification is that hand-written SQL is worse |
 | 10 | A cursor sort through a relation, or under `sqlrepo.UnstablePagination()`, returns no `nextCursor` and says nothing (`crud/sqlrepo/repository.go:248`, `crud/cursor.go:19-22`) | serious | A capability drops out with no signal, and it is the half of #2 that must ship alongside it or #2's fix silently breaks working feeds |
-| 11 | `GetAll(ctx, crud.Unpaged())` returns exactly `MaxLimit` rows while `GetAll(ctx)` returns every row (`crud/sqlrepo/repository.go:271-284`) | serious | The most emphatic way to ask for everything is the one way to get less, silently — and `security.gate` inspects victims through `GetAll`, so a gated `DeleteAll` can inspect 200 rows and delete every match ([[D-026]], open) |
+| 11 | `GetAll(ctx, crud.Unpaged())` returns exactly `MaxLimit` rows while `GetAll(ctx)` returns every row (`crud/sqlrepo/repository.go:271-284`) | serious | The most emphatic way to ask for everything is the one way to get less, silently. The gated-write half of it is closed — the victim fetch clears `Unpaged` with the rest of the paging and the write refuses a page ([[D-026]], [[D-087]]) — so what is left is the direct read |
 | ~~12~~ | ~~`WithExecutorFor` keyed on a transaction handle matches no repository~~ | **closed by [[D-082]]** | strict legacy resolution and `BindExecutor` transaction-source validation return `ErrExecutorScope` before the pool; live database/sql and pgx rollback regressions pin both spellings |
 | 13 | `SaveAll` and `Delete(ids...)` build one statement per call and never chunk (`crud/sqlrepo/repository.go:1124-1176`) | serious | The only bulk verbs have an undocumented row ceiling below any real import, and crossing it is a driver error naming nothing about vv. **= Sqlrepo blocker 4**; listed here because the ceiling is invisible from `crud/repo.go:43`, where the call is chosen |
 | 14 | A `db:"…"` tag on a struct-shaped field, or on an embedded struct, is dropped in silence (`crud/meta.go:375`, `:347`) | serious | The consumer asked for a column and got none. Scoped to a hand-written mixin — an adopted ORM entity carries no `db` tag and still flattens, which is what [[UC-010]] guarantee 4 relies on |

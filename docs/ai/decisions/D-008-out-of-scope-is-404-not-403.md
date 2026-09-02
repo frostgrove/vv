@@ -30,14 +30,22 @@ that leaks nothing. The cost is a slightly worse debugging experience for a
 legitimate caller who typed the wrong tenant, and that is the right trade for a
 multi-tenant API.
 
-**Why `Save` is 403 instead.** `Save` is an upsert ([[D-011]]). There is no
-`WHERE` clause for the scope to narrow, so the statement cannot be made to miss.
-Left alone, a policy that scoped rows and nothing else gave `Save` no protection
-at all: the insert turned into an update and re-tenanted somebody else's row,
-with `err == nil`. Refusing is the only move available, and refusing is
-observable, so it is spelled honestly. `gate.saveTarget` distinguishes the two
-cases: a row visible under the scope is an overwrite of the caller's own row, a
-row invisible but present is the denial, and a row genuinely absent is an insert.
+**Why `Save` is 403 instead.** `Save` is an upsert ([[D-011]]). Left alone, a
+policy that scoped rows and nothing else gave `Save` no protection at all: the
+insert turned into an update and re-tenanted somebody else's row, with
+`err == nil`. Refusing is the only move available, and refusing is observable, so
+it is spelled honestly. `gate.saveTarget` distinguishes the two cases: a row
+visible under the scope is an overwrite of the caller's own row, a row invisible
+but present is the denial, and a row genuinely absent is an insert.
+
+The statement *can* now be made to miss — [[D-011]]'s fourth row writes an
+`UPDATE … WHERE pk = ? AND <scope>` — and that does not change this decision. The
+scope that reaches the statement is the blueprint's, fixed at declaration and the
+same for everyone. The gate's scope is per-principal and arrives with the request,
+so it is not in the statement and there is nowhere to put it without giving `Save`
+options ([[D-011]] forbids that). What the fourth row changed is that a
+*declaration*-level scope no longer needs the gate to be safe; a policy scope
+still does, and it still answers 403 rather than a silent miss.
 
 **Why `loadScoped` does not run `Authorize`.** The caller decides which action is
 being authorised — `GetByID` authorises `Read`, `Update` authorises `Update` —
@@ -55,8 +63,8 @@ so the load has to stay neutral.
   the two statements was updated anyway, and the fresh copy of somebody else's
   record was handed back with `err == nil`
   (`crud/decorators/security/security.go:gate.Update`).
-- Do not fold `Save`'s denial into a 404 for consistency. The upsert has no
-  `WHERE`; silence there means a successful overwrite.
+- Do not fold `Save`'s denial into a 404 for consistency. A policy scope is not in
+  the statement; silence there means a successful overwrite.
 
 ## Where it lives
 

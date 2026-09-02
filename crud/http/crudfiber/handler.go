@@ -9,6 +9,7 @@ import (
 	"github.com/frostgrove/vv/crud"
 	"github.com/frostgrove/vv/crud/http/crudhttp"
 	"github.com/frostgrove/vv/crud/query"
+	"github.com/frostgrove/vv/crud/wire"
 	"github.com/frostgrove/vv/errs"
 	"github.com/frostgrove/vv/port"
 )
@@ -19,38 +20,57 @@ type Service[M any, ID comparable, U any] = port.Service[M, ID, U]
 
 type Mapper[In, M any] = port.Mapper[In, M]
 
-type HandlerFor[M any, ID comparable, U any, In any] struct {
-	service Service[M, ID, U]
-	mapper  Mapper[In, M]
-	opt     options[M, ID, U]
+type PatchMapper[P, U any] = wire.PatchMapper[P, U]
+
+type Presenter[M, R any] = wire.Presenter[M, R]
+
+type ResourceFor[M any, ID comparable, U any, In any, P any, R any] struct {
+	service   Service[M, ID, U]
+	mapper    Mapper[In, M]
+	patcher   PatchMapper[P, U]
+	presenter Presenter[M, R]
+	opt       options[M, ID, U]
 }
 
-type Handler[M any, ID comparable, U any] = HandlerFor[M, ID, U, M]
+type HandlerFor[M any, ID comparable, U any, In any] = ResourceFor[M, ID, U, In, U, M]
+
+type Handler[M any, ID comparable, U any] = ResourceFor[M, ID, U, M, U, M]
 
 func New[M any, ID comparable, U any](repository Repository[M, ID, U], options ...Option[M, ID, U]) *Handler[M, ID, U] {
 	o := collect(options)
-	return build(port.NewService(repository, o.Service()...), port.Identity[M](), o)
+	return build(port.NewService(repository, o.Service()...), port.Identity[M](), wire.IdentityPatch[U](), wire.IdentityPresenter[M](), o)
 }
 
 func NewFor[In, M any, ID comparable, U any](repository Repository[M, ID, U], mapper Mapper[In, M], options ...Option[M, ID, U]) *HandlerFor[M, ID, U, In] {
 	o := collect(options)
-	return build(port.NewService(repository, o.Service()...), mapper, o)
+	return build(port.NewService(repository, o.Service()...), mapper, wire.IdentityPatch[U](), wire.IdentityPresenter[M](), o)
 }
 
 func Serving[M any, ID comparable, U any](service Service[M, ID, U], options ...Option[M, ID, U]) *Handler[M, ID, U] {
 	o := collect(options)
 	o.RefuseServiceOptions("crudfiber.Serving")
-	return build(service, port.Identity[M](), o)
+	return build(service, port.Identity[M](), wire.IdentityPatch[U](), wire.IdentityPresenter[M](), o)
 }
 
 func ServingFor[In, M any, ID comparable, U any](service Service[M, ID, U], mapper Mapper[In, M], options ...Option[M, ID, U]) *HandlerFor[M, ID, U, In] {
 	o := collect(options)
 	o.RefuseServiceOptions("crudfiber.ServingFor")
-	return build(service, mapper, o)
+	return build(service, mapper, wire.IdentityPatch[U](), wire.IdentityPresenter[M](), o)
 }
 
-func build[M any, ID comparable, U any, In any](service Service[M, ID, U], mapper Mapper[In, M], o options[M, ID, U]) *HandlerFor[M, ID, U, In] {
-	h := &HandlerFor[M, ID, U, In]{service: service, mapper: mapper, opt: o}
+func NewWire[In, P, R, M any, ID comparable, U any](repository Repository[M, ID, U], mapper Mapper[In, M], patcher PatchMapper[P, U], presenter Presenter[M, R], options ...Option[M, ID, U]) *ResourceFor[M, ID, U, In, P, R] {
+	o := collect(options)
+	return build(port.NewService(repository, o.Service()...), mapper, patcher, presenter, o)
+}
+
+func ServingWire[In, P, R, M any, ID comparable, U any](service Service[M, ID, U], mapper Mapper[In, M], patcher PatchMapper[P, U], presenter Presenter[M, R], options ...Option[M, ID, U]) *ResourceFor[M, ID, U, In, P, R] {
+	o := collect(options)
+	o.RefuseServiceOptions("crudfiber.ServingWire")
+	return build(service, mapper, patcher, presenter, o)
+}
+
+func build[M any, ID comparable, U any, In any, P any, R any](service Service[M, ID, U], mapper Mapper[In, M], patcher PatchMapper[P, U], presenter Presenter[M, R], o options[M, ID, U]) *ResourceFor[M, ID, U, In, P, R] {
+	h := &ResourceFor[M, ID, U, In, P, R]{service: service, mapper: mapper, patcher: patcher, presenter: presenter, opt: o}
 	if h.opt.errorHandler == nil {
 		rd := h.opt.renderer
 		if rd == nil {
@@ -61,20 +81,20 @@ func build[M any, ID comparable, U any, In any](service Service[M, ID, U], mappe
 	return h
 }
 
-func (this *HandlerFor[M, ID, U, In]) Routes() *fiber.App {
+func (this *ResourceFor[M, ID, U, In, P, R]) Routes() *fiber.App {
 	app := fiber.New(fiber.Config{BodyLimit: this.bodyLimit()})
 	this.Register(app)
 	return app
 }
 
-func (this *HandlerFor[M, ID, U, In]) bodyLimit() int {
+func (this *ResourceFor[M, ID, U, In, P, R]) bodyLimit() int {
 	if this.opt.MaxBody > 0 {
 		return this.opt.MaxBody + 1
 	}
 	return crudhttp.MaxBody + 1
 }
 
-func (this *HandlerFor[M, ID, U, In]) Register(r fiber.Router) {
+func (this *ResourceFor[M, ID, U, In, P, R]) Register(r fiber.Router) {
 	if !this.opt.ReadOnly {
 		r.Post("/", this.Create)
 		r.Post("/bulk-delete", this.BulkDelete)
@@ -91,7 +111,7 @@ func (this *HandlerFor[M, ID, U, In]) Register(r fiber.Router) {
 	}
 }
 
-func (this *HandlerFor[M, ID, U, In]) List(c fiber.Ctx) error {
+func (this *ResourceFor[M, ID, U, In, P, R]) List(c fiber.Ctx) error {
 	request, err := this.parseQueryString(c)
 	if err != nil {
 		return this.fail(c, err)
@@ -99,7 +119,7 @@ func (this *HandlerFor[M, ID, U, In]) List(c fiber.Ctx) error {
 	return this.list(c, request)
 }
 
-func (this *HandlerFor[M, ID, U, In]) Query(c fiber.Ctx) error {
+func (this *ResourceFor[M, ID, U, In, P, R]) Query(c fiber.Ctx) error {
 	request, err := this.parseBody(c)
 	if err != nil {
 		return this.fail(c, err)
@@ -107,7 +127,7 @@ func (this *HandlerFor[M, ID, U, In]) Query(c fiber.Ctx) error {
 	return this.list(c, request)
 }
 
-func (this *HandlerFor[M, ID, U, In]) list(c fiber.Ctx, request *query.Request) error {
+func (this *ResourceFor[M, ID, U, In, P, R]) list(c fiber.Ctx, request *query.Request) error {
 	scope, err := this.scope(c)
 	if err != nil {
 		return this.fail(c, err)
@@ -117,14 +137,14 @@ func (this *HandlerFor[M, ID, U, In]) list(c fiber.Ctx, request *query.Request) 
 		return this.fail(c, err)
 	}
 	if this.opt.transform == nil {
-		return writeJSON(c, fiber.StatusOK, page)
+		return writeJSON(c, fiber.StatusOK, crud.MapPage(page, this.presenter.Response))
 	}
 	return writeJSON(c, fiber.StatusOK, crud.MapPage(page, func(m M) any {
 		return this.opt.transform(c, m)
 	}))
 }
 
-func (this *HandlerFor[M, ID, U, In]) CountGet(c fiber.Ctx) error {
+func (this *ResourceFor[M, ID, U, In, P, R]) CountGet(c fiber.Ctx) error {
 	request, err := this.parseQueryString(c)
 	if err != nil {
 		return this.fail(c, err)
@@ -132,7 +152,7 @@ func (this *HandlerFor[M, ID, U, In]) CountGet(c fiber.Ctx) error {
 	return this.count(c, request)
 }
 
-func (this *HandlerFor[M, ID, U, In]) CountPost(c fiber.Ctx) error {
+func (this *ResourceFor[M, ID, U, In, P, R]) CountPost(c fiber.Ctx) error {
 	request, err := this.parseBody(c)
 	if err != nil {
 		return this.fail(c, err)
@@ -140,7 +160,7 @@ func (this *HandlerFor[M, ID, U, In]) CountPost(c fiber.Ctx) error {
 	return this.count(c, request)
 }
 
-func (this *HandlerFor[M, ID, U, In]) count(c fiber.Ctx, request *query.Request) error {
+func (this *ResourceFor[M, ID, U, In, P, R]) count(c fiber.Ctx, request *query.Request) error {
 	scope, err := this.scope(c)
 	if err != nil {
 		return this.fail(c, err)
@@ -152,7 +172,7 @@ func (this *HandlerFor[M, ID, U, In]) count(c fiber.Ctx, request *query.Request)
 	return writeJSON(c, fiber.StatusOK, fiber.Map{"count": n})
 }
 
-func (this *HandlerFor[M, ID, U, In]) GetByID(c fiber.Ctx) error {
+func (this *ResourceFor[M, ID, U, In, P, R]) GetByID(c fiber.Ctx) error {
 	id, err := this.id(c)
 	if err != nil {
 		return this.fail(c, err)
@@ -172,7 +192,7 @@ func (this *HandlerFor[M, ID, U, In]) GetByID(c fiber.Ctx) error {
 	return this.entity(c, fiber.StatusOK, m)
 }
 
-func (this *HandlerFor[M, ID, U, In]) Create(c fiber.Ctx) error {
+func (this *ResourceFor[M, ID, U, In, P, R]) Create(c fiber.Ctx) error {
 	var in In
 	raw, err := this.decode(c, &in)
 	keep(c, raw)
@@ -190,25 +210,25 @@ func (this *HandlerFor[M, ID, U, In]) Create(c fiber.Ctx) error {
 	return this.entity(c, fiber.StatusCreated, m)
 }
 
-func (this *HandlerFor[M, ID, U, In]) Update(c fiber.Ctx) error {
+func (this *ResourceFor[M, ID, U, In, P, R]) Update(c fiber.Ctx) error {
 	id, err := this.id(c)
 	if err != nil {
 		return this.fail(c, err)
 	}
-	var dataTransferObject U
-	raw, err := this.decode(c, &dataTransferObject)
+	var patch P
+	raw, err := this.decode(c, &patch)
 	keep(c, raw)
 	if err != nil {
 		return this.fail(c, err)
 	}
-	m, err := this.service.Update(c.Context(), port.UpdateCommand[ID, U]{ID: id, Patch: dataTransferObject, Before: this.beforeUpdate(c, id)})
+	m, err := this.service.Update(c.Context(), port.UpdateCommand[ID, U]{ID: id, Patch: this.patcher.Update(patch), Before: this.beforeUpdate(c, id)})
 	if err != nil {
 		return this.fail(c, err)
 	}
 	return this.entity(c, fiber.StatusOK, m)
 }
 
-func (this *HandlerFor[M, ID, U, In]) Replace(c fiber.Ctx) error {
+func (this *ResourceFor[M, ID, U, In, P, R]) Replace(c fiber.Ctx) error {
 	id, err := this.id(c)
 	if err != nil {
 		return this.fail(c, err)
@@ -230,7 +250,7 @@ func (this *HandlerFor[M, ID, U, In]) Replace(c fiber.Ctx) error {
 	return this.entity(c, fiber.StatusOK, m)
 }
 
-func (this *HandlerFor[M, ID, U, In]) Delete(c fiber.Ctx) error {
+func (this *ResourceFor[M, ID, U, In, P, R]) Delete(c fiber.Ctx) error {
 	id, err := this.id(c)
 	if err != nil {
 		return this.fail(c, err)
@@ -244,7 +264,7 @@ func (this *HandlerFor[M, ID, U, In]) Delete(c fiber.Ctx) error {
 
 type BulkDeleteRequest[ID comparable] = crudhttp.BulkDeleteRequest[ID]
 
-func (this *HandlerFor[M, ID, U, In]) BulkDelete(c fiber.Ctx) error {
+func (this *ResourceFor[M, ID, U, In, P, R]) BulkDelete(c fiber.Ctx) error {
 	var request BulkDeleteRequest[ID]
 	if err := this.decodeOnly(c, &request); err != nil {
 		return this.fail(c, err)
@@ -259,28 +279,28 @@ func (this *HandlerFor[M, ID, U, In]) BulkDelete(c fiber.Ctx) error {
 	return writeJSON(c, fiber.StatusOK, fiber.Map{"deleted": n})
 }
 
-func (this *HandlerFor[M, ID, U, In]) scope(c fiber.Ctx) ([]crud.Option, error) {
+func (this *ResourceFor[M, ID, U, In, P, R]) scope(c fiber.Ctx) ([]crud.Option, error) {
 	if this.opt.scope == nil {
 		return nil, nil
 	}
 	return this.opt.scope(c)
 }
 
-func (this *HandlerFor[M, ID, U, In]) beforeSave(c fiber.Ctx) func(*M) error {
+func (this *ResourceFor[M, ID, U, In, P, R]) beforeSave(c fiber.Ctx) func(*M) error {
 	if this.opt.beforeSave == nil {
 		return nil
 	}
 	return func(m *M) error { return this.opt.beforeSave(c, m) }
 }
 
-func (this *HandlerFor[M, ID, U, In]) beforeUpdate(c fiber.Ctx, id ID) func(*U) error {
+func (this *ResourceFor[M, ID, U, In, P, R]) beforeUpdate(c fiber.Ctx, id ID) func(*U) error {
 	if this.opt.beforeUpdate == nil {
 		return nil
 	}
 	return func(dataTransferObject *U) error { return this.opt.beforeUpdate(c, id, dataTransferObject) }
 }
 
-func (this *HandlerFor[M, ID, U, In]) parseQueryString(c fiber.Ctx) (*query.Request, error) {
+func (this *ResourceFor[M, ID, U, In, P, R]) parseQueryString(c fiber.Ctx) (*query.Request, error) {
 	return query.ParseQuery(queryValues(c))
 }
 
@@ -292,7 +312,7 @@ func queryValues(c fiber.Ctx) url.Values {
 	return v
 }
 
-func (this *HandlerFor[M, ID, U, In]) parseBody(c fiber.Ctx) (*query.Request, error) {
+func (this *ResourceFor[M, ID, U, In, P, R]) parseBody(c fiber.Ctx) (*query.Request, error) {
 	request := &query.Request{}
 	if err := this.decodeOnly(c, request); err != nil {
 		return nil, err
@@ -300,27 +320,27 @@ func (this *HandlerFor[M, ID, U, In]) parseBody(c fiber.Ctx) (*query.Request, er
 	return request, nil
 }
 
-func (this *HandlerFor[M, ID, U, In]) decode(c fiber.Ctx, v any) ([]byte, error) {
+func (this *ResourceFor[M, ID, U, In, P, R]) decode(c fiber.Ctx, v any) ([]byte, error) {
 	return crudhttp.DecodeJSONKeepLimit(bytes.NewReader(c.Body()), v, this.opt.MaxBody)
 }
 
-func (this *HandlerFor[M, ID, U, In]) decodeOnly(c fiber.Ctx, v any) error {
+func (this *ResourceFor[M, ID, U, In, P, R]) decodeOnly(c fiber.Ctx, v any) error {
 	_, err := this.decode(c, v)
 	return err
 }
 
-func (this *HandlerFor[M, ID, U, In]) id(c fiber.Ctx) (ID, error) {
+func (this *ResourceFor[M, ID, U, In, P, R]) id(c fiber.Ctx) (ID, error) {
 	return port.CoerceID[ID](c.Params("id"))
 }
 
-func (this *HandlerFor[M, ID, U, In]) entity(c fiber.Ctx, status int, m M) error {
+func (this *ResourceFor[M, ID, U, In, P, R]) entity(c fiber.Ctx, status int, m M) error {
 	if this.opt.transform != nil {
 		return writeJSON(c, status, this.opt.transform(c, m))
 	}
-	return writeJSON(c, status, m)
+	return writeJSON(c, status, this.presenter.Response(m))
 }
 
-func (this *HandlerFor[M, ID, U, In]) fail(c fiber.Ctx, err error) error {
+func (this *ResourceFor[M, ID, U, In, P, R]) fail(c fiber.Ctx, err error) error {
 	return this.opt.errorHandler(c, err)
 }
 

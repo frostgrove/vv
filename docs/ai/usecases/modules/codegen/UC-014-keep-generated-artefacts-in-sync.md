@@ -1,7 +1,7 @@
 # UC-014 — Keep generated artefacts in sync with the model
 
 **Actor:** the application author, and whoever reviews the pull request
-**Covered by:** [[FL-010]] [[FL-004]] [[FL-015]]
+**Covered by:** [[FL-010]] [[FL-004]] [[FL-015]] [[FL-029]] [[FL-002]]
 
 ## Scenario
 The partial-update DTO, the typed metamodel and — when the author asks for them
@@ -62,6 +62,23 @@ that a diff of it is reviewable rather than noise.
     time can see a command-line flag, so the generated file has to carry the
     list — which has a second benefit: a reader of the output can see what the
     flags did.
+16. What the database may write and what a client may send are separate
+    artefacts. The partial-update DTO keeps every column an update may write,
+    including the ones only the application's own code writes; the public create,
+    patch and response bodies are generated beside it as types of their own, with
+    a total map from each onto the shape it feeds. Publishing an internally
+    written column is then a decision somebody makes, not a consequence of
+    reusing one type for two audiences.
+17. What each public body carries is derived by narrowing, written down beside
+    the package, and reviewed. Removing a field from a public body costs nothing.
+    Adding one the narrowing left out stops generation until it is confirmed by
+    name, and the confirmation is bound to the derivation it was given for, so a
+    model that changes shape asks again. A field the model cannot publish at all
+    is an error rather than something to confirm.
+18. Regeneration can be asked as a question. A check mode renders every artefact
+    and reports which files are behind their models without writing any of them,
+    naming every package rather than the first — so a build can fail on drift
+    that nobody would otherwise notice until start-up.
 
 ## Out of scope
 
@@ -86,6 +103,8 @@ that a diff of it is reviewable rather than noise.
 | [[FL-010]] | the derivation rules, the flags, the relation expansion and its bounds |
 | [[FL-004]] | the start-up validation that catches a stale artefact naming a field the model lost |
 | [[FL-015]] | what the generated mapping and its inverse are for once the process is running |
+| [[FL-029]] | the public bodies, the narrowing that derives them, the manifest that records it and the confirmation that widens it |
+| [[FL-002]] | where the public patch body becomes the one the repository writes |
 
 ## Status
 **covered.**
@@ -120,6 +139,16 @@ What remained true was the second sentence — no model in the test tree carried
 version column, so none of that ran against a real generated artefact. There is
 one now, generated with the wire shape as well, so the case is reachable rather
 than argued.
+
+**Guarantees 16-18 — covered.** The split is proven from both ends: the
+generator's, where a body that publishes less than the update DTO writes is
+pinned with the DTO's own ability to write the column as the control; and the
+transport's, where the same request through a mapperless mount is the control
+that the separated body is what carried the field. The narrowing, the
+confirmation, the fingerprint that drops a confirmation when its derivation
+moves, the refusal of a field no body could map, and the check mode that writes
+nothing all carry a control of their own. The generated file is built and run,
+so the coverage assertions are exercised rather than argued.
 
 One smaller thing, still open: the metamodel attribute type is chosen from the
 field type's *spelling*, so a named type over an integer, or a timestamp reached

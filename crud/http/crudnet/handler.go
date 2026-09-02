@@ -8,6 +8,7 @@ import (
 	"github.com/frostgrove/vv/crud"
 	"github.com/frostgrove/vv/crud/http/crudhttp"
 	"github.com/frostgrove/vv/crud/query"
+	"github.com/frostgrove/vv/crud/wire"
 	"github.com/frostgrove/vv/errs"
 	"github.com/frostgrove/vv/port"
 )
@@ -18,38 +19,57 @@ type Service[M any, ID comparable, U any] = port.Service[M, ID, U]
 
 type Mapper[In, M any] = port.Mapper[In, M]
 
-type HandlerFor[M any, ID comparable, U any, In any] struct {
-	service Service[M, ID, U]
-	mapper  Mapper[In, M]
-	opt     options[M, ID, U]
+type PatchMapper[P, U any] = wire.PatchMapper[P, U]
+
+type Presenter[M, R any] = wire.Presenter[M, R]
+
+type ResourceFor[M any, ID comparable, U any, In any, P any, R any] struct {
+	service   Service[M, ID, U]
+	mapper    Mapper[In, M]
+	patcher   PatchMapper[P, U]
+	presenter Presenter[M, R]
+	opt       options[M, ID, U]
 }
 
-type Handler[M any, ID comparable, U any] = HandlerFor[M, ID, U, M]
+type HandlerFor[M any, ID comparable, U any, In any] = ResourceFor[M, ID, U, In, U, M]
+
+type Handler[M any, ID comparable, U any] = ResourceFor[M, ID, U, M, U, M]
 
 func New[M any, ID comparable, U any](repository Repository[M, ID, U], options ...Option[M, ID, U]) *Handler[M, ID, U] {
 	o := collect(options)
-	return build(port.NewService(repository, o.Service()...), port.Identity[M](), o)
+	return build(port.NewService(repository, o.Service()...), port.Identity[M](), wire.IdentityPatch[U](), wire.IdentityPresenter[M](), o)
 }
 
 func NewFor[In, M any, ID comparable, U any](repository Repository[M, ID, U], mapper Mapper[In, M], options ...Option[M, ID, U]) *HandlerFor[M, ID, U, In] {
 	o := collect(options)
-	return build(port.NewService(repository, o.Service()...), mapper, o)
+	return build(port.NewService(repository, o.Service()...), mapper, wire.IdentityPatch[U](), wire.IdentityPresenter[M](), o)
 }
 
 func Serving[M any, ID comparable, U any](service Service[M, ID, U], options ...Option[M, ID, U]) *Handler[M, ID, U] {
 	o := collect(options)
 	o.RefuseServiceOptions("crudnet.Serving")
-	return build(service, port.Identity[M](), o)
+	return build(service, port.Identity[M](), wire.IdentityPatch[U](), wire.IdentityPresenter[M](), o)
 }
 
 func ServingFor[In, M any, ID comparable, U any](service Service[M, ID, U], mapper Mapper[In, M], options ...Option[M, ID, U]) *HandlerFor[M, ID, U, In] {
 	o := collect(options)
 	o.RefuseServiceOptions("crudnet.ServingFor")
-	return build(service, mapper, o)
+	return build(service, mapper, wire.IdentityPatch[U](), wire.IdentityPresenter[M](), o)
 }
 
-func build[M any, ID comparable, U any, In any](service Service[M, ID, U], mapper Mapper[In, M], o options[M, ID, U]) *HandlerFor[M, ID, U, In] {
-	h := &HandlerFor[M, ID, U, In]{service: service, mapper: mapper, opt: o}
+func NewWire[In, P, R, M any, ID comparable, U any](repository Repository[M, ID, U], mapper Mapper[In, M], patcher PatchMapper[P, U], presenter Presenter[M, R], options ...Option[M, ID, U]) *ResourceFor[M, ID, U, In, P, R] {
+	o := collect(options)
+	return build(port.NewService(repository, o.Service()...), mapper, patcher, presenter, o)
+}
+
+func ServingWire[In, P, R, M any, ID comparable, U any](service Service[M, ID, U], mapper Mapper[In, M], patcher PatchMapper[P, U], presenter Presenter[M, R], options ...Option[M, ID, U]) *ResourceFor[M, ID, U, In, P, R] {
+	o := collect(options)
+	o.RefuseServiceOptions("crudnet.ServingWire")
+	return build(service, mapper, patcher, presenter, o)
+}
+
+func build[M any, ID comparable, U any, In any, P any, R any](service Service[M, ID, U], mapper Mapper[In, M], patcher PatchMapper[P, U], presenter Presenter[M, R], o options[M, ID, U]) *ResourceFor[M, ID, U, In, P, R] {
+	h := &ResourceFor[M, ID, U, In, P, R]{service: service, mapper: mapper, patcher: patcher, presenter: presenter, opt: o}
 	if h.opt.errorHandler == nil {
 		rd := h.opt.renderer
 		if rd == nil {
@@ -60,7 +80,7 @@ func build[M any, ID comparable, U any, In any](service Service[M, ID, U], mappe
 	return h
 }
 
-func (this *HandlerFor[M, ID, U, In]) Mount(mux *http.ServeMux, prefix string) {
+func (this *ResourceFor[M, ID, U, In, P, R]) Mount(mux *http.ServeMux, prefix string) {
 	p := strings.TrimSuffix(prefix, "/")
 	if p != "" && !strings.HasPrefix(p, "/") {
 		p = "/" + p
@@ -91,7 +111,7 @@ func (this *HandlerFor[M, ID, U, In]) Mount(mux *http.ServeMux, prefix string) {
 	}
 }
 
-func (this *HandlerFor[M, ID, U, In]) List(w http.ResponseWriter, r *http.Request) {
+func (this *ResourceFor[M, ID, U, In, P, R]) List(w http.ResponseWriter, r *http.Request) {
 	request, err := this.parseQueryString(r)
 	if err != nil {
 		this.fail(w, r, err)
@@ -100,7 +120,7 @@ func (this *HandlerFor[M, ID, U, In]) List(w http.ResponseWriter, r *http.Reques
 	this.list(w, r, request)
 }
 
-func (this *HandlerFor[M, ID, U, In]) Query(w http.ResponseWriter, r *http.Request) {
+func (this *ResourceFor[M, ID, U, In, P, R]) Query(w http.ResponseWriter, r *http.Request) {
 	request, err := this.parseBody(r)
 	if err != nil {
 		this.fail(w, r, err)
@@ -109,7 +129,7 @@ func (this *HandlerFor[M, ID, U, In]) Query(w http.ResponseWriter, r *http.Reque
 	this.list(w, r, request)
 }
 
-func (this *HandlerFor[M, ID, U, In]) list(w http.ResponseWriter, r *http.Request, request *query.Request) {
+func (this *ResourceFor[M, ID, U, In, P, R]) list(w http.ResponseWriter, r *http.Request, request *query.Request) {
 	scope, err := this.scope(r)
 	if err != nil {
 		this.fail(w, r, err)
@@ -121,7 +141,7 @@ func (this *HandlerFor[M, ID, U, In]) list(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if this.opt.transform == nil {
-		writeJSON(r.Context(), w, http.StatusOK, page)
+		writeJSON(r.Context(), w, http.StatusOK, crud.MapPage(page, this.presenter.Response))
 		return
 	}
 	writeJSON(r.Context(), w, http.StatusOK, crud.MapPage(page, func(m M) any {
@@ -129,7 +149,7 @@ func (this *HandlerFor[M, ID, U, In]) list(w http.ResponseWriter, r *http.Reques
 	}))
 }
 
-func (this *HandlerFor[M, ID, U, In]) CountGet(w http.ResponseWriter, r *http.Request) {
+func (this *ResourceFor[M, ID, U, In, P, R]) CountGet(w http.ResponseWriter, r *http.Request) {
 	request, err := this.parseQueryString(r)
 	if err != nil {
 		this.fail(w, r, err)
@@ -138,7 +158,7 @@ func (this *HandlerFor[M, ID, U, In]) CountGet(w http.ResponseWriter, r *http.Re
 	this.count(w, r, request)
 }
 
-func (this *HandlerFor[M, ID, U, In]) CountPost(w http.ResponseWriter, r *http.Request) {
+func (this *ResourceFor[M, ID, U, In, P, R]) CountPost(w http.ResponseWriter, r *http.Request) {
 	request, err := this.parseBody(r)
 	if err != nil {
 		this.fail(w, r, err)
@@ -147,7 +167,7 @@ func (this *HandlerFor[M, ID, U, In]) CountPost(w http.ResponseWriter, r *http.R
 	this.count(w, r, request)
 }
 
-func (this *HandlerFor[M, ID, U, In]) count(w http.ResponseWriter, r *http.Request, request *query.Request) {
+func (this *ResourceFor[M, ID, U, In, P, R]) count(w http.ResponseWriter, r *http.Request, request *query.Request) {
 	scope, err := this.scope(r)
 	if err != nil {
 		this.fail(w, r, err)
@@ -161,7 +181,7 @@ func (this *HandlerFor[M, ID, U, In]) count(w http.ResponseWriter, r *http.Reque
 	writeJSON(r.Context(), w, http.StatusOK, map[string]any{"count": n})
 }
 
-func (this *HandlerFor[M, ID, U, In]) GetByID(w http.ResponseWriter, r *http.Request) {
+func (this *ResourceFor[M, ID, U, In, P, R]) GetByID(w http.ResponseWriter, r *http.Request) {
 	id, err := this.id(r)
 	if err != nil {
 		this.fail(w, r, err)
@@ -185,7 +205,7 @@ func (this *HandlerFor[M, ID, U, In]) GetByID(w http.ResponseWriter, r *http.Req
 	this.entity(w, r, http.StatusOK, m)
 }
 
-func (this *HandlerFor[M, ID, U, In]) Create(w http.ResponseWriter, r *http.Request) {
+func (this *ResourceFor[M, ID, U, In, P, R]) Create(w http.ResponseWriter, r *http.Request) {
 	var in In
 	raw, err := this.decode(r.Body, &in)
 	r = keep(r, raw)
@@ -206,20 +226,20 @@ func (this *HandlerFor[M, ID, U, In]) Create(w http.ResponseWriter, r *http.Requ
 	this.entity(w, r, http.StatusCreated, m)
 }
 
-func (this *HandlerFor[M, ID, U, In]) Update(w http.ResponseWriter, r *http.Request) {
+func (this *ResourceFor[M, ID, U, In, P, R]) Update(w http.ResponseWriter, r *http.Request) {
 	id, err := this.id(r)
 	if err != nil {
 		this.fail(w, r, err)
 		return
 	}
-	var dataTransferObject U
-	raw, err := this.decode(r.Body, &dataTransferObject)
+	var patch P
+	raw, err := this.decode(r.Body, &patch)
 	r = keep(r, raw)
 	if err != nil {
 		this.fail(w, r, err)
 		return
 	}
-	m, err := this.service.Update(r.Context(), port.UpdateCommand[ID, U]{ID: id, Patch: dataTransferObject, Before: this.beforeUpdate(r, id)})
+	m, err := this.service.Update(r.Context(), port.UpdateCommand[ID, U]{ID: id, Patch: this.patcher.Update(patch), Before: this.beforeUpdate(r, id)})
 	if err != nil {
 		this.fail(w, r, err)
 		return
@@ -227,7 +247,7 @@ func (this *HandlerFor[M, ID, U, In]) Update(w http.ResponseWriter, r *http.Requ
 	this.entity(w, r, http.StatusOK, m)
 }
 
-func (this *HandlerFor[M, ID, U, In]) Replace(w http.ResponseWriter, r *http.Request) {
+func (this *ResourceFor[M, ID, U, In, P, R]) Replace(w http.ResponseWriter, r *http.Request) {
 	id, err := this.id(r)
 	if err != nil {
 		this.fail(w, r, err)
@@ -253,7 +273,7 @@ func (this *HandlerFor[M, ID, U, In]) Replace(w http.ResponseWriter, r *http.Req
 	this.entity(w, r, http.StatusOK, m)
 }
 
-func (this *HandlerFor[M, ID, U, In]) Delete(w http.ResponseWriter, r *http.Request) {
+func (this *ResourceFor[M, ID, U, In, P, R]) Delete(w http.ResponseWriter, r *http.Request) {
 	id, err := this.id(r)
 	if err != nil {
 		this.fail(w, r, err)
@@ -269,7 +289,7 @@ func (this *HandlerFor[M, ID, U, In]) Delete(w http.ResponseWriter, r *http.Requ
 
 type BulkDeleteRequest[ID comparable] = crudhttp.BulkDeleteRequest[ID]
 
-func (this *HandlerFor[M, ID, U, In]) BulkDelete(w http.ResponseWriter, r *http.Request) {
+func (this *ResourceFor[M, ID, U, In, P, R]) BulkDelete(w http.ResponseWriter, r *http.Request) {
 	var request BulkDeleteRequest[ID]
 	if err := this.decodeOnly(r.Body, &request); err != nil {
 		this.fail(w, r, err)
@@ -287,32 +307,32 @@ func (this *HandlerFor[M, ID, U, In]) BulkDelete(w http.ResponseWriter, r *http.
 	writeJSON(r.Context(), w, http.StatusOK, map[string]any{"deleted": n})
 }
 
-func (this *HandlerFor[M, ID, U, In]) scope(r *http.Request) ([]crud.Option, error) {
+func (this *ResourceFor[M, ID, U, In, P, R]) scope(r *http.Request) ([]crud.Option, error) {
 	if this.opt.scope == nil {
 		return nil, nil
 	}
 	return this.opt.scope(r)
 }
 
-func (this *HandlerFor[M, ID, U, In]) beforeSave(r *http.Request) func(*M) error {
+func (this *ResourceFor[M, ID, U, In, P, R]) beforeSave(r *http.Request) func(*M) error {
 	if this.opt.beforeSave == nil {
 		return nil
 	}
 	return func(m *M) error { return this.opt.beforeSave(r, m) }
 }
 
-func (this *HandlerFor[M, ID, U, In]) beforeUpdate(r *http.Request, id ID) func(*U) error {
+func (this *ResourceFor[M, ID, U, In, P, R]) beforeUpdate(r *http.Request, id ID) func(*U) error {
 	if this.opt.beforeUpdate == nil {
 		return nil
 	}
 	return func(dataTransferObject *U) error { return this.opt.beforeUpdate(r, id, dataTransferObject) }
 }
 
-func (this *HandlerFor[M, ID, U, In]) parseQueryString(r *http.Request) (*query.Request, error) {
+func (this *ResourceFor[M, ID, U, In, P, R]) parseQueryString(r *http.Request) (*query.Request, error) {
 	return query.ParseQuery(r.URL.Query())
 }
 
-func (this *HandlerFor[M, ID, U, In]) parseBody(r *http.Request) (*query.Request, error) {
+func (this *ResourceFor[M, ID, U, In, P, R]) parseBody(r *http.Request) (*query.Request, error) {
 	request := &query.Request{}
 	if err := this.decodeOnly(r.Body, request); err != nil {
 		return nil, err
@@ -320,28 +340,28 @@ func (this *HandlerFor[M, ID, U, In]) parseBody(r *http.Request) (*query.Request
 	return request, nil
 }
 
-func (this *HandlerFor[M, ID, U, In]) decode(r io.Reader, v any) ([]byte, error) {
+func (this *ResourceFor[M, ID, U, In, P, R]) decode(r io.Reader, v any) ([]byte, error) {
 	return crudhttp.DecodeJSONKeepLimit(r, v, this.opt.MaxBody)
 }
 
-func (this *HandlerFor[M, ID, U, In]) decodeOnly(r io.Reader, v any) error {
+func (this *ResourceFor[M, ID, U, In, P, R]) decodeOnly(r io.Reader, v any) error {
 	_, err := this.decode(r, v)
 	return err
 }
 
-func (this *HandlerFor[M, ID, U, In]) id(r *http.Request) (ID, error) {
+func (this *ResourceFor[M, ID, U, In, P, R]) id(r *http.Request) (ID, error) {
 	return port.CoerceID[ID](r.PathValue("id"))
 }
 
-func (this *HandlerFor[M, ID, U, In]) entity(w http.ResponseWriter, r *http.Request, status int, m M) {
+func (this *ResourceFor[M, ID, U, In, P, R]) entity(w http.ResponseWriter, r *http.Request, status int, m M) {
 	if this.opt.transform != nil {
 		writeJSON(r.Context(), w, status, this.opt.transform(r, m))
 		return
 	}
-	writeJSON(r.Context(), w, status, m)
+	writeJSON(r.Context(), w, status, this.presenter.Response(m))
 }
 
-func (this *HandlerFor[M, ID, U, In]) fail(w http.ResponseWriter, r *http.Request, err error) {
+func (this *ResourceFor[M, ID, U, In, P, R]) fail(w http.ResponseWriter, r *http.Request, err error) {
 	this.opt.errorHandler(w, r, err)
 }
 

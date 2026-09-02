@@ -322,9 +322,30 @@ func (widgetMapper) Model(_ context.Context, in widgetInput) (Widget, error) {
 	return Widget{Name: in.Label, Price: in.Price}, nil
 }
 
-func mountHandler[In any](h *HandlerFor[Widget, int64, WidgetUpdate, In]) *gin.Engine {
+func mountHandler[In, P, R any](h *ResourceFor[Widget, int64, WidgetUpdate, In, P, R]) *gin.Engine {
 	r := gin.New()
 	r.HandleMethodNotAllowed = true
 	h.Mount(r, "/widgets")
 	return r
+}
+
+type widgetPatch struct {
+	Label *string `json:"label,omitempty"`
+}
+
+type widgetPatchMapper struct{}
+
+func (widgetPatchMapper) Update(patch widgetPatch) WidgetUpdate {
+	return WidgetUpdate{Name: patch.Label}
+}
+
+type widgetResponse struct {
+	ID   int64  `json:"id"`
+	Name string `json:"name"`
+}
+
+type widgetPresenter struct{}
+
+func (widgetPresenter) Response(model Widget) widgetResponse {
+	return widgetResponse{ID: model.ID, Name: model.Name}
 }

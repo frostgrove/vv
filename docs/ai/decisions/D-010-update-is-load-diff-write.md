@@ -49,8 +49,12 @@ not share a clock, which is why a timestamp version is refused
 
 **Why the version is not in `Schema.Update`.** It is not the caller's to set. An
 update DTO naming it is refused, `version = version + 1` is written by the
-repository, and `Save`'s conflict clause leaves it alone — so an upsert built
-from a stale model cannot wind the counter back.
+repository, and neither half of `Save` touches the column — so an upsert built
+from a stale model cannot wind the counter back. That also means `Save` does not
+*check* it: a stale full-row `Save` overwrites newer fields and succeeds, which is
+[[D-011]]'s trade and why `Repo.Replace` exists beside it. `Replace` is the verb
+that pins the write to the version the model carries and advances it; `Save`
+stays version-agnostic in both directions.
 
 **Why an `UPDATE` that matched nothing needs two answers.** A row that is gone
 is `ErrNotFound` and the caller should stop; a row that moved on is

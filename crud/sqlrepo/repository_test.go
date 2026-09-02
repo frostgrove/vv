@@ -371,8 +371,7 @@ func TestSaveOnADialectWithoutRETURNINGReadsTheRowBack(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	wantSQL(t, mustSQL(t, rec, 0).SQL,
-		"INSERT INTO `docs` (`id`, `title`) VALUES (?, ?) ON DUPLICATE KEY UPDATE `title` = VALUES(`title`)")
+	wantSQL(t, mustSQL(t, rec, 0).SQL, "UPDATE `docs` SET `title` = ? WHERE `id` = ?")
 	wantSQL(t, mustSQL(t, rec, 1).SQL, "SELECT `id`, `title` FROM `docs` WHERE `id` = ? LIMIT 1")
 	if saved.Title != "what the table actually holds" {
 		t.Fatalf("Save returned %q, want the stored value", saved.Title)
@@ -437,14 +436,6 @@ func TestUpdateUsesAFullMutationReadAndKeepsOnlyItsNarrowing(t *testing.T) {
 	got, err := Users.Bind(rec).Update(context.Background(), 1,
 		UserUpdate{Name: ptr("Ann")},
 		crud.Where(crud.Eq("TenantID", 7)),
-		crud.Select("Name"),
-		crud.OrderBy(crud.Desc("Email")),
-		crud.After("not-a-cursor"),
-		crud.Page(99),
-		crud.Limit(99),
-		crud.Offset(99),
-		crud.Preload("DoesNotExist"),
-		crud.Distinct(),
 	)
 	if err != nil {
 		t.Fatal(err)

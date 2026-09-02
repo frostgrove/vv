@@ -17,11 +17,11 @@ func ServiceName(name string) string {
 	return ServicePrefix + name
 }
 
-func (this *HandlerFor[M, ID, U, In]) Register(s grpc.ServiceRegistrar, name string) {
+func (this *ResourceFor[M, ID, U, In, P, R]) Register(s grpc.ServiceRegistrar, name string) {
 	s.RegisterService(this.Desc(name), nil)
 }
 
-func (this *HandlerFor[M, ID, U, In]) Desc(name string) *grpc.ServiceDesc {
+func (this *ResourceFor[M, ID, U, In, P, R]) Desc(name string) *grpc.ServiceDesc {
 	full := ServiceName(name)
 	desc := &grpc.ServiceDesc{
 		ServiceName: full,

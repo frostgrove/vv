@@ -6,38 +6,23 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"slices"
 
+	"github.com/frostgrove/vv/auth"
 	"github.com/frostgrove/vv/crud"
 )
 
 var ErrForbidden = fmt.Errorf("security: %w", crud.ErrForbidden)
 
-type Action uint8
+type Action = crud.Action
 
 const (
-	Read Action = iota
-	Create
-	Update
-	Delete
-	Restore
+	Read    = crud.ActionRead
+	Create  = crud.ActionCreate
+	Update  = crud.ActionUpdate
+	Delete  = crud.ActionDelete
+	Restore = crud.ActionRestore
 )
-
-func (this Action) String() string {
-	switch this {
-	case Read:
-		return "read"
-	case Create:
-		return "create"
-	case Update:
-		return "update"
-	case Delete:
-		return "delete"
-	case Restore:
-		return "restore"
-	default:
-		return "unknown"
-	}
-}
 
 type Policy[M any, ID comparable] struct {
 	Scope func(ctx context.Context) (crud.Predicate, error)
@@ -47,6 +32,8 @@ type Policy[M any, ID comparable] struct {
 	AllowUnscopedRelationScopes bool
 
 	RelationScopes func(ctx context.Context) (*crud.RelationScopes, error)
+
+	Requires map[Action][]auth.Permission
 
 	Authorize func(ctx context.Context, action Action) error
 
@@ -59,6 +46,14 @@ type Policy[M any, ID comparable] struct {
 	AllowUnscopedDeleteAll bool
 
 	AllowUnscopedUpdateAll bool
+}
+
+func (this Policy[M, ID]) RequiredFor(action Action) ([]auth.Permission, bool) {
+	permissions, declared := this.Requires[action]
+	if !declared {
+		return nil, false
+	}
+	return slices.Clone(permissions), true
 }
 
 func Gate[M any, ID comparable](p Policy[M, ID]) crud.Middleware[M, ID] {
@@ -78,7 +73,7 @@ func validate[M any, ID comparable](p Policy[M, ID]) {
 	if p.InspectReads && p.Inspect == nil {
 		panic("security: Policy.InspectReads requires Policy.Inspect")
 	}
-	if p.Scope == nil && p.RelationScopes == nil && p.Authorize == nil && p.Inspect == nil && len(p.Immutable) == 0 {
+	if p.Scope == nil && p.RelationScopes == nil && p.Requires == nil && p.Authorize == nil && p.Inspect == nil && len(p.Immutable) == 0 {
 		panic("security: Gate requires a scope, relation scope, authorizer, inspector, or immutable field; bind the repository directly when it is intentionally unrestricted")
 	}
 }
@@ -116,11 +111,16 @@ func Denied(action Action, reason string) error {
 	return fmt.Errorf("%w: %s: %s", ErrForbidden, action, reason)
 }
 
-func (this *gate[M, ID]) authorize(ctx context.Context, a Action) error {
+func (this *gate[M, ID]) authorize(ctx context.Context, action Action) error {
+	if this.p.Requires != nil {
+		if err := requireDeclared(ctx, this.p.Requires, action); err != nil {
+			return err
+		}
+	}
 	if this.p.Authorize == nil {
 		return nil
 	}
-	return this.p.Authorize(ctx, a)
+	return this.p.Authorize(ctx, action)
 }
 
 func (this *gate[M, ID]) inspect(ctx context.Context, a Action, m *M) error {

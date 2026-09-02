@@ -53,7 +53,7 @@ sub-application, so there is no counterpart to Fiber's `Routes()`.
 Every route is also a `gin.HandlerFunc` method, so you can register them one at a
 time.
 
-## The four constructors
+## The six constructors
 
 ```go
 crudgin.New(repo, opts...)                  // a repository; the model is the wire shape
@@ -61,6 +61,19 @@ crudgin.NewFor(repo, mapper, opts...)       // …with a request body of its own
 crudgin.Serving(svc, opts...)               // a port.Service — your business rules
 crudgin.ServingFor(svc, mapper, opts...)    // both
 ```
+
+`NewWire` and `ServingWire` are the explicit form under the four above. They
+take the create mapper, a `wire.PatchMapper` and a `wire.Presenter`, so the
+public PATCH body and the answer body are types of their own rather than the
+persistence DTO and the model ([[D-105]]):
+
+```go
+crudgin.ServingWire(svc, ArticleInputMapper{}, ArticlePatchMapper{}, ArticlePresenter{})
+```
+
+The four short constructors fill in `wire.IdentityPatch` and
+`wire.IdentityPresenter`, which is why nothing about them changed. See
+[wire](wire.md).
 
 `New` takes an **interface** ([[D-022]]), so your own service type satisfies it:
 

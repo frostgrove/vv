@@ -252,6 +252,12 @@ DSL, because then it is already a `[]utils.Option`. Note the one difference from
 `Update`: there is no single row to diff against, so every field the DTO defines
 is written to every matching row. A DTO that defines nothing writes nothing.
 
+A filtered write takes the narrowing options and nothing else — `Where`,
+`NarrowRelations`, `ForUpdate` and `PrimaryOnly`. A compiled DSL list also carries paging and
+sorting, and there is no portable `UPDATE … LIMIT`, so passing one whole is a
+`*crud.SchemaError` naming the option rather than a write of every matching row.
+Pass the predicate, not the request.
+
 ### Optimistic locking
 
 `Update` is load-then-write. Inside a transaction the load locks the row; outside
@@ -782,6 +788,85 @@ themselves rather than being invented.
 `-binding net` (the default) writes `net/http` wiring. `-binding none` writes the
 resource without it, which is what to use when you mount on Fiber or Gin: build
 the service, then `crudfiber.ServingFor(svc, store.UserMapper{})`.
+
+
+### The public bodies: what a client may send
+
+`UserUpdate` is the **persistence** patch. It names every column an `UPDATE` may
+write — and that includes `TenantID` and `Active`, which your own code writes and
+no client should. Hand that type to a public PATCH binder and both become
+something a client may send. Take them out of it and your own code loses them.
+
+`vv generate resource` writes the public half beside it, as types of its own:
+
+```bash
+go run github.com/frostgrove/vv/cmd/vv generate resource \
+    -dir ../ent -types User,Article -readonly CreatedAt \
+    -import myapp/ent -into . -recursive=false
+```
+
+`-into`, `-import` and `-types` mean here exactly what they mean for the DTO —
+the entity lives in ent's package and the generated file lives in yours.
+`-recursive` is on by default and writes beside each model package, so naming a
+destination turns it off.
+
+```go
+type UserInput struct{ … }          // the create body
+type UserInputMapper struct{}       // port.Mapper[UserInput, ent.User]
+
+type UserPatch struct{ … }          // the PATCH body
+type UserPatchMapper struct{}       // wire.PatchMapper[UserPatch, UserUpdate]
+
+type UserResponse struct{ … }       // the answer body
+type UserPresenter struct{}         // wire.Presenter[ent.User, UserResponse]
+
+func init() {
+    wire.MustCoverCreate[ent.User, UserInput]("CreatedAt")
+    wire.MustCoverPatch[UserUpdate, UserPatch]()
+    wire.MustCoverResponse[ent.User, UserResponse]()
+}
+```
+
+Mount them with `ServingWire`, the explicit form under `Serving`:
+
+```go
+crudfiber.ServingWire(svc, store.UserInputMapper{}, store.UserPatchMapper{}, store.UserPresenter{})
+```
+
+`New`, `NewFor`, `Serving` and `ServingFor` are unchanged: they still take the
+entity and `UserUpdate`, so nothing you already mounted moves.
+
+**Narrowing `TenantID` and `Active` out.** An ent entity carries no `db` tags, so
+there is nothing to mark them with. The manifest is where you say it — that is
+what it is for. `resource.manifest.yml` sits beside the package:
+
+```json
+{
+  "model": "User",
+  "patch": {
+    "narrowed": ["Active", "Age", "Email", "Name", "TenantID"],
+    "fields": ["Age", "Email", "Name"],
+    "widened": [],
+    "derivation_fingerprint": "3850a0…",
+    "confirmed": false
+  }
+}
+```
+
+Delete the two names from `fields`, regenerate, and `UserPatch` no longer
+carries them — while `UserUpdate` still writes both, so the use case that
+deactivates an account is untouched. The generated `MustCoverPatch` line grows
+`"Active", "TenantID"` as declared omissions, so a third body cannot appear
+without somebody noticing.
+
+Putting a name **back** is the direction that costs something: it lands in
+`widened` and generation stops, naming `User patch`, until `confirmed: true`
+sits beside it. The confirmation is bound to the derivation it was given for, so
+adding a column to the entity asks the question again.
+
+Put `vv generate resource -check` in CI. It renders both artefacts, compares
+them with what is checked in, writes nothing, and names every package that is
+behind its models ([[D-105]]).
 
 ## 11. Mount it
 

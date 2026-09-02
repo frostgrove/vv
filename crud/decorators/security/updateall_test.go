@@ -242,3 +242,70 @@ func TestBulkInspectionIgnoresCallerPagingAndPreloads(t *testing.T) {
 		})
 	}
 }
+
+func TestAGatedFilteredWriteRefusesPagingRatherThanWritingEveryRowItShowedTheRule(t *testing.T) {
+	ctx := withTenant(context.Background(), 7)
+	seen := 0
+	inspecting := security.Combine(tenantPolicy, security.Policy[Doc, int64]{
+		Inspect: func(context.Context, security.Action, *Doc) error { seen++; return nil },
+	})
+
+	written := func(rec *crudtest.Recorder) bool {
+		for _, statement := range rec.Statements() {
+			if strings.HasPrefix(statement.SQL, "UPDATE") || strings.HasPrefix(statement.SQL, "DELETE") {
+				return true
+			}
+		}
+		return false
+	}
+
+	t.Run("UpdateAll", func(t *testing.T) {
+		seen = 0
+		rec := crudtest.Postgres().
+			Push(crudtest.Rows(docRow(1, 7, "one"), docRow(2, 7, "two"))).
+			ExecResult(crud.Result{RowsAffected: 2})
+
+		n, err := Docs.Bind(rec, security.Gate(inspecting)).UpdateAll(ctx,
+			DocUpdate{Title: ptrTo("renamed")}, crud.Where(crud.Eq("Body", "x")), crud.Limit(1))
+
+		if err == nil {
+			t.Fatalf("n = %d: a caller who asked for one row was given the whole matching set", n)
+		}
+		if written(rec) {
+			t.Fatalf("the write ran anyway: %v", rec.SQL())
+		}
+	})
+
+	t.Run("DeleteAll", func(t *testing.T) {
+		seen = 0
+		rec := crudtest.Postgres().
+			Push(crudtest.Rows(docRow(1, 7, "one"), docRow(2, 7, "two"))).
+			ExecResult(crud.Result{RowsAffected: 2})
+
+		n, err := Docs.Bind(rec, security.Gate(inspecting)).DeleteAll(ctx,
+			crud.Where(crud.Eq("Body", "x")), crud.Limit(1))
+
+		if err == nil {
+			t.Fatalf("n = %d: a caller who asked for one row deleted the whole matching set", n)
+		}
+		if written(rec) {
+			t.Fatalf("the delete ran anyway: %v", rec.SQL())
+		}
+	})
+
+	t.Run("without the paging option the same write goes through", func(t *testing.T) {
+		seen = 0
+		rec := crudtest.Postgres().
+			Push(crudtest.Rows(docRow(1, 7, "one"), docRow(2, 7, "two"))).
+			ExecResult(crud.Result{RowsAffected: 2})
+
+		n, err := Docs.Bind(rec, security.Gate(inspecting)).UpdateAll(ctx,
+			DocUpdate{Title: ptrTo("renamed")}, crud.Where(crud.Eq("Body", "x")))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if n != 2 || seen != 2 {
+			t.Fatalf("n = %d and the rule saw %d rows, want the two rows the filter matched", n, seen)
+		}
+	})
+}

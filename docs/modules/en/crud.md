@@ -28,7 +28,7 @@ implement an adapter. Three-state values and small generic helpers live in
 |---|---|
 | **Model metadata** | `db` and `rel` tags become a `Schema`, a `Meta` and a relation graph, resolved once |
 | **`utils.Opt[T]`** | three states — undefined, null, set — so a PATCH can tell "leave it" from "clear it" |
-| **Options** | `Page`, `Limit`, `Where`, `OrderBy`, `Preload`, `Select`, `Distinct`, `Aggregate`, and fourteen more |
+| **Options** | `Page`, `Limit`, `Where`, `OrderBy`, `Preload`, `Select`, `Distinct`, `Aggregate`, and fourteen more — each verb reads its own set and refuses the rest by name |
 | **Predicates** | a closed AST: 26 constructors, `And`/`Or`/`Not` among them, relation paths at any depth |
 | **Pagination** | `PaginatedResponse[T]`, offset paging and cursor paging over the sort tuple |
 | **Relations** | `belongs_to`, `has_one`, `has_many`, `many_to_many` — inferred, overridable |
@@ -128,6 +128,25 @@ Every read takes `...crud.Option`, and every option is additive.
 
 `crud.Where` **ANDs**. That is what lets a decorator inject a filter a caller
 cannot peel back off ([[D-004]]).
+
+### Which verb reads which option
+
+One option type, four contracts. Every verb resolves the caller's options
+through an `OptionGroup` that names what its statement reads, and refuses the
+rest **by the name the caller wrote** — a `*crud.SchemaError`, before any SQL
+exists. An option is never accepted and dropped ([[D-087]]).
+
+| Group | Verbs | Refuses |
+|---|---|---|
+| `crud.ReadOptions` | `Get` `GetAll` `First` `GetByID` `Count` `Exists` | `Aggregate`, `GroupBy` — a read answers with rows |
+| `crud.MutationOptions` | `Update` `UpdateAll` `DeleteAll` | everything but `Where`, `NarrowRelations`, `ForUpdate` and `PrimaryOnly`: a filtered write is not paginated, sorted, projected or preloaded |
+| `crud.AggregateOptions` | `Aggregate` | cursors, `Select`, `Preload`, `SkipTotal`, `ForUpdate`, `Distinct` |
+| `crud.PreloadOptions` | `PreloadWhere`, `PreloadCap` | everything but `Where`, `OrderBy` and `PreloadRows` ([[D-006]]) |
+
+So `users.UpdateAll(ctx, patch, crud.Where(p), crud.Limit(10))` is an error
+naming `Limit`, not an update of ten rows and not an update of every row that
+matched. `group.Build(model, options...)` is the same check on its own, for a
+repository implementation of your own.
 
 Three things happen without asking: the page size is clamped to the repository's
 `MaxLimit` — including when the request says `Unpaged`, which is a flag on the
@@ -290,7 +309,9 @@ under the same narrowing as a read, so a security scope applies ([[D-029]]).
 A summary is unpaged by default: no repository default silently drops groups.
 An explicit `Limit`, `Page`, `Offset`, or `Unpaged` still honours the
 repository's `MaxLimit`. Ordinary `OrderBy` may name grouping columns only;
-other model columns are rejected before a statement is sent.
+other model columns are rejected before a statement is sent. A cursor, a
+`Select`, a `Preload`, `SkipTotal`, `ForUpdate` and `Distinct` are refused for
+the same reason: an aggregate answers with groups ([[D-087]]).
 
 The field names take the metamodel too — `crud.GroupBy(Order_.Status.Name())`,
 `crud.Sum("total", Order_.Amount.Name())`. The aggregate's own name is the key
@@ -323,6 +344,23 @@ err := users.InsertBatch(ctx, rows, crud.PortableBatch())
 The low-level capability is `BatchInserter[M]`, kept outside `Core` for source
 compatibility. Repository decorators must forward it deliberately; an opaque
 decorator fails closed with `ErrNoBatchInsertSupport` instead of being skipped.
+
+## The explicit verbs under Save
+
+```go
+stored, err := users.Create(ctx, &u)   // INSERT only; a taken key is a 409
+stored, err := users.Replace(ctx, &u)  // upsert pinned to u's `version`
+```
+
+`Save` stays the magic and stays what every transport calls ([[D-011]]).
+`Create` and `Replace` are the explicit API beneath it, for a caller who wants
+the refusal named: `Create` never absorbs a conflict, and `Replace` returns
+`ErrStaleVersion` when the row moved on. `Patch` was not added — `Update` is it.
+
+`Creator[M]` and `Replacer[M]` are looked up on the exact outer `Core`, the same
+way `BatchInserter[M]` is, so an opaque decorator fails closed with
+`ErrNoCreateSupport` / `ErrNoReplaceSupport` rather than letting an explicit verb
+step past `security.Gate`.
 
 ## The executor seam
 
@@ -377,8 +415,17 @@ cannot expose a stable `Identified` identity is refused before `Begin`.
 **Optional interfaces** an adapter may implement, each looked up rather than
 required so a third-party adapter keeps compiling without them: `Beginner`
 (savepoints), `UnsafeBulkInserter` (native bulk), `OffsetLimiter`,
-`ReadSourcer`, `Identified`, `Sourced`, `UpsertScope`, `StatementRollback`,
-`Tabler`.
+`ReadSourcer`, `Identified`, `Sourced`, `Tabler`.
+
+**Optional interfaces on `Dialect`**, each with a package-level reader that
+answers for a dialect that does not implement it: `UpsertScope` /
+`UpsertTargetsPrimaryKey` (does the upsert clause target the primary key alone,
+or does it fire on every unique index), `UpdateRowCount` /
+`UpdateCountsChangedRowsOnly` (does a zero row count from an `UPDATE` mean "no
+such row", or can it also mean "found it, nothing changed"; a dialect that does
+not answer is assumed to be the latter, so it is probed), `StatementRollback`,
+`OffsetLimiter`, `BindBudget`, `DefaultValuesInserter`, `LikeEscaper`. The first
+two are what decide whether `Save` can be one statement ([[D-011]]).
 
 Raw execution is available without losing an ambient transaction:
 
@@ -455,6 +502,19 @@ behind an `Update`, and the victim fetch behind a `DeleteAll` all run on the
 primary, because deciding a write from a lagging replica is how a row gets
 silently overwritten.
 
+## Actions
+
+`crud.Action` names what an operation does to a row: `ActionRead`,
+`ActionCreate`, `ActionUpdate`, `ActionDelete`, `ActionRestore`, with
+`crud.Actions()` for the whole list and `String()` for the word.
+
+Nothing in this package decides anything with it. It is here because two
+packages that must not import each other have to name the same verb: a
+[security](security.md) policy declares what each action requires, and a
+[crudhttp](crudhttp.md) route says which one it performs, so a route's access
+declaration can be read off the gate that enforces it ([[D-107]]).
+`security.Action` is an alias of this type.
+
 ## Sentinels
 
 Compare with `errors.Is`, never by string ([[D-015]]).
@@ -463,7 +523,8 @@ Compare with `errors.Is`, never by string ([[D-015]]).
 crud.ErrNotFound       crud.ErrConflict       crud.ErrForbidden
 crud.ErrStaleVersion   crud.ErrReadOnly       crud.ErrMissingID
 crud.ErrNoTxSupport    crud.ErrExecutorScope   crud.ErrNoBatchInsertSupport
-crud.ErrNoBulkInsertSupport
+crud.ErrNoBulkInsertSupport               crud.ErrNoCreateSupport
+crud.ErrNoReplaceSupport
 ```
 
 Every one of them survives being wrapped in an `errs.Fault`, so a caller who

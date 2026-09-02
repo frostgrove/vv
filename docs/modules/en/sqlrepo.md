@@ -75,6 +75,8 @@ error-returning form. Low-level metadata and adapters carry the same identity as
 | `Save(ctx, *M)` | no key → INSERT, key → UPSERT; returns a new stored model and leaves its argument unchanged |
 | `SaveOnly(ctx, *M)` | the same write with no stored-row result and no argument mutation |
 | `SaveAll(ctx, []*M)` | write-only batch insert/upsert; never mutates its models |
+| `Create(ctx, *M)` | INSERT only — an existing key is a 409, never an overwrite |
+| `Replace(ctx, *M)` | key-targeted upsert checked against `version`; a row somebody else advanced is `crud.ErrStaleVersion` |
 | `InsertBatch(ctx, []*M, opts...)` | write-only, insert-only typed bulk; native when explicitly exposed, portable otherwise |
 | `Update(ctx, id, dto, opts...)` | load, diff, write only what changed |
 | `UpdateAll(ctx, dto, opts...)` | one `UPDATE` across a filter; returns rows touched |
@@ -89,6 +91,13 @@ error-returning form. Low-level metadata and adapters carry the same identity as
 
 A zero primary key means `INSERT`. A non-zero one means `UPSERT` ([[D-011]]).
 
+The upsert reaches the row that key names and no other. Where a single statement
+cannot promise that — MySQL and MariaDB, whose `ON DUPLICATE KEY UPDATE` fires on
+every unique index, or any repository that declared `Scope` — `Save` writes an
+`UPDATE` narrowed by the key and the scope, probes, and inserts only if no row
+was there, all in one transaction. On PostgreSQL and SQLite without a `Scope` it
+stays the one statement it always was.
+
 A `db:",auto"` key is left out of the column list. `Save` returns a separate
 model containing the stored row — `RETURNING` on PostgreSQL and SQLite, or an
 insert/upsert followed by a read in one transaction on a dialect without it.
@@ -98,6 +107,23 @@ passed is never changed.
 `SaveOnly` performs only the write. It does not append `RETURNING`, does not
 fetch a model and does not mutate its argument. Use it for writes whose
 generated values are irrelevant.
+
+### Create and Replace say the part Save leaves open
+
+```go
+stored, err := users.Create(ctx, &u)   // INSERT only; a taken key is a 409
+stored, err := users.Replace(ctx, &u)  // upsert, refused if u.Version is behind
+```
+
+`Save` is the default and every transport calls it. These two are for a caller
+who wants the refusal spelled out: `Create` never absorbs a conflict, and
+`Replace` pins the write to the `version` the model carries and advances it.
+`Patch` is not among them — `Update` already is it.
+
+Both are optional capabilities. A decorator that does not forward them makes the
+call return `crud.ErrNoCreateSupport` / `crud.ErrNoReplaceSupport` rather than
+quietly reaching past it, so an explicit verb can never become a way around
+`security.Gate`.
 
 `SaveAll` is likewise write-only and always uses ordinary SQL. It keeps Save's
 semantics: assigned keys upsert, generated keys insert. Native bulk is a
@@ -209,7 +235,7 @@ and applied to every call.
 | `MaxLimit(n)` | the cap. Clamps even an `Unpaged()` request |
 | `DefaultSort(orders...)` | the sort when a request asks for none |
 | `PreloadDepth(n)` | how deep a preload path may go. Default 5 |
-| `Scope(pred)` | a predicate ANDed into every read and every scoped write |
+| `Scope(pred)` | a predicate ANDed into every read, every delete, and the row a write may reach — including the update half of `Save`/`SaveAll` and the read-back after it. It does not narrow the values a new row may hold |
 | `RelationScope(path, pred)` | the same, on the far side of a relation |
 | `SoftDelete(field)` | rows are flagged rather than removed, and hidden from every read |
 | `PortableBatch()` | keep every `InsertBatch` call on ordinary bind-budgeted SQL |
@@ -418,9 +444,13 @@ connection-local state must survive across the chunks.
   nothing, and counts *matched* rather than *changed* rows depending on
   configuration. `ErrNotFound` is therefore never derived from `n == 0` on a
   write path.
-- **`DeleteAll` fetches its victims with the caller's options** before deleting,
-  so a decorator's narrowing applies to the delete and not only to the fetch
-  ([[D-026]]).
+- **`DeleteAll` fetches its victims with the caller's narrowing** before
+  deleting, so a decorator's narrowing applies to the delete and not only to the
+  fetch ([[D-026]]).
+- **A filtered write refuses what it cannot apply.** `Update`, `UpdateAll` and
+  `DeleteAll` take `Where`, `NarrowRelations`, `ForUpdate` and `PrimaryOnly`; a `Limit`, a
+  page, a cursor, a sort, a projection or a preload is a `*crud.SchemaError`
+  naming the option, not a write of every matching row ([[D-087]]).
 - **`Distinct()` forces the primary key into the projection** where a sort needs
   it, because `SELECT DISTINCT` and `ORDER BY` on an unselected column is an
   error on PostgreSQL ([[D-024]]).

@@ -242,3 +242,47 @@ func TestRestoreDoesNotPanicOnANonComparableDynamicInterfaceKey(t *testing.T) {
 		t.Fatalf("RestoreScoped(non-comparable key) = n:%d err:%v ok:%v", n, err, ok)
 	}
 }
+
+func TestASaveOverATombstonedKeyRewritesTheRowWithoutBringingItBack(t *testing.T) {
+	type buriedRow struct {
+		ID    string               `db:"id,pk"`
+		Title string               `db:"title"`
+		Gone  utils.Opt[time.Time] `db:"deleted_at"`
+	}
+	type buriedPatch struct{ Title *string }
+
+	ctx := context.Background()
+	buried := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
+
+	plain := sqlrepo.Define[buriedRow, string, buriedPatch]("buried_rows",
+		sqlrepo.SoftDelete("Gone"), sqlrepo.IndependentTable())
+	recorder := crudtest.Postgres().Push(crudtest.Rows([]any{"a", "rewritten", buried}))
+	saved, err := plain.Bind(recorder).Save(ctx, &buriedRow{ID: "a", Title: "rewritten"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	upsert := crudtest.Normalize(recorder.Last().SQL)
+	written, _, _ := strings.Cut(upsert, " RETURNING ")
+	if strings.Contains(written, "deleted_at") {
+		t.Fatalf("an ordinary Save carries the tombstone column, so it un-deletes the row it lands on: %s", upsert)
+	}
+	if !saved.Gone.IsDefined() {
+		t.Fatalf("Save answered with a live row for a key the database still holds as deleted: %+v", saved)
+	}
+
+	scoped := sqlrepo.Define[buriedRow, string, buriedPatch]("buried_scoped_rows",
+		sqlrepo.SoftDelete("Gone"), sqlrepo.Scope(crud.Eq("Title", "mine")), sqlrepo.IndependentTable())
+	recorder = crudtest.Postgres().
+		ExecResult(crud.Result{RowsAffected: 1}).
+		Push(crudtest.Rows([]any{"a", "mine", buried}))
+	if _, err := scoped.Bind(recorder).Save(ctx, &buriedRow{ID: "a", Title: "mine"}); err != nil {
+		t.Fatal(err)
+	}
+	update := crudtest.Normalize(recorder.SQL()[0])
+	if !strings.HasPrefix(update, `UPDATE "buried_scoped_rows" SET "title" = $1`) {
+		t.Fatalf("a scoped Save did not become the update half of the update/probe/insert sequence: %s", update)
+	}
+	if strings.Contains(update, "deleted_at") {
+		t.Fatalf("the write narrowing picked up the soft-delete predicate, so a row its owner buried is out of reach: %s", update)
+	}
+}

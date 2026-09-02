@@ -2,23 +2,22 @@ package security
 
 import (
 	"context"
+	"slices"
 
 	"github.com/frostgrove/vv/auth"
+	"github.com/frostgrove/vv/crud"
 )
 
-func RequirePermission[M any, ID comparable](ps ...auth.Permission) Policy[M, ID] {
-	return Policy[M, ID]{
-		Authorize: func(ctx context.Context, action Action) error {
-			p, err := auth.Require(ctx)
-			if err != nil {
-				return err
-			}
-			if !auth.HasAll(p, ps...) {
-				return Denied(action, "caller lacks a required permission")
-			}
-			return nil
-		},
+func Requiring[M any, ID comparable](requires map[Action][]auth.Permission) Policy[M, ID] {
+	return Policy[M, ID]{Requires: copyRequirements(requires)}
+}
+
+func RequirePermission[M any, ID comparable](permissions ...auth.Permission) Policy[M, ID] {
+	requires := map[Action][]auth.Permission{}
+	for _, action := range crud.Actions() {
+		requires[action] = permissions
 	}
+	return Requiring[M, ID](requires)
 }
 
 func RequireAnyPermission[M any, ID comparable](ps ...auth.Permission) Policy[M, ID] {
@@ -52,26 +51,44 @@ func RequireRole[M any, ID comparable](rs ...auth.Role) Policy[M, ID] {
 }
 
 func PerAction[M any, ID comparable](m map[Action]auth.Permission) Policy[M, ID] {
-	want := make(map[Action]auth.Permission, len(m))
-	for a, p := range m {
-		want[a] = p
+	requires := make(map[Action][]auth.Permission, len(m))
+	for action, permission := range m {
+		requires[action] = []auth.Permission{permission}
 	}
-	return Policy[M, ID]{
-		Authorize: func(ctx context.Context, action Action) error {
-			p, err := auth.Require(ctx)
-			if err != nil {
-				return err
-			}
-			need, named := want[action]
-			if !named {
-				return Denied(action, "no permission is declared for this action")
-			}
-			if !p.Has(need) {
-				return Denied(action, "caller lacks the permission declared for this action")
-			}
-			return nil
-		},
+	return Requiring[M, ID](requires)
+}
+
+func requireDeclared(ctx context.Context, requires map[Action][]auth.Permission, action Action) error {
+	principal, err := auth.Require(ctx)
+	if err != nil {
+		return err
 	}
+	need, declared := requires[action]
+	if !declared {
+		return Denied(action, "no permission is declared for this action")
+	}
+	if !auth.HasAll(principal, need...) {
+		return Denied(action, "caller lacks the permission declared for this action")
+	}
+	return nil
+}
+
+func copyRequirements(requires map[Action][]auth.Permission) map[Action][]auth.Permission {
+	out := make(map[Action][]auth.Permission, len(requires))
+	for action, permissions := range requires {
+		out[action] = append([]auth.Permission{}, permissions...)
+	}
+	return out
+}
+
+func unionPermissions(first, second []auth.Permission) []auth.Permission {
+	out := append([]auth.Permission{}, first...)
+	for _, permission := range second {
+		if !slices.Contains(out, permission) {
+			out = append(out, permission)
+		}
+	}
+	return out
 }
 
 func ScopeAttr[M any, ID comparable](field, attr string) Policy[M, ID] {

@@ -3,6 +3,11 @@
 **Entry point:** `cmd/vv/main.go:main` → `internal/codegen.Run`
 **Implements:** [[UC-014]] [[UC-010]] [[UC-007]] · **Governed by:** [[D-018]] [[D-002]] [[D-014]] [[D-050]]
 
+This flow is the **persistence** half: `<Model>Update` is what an `UPDATE` may
+write, and it is not a promise to a client. The public bodies — create, patch
+and response — are a second command with a manifest of its own, and they are
+[[FL-029]].
+
 `vv` keeps the AST as its source of declarations and never executes or imports
 the package it generates for. It also builds a best-effort `go/types` view from
 module export data. Resolved fields therefore use the same structural and
@@ -235,7 +240,15 @@ function body does not prevent generation.
     import block in both forbidden directions. A formatting or namespace
     failure is reported before any output write.
 
-13. **`writeGenerated` — owned atomic replacement**
+13. **`-check`** — `Options.Check`, `checkArtifacts` (`internal/codegen/resource.go`)
+    Everything above runs; the rendered bytes are compared with the file on disk
+    instead of replacing it. A file that differs, or does not exist at all, is a
+    `DriftError` naming the path, and nothing is written — including in
+    `-recursive` mode, where every package behind its models is named rather
+    than only the first. This is the same flag and the same error type
+    `vv generate resource` uses ([[FL-029]]).
+
+14. **`writeGenerated` — owned atomic replacement**
     The candidate is written beside the target, chmodded, synced and closed,
     target ownership is revalidated, and an atomic rename replaces only a
     generated regular file. The destination directory is synced afterwards;
@@ -305,6 +318,7 @@ function body does not prevent generation.
 | `-adapter` on a model with no key the generator can name | `renderAdapter` | `-adapter needs a key it can name: tag one field of X db:",pk"` |
 | `-adapter` with `-no-dto` | `run` | `-adapter needs the update DTO; drop -no-dto` |
 | `-binding` naming anything but `net` or `none` | `Run` | `-binding X: only net and none are generated today` |
+| an artefact behind its model under `-check` | `checkArtifacts` | `DriftError` naming every stale path, nothing written |
 
 ## Files
 
@@ -383,7 +397,8 @@ function body does not prevent generation.
 - `TestAVersionedModelGeneratesAResourceThatStarts` — `internal/codegen/codegen_test.go` — with a map claiming the lock as its refused control.
 - `TestTheGeneratedDeclarationForAVersionedModelIsAccepted`, `TestTheGeneratedWireShapesLeaveOutWhatTheClientDoesNotOwn`, `TestTheGeneratedMapperAndItsInverseAgree` — `test/versionstore/versionstore_test.go`.
 - `TestGeneratedDTOTypesFollowNullability` — `_examples/example/blog/blog_test.go` — the generated types, from the consumer's side.
+- `TestAColumnTheGeneratedFileNeverSawIsNamedInsteadOfWrittenOver`, `TestAPackageWithNoGeneratedFileAtAllFailsTheCheckWithoutCreatingOne` and `TestTheRecursiveCheckNamesEveryPackageBehindItsModelsAndNotOnlyTheFirst` — `internal/codegen/check_test.go` — `-check`, each with the freshly generated tree passing as its control and each asserting the check wrote nothing.
 
 ## See also
 
-[[FL-004]] [[FL-002]] [[FL-015]]
+[[FL-004]] [[FL-002]] [[FL-015]] [[FL-029]]

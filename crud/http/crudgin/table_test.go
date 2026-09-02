@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/frostgrove/vv/auth"
+	"github.com/frostgrove/vv/crud/decorators/security"
 	"github.com/frostgrove/vv/crud/http/crudhttp"
 )
 
@@ -69,5 +71,70 @@ func TestAReadOnlyResourceMountsNothingTheTableOmits(t *testing.T) {
 
 	if r := do(t, app, http.MethodGet, "/widgets", ""); !reachedAHandler(r.status) {
 		t.Fatalf("a read-only resource stopped serving its reads (%d), so the refusals above prove nothing", r.status)
+	}
+}
+
+var _ crudhttp.Policy = security.Policy[Widget, int64]{}
+
+func TestTheAccessDeclarationIsDerivedFromTheGatesOwnPermissions(t *testing.T) {
+	policy := security.PerAction[Widget, int64](map[security.Action]auth.Permission{
+		security.Read:   "widget:read",
+		security.Create: "widget:create",
+		security.Update: "widget:write",
+		security.Delete: "widget:remove",
+	})
+
+	declared, err := (crudhttp.Table{Prefix: "/widgets"}).GuardedBy(policy)
+	if err != nil {
+		t.Fatalf("a policy that names every action declared nothing: %v", err)
+	}
+
+	want := map[string]auth.Permission{
+		"POST /widgets":             "widget:create",
+		"POST /widgets/bulk-delete": "widget:remove",
+		"POST /widgets/query":       "widget:read",
+		"GET /widgets/count":        "widget:read",
+		"POST /widgets/count":       "widget:read",
+		"GET /widgets":              "widget:read",
+		"GET /widgets/:id":          "widget:read",
+		"PATCH /widgets/:id":        "widget:write",
+		"PUT /widgets/:id":          "widget:write",
+		"DELETE /widgets/:id":       "widget:remove",
+	}
+	if len(declared) != len(want) {
+		t.Fatalf("the table mounts %d routes and the derived declaration covers %d", len(want), len(declared))
+	}
+	for _, endpoint := range declared {
+		route := endpoint.Method + " " + endpoint.Path
+		expected, mounted := want[route]
+		if !mounted {
+			t.Fatalf("the declaration carries %s, which the table does not mount", route)
+		}
+		if len(endpoint.Needs) != 1 || endpoint.Needs[0] != expected {
+			t.Fatalf("%s is declared as needing %v, and the gate that answers it asks for %s",
+				route, endpoint.Needs, expected)
+		}
+	}
+}
+
+func TestAMountedRouteThePolicyLeavesUndeclaredIsRefusedAtAssembly(t *testing.T) {
+	readsOnly := security.PerAction[Widget, int64](map[security.Action]auth.Permission{
+		security.Read: "widget:read",
+	})
+
+	_, err := (crudhttp.Table{Prefix: "/widgets"}).GuardedBy(readsOnly)
+	if err == nil {
+		t.Fatal("a policy that refuses every write produced a declaration for the write routes, which would name a permission nothing enforces")
+	}
+	if !strings.Contains(err.Error(), "POST /widgets") {
+		t.Fatalf("the refusal does not say which route is undeclared: %v", err)
+	}
+
+	declared, err := (crudhttp.Table{Prefix: "/widgets", ReadOnly: true}).GuardedBy(readsOnly)
+	if err != nil {
+		t.Fatalf("the same policy over a read-only resource declares every route it mounts, and was refused: %v", err)
+	}
+	if len(declared) != 5 {
+		t.Fatalf("a read-only resource mounts five routes and %d were declared", len(declared))
 	}
 }

@@ -66,6 +66,7 @@ type Blueprint[M any, ID comparable, U any] struct {
 	set        settings
 	relScopes  *crud.RelationScopes
 	softDelete *crud.Field
+	writeScope crud.Predicate
 
 	restoreScope crud.Predicate
 }
@@ -123,6 +124,7 @@ func tryDefine[M any, ID comparable, U any](meta *crud.Meta, options ...Setting)
 	for _, o := range options {
 		o(&bp.set)
 	}
+	bp.writeScope = bp.set.scope
 	if bp.set.defaultLimit <= 0 {
 		bp.set.defaultLimit = DefaultPageSize
 	}

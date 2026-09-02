@@ -105,7 +105,11 @@ the create body where a client could forge it.
 alternative was to honour the model's own `json` tag on the Input: it makes the
 two bodies disagree for any model whose tag differs, and then one resource needs
 two inverse maps while only one of them has an owner in [[D-043]]'s chain —
-`port/doc.go` states that PATCH has no mapper. The consequence is intended and
+`port` knows only `Mapper[In, M]`, and PATCH reaches the service already in the
+persistence shape. **[[D-105]] narrows the second half of that sentence:** the
+public PATCH body does now have a mapper, `wire.PatchMapper`, applied by the
+binding rather than by `port`. The naming rule is unchanged and so is the
+argument for it — one rule for both bodies, one inverse map per resource. The consequence is intended and
 stated in both usage guides: **a generated resource has a wire shape of its own**
 (the roadmap's §3: *"The adapter layer is what introduces a distinct one"*). A
 consumer who wants the model's own JSON shape keeps `New` and generates no
@@ -196,6 +200,9 @@ adapter's. One owner per hop.
 ## See also
 
 [[D-021]] [[D-043]] [[D-018]] [[D-014]] [[UC-014]] [[FL-010]] [[FL-015]]
+
+[[D-105]] — the public half of the same argument: totality demanded of a
+generated body, and a narrowing whose exceptions are confirmed by name.
 
 [[D-071]] — the other way to obtain the same map, for a resource mounted
 straight onto the model. It borrows the domain rule and the exactness refusal

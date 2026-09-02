@@ -173,18 +173,8 @@ func validatePreloadOptions(model, path string, o *Options) error {
 	if o.PreloadRows < 0 {
 		return &SchemaError{Model: model, Field: path, Reason: "a preload row cap cannot be negative"}
 	}
-	value := reflect.ValueOf(*o)
-	typ := value.Type()
-	for i := range value.NumField() {
-		field := typ.Field(i)
-		switch field.Name {
-		case "Filter", "Sort", "PreloadRows":
-			continue
-		}
-		if value.Field(i).IsZero() {
-			continue
-		}
-		return &SchemaError{Model: model, Field: path, Reason: unsupportedPreloadOption(field.Name)}
+	if _, reason := PreloadOptions.refused(o); reason != "" {
+		return &SchemaError{Model: model, Field: path, Reason: reason}
 	}
 	return nil
 }
@@ -213,9 +203,8 @@ func unsupportedPreloadOption(field string) string {
 		return "a preload cannot lock related rows"
 	case "Distinct":
 		return "a preload cannot apply DISTINCT to complete related rows"
-	default:
-		return "query option " + field + " is not supported inside a preload"
 	}
+	return ""
 }
 
 func RunPreloads(ctx context.Context, ex Executor, d Dialect, m *Meta, items any, specs []PreloadSpec, maxDepth int, scopes *RelationScopes) error {

@@ -289,3 +289,24 @@ func doc(t *testing.T, raw string) *structpb.Struct {
 	}
 	return st
 }
+
+type widgetPatch struct {
+	Label *string `json:"label,omitempty"`
+}
+
+type widgetPatchMapper struct{}
+
+func (widgetPatchMapper) Update(patch widgetPatch) WidgetUpdate {
+	return WidgetUpdate{Name: patch.Label}
+}
+
+type widgetResponse struct {
+	ID   int64  `json:"id"`
+	Name string `json:"name"`
+}
+
+type widgetPresenter struct{}
+
+func (widgetPresenter) Response(model Widget) widgetResponse {
+	return widgetResponse{ID: model.ID, Name: model.Name}
+}
