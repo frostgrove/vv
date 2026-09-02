@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/frostgrove/vv/auth"
+	"github.com/frostgrove/vv/auth/http/authhttp"
 	"github.com/frostgrove/vv/auth/http/authnet"
 )
 
@@ -207,4 +208,80 @@ func TestANilGuardRefusesToStart(t *testing.T) {
 			authnet.Middleware(tc.guard)
 		})
 	}
+}
+
+type corsAnswer struct {
+	ran bool
+}
+
+func (this *corsAnswer) ServeHTTP(writer http.ResponseWriter, _ *http.Request) {
+	this.ran = true
+	writer.Header().Set("Access-Control-Allow-Origin", "https://app.example")
+	writer.WriteHeader(http.StatusNoContent)
+}
+
+func preflightRequest() *http.Request {
+	request := httptest.NewRequest(http.MethodOptions, "/articles", nil)
+	request.Header.Set(authhttp.HeaderOrigin, "https://app.example")
+	request.Header.Set(authhttp.HeaderRequestMethod, "POST")
+	return request
+}
+
+func TestACorsPreflightIsAnsweredByTheHandlerNamedForItAndABareOptionsIsNot(t *testing.T) {
+	answer := func(request *http.Request) (*corsAnswer, *seen, *httptest.ResponseRecorder) {
+		cors := &corsAnswer{}
+		route := &seen{}
+		recorder := httptest.NewRecorder()
+		authnet.AnswerPreflight(authnet.Middleware(auth.NewGuard(accepts())), cors)(route).
+			ServeHTTP(recorder, request)
+		return cors, route, recorder
+	}
+
+	cors, route, recorder := answer(preflightRequest())
+	if !cors.ran {
+		t.Fatalf("the browser's preflight was refused with %d, so the request it precedes never happens",
+			recorder.Code)
+	}
+	if route.ran {
+		t.Fatal("the preflight reached the route, so an unauthenticated OPTIONS runs application code")
+	}
+	if recorder.Header().Get("Access-Control-Allow-Origin") == "" {
+		t.Fatal("the preflight was answered by something other than the CORS handler")
+	}
+
+	cors, route, recorder = answer(httptest.NewRequest(http.MethodOptions, "/articles", nil))
+	if cors.ran || route.ran || recorder.Code != http.StatusUnauthorized {
+		t.Fatalf("an OPTIONS request that is not a preflight walked past the guard: %d", recorder.Code)
+	}
+
+	authorized := preflightRequest()
+	authorized.Header.Set("Authorization", "Bearer t")
+	cors, route, recorder = answer(authorized)
+	if cors.ran || !route.ran || recorder.Code != http.StatusOK {
+		t.Fatalf("an OPTIONS carrying a credential answered %d; it is a request, not a preflight", recorder.Code)
+	}
+}
+
+func TestAPreflightNobodyAnsweredStopsAtTheDoorInsteadOfAtTheRoute(t *testing.T) {
+	route := &seen{}
+	recorder := httptest.NewRecorder()
+
+	authnet.SkipPreflight(authnet.Middleware(auth.NewGuard(accepts())))(route).
+		ServeHTTP(recorder, preflightRequest())
+
+	if route.ran {
+		t.Fatal("two forgeable headers carried an unauthenticated OPTIONS into a hand-written handler")
+	}
+	if recorder.Code != http.StatusNoContent {
+		t.Fatalf("a preflight nobody was named to answer came back %d, want 204", recorder.Code)
+	}
+}
+
+func TestAPreflightAnswerThatIsNotThereRefusesToStart(t *testing.T) {
+	defer func() {
+		if recover() == nil {
+			t.Fatal("AnswerPreflight accepted nothing to answer a preflight with")
+		}
+	}()
+	authnet.AnswerPreflight(authnet.Middleware(auth.NewGuard(accepts())), nil)
 }

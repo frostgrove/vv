@@ -1,7 +1,7 @@
 # D-056 — An authentication failure is a fault that wraps a sentinel, and its reason never leaves the process
 
 **Status:** accepted
-**Invariant:** a 401 is built with `auth.Unauthenticated`, which produces an `errs.Fault` of `errs.KindUnauthorized` wrapping `auth.ErrUnauthenticated`. Nothing in `crud`, `port` or `errs` changes to carry it, and the reason it was refused travels in the wrapped error — never in `Fault.Message`, never in a body.
+**Invariant:** a 401 is built with `auth.Unauthenticated`, which produces an `errs.Fault` of `errs.KindUnauthorized` wrapping `auth.ErrUnauthenticated`. Nothing in `crud`, `port` or `errs` changes to carry it, and the reason it was refused travels in the wrapped error — never in `Fault.Message`, never in a body. Inside the process it reaches an operator through `auth.Observer`, and never carries the credential.
 **Narrowed by:** [[D-078]] — inability to obtain verification keys is not an
 authentication failure and remains a typed infrastructure error.
 
@@ -73,6 +73,34 @@ required"*, whether the token was absent, expired, forged, for another audience,
   answer has made no credential decision; [[D-078]] keeps that failure out of
   this equivalence class.
 
+## Where the reason does go
+
+"Never leaves the process" is a rule about the response, and it left a second
+question unanswered for long enough to be answered three different ways: the Gin
+binding filed the cause with Gin's error bag, and net/http and Fiber logged
+nothing at all. Whether an operator hears about a wave of refusals should not
+depend on which router a deployment picked.
+
+`auth.Observe(observer)` puts it on the guard instead — one seam, above every
+transport:
+
+```go
+guard := auth.NewGuard(authn, auth.Observe(auth.Sampled(100, observer)))
+```
+
+The `Reason` carries a `Kind` from a closed vocabulary (`ReasonNoCredential`,
+`ReasonAmbiguousCredential`, `ReasonRejected`, `ReasonNoPrincipal`,
+`ReasonGuardUnusable`), a `Detail` written in `auth`, and the `Err` the caller
+was answered with. **It never carries the credential**: a `Detail` is one of a
+handful of sentences in this package, and a token, cookie or header value must
+not be put there — an observer is a log line, and the point of this decision is
+that the token does not reach one.
+
+It is an extension point and not a logger: `auth` has no logger and takes none
+([[D-062]]). `Sampled(oneIn, observer)` is the decorator for a surface under a
+credential-stuffing run, because the interesting number there is the rate and not
+the transcript.
+
 ## What a caller can still find out
 
 The reason is not destroyed, only kept inside. `errs.AsFault` then `Fault.Unwrap`
@@ -113,6 +141,11 @@ NotFound(1) < Unauthorized(2) < Forbidden(3)`.
   key with kid `abc123`".
 - Do not report which authenticator in an `auth.Chain` refused, or how many were
   tried. That is a list of the schemes a deployment accepts.
+- Do not put a credential, a token, a cookie or a header value into
+  `auth.Reason`. It exists so the reason reaches an operator, and a credential in
+  a log line is the leak this decision is about, one hop further out.
+- Do not let a binding decide on its own what to do with a refusal it was not
+  asked about. The observer is where that decision belongs now.
 
 ## Where it lives
 
@@ -131,6 +164,10 @@ NotFound(1) < Unauthorized(2) < Forbidden(3)`.
 
 ## Proven by
 
+- `TestEveryRefusalReachesTheObserverWithTheReasonTheCallerNeverSees` —
+  `auth/observer_test.go`: both refusals observed, the success not observed, and
+  the presented token absent from what the observer was handed.
+  `TestASampledObserverSeesOneRefusalInEveryRun` is the decorator.
 - `TestTheReasonForA401NeverReachesTheBody` — `auth/errors_test.go`. It carries
   the control that makes it mean something: a second subtest builds the same
   fault with the reason in `Fault.Message` and asserts the leak **is** there, so

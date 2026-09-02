@@ -2,6 +2,7 @@ package authhttp_test
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"testing"
 
@@ -10,6 +11,13 @@ import (
 )
 
 func presented(t *testing.T, header http.Header, options ...auth.Option) (auth.Credential, bool) {
+	t.Helper()
+
+	credential, reached, _ := lookedUp(t, header, options...)
+	return credential, reached
+}
+
+func lookedUp(t *testing.T, header http.Header, options ...auth.Option) (auth.Credential, bool, error) {
 	t.Helper()
 
 	var seen auth.Credential
@@ -21,8 +29,8 @@ func presented(t *testing.T, header http.Header, options ...auth.Option) (auth.C
 		})
 
 	guard := auth.NewGuard(authenticator, append([]auth.Option{auth.Optional()}, options...)...)
-	_, _ = guard.Authenticate(context.Background(), header.Get)
-	return seen, reached
+	_, err := guard.Authenticate(context.Background(), header.Get)
+	return seen, reached, err
 }
 
 func TestACredentialIsReadFromACookie(t *testing.T) {
@@ -58,9 +66,50 @@ func TestACookieLookupStillReadsTheAuthorizationHeader(t *testing.T) {
 		t.Fatalf("the credential is %q", credential.Token)
 	}
 
+	header.Set("Cookie", "other=x")
+	if credential, reached := presented(t, header, authhttp.Cookie("access")); !reached || credential.Token != "a signed token" {
+		t.Fatalf("a cookie header carrying no access cookie stopped the header from being read: %q", credential.Token)
+	}
+}
+
+func TestARequestPresentingTwoCredentialsIsRefusedRatherThanRanked(t *testing.T) {
+	for name, request := range map[string]struct{ cookie, authorization string }{
+		"a cookie beside an Authorization header": {cookie: "access=the cookie", authorization: "Bearer a signed token"},
+		"two cookies of the same name":            {cookie: "access=the first; access=the second"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			header := http.Header{}
+			header.Set("Cookie", request.cookie)
+			if request.authorization != "" {
+				header.Set("Authorization", request.authorization)
+			}
+
+			_, reached, err := lookedUp(t, header, authhttp.Cookie("access"))
+			if reached {
+				t.Fatal("one of two credentials was picked and handed to the authenticator; " +
+					"which one wins is not something the request may decide")
+			}
+			if !errors.Is(err, auth.ErrCredentialCardinality) || !errors.Is(err, auth.ErrUnauthenticated) {
+				t.Fatalf("two credentials answered %v, want a typed authentication refusal", err)
+			}
+		})
+	}
+}
+
+func TestTheLegacyCookiePrecedenceIsAvailableOnlyByNamingIt(t *testing.T) {
+	header := http.Header{}
 	header.Set("Cookie", "access=the cookie")
-	if credential, _ := presented(t, header, authhttp.Cookie("access")); credential.Token != "the cookie" {
-		t.Fatalf("with both present the guard took %q", credential.Token)
+	header.Set("Authorization", "Bearer a signed token")
+
+	credential, reached := presented(t, header, authhttp.UnsafeCookieWinsOverAuthorization("access"))
+	if !reached || credential.Token != "the cookie" {
+		t.Fatalf("the legacy option handed the authenticator %q, want the cookie it prefers", credential.Token)
+	}
+
+	header.Del("Cookie")
+	if credential, reached := presented(t, header, authhttp.UnsafeCookieWinsOverAuthorization("access")); !reached ||
+		credential.Token != "a signed token" {
+		t.Fatalf("the legacy option stopped reading the header: %q", credential.Token)
 	}
 }
 

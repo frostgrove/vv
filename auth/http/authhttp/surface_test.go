@@ -109,18 +109,42 @@ func TestATrailingSlashIsNotADisagreement(t *testing.T) {
 	}
 }
 
-func TestARouteOutsideThePrefixIsNotPartOfTheSurface(t *testing.T) {
+func TestARouteOutsideThePrefixStillHasToDeclareItsAccess(t *testing.T) {
 	declared := []authhttp.Endpoint{
 		authhttp.Requires(http.MethodGet, "/things", auth.Permission("thing.read")),
 	}
 	routes := mounted("GET /", "GET /favicon.ico", "GET /api/v1/things")
 
-	if err := authhttp.Verify(declared, routes, authhttp.UnderPrefix(prefix)); err != nil {
-		t.Fatalf("a route outside %s was checked: %v", prefix, err)
+	err := authhttp.Verify(declared, routes, authhttp.UnderPrefix(prefix))
+	if err == nil {
+		t.Fatalf("the root and the favicon answer the world and configuring %s was enough to stop anybody looking at them", prefix)
+	}
+	for _, want := range []string{"GET /", "GET /favicon.ico"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("the failure does not name %s: %v", want, err)
+		}
+	}
+	if strings.Contains(err.Error(), "/api/v1/things") {
+		t.Fatalf("a declared route under the prefix was reported as well: %v", err)
+	}
+}
+
+func TestAnEndpointDeclaredAtRootIsCheckedByItsAbsolutePath(t *testing.T) {
+	declared := []authhttp.Endpoint{
+		authhttp.Requires(http.MethodGet, "/things", auth.Permission("thing.read")),
+		authhttp.AtRoot(authhttp.Public(http.MethodGet, "/live", "a load balancer cannot present a credential")),
 	}
 
-	if err := authhttp.Verify(declared, routes); err == nil {
-		t.Fatal("with no prefix the health check and the favicon were still exempt, so the case above proves nothing")
+	if err := authhttp.Verify(declared, mounted("GET /api/v1/things", "GET /live"), authhttp.UnderPrefix(prefix)); err != nil {
+		t.Fatalf("the probe was declared where it actually answers and the gate still refused: %v", err)
+	}
+
+	stale := authhttp.Verify(declared, mounted("GET /api/v1/things"), authhttp.UnderPrefix(prefix))
+	if stale == nil {
+		t.Fatal("the root declaration was accepted without the route existing, so it is not being matched by its absolute path")
+	}
+	if !strings.Contains(stale.Error(), "GET /live") {
+		t.Fatalf("the stale root declaration is reported under some other path: %v", stale)
 	}
 }
 
@@ -164,5 +188,102 @@ func TestAnAuthenticatedEndpointRecordsThatItIsOpen(t *testing.T) {
 	}
 	if !strings.Contains(endpoint.Why, "reading your own principal") {
 		t.Fatalf("the reason a reviewer reads was dropped: %q", endpoint.Why)
+	}
+}
+
+func TestANeighbouringPrefixIsNotPartOfThisSurface(t *testing.T) {
+	declared := []authhttp.Endpoint{
+		authhttp.Requires(http.MethodGet, "/things", auth.Permission("thing.read")),
+		authhttp.AtRoot(authhttp.Public(http.MethodGet, "/api/v10/things", "the next version answers for itself")),
+		authhttp.AtRoot(authhttp.Public(http.MethodGet, "/api/v1evil", "a path that merely starts with the prefix")),
+	}
+	neighbours := mounted("GET /api/v1/things", "GET /api/v10/things", "GET /api/v1evil")
+
+	if err := authhttp.Verify(declared, neighbours, authhttp.UnderPrefix(prefix)); err != nil {
+		t.Fatalf("a route in a neighbouring tree was pulled into %s and judged against its declarations: %v", prefix, err)
+	}
+
+	sameTree := []authhttp.Endpoint{
+		authhttp.Requires(http.MethodGet, "/things", auth.Permission("thing.read")),
+	}
+	if err := authhttp.Verify(sameTree, mounted("GET /api/v1/things", "GET /api/v1/other"), authhttp.UnderPrefix(prefix)); err == nil {
+		t.Fatal("a route genuinely under the prefix was skipped too, so the case above proves nothing")
+	}
+}
+
+func TestARouteMountedOutsideEveryVerifiedSurfaceIsRefused(t *testing.T) {
+	err := authhttp.VerifyAreas(
+		mounted("GET /api/v1/things", "GET /live", "GET /favicon.ico"),
+		authhttp.Under(prefix, authhttp.Requires(http.MethodGet, "/things", auth.Permission("thing.read"))),
+	)
+	if err == nil {
+		t.Fatal("the health probe and the favicon answer to the world and nobody had to say why")
+	}
+	for _, want := range []string{"GET /live", "GET /favicon.ico"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("the failure does not name %s: %v", want, err)
+		}
+	}
+	if strings.Contains(err.Error(), "/api/v1/things") {
+		t.Fatalf("a declared route inside a verified surface was reported as well: %v", err)
+	}
+}
+
+func TestARootSurfaceDeclaresWhatLivesOutsideThePrefix(t *testing.T) {
+	err := authhttp.VerifyAreas(
+		mounted("GET /api/v1/things", "GET /live", "GET /favicon.ico"),
+		authhttp.Under(prefix, authhttp.Requires(http.MethodGet, "/things", auth.Permission("thing.read"))),
+		authhttp.Rooted(
+			authhttp.Public(http.MethodGet, "/live", "a load balancer cannot present a credential"),
+			authhttp.Public(http.MethodGet, "/favicon.ico", "a browser asks for it before anybody signs in"),
+		),
+	)
+	if err != nil {
+		t.Fatalf("every mounted route was declared and the gate still refused: %v", err)
+	}
+
+	stale := authhttp.VerifyAreas(
+		mounted("GET /api/v1/things", "GET /live", "GET /ready"),
+		authhttp.Under(prefix, authhttp.Requires(http.MethodGet, "/things", auth.Permission("thing.read"))),
+		authhttp.Rooted(authhttp.Public(http.MethodGet, "/live", "a load balancer cannot present a credential")),
+	)
+	if stale == nil {
+		t.Fatal("a probe nobody declared passed the root surface, so the case above proves nothing")
+	}
+}
+
+func TestTwoVerifiedSurfacesThatOverlapAreRefused(t *testing.T) {
+	err := authhttp.VerifyAreas(
+		mounted("GET /api/v1/things"),
+		authhttp.Under("/api", authhttp.Requires(http.MethodGet, "/v1/things", auth.Permission("thing.read"))),
+		authhttp.Under(prefix, authhttp.Requires(http.MethodGet, "/things", auth.Permission("thing.read"))),
+	)
+	if err == nil {
+		t.Fatal("two surfaces claim the same routes and which one checks them is whichever the loop reached first")
+	}
+	if !strings.Contains(err.Error(), "overlap") {
+		t.Fatalf("the failure does not say the surfaces overlap: %v", err)
+	}
+}
+
+func TestARouteOutsideThePrefixIsToldWhereToDeclareItself(t *testing.T) {
+	err := authhttp.Verify(
+		[]authhttp.Endpoint{authhttp.Requires(http.MethodGet, "/things", auth.Permission("thing.read"))},
+		mounted("GET /api/v1/things", "GET /live"),
+		authhttp.UnderPrefix(prefix),
+	)
+	if err == nil {
+		t.Fatal("the probe answered outside the prefix and the gate said nothing")
+	}
+	if !strings.Contains(err.Error(), "AtRoot") {
+		t.Fatalf("the refusal names the route but not the one seam that declares it, so it reads as a wall: %v", err)
+	}
+
+	inside := authhttp.Verify(nil, mounted("GET /api/v1/things"), authhttp.UnderPrefix(prefix))
+	if inside == nil {
+		t.Fatal("an undeclared route under the prefix was accepted, so the case above proves nothing")
+	}
+	if strings.Contains(inside.Error(), "AtRoot") {
+		t.Fatalf("a route under the prefix is told to declare itself at the root, which would move it out of the surface it belongs to: %v", inside)
 	}
 }

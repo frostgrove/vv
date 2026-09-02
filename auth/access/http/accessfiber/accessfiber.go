@@ -34,6 +34,12 @@ func newJar(table accesshttp.Table, options []Option) jar {
 	return jar{credentials: accesshttp.NewCredentials(table, chosen.cookies)}
 }
 
+func (this jar) protect(c fiber.Ctx) error {
+	return this.credentials.Protect(c.Method(),
+		func(name string) string { return c.Get(name) },
+		func(name string) string { return c.Cookies(name) })
+}
+
 func (this jar) requested(c fiber.Ctx) (accesshttp.Delivery, error) {
 	return this.credentials.Requested(func(name string) string { return c.Get(name) })
 }
@@ -117,6 +123,9 @@ func (this *Handler) dispatch(name string) fiber.Handler {
 }
 
 func (this *Handler) SignIn(c fiber.Ctx) error {
+	if err := this.jar.protect(c); err != nil {
+		return err
+	}
 	var body access.SignInRequest
 	if err := c.Bind().Body(&body); err != nil {
 		return porthttp.BadRequest(err)
@@ -134,6 +143,9 @@ func (this *Handler) SignIn(c fiber.Ctx) error {
 }
 
 func (this *Handler) SignOut(c fiber.Ctx) error {
+	if err := this.jar.protect(c); err != nil {
+		return err
+	}
 	response, err := this.endpoints.SignOut(c.Context())
 	if err != nil {
 		return err
@@ -143,6 +155,9 @@ func (this *Handler) SignOut(c fiber.Ctx) error {
 }
 
 func (this *Handler) SignOutAll(c fiber.Ctx) error {
+	if err := this.jar.protect(c); err != nil {
+		return err
+	}
 	everywhere := c.Query("all") == "true"
 	response, err := this.endpoints.SignOutAll(c.Context(), everywhere)
 	if err != nil {
@@ -156,6 +171,9 @@ func (this *Handler) SignOutAll(c fiber.Ctx) error {
 }
 
 func (this *Handler) ChangeSecret(c fiber.Ctx) error {
+	if err := this.jar.protect(c); err != nil {
+		return err
+	}
 	var body access.ChangeSecretRequest
 	if err := c.Bind().Body(&body); err != nil {
 		return porthttp.BadRequest(err)
@@ -184,6 +202,9 @@ func (this *Handler) ListSessions(c fiber.Ctx) error {
 }
 
 func (this *Handler) KillSession(c fiber.Ctx) error {
+	if err := this.jar.protect(c); err != nil {
+		return err
+	}
 	if err := this.endpoints.KillSession(c.Context(), c.Params("id")); err != nil {
 		return err
 	}
@@ -220,6 +241,9 @@ func (this *RegisterHandler[P]) Mount(r fiber.Router) {
 func (this *RegisterHandler[P]) Route() accesshttp.Route { return this.route }
 
 func (this *RegisterHandler[P]) Register(c fiber.Ctx) error {
+	if err := this.jar.protect(c); err != nil {
+		return err
+	}
 	var payload P
 	if err := c.Bind().Body(&payload); err != nil {
 		return porthttp.BadRequest(err)
@@ -257,6 +281,9 @@ func (this *RefreshHandler) Mount(r fiber.Router) {
 func (this *RefreshHandler) Route() accesshttp.Route { return this.route }
 
 func (this *RefreshHandler) Refresh(c fiber.Ctx) error {
+	if err := this.jar.protect(c); err != nil {
+		return err
+	}
 	var body access.RefreshRequest
 
 	if len(c.Body()) > 0 {

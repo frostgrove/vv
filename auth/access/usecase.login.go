@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+
+	"github.com/frostgrove/vv/errs"
 )
 
 type LoginUseCase struct {
@@ -24,6 +26,15 @@ func (this *LoginUseCase) Issuing(issuer SessionIssuer) *LoginUseCase {
 func (this *LoginUseCase) Execute(ctx context.Context, cmd LoginCommand) (AuthResponse, error) {
 	if cmd.Subject == "" {
 		return AuthResponse{}, fmt.Errorf("access: signing in with no subject type")
+	}
+
+	attempt := Attempt{Subject: cmd.Subject, Identifier: cmd.Identifier, IP: cmd.Agent.IP}
+	if err := this.admit(ctx, attempt); err != nil {
+		return AuthResponse{}, err
+	}
+	if !this.withinBounds(cmd) {
+		this.recordAttempt(ctx, attempt, AttemptFailed)
+		return AuthResponse{}, badCredentials("Login")
 	}
 
 	var (
@@ -76,12 +87,26 @@ func (this *LoginUseCase) Execute(ctx context.Context, cmd LoginCommand) (AuthRe
 		return err
 	})
 	if err != nil {
+		if isBadCredentials(err) {
+			this.recordAttempt(ctx, attempt, AttemptFailed)
+		}
 		return AuthResponse{}, err
 	}
+	this.recordAttempt(ctx, attempt, AttemptSucceeded)
 
 	if err := directory.Touch(ctx, ref.ID); err != nil {
 		this.Log.WarnContext(ctx, "could not record a sign-in",
 			slog.String("subject", ref.String()), slog.Any("err", err))
 	}
 	return response, nil
+}
+
+func (this *LoginUseCase) withinBounds(cmd LoginCommand) bool {
+	return len(cmd.Identifier) <= this.Config.MaxIdentifierLength() &&
+		len(cmd.Password) <= this.Config.MaxPasswordLength()
+}
+
+func isBadCredentials(err error) bool {
+	fault, ok := errs.AsFault(err)
+	return ok && fault.Code == CodeBadCredentials
 }

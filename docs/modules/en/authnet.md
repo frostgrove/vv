@@ -67,6 +67,8 @@ neighbours are not authenticated.
 |---|---|
 | `Middleware(guard, opts...)` | an ordinary `func(http.Handler) http.Handler` |
 | `Handler(guard, next, opts...)` | the same, applied to one handler |
+| `AnswerPreflight(middleware, preflight)` | wraps it so a browser's CORS preflight — `OPTIONS`, an `Origin`, an `Access-Control-Request-Method` and no `Authorization` — skips the guard and is answered by the handler you name, without ever reaching `next` ([[D-103]]). An `OPTIONS` carrying a credential is authenticated like any other request |
+| `SkipPreflight(middleware)` | the same wrapper with nobody named to answer: the preflight gets a bare `204` and no `Access-Control-Allow-*` header, which the browser refuses — visibly, instead of a forgeable pair of headers reaching a handler unauthenticated |
 
 `opts` are `porthttp.RenderOption`s — the same ones `crudnet.Errors` takes — so
 a refusal renders through your vocabulary and your message catalogue.
@@ -102,9 +104,11 @@ directly.
 |---|---|
 | `Over(mux)` | a mux that remembers what was registered on it; `nil` gets a new one |
 | `Surface.Handle` / `HandleFunc` | register, and record |
-| `Surface.Mux()` | the mux, for handing to a server |
+| `Surface.Handler()` | what the surface serves, and nothing more: no way to register past the recorder |
+| `Surface.Mux()` | the mux itself — the escape hatch, and the thing `Handler` exists to make unnecessary |
 | `Surface.Routes()` | what was registered, as `[]authhttp.Route` |
-| `Surface.Verify(declared, opts…)` | that, compared against the declarations |
+| `Surface.Verify(declared, opts…)` | that, compared against the declarations: the prefix's relative ones, and the `authhttp.AtRoot` ones for everything outside it |
+| `Surface.VerifyAreas(areas…)` | the same, over every recorded route — see [authhttp](authhttp.md) |
 | `AnyMethod` | the method recorded for a pattern that names none |
 
 This is the one place the three HTTP bindings do not do the same thing, and the
@@ -115,8 +119,14 @@ has to be recorded as it is made.
 **What that costs:** a handler registered straight on the wrapped mux is
 invisible here. On net/http the gate catches a stale declaration and an endpoint
 added *through the Surface* without one, and cannot catch one that went around
-it. `Surface.Mux` exists for handing the finished mux to a server, not for
-registering more on it.
+it. That is a documented limit of this binding rather than a defect to hide —
+[[D-073]] refuses to make the recorder look like the other two, and
+`TestARouteRegisteredPastTheSurfaceIsInvisibleToTheGate` pins it.
+
+Serve with `Surface.Handler()`. It forwards to the same mux and offers no way to
+add anything to it, so nothing in an application has to hold the value that can
+register past the gate. `Surface.Mux()` remains for a caller that genuinely needs
+the mux; a route mounted through it is one nobody verified.
 
 A pattern with no verb answers every verb, which is a decision and not an
 omission — so it is declared as one, with `AnyMethod`, rather than silently

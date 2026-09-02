@@ -48,6 +48,8 @@ func (this *SetPasswordUseCase) Execute(ctx context.Context, cmd SetPasswordComm
 			return err
 		}
 		switch {
+		case len(credentials) > 1:
+			return ambiguousPassword(cmd.Subject, len(credentials))
 		case len(credentials) == 0:
 			err = this.Store.Credentials.SaveOnly(txCtx, &Credential{
 				SubjectType: string(cmd.Subject.Type),

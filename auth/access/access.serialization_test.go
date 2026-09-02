@@ -365,7 +365,7 @@ func serialDeps(t *testing.T, source crud.Source, issuer *serialIssuer) *Deps {
 	directories := MustDirectories(stubDirectory{active: true})
 	grants := NewGrants(store, directories)
 	issuer.store = store
-	return newDeps(store, grants, cheapHasher{}, Config{}, slog.New(slog.DiscardHandler), nil)
+	return newDeps(store, grants, cheapHasher{}, Config{}, slog.New(slog.DiscardHandler), nil, Protection{})
 }
 
 type serialIssuer struct {

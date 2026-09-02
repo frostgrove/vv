@@ -15,8 +15,7 @@ type Deps struct {
 	Log    *slog.Logger
 
 	revocations *revocationSinks
-
-	now func() time.Time
+	protection  Protection
 }
 
 func newDeps(
@@ -26,6 +25,7 @@ func newDeps(
 	configuration Config,
 	logger *slog.Logger,
 	revocations *revocationSinks,
+	protection Protection,
 ) *Deps {
 	return &Deps{
 		Store:       store,
@@ -34,20 +34,12 @@ func newDeps(
 		Config:      configuration,
 		Log:         logger,
 		revocations: revocations,
-		now:         time.Now,
+		protection:  protection,
 	}
-}
-
-func (this *Deps) WithClock(clock func() time.Time) *Deps {
-	this.now = clock
-	return this
 }
 
 func (this *Deps) Now() time.Time {
-	if this.now == nil {
-		return time.Now()
-	}
-	return this.now()
+	return this.Config.Now()
 }
 
 const (

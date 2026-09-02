@@ -17,6 +17,8 @@ type Cookies struct {
 	Domain string
 
 	SameSite SameSite
+
+	CrossSite CrossSite
 }
 
 type SameSite string
@@ -71,12 +73,13 @@ func (this SameSite) HTTP() http.SameSite {
 }
 
 type Credentials struct {
-	cookies  bool
-	access   cookieSpec
-	refresh  cookieSpec
-	secure   bool
-	domain   string
-	sameSite SameSite
+	cookies   bool
+	access    cookieSpec
+	refresh   cookieSpec
+	secure    bool
+	domain    string
+	sameSite  SameSite
+	protector protector
 }
 
 type cookieSpec struct{ name, path string }
@@ -102,10 +105,11 @@ func NewCredentials(table Table, policy Cookies) Credentials {
 
 		access: cookieSpec{name: table.AccessCookie(), path: orRoot(prefix)},
 
-		refresh:  cookieSpec{name: table.RefreshCookie(), path: prefix + table.Path("/refresh")},
-		secure:   policy.Secure,
-		domain:   policy.Domain,
-		sameSite: sameSite,
+		refresh:   cookieSpec{name: table.RefreshCookie(), path: prefix + table.Path("/refresh")},
+		secure:    policy.Secure,
+		domain:    policy.Domain,
+		sameSite:  sameSite,
+		protector: newProtector(policy.CrossSite),
 	}
 }
 

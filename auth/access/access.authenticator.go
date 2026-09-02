@@ -31,7 +31,7 @@ func NewAuthenticator(store *Store, grants *GrantsService, configuration Config,
 		grants: grants,
 		config: configuration.Sessions(),
 		logger: logger,
-		now:    time.Now,
+		now:    configuration.Now,
 	}
 }
 

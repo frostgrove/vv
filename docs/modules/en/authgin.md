@@ -99,15 +99,39 @@ traffic.
 | | |
 |---|---|
 | `Routes(engine)` | what this application actually serves, as `[]authhttp.Route` |
-| `Verify(engine, declared, opts…)` | that, compared against the declarations, in one call |
+| `Verify(engine, declared, opts…)` | that, compared against the declarations: the prefix's relative ones, and the `authhttp.AtRoot` ones for everything outside it |
+| `VerifyAreas(engine, areas…)` | the same, over every mounted route — see [authhttp](authhttp.md) |
+| `AnswerPreflight(middleware, preflight)` | wraps the middleware so a browser's CORS preflight is answered by the handler you name instead of being asked for a credential |
+| `SkipPreflight(middleware)` | the same wrapper with nobody named: the preflight is answered `204` and reaches no route |
 
 It reads Gin's own table rather than a list kept alongside it: a declaration is
 only worth checking against a second statement arrived at independently.
 
-HEAD and OPTIONS are left out. Gin does not generate a HEAD the way Fiber does,
-so one that appears here was registered on purpose — and is skipped anyway,
-because the three bindings must not disagree about what a declaration has to
-cover ([[D-073]]).
+Nothing is left out. Gin generates neither a HEAD nor an OPTIONS route, so every
+method in this table was registered on purpose and has to declare its access —
+including the `OPTIONS` handler somebody wrote by hand, which is a route however
+much it looks like a CORS answer ([[D-073]]).
+
+## Letting a CORS preflight through
+
+A guard in front of the CORS middleware answers a browser's preflight with a 401,
+and the request it was asking about never happens.
+
+```go
+engine.Use(authgin.AnswerPreflight(authgin.Middleware(guard), cors.Default()))
+```
+
+It recognises a preflight and nothing else: `OPTIONS`, an `Origin`, an
+`Access-Control-Request-Method`, and no `Authorization` header. That one skips
+the guard and goes to the handler you named, and the context is aborted after it
+returns, so **the `OPTIONS` route Gin lets you write never runs unauthenticated**
+([[D-103]]). An `OPTIONS` carrying a credential is authenticated like any other
+request.
+
+`SkipPreflight(middleware)` is the same wrapper with nobody named to answer, and
+answers `204` itself with no `Access-Control-Allow-*` header — a visible CORS
+failure rather than an open door, since the two headers the predicate reads are
+the client's to set.
 
 ## See also
 

@@ -69,3 +69,73 @@ func TestTheGateRefusesADeclarationThatMountsNothing(t *testing.T) {
 		t.Fatalf("the failure does not say the declaration is stale: %v", err)
 	}
 }
+
+func TestAHandMountedHeadOrOptionsRouteMustDeclareItsAccess(t *testing.T) {
+	app := mountedApp(func(r fiber.Router) {
+		r.Get("/things", nothing)
+		r.Add([]string{fiber.MethodHead}, "/health", nothing)
+		r.Add([]string{fiber.MethodOptions}, "/things", nothing)
+	})
+
+	err := authfiber.Verify(app, []authhttp.Endpoint{
+		authhttp.Requires(http.MethodGet, "/things", auth.Permission("thing.read")),
+	}, authhttp.UnderPrefix(apiPrefix))
+	if err == nil {
+		t.Fatal("a HEAD and an OPTIONS handler somebody mounted by hand answer without ever having been considered")
+	}
+	for _, want := range []string{"HEAD /api/v1/health", "OPTIONS /api/v1/things"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("the failure does not name %s: %v", want, err)
+		}
+	}
+}
+
+func TestTheGateRefusesARouteMountedOutsideEveryVerifiedSurface(t *testing.T) {
+	app := mountedApp(func(r fiber.Router) { r.Get("/things", nothing) })
+	app.Get("/live", nothing)
+
+	declared := authhttp.Under(apiPrefix,
+		authhttp.Requires(http.MethodGet, "/things", auth.Permission("thing.read")))
+
+	err := authfiber.VerifyAreas(app, declared)
+	if err == nil {
+		t.Fatal("a route mounted outside the verified prefix answered without declaring anything")
+	}
+	if !strings.Contains(err.Error(), "GET /live") {
+		t.Fatalf("the failure does not name the route nobody verified: %v", err)
+	}
+
+	if err := authfiber.VerifyAreas(app, declared, authhttp.Rooted(
+		authhttp.Public(http.MethodGet, "/live", "a load balancer cannot present a credential"),
+	)); err != nil {
+		t.Fatalf("the probe was declared as its own surface and the gate still refused: %v", err)
+	}
+}
+
+func TestAPrefixIsNotAnExemptionForTheRoutesOutsideIt(t *testing.T) {
+	app := mountedApp(func(r fiber.Router) { r.Get("/things", nothing) })
+	app.Get("/live", nothing)
+	app.Get("/favicon.ico", nothing)
+
+	declared := []authhttp.Endpoint{
+		authhttp.Requires(http.MethodGet, "/things", auth.Permission("thing.read")),
+	}
+
+	err := authfiber.Verify(app, declared, authhttp.UnderPrefix(apiPrefix))
+	if err == nil {
+		t.Fatalf("the probe and the favicon answer outside %s and configuring that prefix was enough to stop anybody looking at them", apiPrefix)
+	}
+	for _, want := range []string{"GET /live", "GET /favicon.ico"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("the failure does not name %s: %v", want, err)
+		}
+	}
+
+	declared = append(declared,
+		authhttp.AtRoot(authhttp.Public(http.MethodGet, "/live", "a load balancer cannot present a credential")),
+		authhttp.AtRoot(authhttp.Public(http.MethodGet, "/favicon.ico", "a browser asks for it before anybody signs in")),
+	)
+	if err := authfiber.Verify(app, declared, authhttp.UnderPrefix(apiPrefix)); err != nil {
+		t.Fatalf("every route outside the prefix was declared where it answers and the gate still refused: %v", err)
+	}
+}

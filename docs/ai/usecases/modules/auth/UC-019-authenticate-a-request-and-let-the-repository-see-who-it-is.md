@@ -35,7 +35,10 @@ request.
    are one answer to the client.
 5. The refusal names no reason. A client cannot tell which check failed, and
    cannot learn whether a subject exists.
-6. The reason is still recoverable inside the process, for a log.
+6. The reason is still recoverable inside the process, for a log — and it is
+   *reported* at one seam rather than left to each transport: an observer
+   registered on the guard sees every refusal, with a kind, a sentence the
+   library wrote and the error, and never the credential itself.
 7. An endpoint may be declared optional, meaning a request with no credential
    proceeds with no identity. A *bad* credential is still refused there: a token
    that does not verify never silently becomes anonymous.
@@ -58,6 +61,25 @@ request.
     time — and every relaxation of it has a name that appears at the call site.
 15. Everything above is the same on `net/http`, Gin, Fiber and gRPC. The same
     guard object drives all four.
+16. A request presents its credential in one place. The same source carrying two
+    values, a cookie beside an `Authorization` header, or two cookies of the
+    configured name are all refused rather than ranked — an optional endpoint
+    included, because an ambiguous credential is a bad credential and not an
+    absent one.
+17. A refusal a transport writes carries every header it was rendered with. A
+    401 that offers two authentication schemes offers both, on every binding.
+18. A browser's CORS preflight is not refused for presenting no credential.
+    Ordering a CORS middleware in front of the door does it where the chain is
+    the author's to order; where it is not, each HTTP binding has a decorator
+    that recognises a preflight by its one shape — `OPTIONS`, an origin, a
+    requested method and no credential — and nothing else. An `OPTIONS` carrying
+    a credential is authenticated like any other request.
+19. What a preflight is granted is an answer, not a route. The decorator hands
+    it to the handler the author named for preflights, or answers it itself when
+    nobody was named, and the request ends there — no handler of the
+    application's own runs for a request that skipped the door. The shape the
+    decorator recognises is written by whoever sends the request, so anything
+    reachable past it is reachable by anyone.
 
 ## Out of scope
 
@@ -67,7 +89,9 @@ request.
   authorizing an operation are separate, and an authenticated caller with no
   permissions is a normal state.
 - **Session cookies, CSRF and rate limiting.** Different subsystems; none of
-  them is what a repository rule needs.
+  them is what a repository rule needs. Limiting *sign-in attempts* belongs to
+  the subsystem that owns sign-in and is part of [[UC-023]]; this use case is
+  about a credential already in hand.
 - **mTLS.** A principal derived from a client certificate is an authenticator
   the application writes; the rest of this use case then applies unchanged.
 - **Revoking a token before it expires.** A denylist is application state, and

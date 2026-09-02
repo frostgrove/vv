@@ -1,7 +1,9 @@
 package access
 
 import (
+	"encoding/base64"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -118,4 +120,68 @@ func TestASessionTokenIsUnguessableAndStoredOnlyAsADigest(t *testing.T) {
 	if len(digest) != 64 {
 		t.Fatalf("digest is %d characters, want 64 hex characters of SHA-256", len(digest))
 	}
+}
+
+func TestAStoredHashIsRefusedUnlessEveryParameterIsInBounds(t *testing.T) {
+	h := testHasher()
+	salt := base64.RawStdEncoding.EncodeToString(make([]byte, argonSaltLen))
+	digest := base64.RawStdEncoding.EncodeToString(make([]byte, argonKeyLen))
+	sound := fmt.Sprintf("$argon2id$v=19$m=8192,t=1,p=1$%s$%s", salt, digest)
+	if _, err := h.Verify("anything", sound); err != nil {
+		t.Fatalf("the control hash was refused, so the refusals below prove nothing: %v", err)
+	}
+
+	for name, encoded := range map[string]string{
+		"no digest at all":       fmt.Sprintf("$argon2id$v=19$m=8192,t=1,p=1$%s$", salt),
+		"a digest of four bytes": fmt.Sprintf("$argon2id$v=19$m=8192,t=1,p=1$%s$aGFzaA", salt),
+		"a salt of four bytes":   fmt.Sprintf("$argon2id$v=19$m=8192,t=1,p=1$c2FsdA$%s", digest),
+		"a memory cost of zero":  fmt.Sprintf("$argon2id$v=19$m=0,t=1,p=1$%s$%s", salt, digest),
+		"no rounds":              fmt.Sprintf("$argon2id$v=19$m=8192,t=0,p=1$%s$%s", salt, digest),
+		"no threads":             fmt.Sprintf("$argon2id$v=19$m=8192,t=1,p=0$%s$%s", salt, digest),
+		"a terabyte of memory":   fmt.Sprintf("$argon2id$v=19$m=1073741824,t=1,p=1$%s$%s", salt, digest),
+		"four billion rounds":    fmt.Sprintf("$argon2id$v=19$m=8192,t=4000000000,p=1$%s$%s", salt, digest),
+		"a cost that is text":    fmt.Sprintf("$argon2id$v=19$m=lots,t=1,p=1$%s$%s", salt, digest),
+		"a fourth cost":          fmt.Sprintf("$argon2id$v=19$m=8192,t=1,p=1,x=9$%s$%s", salt, digest),
+		"no leading empty field": fmt.Sprintf("argon2id$v=19$m=8192,t=1,p=1$%s$%s$", salt, digest),
+	} {
+		t.Run(name, func(t *testing.T) {
+			ok, err := h.Verify("anything", encoded)
+			if ok {
+				t.Fatalf("%q verified", encoded)
+			}
+			if !errors.Is(err, ErrSecretFormat) {
+				t.Fatalf("Verify(%q) err = %v, want ErrSecretFormat", encoded, err)
+			}
+		})
+	}
+}
+
+func FuzzAStoredHashIsEitherRefusedOrWithinItsBounds(f *testing.F) {
+	f.Add("$argon2id$v=19$m=8192,t=1,p=1$AAAAAAAAAAAAAAAAAAAAAA$AAAAAAAAAAAAAAAAAAAAAA")
+	f.Add("$argon2id$v=19$m=65536,t=3,p=4$c2FsdA$")
+	f.Add("$argon2id$v=19$m=65536,t=3,p=4$c2FsdA$aGFzaA")
+	f.Add("$argon2id$v=99999999999999999999$m=8,t=1,p=1$AAAAAAAAAAA$AAAAAAAAAAA")
+	f.Add("")
+
+	f.Fuzz(func(t *testing.T, encoded string) {
+		stored, err := parseStoredHash(encoded)
+		if err != nil {
+			if !errors.Is(err, ErrSecretFormat) {
+				t.Fatalf("parsing %q answered %v, which no caller distinguishes from a mismatch", encoded, err)
+			}
+			return
+		}
+		switch {
+		case stored.memory < argonMinMemory || stored.memory > argonMaxMemory:
+			t.Fatalf("%q asks for %d KiB of memory", encoded, stored.memory)
+		case stored.time < argonMinTime || stored.time > argonMaxTime:
+			t.Fatalf("%q asks for %d rounds", encoded, stored.time)
+		case stored.threads < argonMinThreads:
+			t.Fatalf("%q asks for %d threads", encoded, stored.threads)
+		case len(stored.salt) < argonMinSaltLen || len(stored.salt) > argonMaxSaltLen:
+			t.Fatalf("%q carries a salt of %d bytes", encoded, len(stored.salt))
+		case len(stored.digest) < argonMinKeyLen || len(stored.digest) > argonMaxKeyLen:
+			t.Fatalf("%q carries a digest of %d bytes", encoded, len(stored.digest))
+		}
+	})
 }

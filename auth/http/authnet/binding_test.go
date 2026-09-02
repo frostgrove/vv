@@ -64,3 +64,30 @@ func TestARouteRegisteredPastTheSurfaceIsInvisibleToTheGate(t *testing.T) {
 		t.Fatal("an undeclared route registered through the Surface was accepted, so this binding's gate catches nothing at all")
 	}
 }
+
+func TestTheSurfaceCanBeServedWithoutHoldingTheEscapeHatch(t *testing.T) {
+	surface := authnet.Over(nil)
+	surface.HandleFunc("GET /api/v1/things", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusTeapot)
+	})
+
+	handler := surface.Handler()
+	if _, registers := handler.(*http.ServeMux); registers {
+		t.Fatal("what a consumer serves is the mux itself, so serving and registering past the gate are the same value")
+	}
+
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/v1/things", nil))
+	if recorder.Code != http.StatusTeapot {
+		t.Fatalf("the sealed handler answered %d, so it does not serve what the surface recorded", recorder.Code)
+	}
+}
+
+func TestATypedNilPreflightAnswerIsStillNothingToAnswerWith(t *testing.T) {
+	defer func() {
+		if recover() == nil {
+			t.Fatal("a nil *corsAnswer was accepted as the thing that answers a preflight")
+		}
+	}()
+	authnet.AnswerPreflight(authnet.Middleware(auth.NewGuard(accepts())), (*corsAnswer)(nil))
+}

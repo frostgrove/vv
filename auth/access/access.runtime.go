@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/frostgrove/vv/auth"
 	"github.com/frostgrove/vv/crud"
@@ -16,6 +17,8 @@ type RuntimeSpec struct {
 	Logger *slog.Logger
 
 	Hasher Hasher
+
+	Protection Protection
 }
 
 type Runtime struct {
@@ -25,6 +28,8 @@ type Runtime struct {
 	hasher Hasher
 	config Config
 	logger *slog.Logger
+
+	protection Protection
 
 	subjects  []*MountedSubject
 	declared  []ModuleGrants
@@ -42,7 +47,7 @@ func New(spec RuntimeSpec) (*Runtime, error) {
 	}
 	hasher := spec.Hasher
 	if hasher == nil {
-		hasher = NewHasher()
+		hasher = Bulkhead(NewHasher())
 	}
 	return &Runtime{
 		store:       NewStore(spec.Source),
@@ -50,6 +55,7 @@ func New(spec RuntimeSpec) (*Runtime, error) {
 		hasher:      hasher,
 		config:      spec.Config,
 		logger:      spec.Logger,
+		protection:  spec.Protection,
 		declared:    []ModuleGrants{OwnGrants()},
 		revocations: newRevocationSinks(),
 	}, nil
@@ -62,8 +68,16 @@ func (this *Runtime) Config() Config { return this.config }
 func (this *Runtime) Seeder() *Seeder { return NewSeeder(this.store, this.logger) }
 
 func (this *Runtime) SetPassword() *SetPasswordUseCase {
-	return NewSetPassword(newDeps(
-		this.store, this.grants, this.hasher, this.config, this.logger, this.revocations))
+	return NewSetPassword(this.deps())
+}
+
+func (this *Runtime) ReannounceRevocations(ctx context.Context, since time.Time) error {
+	return this.deps().ReannounceRevocations(ctx, since)
+}
+
+func (this *Runtime) deps() *Deps {
+	return newDeps(
+		this.store, this.grants, this.hasher, this.config, this.logger, this.revocations, this.protection)
 }
 
 func (this *Runtime) Declare(grants ...ModuleGrants) {
@@ -172,7 +186,8 @@ func Mount[P any](runtime *Runtime, spec SubjectSpec[P]) (*MountedSubject, *Sign
 	}
 
 	dependencies := newDeps(
-		runtime.store, candidateGrants, runtime.hasher, runtime.config, runtime.logger, runtime.revocations)
+		runtime.store, candidateGrants, runtime.hasher, runtime.config, runtime.logger,
+		runtime.revocations, runtime.protection)
 
 	var signUp *SignUpUseCase[P]
 	if spec.Registrar != nil {

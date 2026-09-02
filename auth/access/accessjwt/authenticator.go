@@ -2,6 +2,7 @@ package accessjwt
 
 import (
 	"context"
+	"errors"
 
 	"github.com/frostgrove/vv/auth"
 	"github.com/frostgrove/vv/auth/access"
@@ -23,6 +24,9 @@ func (this *authenticator) Authenticate(ctx context.Context, credential auth.Cre
 
 	claims, err := this.parser.Parse(ctx, credential.Token)
 	if err != nil {
+		if !errors.Is(err, auth.ErrUnauthenticated) {
+			return nil, err
+		}
 		return nil, auth.Unauthenticated("the presented token is not a valid access token")
 	}
 

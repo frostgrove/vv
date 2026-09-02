@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -60,29 +61,87 @@ func (this *Argon2Hasher) Hash(password string) (string, error) {
 }
 
 func (this *Argon2Hasher) Verify(password, encoded string) (bool, error) {
+	stored, err := parseStoredHash(encoded)
+	if err != nil {
+		return false, err
+	}
+	got := argon2.IDKey([]byte(password), stored.salt, stored.time, stored.memory, stored.threads, uint32(len(stored.digest)))
+	return subtle.ConstantTimeCompare(got, stored.digest) == 1, nil
+}
+
+type storedHash struct {
+	memory  uint32
+	time    uint32
+	threads uint8
+	salt    []byte
+	digest  []byte
+}
+
+const (
+	argonMinMemory  = 8
+	argonMaxMemory  = 1 << 20
+	argonMinTime    = 1
+	argonMaxTime    = 16
+	argonMinThreads = 1
+	argonMinSaltLen = 8
+	argonMaxSaltLen = 64
+	argonMinKeyLen  = 16
+	argonMaxKeyLen  = 64
+)
+
+func parseStoredHash(encoded string) (storedHash, error) {
 	parts := strings.Split(encoded, "$")
-	if len(parts) != 6 || parts[1] != "argon2id" {
-		return false, ErrSecretFormat
+	if len(parts) != 6 || parts[0] != "" || parts[1] != "argon2id" {
+		return storedHash{}, ErrSecretFormat
 	}
-	var version int
-	if _, err := fmt.Sscanf(parts[2], "v=%d", &version); err != nil || version != argon2.Version {
-		return false, ErrSecretFormat
+	version, err := bounded(parts[2], "v=", argon2.Version, argon2.Version)
+	if err != nil || version != argon2.Version {
+		return storedHash{}, ErrSecretFormat
 	}
-	var memory, time uint32
-	var threads uint8
-	if _, err := fmt.Sscanf(parts[3], "m=%d,t=%d,p=%d", &memory, &time, &threads); err != nil {
-		return false, ErrSecretFormat
+
+	cost := strings.Split(parts[3], ",")
+	if len(cost) != 3 {
+		return storedHash{}, ErrSecretFormat
 	}
-	salt, err := base64.RawStdEncoding.DecodeString(parts[4])
+	memory, memoryErr := bounded(cost[0], "m=", argonMinMemory, argonMaxMemory)
+	time, timeErr := bounded(cost[1], "t=", argonMinTime, argonMaxTime)
+	threads, threadsErr := bounded(cost[2], "p=", argonMinThreads, 255)
+	if memoryErr != nil || timeErr != nil || threadsErr != nil {
+		return storedHash{}, ErrSecretFormat
+	}
+
+	salt, err := decoded(parts[4], argonMinSaltLen, argonMaxSaltLen)
 	if err != nil {
-		return false, ErrSecretFormat
+		return storedHash{}, err
 	}
-	want, err := base64.RawStdEncoding.DecodeString(parts[5])
+	digest, err := decoded(parts[5], argonMinKeyLen, argonMaxKeyLen)
 	if err != nil {
-		return false, ErrSecretFormat
+		return storedHash{}, err
 	}
-	got := argon2.IDKey([]byte(password), salt, time, memory, threads, uint32(len(want)))
-	return subtle.ConstantTimeCompare(got, want) == 1, nil
+	return storedHash{memory: memory, time: time, threads: uint8(threads), salt: salt, digest: digest}, nil
+}
+
+func bounded(field, prefix string, low, high uint64) (uint32, error) {
+	digits, found := strings.CutPrefix(field, prefix)
+	if !found || digits == "" || (len(digits) > 1 && digits[0] == '0') {
+		return 0, ErrSecretFormat
+	}
+	value, err := strconv.ParseUint(digits, 10, 32)
+	if err != nil || value < low || value > high {
+		return 0, ErrSecretFormat
+	}
+	return uint32(value), nil
+}
+
+func decoded(field string, low, high int) ([]byte, error) {
+	if len(field) > base64.RawStdEncoding.EncodedLen(high) {
+		return nil, ErrSecretFormat
+	}
+	out, err := base64.RawStdEncoding.DecodeString(field)
+	if err != nil || len(out) < low || len(out) > high {
+		return nil, ErrSecretFormat
+	}
+	return out, nil
 }
 
 func DummyHash() string {

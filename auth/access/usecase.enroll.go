@@ -22,10 +22,8 @@ func (this *EnrollUseCase) execute(ctx context.Context, cmd EnrollCommand, resol
 	if cmd.Subject.Zero() {
 		return fmt.Errorf("access: enrolling an empty subject")
 	}
-	if cmd.Identifier == "" {
-		return errs.Validation().
-			Field("Identifier").Code(errs.CodeRequired).
-			Entity("Credential").Op("Enroll").Fault()
+	if err := this.checkIdentifier(cmd.Identifier); err != nil {
+		return err
 	}
 	if err := this.checkPassword(cmd.Password); err != nil {
 		return err
@@ -37,6 +35,13 @@ func (this *EnrollUseCase) execute(ctx context.Context, cmd EnrollCommand, resol
 	}
 
 	return this.Store.Tx(ctx, func(txCtx context.Context) error {
+		enrolled, err := this.Store.LockPasswordCredentials(txCtx, cmd.Subject)
+		if err != nil {
+			return err
+		}
+		if len(enrolled) > 0 {
+			return alreadyEnrolled()
+		}
 		if err := this.Store.Credentials.SaveOnly(txCtx, &Credential{
 			SubjectType: string(cmd.Subject.Type),
 			SubjectID:   cmd.Subject.ID,
@@ -48,6 +53,13 @@ func (this *EnrollUseCase) execute(ctx context.Context, cmd EnrollCommand, resol
 		}
 		return this.grantRole(txCtx, cmd.Subject, cmd.Role, resolved)
 	})
+}
+
+func alreadyEnrolled() error {
+	return errs.Conflict().
+		Field("Identifier").Code(errs.CodeUnique).
+		Message("this account already signs in with a password; change or reset it instead").
+		Entity("Credential").Op("Enroll").Fault()
 }
 
 func (this *EnrollUseCase) grantRole(ctx context.Context, subject SubjectRef, slug auth.Role, resolved *Role) error {
@@ -77,6 +89,31 @@ func (this *Deps) checkPassword(password string) error {
 			Params(errs.P{"min": minimum}).
 			Message(fmt.Sprintf("a password needs at least %d characters", minimum)).
 			Entity("Credential").Fault()
+	}
+	maximum := this.Config.MaxPasswordLength()
+	if len(password) > maximum {
+		return errs.Validation().
+			Field("Password").Code(errs.CodeTooLong).
+			Params(errs.P{"max": maximum}).
+			Message(fmt.Sprintf("a password may be at most %d bytes long", maximum)).
+			Entity("Credential").Fault()
+	}
+	return nil
+}
+
+func (this *Deps) checkIdentifier(identifier string) error {
+	if identifier == "" {
+		return errs.Validation().
+			Field("Identifier").Code(errs.CodeRequired).
+			Entity("Credential").Op("Enroll").Fault()
+	}
+	maximum := this.Config.MaxIdentifierLength()
+	if len(identifier) > maximum {
+		return errs.Validation().
+			Field("Identifier").Code(errs.CodeTooLong).
+			Params(errs.P{"max": maximum}).
+			Message(fmt.Sprintf("an identifier may be at most %d bytes long", maximum)).
+			Entity("Credential").Op("Enroll").Fault()
 	}
 	return nil
 }

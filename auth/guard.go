@@ -9,17 +9,21 @@ import (
 )
 
 type Guard struct {
-	authn    Authenticator
-	header   string
-	optional bool
-	lookup   func(get func(string) string) (Credential, bool)
-	ready    bool
+	authn     Authenticator
+	header    string
+	optional  bool
+	lookup    Lookout
+	observers []Observer
+	ready     bool
 }
 
+type Lookout func(get func(name string) string) (Credential, bool, error)
+
 type guardConfig struct {
-	header   string
-	optional bool
-	lookup   func(get func(string) string) (Credential, bool)
+	header    string
+	optional  bool
+	lookup    Lookout
+	observers []Observer
 }
 
 type Option interface {
@@ -44,11 +48,12 @@ func NewGuard(a Authenticator, options ...Option) *Guard {
 	}
 
 	return &Guard{
-		authn:    a,
-		header:   cfg.header,
-		optional: cfg.optional,
-		lookup:   cfg.lookup,
-		ready:    true,
+		authn:     a,
+		header:    cfg.header,
+		optional:  cfg.optional,
+		lookup:    cfg.lookup,
+		observers: cfg.observers,
+		ready:     true,
 	}
 }
 
@@ -75,6 +80,18 @@ func Lookup(fn func(get func(name string) string) (Credential, bool)) Option {
 	return guardOption(func(cfg *guardConfig) {
 		if fn == nil {
 			panic("auth: Lookup needs a function")
+		}
+		cfg.lookup = func(get func(name string) string) (Credential, bool, error) {
+			credential, found := fn(get)
+			return credential, found, nil
+		}
+	})
+}
+
+func LookupOrRefuse(fn Lookout) Option {
+	return guardOption(func(cfg *guardConfig) {
+		if fn == nil {
+			panic("auth: LookupOrRefuse needs a function")
 		}
 		cfg.lookup = fn
 	})
@@ -109,37 +126,42 @@ func (this *Guard) authenticate(
 	values func(name string) []string,
 ) (context.Context, error) {
 	if err := this.Validate(); err != nil {
-		return ctx, internal(err)
+		return ctx, this.refuse(ctx, ReasonGuardUnusable, "the guard was never built", internal(err))
 	}
 	if mark := authenticationMark(ctx, this); mark != nil {
 		if mark == latestAuthenticationMark(ctx) && mark.principal == principalStateFrom(ctx) {
 			return ctx, nil
 		}
-		return ctx, internal(fmt.Errorf(
-			"%w: the same Guard appears on both sides of another successful identity boundary",
-			ErrAmbiguousGuardOrder,
-		))
+		return ctx, this.refuse(ctx, ReasonGuardUnusable,
+			"the same guard authenticates on both sides of another identity boundary",
+			internal(fmt.Errorf(
+				"%w: the same Guard appears on both sides of another successful identity boundary",
+				ErrAmbiguousGuardOrder,
+			)))
 	}
 
-	cred, ok, err := this.credential(values)
+	credential, found, err := this.credential(values)
 	if err != nil {
-		return ctx, err
+		return ctx, this.refuse(ctx, ReasonAmbiguousCredential,
+			"the credential source carried more than one value", err)
 	}
-	if !ok {
+	if !found {
 		if this.optional {
 			return ctx, nil
 		}
-		return ctx, Unauthenticated("no credential presented")
+		return ctx, this.refuse(ctx, ReasonNoCredential, "no credential presented",
+			Unauthenticated("no credential presented"))
 	}
 
-	p, err := this.authn.Authenticate(ctx, cred)
+	principal, err := this.authn.Authenticate(ctx, credential)
 	if err != nil {
-		return ctx, err
+		return ctx, this.refuse(ctx, ReasonRejected, "the authenticator refused the credential", err)
 	}
-	if nilvalue.Is(p) {
-		return ctx, Unauthenticated("authenticator returned no principal")
+	if nilvalue.Is(principal) {
+		return ctx, this.refuse(ctx, ReasonNoPrincipal, "the authenticator returned no principal",
+			Unauthenticated("authenticator returned no principal"))
 	}
-	return markAuthenticated(WithPrincipal(ctx, p), this), nil
+	return markAuthenticated(WithPrincipal(ctx, principal), this), nil
 }
 
 func (this *Guard) credential(values func(name string) []string) (Credential, bool, error) {
@@ -172,9 +194,12 @@ func (this *Guard) credential(values func(name string) []string) (Credential, bo
 		}
 		return ""
 	}
-	credential, ok := this.lookup(get)
+	credential, ok, err := this.lookup(get)
 	if cardinality > 1 {
 		return Credential{}, false, invalidCredentialCardinality(cardinality)
+	}
+	if err != nil {
+		return Credential{}, false, err
 	}
 	return credential, ok, nil
 }

@@ -30,6 +30,10 @@ func (this *ChangePasswordUseCase) Execute(ctx context.Context, cmd ChangePasswo
 			return badCredentials("ChangePassword")
 		}
 
+		if len(credentials) > 1 {
+			return ambiguousPassword(cmd.Subject, len(credentials))
+		}
+
 		credential := credentials[0]
 		ok, err := this.Hasher.Verify(cmd.Current, credential.SecretHash)
 		if err != nil && !errors.Is(err, ErrSecretFormat) {

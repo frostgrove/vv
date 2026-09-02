@@ -33,15 +33,24 @@ type Presented struct {
 	Current  string
 	Previous string
 
-	RotatedAt *time.Time
+	RotatedAt  *time.Time
+	LastUsedAt time.Time
 
 	Revoked   bool
 	ExpiresAt time.Time
 }
 
-func Classify(presented Presented, now time.Time, grace time.Duration) Outcome {
+type Window struct {
+	Grace time.Duration
+
+	Idle time.Duration
+}
+
+func Classify(presented Presented, now time.Time, window Window) Outcome {
 	switch {
 	case presented.Revoked, !now.Before(presented.ExpiresAt):
+		return Unusable
+	case window.Idle > 0 && now.Sub(presented.LastUsedAt) > window.Idle:
 		return Unusable
 	case presented.Digest == "":
 		return Unusable
@@ -51,7 +60,7 @@ func Classify(presented Presented, now time.Time, grace time.Duration) Outcome {
 		return Unusable
 	case presented.RotatedAt == nil:
 		return Unusable
-	case now.Sub(*presented.RotatedAt) <= grace:
+	case now.Sub(*presented.RotatedAt) <= window.Grace:
 		return RotateAgain
 	default:
 		return Replay

@@ -42,13 +42,31 @@ func headerValues(c fiber.Ctx, name string) []string {
 
 func refuse(c fiber.Ctx, rd porthttp.Renderer, err error) error {
 	status, header, body := rd.Render(locale(c), err)
-	for k, vs := range header {
-		for _, v := range vs {
-			c.Set(k, v)
+	for name, values := range header {
+		for _, value := range values {
+			c.Response().Header.Add(name, value)
 		}
 	}
 	if body == nil {
 		return c.SendStatus(status)
 	}
 	return c.Status(status).JSON(body)
+}
+
+func SkipPreflight(handler fiber.Handler) fiber.Handler {
+	return AnswerPreflight(handler, func(fiberContext fiber.Ctx) error {
+		return fiberContext.SendStatus(authhttp.PreflightStatus)
+	})
+}
+
+func AnswerPreflight(handler fiber.Handler, preflight fiber.Handler) fiber.Handler {
+	if preflight == nil {
+		panic("authfiber: AnswerPreflight needs something to answer a preflight with")
+	}
+	return func(fiberContext fiber.Ctx) error {
+		if authhttp.Preflight(fiberContext.Method(), func(name string) string { return fiberContext.Get(name) }) {
+			return preflight(fiberContext)
+		}
+		return handler(fiberContext)
+	}
 }

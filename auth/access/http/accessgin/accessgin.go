@@ -36,6 +36,17 @@ func newJar(table accesshttp.Table, options []Option) jar {
 	return jar{credentials: accesshttp.NewCredentials(table, chosen.cookies)}
 }
 
+func (this jar) protect(c *gin.Context) error {
+	return this.credentials.Protect(c.Request.Method, c.GetHeader,
+		func(name string) string {
+			value, err := c.Cookie(name)
+			if err != nil {
+				return ""
+			}
+			return value
+		})
+}
+
 func (this jar) requested(c *gin.Context) (accesshttp.Delivery, error) {
 	return this.credentials.Requested(c.GetHeader)
 }
@@ -98,6 +109,10 @@ func (this *Handler) dispatch(name string) gin.HandlerFunc {
 }
 
 func (this *Handler) SignIn(c *gin.Context) {
+	if err := this.jar.protect(c); err != nil {
+		refuse(c, err)
+		return
+	}
 	var body access.SignInRequest
 	if err := c.ShouldBindJSON(&body); err != nil {
 		refuse(c, porthttp.BadRequest(err))
@@ -118,6 +133,10 @@ func (this *Handler) SignIn(c *gin.Context) {
 }
 
 func (this *Handler) SignOut(c *gin.Context) {
+	if err := this.jar.protect(c); err != nil {
+		refuse(c, err)
+		return
+	}
 	response, err := this.endpoints.SignOut(c.Request.Context())
 	if err != nil {
 		refuse(c, err)
@@ -128,6 +147,10 @@ func (this *Handler) SignOut(c *gin.Context) {
 }
 
 func (this *Handler) SignOutAll(c *gin.Context) {
+	if err := this.jar.protect(c); err != nil {
+		refuse(c, err)
+		return
+	}
 	everywhere := c.Query("all") == "true"
 	response, err := this.endpoints.SignOutAll(c.Request.Context(), everywhere)
 	if err != nil {
@@ -142,6 +165,10 @@ func (this *Handler) SignOutAll(c *gin.Context) {
 }
 
 func (this *Handler) ChangeSecret(c *gin.Context) {
+	if err := this.jar.protect(c); err != nil {
+		refuse(c, err)
+		return
+	}
 	var body access.ChangeSecretRequest
 	if err := c.ShouldBindJSON(&body); err != nil {
 		refuse(c, porthttp.BadRequest(err))
@@ -174,6 +201,10 @@ func (this *Handler) ListSessions(c *gin.Context) {
 }
 
 func (this *Handler) KillSession(c *gin.Context) {
+	if err := this.jar.protect(c); err != nil {
+		refuse(c, err)
+		return
+	}
 	if err := this.endpoints.KillSession(c.Request.Context(), c.Param("id")); err != nil {
 		refuse(c, err)
 		return
@@ -216,6 +247,10 @@ func (this *RegisterHandler[P]) Mount(r gin.IRouter) {
 func (this *RegisterHandler[P]) Route() accesshttp.Route { return this.route }
 
 func (this *RegisterHandler[P]) Register(c *gin.Context) {
+	if err := this.jar.protect(c); err != nil {
+		refuse(c, err)
+		return
+	}
 	var payload P
 	if err := c.ShouldBindJSON(&payload); err != nil {
 		refuse(c, porthttp.BadRequest(err))
@@ -256,6 +291,10 @@ func (this *RefreshHandler) Mount(r gin.IRouter) {
 func (this *RefreshHandler) Route() accesshttp.Route { return this.route }
 
 func (this *RefreshHandler) Refresh(c *gin.Context) {
+	if err := this.jar.protect(c); err != nil {
+		refuse(c, err)
+		return
+	}
 	var body access.RefreshRequest
 
 	if c.Request.Body != nil && c.Request.ContentLength != 0 {

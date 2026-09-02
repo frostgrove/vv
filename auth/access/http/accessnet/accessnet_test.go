@@ -8,6 +8,7 @@ import (
 
 	"github.com/frostgrove/vv/auth/access"
 	"github.com/frostgrove/vv/auth/access/http/accesshttp"
+	"github.com/frostgrove/vv/auth/http/authhttp"
 )
 
 func TestTheRouteTableIsMountedUnderTheConfiguredPrefix(t *testing.T) {
@@ -124,5 +125,38 @@ func assertCookiesLeftTheBody(t *testing.T, response *http.Response, body []byte
 	}
 	if _, present := decoded["refresh"]; present {
 		t.Fatalf("the rotating credential went into a cookie and stayed in the body: %s", body)
+	}
+}
+
+func crossSiteWrite() *http.Request {
+	request := httptest.NewRequest(http.MethodPost, "/api/auth/logout", nil)
+	request.AddCookie(&http.Cookie{Name: "access", Value: "the-session-cookie"})
+	request.Header.Set(accesshttp.HeaderFetchSite, "cross-site")
+	request.Header.Set(accesshttp.HeaderOrigin, "https://evil.test")
+	return request
+}
+
+func TestACookieBorneWriteFromAnotherSiteIsRefusedByThisTransport(t *testing.T) {
+	jar := newJar(accesshttp.Table{}, optionsOf([]Option{
+		Delivering(accesshttp.Cookies{Prefix: "/api", Secure: true, SameSite: accesshttp.SameSiteNone}),
+	}))
+
+	request := crossSiteWrite()
+	if err := jar.protect(request); err == nil {
+		t.Fatal("this transport read no cookie or no origin from the request, so nothing was checked")
+	}
+
+	sameOrigin := crossSiteWrite()
+	sameOrigin.Header.Set(accesshttp.HeaderFetchSite, "same-origin")
+	if err := jar.protect(sameOrigin); err != nil {
+		t.Fatalf("the deployment's own page was refused: %v", err)
+	}
+
+	handler := &Handler{jar: jar, renderer: authhttp.RendererFor(nil)}
+	recorder := httptest.NewRecorder()
+	handler.SignOut(recorder, crossSiteWrite())
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("signing out answered %d for a request made from another site; the handler never asks",
+			recorder.Code)
 	}
 }

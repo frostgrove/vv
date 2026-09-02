@@ -12,6 +12,7 @@ import (
 
 	"github.com/frostgrove/vv/auth"
 	"github.com/frostgrove/vv/auth/http/authfiber"
+	"github.com/frostgrove/vv/auth/http/authhttp"
 )
 
 func serve(t *testing.T, guard *auth.Guard, header string) (*seen, *http.Response, string) {
@@ -245,4 +246,92 @@ func TestANilGuardRefusesToStart(t *testing.T) {
 			authfiber.Middleware(tc.guard)
 		})
 	}
+}
+
+type corsAnswer struct {
+	ran bool
+}
+
+func (this *corsAnswer) handle(fiberContext fiber.Ctx) error {
+	this.ran = true
+	fiberContext.Set("Access-Control-Allow-Origin", "https://app.example")
+	return fiberContext.SendStatus(http.StatusNoContent)
+}
+
+func preflightRequest() *http.Request {
+	request := httptest.NewRequest(http.MethodOptions, "/articles", nil)
+	request.Header.Set(authhttp.HeaderOrigin, "https://app.example")
+	request.Header.Set(authhttp.HeaderRequestMethod, "POST")
+	return request
+}
+
+func TestACorsPreflightIsAnsweredByTheHandlerNamedForItAndABareOptionsIsNot(t *testing.T) {
+	answer := func(request *http.Request) (*corsAnswer, *seen, *http.Response) {
+		cors := &corsAnswer{}
+		route := &seen{}
+		app := fiber.New()
+		app.Use(authfiber.AnswerPreflight(authfiber.Middleware(auth.NewGuard(accepts())), cors.handle))
+		app.Add([]string{fiber.MethodOptions}, "/articles", route.handle)
+
+		response, err := app.Test(request)
+		if err != nil {
+			t.Fatalf("serving the request: %v", err)
+		}
+		t.Cleanup(func() { _ = response.Body.Close() })
+		return cors, route, response
+	}
+
+	cors, route, response := answer(preflightRequest())
+	if !cors.ran {
+		t.Fatalf("the browser's preflight was refused with %d, so the request it precedes never happens",
+			response.StatusCode)
+	}
+	if route.ran {
+		t.Fatal("the preflight reached the route, so an unauthenticated OPTIONS runs application code")
+	}
+	if response.Header.Get("Access-Control-Allow-Origin") == "" {
+		t.Fatal("the preflight was answered by something other than the CORS handler")
+	}
+
+	cors, route, response = answer(httptest.NewRequest(http.MethodOptions, "/articles", nil))
+	if cors.ran || route.ran || response.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("an OPTIONS request that is not a preflight walked past the guard: %d", response.StatusCode)
+	}
+
+	authorized := preflightRequest()
+	authorized.Header.Set("Authorization", "Bearer t")
+	cors, route, response = answer(authorized)
+	if cors.ran || !route.ran || response.StatusCode != http.StatusOK {
+		t.Fatalf("an OPTIONS carrying a credential answered %d; it is a request, not a preflight",
+			response.StatusCode)
+	}
+}
+
+func TestAPreflightNobodyAnsweredStopsAtTheDoorInsteadOfAtTheRoute(t *testing.T) {
+	route := &seen{}
+	app := fiber.New()
+	app.Use(authfiber.SkipPreflight(authfiber.Middleware(auth.NewGuard(accepts()))))
+	app.Add([]string{fiber.MethodOptions}, "/articles", route.handle)
+
+	response, err := app.Test(preflightRequest())
+	if err != nil {
+		t.Fatalf("serving the request: %v", err)
+	}
+	t.Cleanup(func() { _ = response.Body.Close() })
+
+	if route.ran {
+		t.Fatal("two forgeable headers carried an unauthenticated OPTIONS into a hand-written handler")
+	}
+	if response.StatusCode != http.StatusNoContent {
+		t.Fatalf("a preflight nobody was named to answer came back %d, want 204", response.StatusCode)
+	}
+}
+
+func TestAPreflightAnswerThatIsNotThereRefusesToStart(t *testing.T) {
+	defer func() {
+		if recover() == nil {
+			t.Fatal("AnswerPreflight accepted nothing to answer a preflight with")
+		}
+	}()
+	authfiber.AnswerPreflight(authfiber.Middleware(auth.NewGuard(accepts())), nil)
 }

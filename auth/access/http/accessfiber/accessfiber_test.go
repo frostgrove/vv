@@ -151,3 +151,45 @@ func assertCookiesLeftTheBody(t *testing.T, response *http.Response, body []byte
 		t.Fatalf("the rotating credential went into a cookie and stayed in the body: %s", body)
 	}
 }
+
+func crossSiteWrite() *http.Request {
+	request := httptest.NewRequest(http.MethodPost, "/api/auth/logout", nil)
+	request.AddCookie(&http.Cookie{Name: "access", Value: "the-session-cookie"})
+	request.Header.Set(accesshttp.HeaderFetchSite, "cross-site")
+	request.Header.Set(accesshttp.HeaderOrigin, "https://evil.test")
+	return request
+}
+
+func TestACookieBorneWriteFromAnotherSiteIsRefusedByThisTransport(t *testing.T) {
+	jar := newJar(accesshttp.Table{}, []Option{
+		Delivering(accesshttp.Cookies{Prefix: "/api", Secure: true, SameSite: accesshttp.SameSiteNone}),
+	})
+	handler := &Handler{jar: jar}
+
+	answer := func(request *http.Request, run func(fiber.Ctx) error) error {
+		var captured error
+		app := fiber.New()
+		app.Post("/api/auth/logout", func(c fiber.Ctx) error {
+			captured = run(c)
+			return nil
+		})
+		if _, err := app.Test(request); err != nil {
+			t.Fatalf("serving the request: %v", err)
+		}
+		return captured
+	}
+
+	if err := answer(crossSiteWrite(), jar.protect); err == nil {
+		t.Fatal("this transport read no cookie or no origin from the request, so nothing was checked")
+	}
+
+	sameOrigin := crossSiteWrite()
+	sameOrigin.Header.Set(accesshttp.HeaderFetchSite, "same-origin")
+	if err := answer(sameOrigin, jar.protect); err != nil {
+		t.Fatalf("the deployment's own page was refused: %v", err)
+	}
+
+	if err := answer(crossSiteWrite(), handler.SignOut); err == nil {
+		t.Fatal("signing out ran for a request made from another site; the handler never asks")
+	}
+}

@@ -42,7 +42,7 @@ func TestTheDefaultRoleIsWhateverTheTableSays(t *testing.T) {
 		crudtest.Rows(roleRow(roleID, "client")),
 	)
 
-	dependencies := newDeps(NewStore(recorder), nil, nil, Config{}, slog.New(slog.DiscardHandler), nil)
+	dependencies := newDeps(NewStore(recorder), nil, nil, Config{}, slog.New(slog.DiscardHandler), nil, Protection{})
 	role, err := dependencies.DefaultRole(context.Background(), testSubject)
 	if err != nil {
 		t.Fatalf("reading the default role: %v", err)
@@ -65,7 +65,7 @@ func TestTheDefaultRoleIsWhateverTheTableSays(t *testing.T) {
 
 func TestASubjectTypeWithNoDefaultRoleGrantsNothing(t *testing.T) {
 	recorder := crudtest.Postgres()
-	dependencies := newDeps(NewStore(recorder), nil, nil, Config{}, slog.New(slog.DiscardHandler), nil)
+	dependencies := newDeps(NewStore(recorder), nil, nil, Config{}, slog.New(slog.DiscardHandler), nil, Protection{})
 
 	role, err := dependencies.DefaultRole(context.Background(), testSubject)
 	if err != nil {
@@ -183,7 +183,7 @@ func TestAResolvedRoleIsGrantedWithoutASecondLookup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	enrol := NewEnroll(newDeps(runtime.store, nil, runtime.hasher, runtime.config, runtime.logger, runtime.revocations))
+	enrol := NewEnroll(newDeps(runtime.store, nil, runtime.hasher, runtime.config, runtime.logger, runtime.revocations, Protection{}))
 
 	resolved := &Role{ID: uuid.New(), Slug: "client"}
 	command := EnrollCommand{
@@ -204,7 +204,7 @@ func TestAResolvedRoleIsGrantedWithoutASecondLookup(t *testing.T) {
 	}
 
 	recorder.Reset()
-	recorder.Push(crudtest.Rows(roleRow(uuid.New(), "client")))
+	recorder.Push(crudtest.Rows(), crudtest.Rows(roleRow(uuid.New(), "client")))
 	if err := enrol.execute(context.Background(), command, nil); err != nil {
 		t.Fatalf("enrolling without a resolved role: %v", err)
 	}
@@ -224,10 +224,10 @@ func TestAResolvedRoleForAnotherSlugIsLookedUpAnyway(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	enrol := NewEnroll(newDeps(runtime.store, nil, runtime.hasher, runtime.config, runtime.logger, runtime.revocations))
+	enrol := NewEnroll(newDeps(runtime.store, nil, runtime.hasher, runtime.config, runtime.logger, runtime.revocations, Protection{}))
 
 	wanted := uuid.New()
-	recorder.Push(crudtest.Rows(roleRow(wanted, "client")))
+	recorder.Push(crudtest.Rows(), crudtest.Rows(roleRow(wanted, "client")))
 
 	err = enrol.execute(context.Background(), EnrollCommand{
 		Subject:    SubjectRef{Type: testSubject, ID: uuid.New()},

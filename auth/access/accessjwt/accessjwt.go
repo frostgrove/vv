@@ -39,6 +39,10 @@ type Spec struct {
 
 	Issuer string
 
+	Audience string
+
+	UnsafeAnyAudience bool
+
 	AccessTTL time.Duration
 
 	RefreshTTL time.Duration
@@ -64,26 +68,42 @@ func (this *strategy) Build(dependencies access.StrategyDeps) (access.Issued, er
 	if this.spec.Issuer == "" {
 		return access.Issued{}, fmt.Errorf("accessjwt: an issuer is required; a token nobody claims is one nobody can scope")
 	}
+	if this.spec.Audience != "" && this.spec.UnsafeAnyAudience {
+		return access.Issued{}, fmt.Errorf(
+			"accessjwt: Audience %q and UnsafeAnyAudience name opposite policies; a token cannot both be scoped and be replayable anywhere",
+			this.spec.Audience)
+	}
 
+	lifetimes := dependencies.Config.Sessions()
 	settings := this.spec
-	if settings.AccessTTL <= 0 {
+	if err := refuseLifetimesBelowZero(settings, lifetimes); err != nil {
+		return access.Issued{}, err
+	}
+	if settings.AccessTTL == 0 {
 		settings.AccessTTL = DefaultAccessTTL
 	}
-	if settings.RefreshTTL <= 0 {
-		settings.RefreshTTL = dependencies.Config.Sessions().TTL
+	if settings.RefreshTTL == 0 {
+		settings.RefreshTTL = lifetimes.TTL
 	}
-	if settings.RefreshGrace <= 0 {
+	if settings.RefreshGrace == 0 {
 		settings.RefreshGrace = DefaultRefreshGrace
+	}
+	if settings.Audience == "" && !settings.UnsafeAnyAudience {
+		settings.Audience = settings.Issuer
+	}
+	window := Window{Grace: settings.RefreshGrace, Idle: lifetimes.IdleTTL}
+	if err := checkLifetimes(settings, lifetimes, window); err != nil {
+		return access.Issued{}, err
 	}
 
 	sessions := sqlrepo.Define[rotatingSession, uuid.UUID, rotatingUpdate]("").Bind(dependencies.Source)
-	core := &core{spec: settings, deps: dependencies, sessions: sessions}
+	core := &core{spec: settings, window: window, deps: dependencies, sessions: sessions}
 
-	parser := authjwt.New[Claims](settings.Verify,
-		authjwt.Issuer(settings.Issuer),
-
-		authjwt.AllowAnyAudience(),
-	)
+	audience := authjwt.Audience(settings.Audience)
+	if settings.UnsafeAnyAudience {
+		audience = authjwt.AllowAnyAudience()
+	}
+	parser := authjwt.New[Claims](settings.Verify, authjwt.Issuer(settings.Issuer), audience)
 
 	issued := access.Issued{
 		Issuer:        core,
@@ -109,8 +129,58 @@ func (this *core) SessionsRevoked(ctx context.Context, sessions []uuid.UUID) err
 
 type core struct {
 	spec     Spec
+	window   Window
 	deps     access.StrategyDeps
 	sessions *crud.Repo[rotatingSession, uuid.UUID, rotatingUpdate]
+}
+
+// refuseLifetimesBelowZero separates a lifetime left out from a lifetime written wrongly.
+//
+// Zero is a caller taking the default, which is what leaving a field of Spec unset says. A
+// negative duration is a caller who meant something and got it wrong — a subtraction that came
+// out backwards, a flag parsed from a string — and replacing it with the default is the clamp
+// [[D-088]] forbids: the deployment would report the lifetime it configured and mint tokens on
+// another one, and no check below would ever mention the value that was written.
+func refuseLifetimesBelowZero(settings Spec, lifetimes access.SessionConfig) error {
+	var problems []error
+	if settings.AccessTTL < 0 {
+		problems = append(problems, fmt.Errorf(
+			"accessjwt: AccessTTL is %s; leave it at zero to take the default of %s",
+			settings.AccessTTL, DefaultAccessTTL))
+	}
+	if settings.RefreshTTL < 0 {
+		problems = append(problems, fmt.Errorf(
+			"accessjwt: RefreshTTL is %s; leave it at zero to take the session TTL of %s",
+			settings.RefreshTTL, lifetimes.TTL))
+	}
+	if settings.RefreshGrace < 0 {
+		problems = append(problems, fmt.Errorf(
+			"accessjwt: RefreshGrace is %s; leave it at zero to take the default of %s",
+			settings.RefreshGrace, DefaultRefreshGrace))
+	}
+	return errors.Join(problems...)
+}
+
+func checkLifetimes(settings Spec, lifetimes access.SessionConfig, window Window) error {
+	switch {
+	case settings.RefreshTTL > lifetimes.TTL:
+		return fmt.Errorf(
+			"accessjwt: RefreshTTL %s outlives the session TTL %s; the lineage would keep rotating past the session row it belongs to",
+			settings.RefreshTTL, lifetimes.TTL)
+	case settings.AccessTTL > settings.RefreshTTL:
+		return fmt.Errorf(
+			"accessjwt: AccessTTL %s outlives RefreshTTL %s; the access token would still verify when nothing can renew it",
+			settings.AccessTTL, settings.RefreshTTL)
+	case window.Idle > 0 && settings.AccessTTL > window.Idle:
+		return fmt.Errorf(
+			"accessjwt: AccessTTL %s outlives the session idle TTL %s; an abandoned session would keep answering past the idle deadline",
+			settings.AccessTTL, window.Idle)
+	case settings.RefreshGrace >= settings.RefreshTTL:
+		return fmt.Errorf(
+			"accessjwt: RefreshGrace %s is not shorter than RefreshTTL %s; a spent credential would never become a replay",
+			settings.RefreshGrace, settings.RefreshTTL)
+	}
+	return nil
 }
 
 func (this *core) now() time.Time { return this.deps.Config.Now() }
@@ -148,18 +218,25 @@ func (this *core) answer(
 	subject access.SubjectRef,
 	session uuid.UUID,
 	refresh string,
-	refreshExpiry time.Time,
+	sessionExpiry time.Time,
 	now time.Time,
 ) (access.AuthResponse, error) {
 	expiry := now.Add(this.spec.AccessTTL)
-	token, err := jwt.NewWithClaims(this.spec.Method, jwt.MapClaims{
+	if expiry.After(sessionExpiry) {
+		expiry = sessionExpiry
+	}
+	claims := jwt.MapClaims{
 		"sub": subject.ID.String(),
 		"sty": string(subject.Type),
 		"sid": session.String(),
 		"iss": this.spec.Issuer,
 		"iat": now.Unix(),
 		"exp": expiry.Unix(),
-	}).SignedString(this.spec.Key)
+	}
+	if this.spec.Audience != "" {
+		claims["aud"] = this.spec.Audience
+	}
+	token, err := jwt.NewWithClaims(this.spec.Method, claims).SignedString(this.spec.Key)
 	if err != nil {
 		return access.AuthResponse{}, fmt.Errorf("accessjwt: signing an access token: %w", err)
 	}
@@ -174,7 +251,7 @@ func (this *core) answer(
 		Token:            token,
 		ExpiresAt:        expiry,
 		Refresh:          refresh,
-		RefreshExpiresAt: refreshExpiry,
+		RefreshExpiresAt: sessionExpiry,
 		Principal:        access.NewPrincipalDto(principal),
 	}, nil
 }
@@ -194,9 +271,9 @@ func (this *core) Refresh(ctx context.Context, credential string, agent access.A
 		return access.AuthResponse{}, refused()
 	}
 
-	switch Classify(presentedOf(*session, digest), now, this.spec.RefreshGrace) {
+	switch Classify(presentedOf(*session, digest), now, this.window) {
 	case Rotate, RotateAgain:
-		return this.rotate(ctx, *session, now)
+		return this.rotate(ctx, *session, digest, now)
 	case Replay:
 		if err := this.close(ctx, session.ID, now, access.ReasonRefreshReplayed); err != nil {
 			return access.AuthResponse{}, err
@@ -230,16 +307,24 @@ func (this *core) find(ctx context.Context, digest string) (*rotatingSession, er
 
 func presentedOf(session rotatingSession, digest string) Presented {
 	return Presented{
-		Digest:    digest,
-		Current:   session.TokenHash,
-		Previous:  session.PreviousTokenHash,
-		RotatedAt: session.RotatedAt,
-		Revoked:   session.RevokedAt != nil,
-		ExpiresAt: session.ExpiresAt,
+		Digest:     digest,
+		Current:    session.TokenHash,
+		Previous:   session.PreviousTokenHash,
+		RotatedAt:  session.RotatedAt,
+		LastUsedAt: session.LastUsedAt,
+		Revoked:    session.RevokedAt != nil,
+		ExpiresAt:  session.ExpiresAt,
 	}
 }
 
-func (this *core) rotate(ctx context.Context, session rotatingSession, now time.Time) (access.AuthResponse, error) {
+const rotationAttempts = 3
+
+func (this *core) rotate(
+	ctx context.Context,
+	session rotatingSession,
+	presented string,
+	now time.Time,
+) (access.AuthResponse, error) {
 	subject := access.SubjectRef{Type: access.SubjectType(session.SubjectType), ID: session.SubjectID}
 
 	directory, served := this.deps.Grants.Directory(subject.Type)
@@ -260,7 +345,33 @@ func (this *core) rotate(ctx context.Context, session rotatingSession, now time.
 	}
 	digest := access.HashToken(next)
 
-	changed, err := this.sessions.UpdateAll(ctx,
+	response, err := this.answer(ctx, subject, session.ID, next, session.ExpiresAt, now)
+	if err != nil {
+		return access.AuthResponse{}, err
+	}
+
+	current := session
+	for attempt := 0; ; attempt++ {
+		changed, err := this.swap(ctx, current, digest, now)
+		if err != nil {
+			return access.AuthResponse{}, err
+		}
+		if changed > 0 {
+			return response, nil
+		}
+		if attempt+1 == rotationAttempts {
+			return access.AuthResponse{}, refused()
+		}
+		fresh, err := this.reread(ctx, session.ID, presented, now)
+		if err != nil {
+			return access.AuthResponse{}, err
+		}
+		current = *fresh
+	}
+}
+
+func (this *core) swap(ctx context.Context, session rotatingSession, digest string, now time.Time) (int64, error) {
+	return this.sessions.UpdateAll(ctx,
 		rotatingUpdate{
 			TokenHash:         &digest,
 			PreviousTokenHash: &session.TokenHash,
@@ -269,18 +380,31 @@ func (this *core) rotate(ctx context.Context, session rotatingSession, now time.
 		},
 		crud.Where(crud.And(
 			crud.Eq("ID", session.ID),
-
 			crud.Eq("TokenHash", session.TokenHash),
 			crud.IsNull("RevokedAt"),
 		)),
 	)
+}
+
+func (this *core) reread(
+	ctx context.Context,
+	id uuid.UUID,
+	presented string,
+	now time.Time,
+) (*rotatingSession, error) {
+	session, err := this.sessions.GetByID(ctx, id)
+	if errors.Is(err, crud.ErrNotFound) {
+		return nil, refused()
+	}
 	if err != nil {
-		return access.AuthResponse{}, err
+		return nil, err
 	}
-	if changed == 0 {
-		return access.AuthResponse{}, refused()
+	switch Classify(presentedOf(session, presented), now, this.window) {
+	case Rotate, RotateAgain:
+		return &session, nil
+	default:
+		return nil, refused()
 	}
-	return this.answer(ctx, subject, session.ID, next, session.ExpiresAt, now)
 }
 
 func (this *core) close(ctx context.Context, session uuid.UUID, now time.Time, reason string) error {

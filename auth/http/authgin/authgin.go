@@ -28,3 +28,23 @@ func Middleware(guard *auth.Guard, options ...porthttp.RenderOption) gin.Handler
 		ginContext.Next()
 	}
 }
+
+func SkipPreflight(middleware gin.HandlerFunc) gin.HandlerFunc {
+	return AnswerPreflight(middleware, func(ginContext *gin.Context) {
+		ginContext.Status(authhttp.PreflightStatus)
+	})
+}
+
+func AnswerPreflight(middleware gin.HandlerFunc, preflight gin.HandlerFunc) gin.HandlerFunc {
+	if preflight == nil {
+		panic("authgin: AnswerPreflight needs something to answer a preflight with")
+	}
+	return func(ginContext *gin.Context) {
+		if authhttp.Preflight(ginContext.Request.Method, ginContext.GetHeader) {
+			preflight(ginContext)
+			ginContext.Abort()
+			return
+		}
+		middleware(ginContext)
+	}
+}

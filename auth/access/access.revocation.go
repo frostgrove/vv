@@ -2,7 +2,10 @@ package access
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -33,8 +36,31 @@ type revoked struct {
 func (this revoked) nothing() bool { return len(this.sessions) == 0 }
 
 func (this *Deps) announce(ctx context.Context, closed revoked) {
+	if err := this.tell(ctx, closed); err != nil {
+		this.Log.ErrorContext(ctx,
+			"sessions were closed but the strategy could not be told; their credentials stay usable "+
+				"until the revocation is replayed or they expire",
+			slog.String("error", err.Error()))
+	}
+}
+
+// The sessions table is the journal a failed announcement is replayed from, and
+// telling a sink about a session it already knows costs a duplicate deny-list
+// entry and nothing else, so windows may overlap freely.
+func (this *Deps) ReannounceRevocations(ctx context.Context, since time.Time) error {
+	if this.revocations.empty() {
+		return nil
+	}
+	sessions, err := this.Store.SessionsRevokedSince(ctx, since, this.Now())
+	if err != nil {
+		return err
+	}
+	return this.tell(ctx, revoked{sessions: sessions})
+}
+
+func (this *Deps) tell(ctx context.Context, closed revoked) error {
 	if closed.nothing() || this.revocations.empty() {
-		return
+		return nil
 	}
 
 	byType := make(map[SubjectType][]uuid.UUID)
@@ -46,13 +72,11 @@ func (this *Deps) announce(ctx context.Context, closed revoked) {
 		byType[subject] = append(byType[subject], session.ID)
 	}
 
+	var failures []error
 	for subject, ids := range byType {
 		if err := this.revocations.byType[subject].SessionsRevoked(ctx, ids); err != nil {
-			this.Log.ErrorContext(ctx,
-				"sessions were closed but the strategy could not be told; their credentials stay usable until they expire",
-				slog.String("subject_type", string(subject)),
-				slog.Any("session_ids", ids),
-				slog.String("error", err.Error()))
+			failures = append(failures, fmt.Errorf("%s sessions %v: %w", subject, ids, err))
 		}
 	}
+	return errors.Join(failures...)
 }

@@ -26,14 +26,18 @@ func Unauthenticatedf(format string, args ...any) error {
 	return Unauthenticated(fmt.Sprintf(format, args...))
 }
 
-func invalidCredentialCardinality(count int) error {
+func AmbiguousCredential(reason string) error {
 	return errs.Unauthorized().
 		Code(errs.CodeUnauthenticated).
 		Wrapping(
 			ErrUnauthenticated,
-			fmt.Errorf("%w: credential source contained %d values", ErrCredentialCardinality, count),
+			fmt.Errorf("%w: %s", ErrCredentialCardinality, reason),
 		).
 		Fault()
+}
+
+func invalidCredentialCardinality(count int) error {
+	return AmbiguousCredential(fmt.Sprintf("credential source contained %d values", count))
 }
 
 func internal(cause error) error {

@@ -5,6 +5,7 @@ import "time"
 type Config struct {
 	Session  SessionConfig  `yaml:"session"`
 	Password PasswordConfig `yaml:"password"`
+	Login    LoginConfig    `yaml:"login"`
 
 	Clock Clock `yaml:"-"`
 }
@@ -19,6 +20,12 @@ type SessionConfig struct {
 
 type PasswordConfig struct {
 	MinLength int `yaml:"min_length" env:"ACCESS_PASSWORD_MIN_LENGTH" env-default:"10"`
+
+	MaxLength int `yaml:"max_length" env:"ACCESS_PASSWORD_MAX_LENGTH" env-default:"256"`
+}
+
+type LoginConfig struct {
+	MaxIdentifierLength int `yaml:"max_identifier_length" env:"ACCESS_LOGIN_MAX_IDENTIFIER_LENGTH" env-default:"320"`
 }
 
 const (
@@ -26,6 +33,10 @@ const (
 	DefaultIdleTTL           = 7 * 24 * time.Hour
 	DefaultTouchInterval     = 5 * time.Minute
 	DefaultMinPasswordLength = 10
+
+	DefaultMaxPasswordLength = 256
+
+	DefaultMaxIdentifierLength = 320
 )
 
 type Clock func() time.Time
@@ -56,4 +67,18 @@ func (this Config) MinPasswordLength() int {
 		return this.Password.MinLength
 	}
 	return DefaultMinPasswordLength
+}
+
+func (this Config) MaxPasswordLength() int {
+	if this.Password.MaxLength > 0 {
+		return this.Password.MaxLength
+	}
+	return DefaultMaxPasswordLength
+}
+
+func (this Config) MaxIdentifierLength() int {
+	if this.Login.MaxIdentifierLength > 0 {
+		return this.Login.MaxIdentifierLength
+	}
+	return DefaultMaxIdentifierLength
 }

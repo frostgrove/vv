@@ -131,3 +131,40 @@ func assertCookiesLeftTheBody(t *testing.T, response *http.Response, body []byte
 		t.Fatalf("the rotating credential went into a cookie and stayed in the body: %s", body)
 	}
 }
+
+func crossSiteWrite() *http.Request {
+	request := httptest.NewRequest(http.MethodPost, "/api/auth/logout", nil)
+	request.AddCookie(&http.Cookie{Name: "access", Value: "the-session-cookie"})
+	request.Header.Set(accesshttp.HeaderFetchSite, "cross-site")
+	request.Header.Set(accesshttp.HeaderOrigin, "https://evil.test")
+	return request
+}
+
+func TestACookieBorneWriteFromAnotherSiteIsRefusedByThisTransport(t *testing.T) {
+	jar := newJar(accesshttp.Table{}, []Option{
+		Delivering(accesshttp.Cookies{Prefix: "/api", Secure: true, SameSite: accesshttp.SameSiteNone}),
+	})
+
+	context := func(request *http.Request) *gin.Context {
+		c, _ := gin.CreateTestContext(httptest.NewRecorder())
+		c.Request = request
+		return c
+	}
+
+	if err := jar.protect(context(crossSiteWrite())); err == nil {
+		t.Fatal("this transport read no cookie or no origin from the request, so nothing was checked")
+	}
+
+	sameOrigin := crossSiteWrite()
+	sameOrigin.Header.Set(accesshttp.HeaderFetchSite, "same-origin")
+	if err := jar.protect(context(sameOrigin)); err != nil {
+		t.Fatalf("the deployment's own page was refused: %v", err)
+	}
+
+	handler := &Handler{jar: jar}
+	refused := context(crossSiteWrite())
+	handler.SignOut(refused)
+	if !refused.IsAborted() || len(refused.Errors) == 0 {
+		t.Fatal("signing out ran for a request made from another site; the handler never asks")
+	}
+}

@@ -129,6 +129,14 @@ CREATE TABLE IF NOT EXISTS "credentials" (
 -- because (provider, identifier) alone is no longer a question with one answer.
 CREATE UNIQUE INDEX IF NOT EXISTS "uq_credentials_subject_type_provider_identifier"
     ON "credentials" ("subject_type", "provider", "identifier");
+-- One password per account, and the database is what says so. Without this a
+-- reset rewrites whichever row the application picked and every other identifier
+-- the account was ever enrolled under keeps signing in with its old password —
+-- a hole nobody sees, because the reset reports success and the account works.
+-- Only 'password' is constrained: an account may hold several OIDC or API-key
+-- credentials, and those providers carry no secret this one has to replace.
+CREATE UNIQUE INDEX IF NOT EXISTS "uq_credentials_password_subject"
+    ON "credentials" ("subject_type", "subject_id") WHERE "provider" = 'password';
 CREATE INDEX IF NOT EXISTS "ix_credentials_subject"
     ON "credentials" ("subject_type", "subject_id");
 

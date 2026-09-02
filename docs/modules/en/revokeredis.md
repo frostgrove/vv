@@ -63,6 +63,22 @@ timeouts, is the application's decision.
 | `Prefix(string)` | namespaces the keys; default `access:revoked:` |
 | `Ping(ctx)` | a start-up check — a configured-but-unreachable list refuses every request |
 
+## Where it must live
+
+The list is durable state, and the resource it lives on decides whether it
+works. Redis under `maxmemory` evicts the coldest key it can find, and `Revoked`
+reads an absent key as "not revoked" — a capacity event on an instance shared
+with a cache quietly hands a signed-out session back. `Prefix` does not help:
+it separates names, not memory.
+
+So there are three resource identities, one per kind of state — caching, durable
+work, and this list — and the composition root is where they are declared. Name
+the resource this client points at with `cache.DurableSecurityTenant`
+([cache](cache.md)); activation then refuses any cache resolved onto it, and no
+waiver excuses that. Sharing one resource with a job queue is the single overlap
+a written `cache.SharedDurableSecurity(reason)` excuses. An undeclared resource
+is unchecked, not proven separate. See [[D-104]].
+
 ## What it stores
 
 One key per revoked **session id**, not per token id: the session id survives

@@ -47,7 +47,7 @@ func depsWithSinks(recorder *crudtest.Recorder, sinks map[SubjectType]Revocation
 	for subject, sink := range sinks {
 		registry.register(subject, sink)
 	}
-	return newDeps(NewStore(recorder), nil, nil, Config{}, slog.New(slog.DiscardHandler), registry)
+	return newDeps(NewStore(recorder), nil, nil, Config{}, slog.New(slog.DiscardHandler), registry, Protection{})
 }
 
 func TestSigningOutTellsTheStrategyWhichSessionClosed(t *testing.T) {
@@ -164,7 +164,7 @@ func TestSessionInvalidationOwnsCommitBeforeAnnouncementDespiteOuterRollback(t *
 	sink := &recordingSink{}
 	registry := newRevocationSinks()
 	registry.register(testSubject, sink)
-	dependencies := newDeps(NewStore(source), nil, nil, Config{}, slog.New(slog.DiscardHandler), registry)
+	dependencies := newDeps(NewStore(source), nil, nil, Config{}, slog.New(slog.DiscardHandler), registry, Protection{})
 
 	outerExec, err := source.Begin(t.Context())
 	if err != nil {
@@ -261,7 +261,7 @@ func TestMountRegistersTheStrategysRevocationSink(t *testing.T) {
 	}
 
 	if NewSetPassword(newDeps(runtime.store, runtime.grants, runtime.hasher,
-		runtime.config, runtime.logger, runtime.revocations)).revocations.byType[testSubject] == nil {
+		runtime.config, runtime.logger, runtime.revocations, Protection{})).revocations.byType[testSubject] == nil {
 		t.Fatal("the runtime's own use cases cannot reach the sink")
 	}
 }
@@ -289,3 +289,5 @@ func (this revokingStrategy) Build(dependencies StrategyDeps) (Issued, error) {
 	built.Revocations = this.sink
 	return built, nil
 }
+
+var errUnreachableSink = errors.New("redis is unreachable")

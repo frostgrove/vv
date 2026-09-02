@@ -51,6 +51,8 @@ strategy := accessjwt.Strategy(accessjwt.Spec{
 	Verify: authjwt.HMAC(secret),
 	Issuer: "example.com",
 
+	Audience: "api.example.com",
+
 	AccessTTL:    5 * time.Minute,
 	RefreshGrace: 10 * time.Second,
 })
@@ -67,10 +69,27 @@ users, signUp, err := access.Mount(runtime, access.SubjectSpec[SignUpForm]{
 | `Method`, `Key` | required | how an access token is signed |
 | `Verify` | required | how one is checked; the public half for an asymmetric method |
 | `Issuer` | required | goes in `iss`, and is required on the way back in |
+| `Audience` | the issuer | goes in `aud`, and is required on the way back in ([[D-097]]) |
+| `UnsafeAnyAudience` | `false` | mint no `aud` and accept any; the only way to a token no service claims, and refused together with `Audience` |
 | `AccessTTL` | `5m` | token lifetime, and the revocation delay without a list |
 | `RefreshTTL` | the session TTL | bounds the whole lineage |
 | `RefreshGrace` | `10s` | how long a just-replaced credential is still a concurrent refresh |
 | `Revocation` | none | see [revokeredis](revokeredis.md) |
+
+**The matrix is checked at start-up, not at request time** ([[D-088]]). `Build`
+refuses `AccessTTL > RefreshTTL`, `RefreshTTL > session.ttl`,
+`AccessTTL > session.idle_ttl` and `RefreshGrace >= RefreshTTL`. Each of those is
+a configuration under which every token minted is already wrong, so it is a
+process that does not start rather than a request that is refused.
+
+**A lifetime left at zero takes the default in the table above; a lifetime below
+zero is refused by name and by value.** Both are checked at `Build`, and the
+refusal comes before any default is put in place — a `-5m` replaced by five
+minutes would pass every check below it and be reported nowhere ([[D-088]]).
+
+The idle deadline is not a field here. It is `session.idle_ttl` from
+`access.Config` — the same value the opaque strategy applies — precisely so the
+two cannot come to disagree about when a session is over.
 
 The response carries both halves:
 
@@ -94,8 +113,18 @@ type Claims struct {
 }
 ```
 
+`aud` is minted and verified but is not a field here: it is a verification input
+rather than something a caller reads, and a `string` field would fail to decode
+the equally legal JSON-array form. Two services sharing one signing key are told
+apart by it — without an audience, every session of the first is a session of the
+second ([[D-097]]).
+
 Roles and permissions are **not** in it. They come from the rows on every
 request, so a demotion takes effect on the next call.
+
+`exp` is `min(now + AccessTTL, session.expires_at)`. The session's end is
+absolute and no rotation moves it, so refreshing a second before it buys a
+second — not another `AccessTTL` that nothing can take back ([[D-088]]).
 
 `sty` is checked and not taken. A token minted for one kind of caller, presented
 to another subject's guard, verifies its signature perfectly — the session is
@@ -106,19 +135,40 @@ route assumed.
 
 A refresh credential is spent by the call that uses it. The session row holds
 the digest of the current one and of the one before it, and a rotation is a
-compare-and-swap on the current digest. Losing that swap is **two** situations,
-and telling them apart is the whole design:
+compare-and-swap on the current digest. The replacement — the new credential, the
+grants and the signed access token — exists **before** that swap runs, so a
+rotation that cannot be answered has spent nothing ([[D-098]]).
+
+Losing that swap is **two** situations, and telling them apart is the whole
+design:
 
 ```go
-func Classify(presented Presented, now time.Time, grace time.Duration) Outcome
+func Classify(presented Presented, now time.Time, window Window) Outcome
+
+type Window struct {
+	Grace time.Duration // RefreshGrace
+	Idle  time.Duration // session.idle_ttl; zero applies no idle deadline
+}
 ```
 
 | Outcome | When | What happens |
 |---|---|---|
 | `Rotate` | the digest is the current one | swap it, answer normally |
-| `RotateAgain` | it is the previous one, within `RefreshGrace` | two tabs refreshed at once — rotate again, answer normally |
+| `RotateAgain` | it is the previous one, within `Window.Grace` | two tabs refreshed at once — rotate again, answer normally |
 | `Replay` | it is the previous one, after the grace | a spent credential came back: **close the lineage** |
-| `Unusable` | anything else, or the session is closed or expired | one refusal |
+| `Unusable` | anything else, or the session is closed, expired, or untouched for longer than `Window.Idle` | one refusal |
+
+`Presented.LastUsedAt` is the session row's `last_used_at`, which is what the
+idle arm reads.
+
+`Classify` also decides the swap that changed no row. Two refreshes that both
+read the row before either wrote it do not reach the table above on the first
+pass — both see `Rotate`, and one of them loses. The loser re-reads the row by
+id, classifies the credential it was given against what is there now, and
+rotates again from the winner's digest; the winner's own credential is the
+lineage's previous digest and stays usable for the grace window. Refusing it
+instead would sign out a client for retrying a request the network dropped
+([[D-098]]).
 
 Refusing a concurrent refresh signs people out for having two windows open,
 which is the failure people actually hit. Treating a replay as concurrent leaves
@@ -141,6 +191,9 @@ Every failed rotation gets the same refusal, whatever it was.
 |---|---|
 | `previous_token_hash` | the digest replaced by the last rotation |
 | `rotated_at` | when, so the grace window means something |
+
+`last_used_at` and `expires_at` are access's own columns, and rotation reads
+both: the first is the idle deadline, the second is the end `exp` is clamped to.
 
 Separate from access's own migration because a deployment holding opaque
 sessions never rotates and has no use for either. The session row *is* the

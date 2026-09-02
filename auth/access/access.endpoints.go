@@ -2,6 +2,7 @@ package access
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -10,6 +11,9 @@ type Endpoints struct {
 	subject Subject
 	store   *Store
 	issuer  SessionIssuer
+
+	now      func() time.Time
+	sessions SessionConfig
 
 	refresher SessionRefresher
 	login     *LoginUseCase
@@ -25,6 +29,8 @@ func newEndpoints(dependencies *Deps, subject Subject, issuer SessionIssuer, ref
 		subject:   subject,
 		store:     dependencies.Store,
 		issuer:    issuer,
+		now:       dependencies.Now,
+		sessions:  dependencies.Config.Sessions(),
 		refresher: refresher,
 		login:     NewLogin(dependencies).Issuing(issuer),
 		logout:    NewLogout(dependencies),
@@ -117,7 +123,7 @@ func (this Endpoints) ListSessions(ctx context.Context) ([]SessionDto, error) {
 	if err != nil {
 		return nil, err
 	}
-	sessions, err := this.store.LiveSessionsOf(ctx, principal.Ref)
+	sessions, err := this.store.LiveSessionsOf(ctx, principal.Ref, this.now(), this.sessions.IdleTTL)
 	if err != nil {
 		return nil, err
 	}

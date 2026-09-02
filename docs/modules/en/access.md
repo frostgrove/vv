@@ -117,7 +117,12 @@ nothing — without the sink, signing out closes the session everywhere except
 where the next request will look. Every path that closes a session announces
 through it, including the administrator's password reset behind
 `Runtime.SetPassword`, and the announcement happens after the transaction
-commits. See [[D-072]].
+commits. An announcement the sink could not take is logged and does not fail a
+sign-out that already happened — and it is not lost either:
+`Runtime.ReannounceRevocations(ctx, since)` reads the rows revoked since a moment
+and not yet expired and tells the sinks again. It is idempotent, so a job running
+it every minute for the last hour is the right shape, and it returns the failure
+rather than logging it, because its caller is a worker. See [[D-072]].
 
 `Mount` builds a custom strategy against a private candidate resolver, then
 validates the complete `Issued` result before publishing the subject. `Issuer`
@@ -244,10 +249,10 @@ response, err := users.Endpoints().SignIn(ctx, access.SignInRequest{
 }, agent)
 ```
 
-Every refusal is the same refusal — an unknown identifier, a wrong password and
-a deactivated account answer alike, and the password is verified against
-`DummyHash()` when no credential was found so the response time says nothing
-either.
+Every refusal is the same refusal — an unknown identifier, a wrong password, a
+deactivated account and a field longer than this deployment accepts answer alike,
+and the password is verified against `DummyHash()` when no credential was found so
+the response time says nothing either.
 
 Password login, password reset/change and sign-out-all share one database
 serialization protocol. Inside one transaction they lock the subject's password
@@ -264,6 +269,51 @@ equivalent trigger if it wants that timestamp semantic. The order is always
 credentials → sessions. Credential ids are discovered without locks, sorted,
 then locked by exact primary key one at a time; this does not trust an InnoDB
 secondary-index scan to honour SQL's `ORDER BY` as a physical lock order.
+
+### Bounding what a sign-in costs
+
+Three things stand in front of the hash, and none of them is on by default except
+the last two ([[D-089]]).
+
+```go
+runtime, err := access.New(access.RuntimeSpec{
+	Source: source,
+	Logger: logger,
+	Config: cfg.Access,
+	Protection: access.Protection{
+		Limiter:  access.DefaultMemoryLimiter(),
+		Observer: metrics,
+	},
+})
+```
+
+| Seam | What it does | What ships |
+|---|---|---|
+| `AttemptLimiter` | `Admit` before an attempt, `Record` after | `NewMemoryLimiter(AttemptPolicy{…})`, and `DefaultMemoryLimiter()` for its defaults |
+| `AttemptObserver` | told every `succeeded`, `failed` and `refused` | nothing; it is your telemetry |
+| `BulkheadHasher` | caps concurrent Argon2 work | `NewBulkhead(inner, permits, queue)`, and `Bulkhead(inner)` for `min(NumCPU, 4)` permits and eight times that queued |
+
+`MemoryLimiter` counts per `(subject type, identifier)` and per IP inside one
+process. It is the right thing for a single instance and the wrong thing for
+four: implement `AttemptLimiter` over whatever your replicas share, and provide
+it — with `accessfx`, providing an `access.AttemptLimiter` is the whole wiring.
+Refusal is a retryable fault with code `too_many_attempts`; a limiter that fails
+to record is logged and refuses nobody.
+
+`Argon2Hasher.Verify` reads the stored PHC string with an exact grammar and
+bounded parameters — memory 8 KiB..1 GiB, 1..16 rounds, at least one thread, a
+salt of 8..64 bytes and a digest of 16..64 bytes — and answers `ErrSecretFormat`
+for anything else ([[D-089]]). The cost of a verification comes out of a column,
+and two of the values that column can hold end the process rather than the
+sign-in: zero rounds and a zero-length digest both panic inside `argon2.IDKey`.
+An unreadable hash is a fault and never a mismatch, so a truncated row is not a
+wrong password either.
+
+The bulkhead wraps the hasher `Runtime` builds for itself. A hasher you pass in
+`RuntimeSpec.Hasher` is yours untouched, bulkhead included if you want one.
+Work past the queue is refused as `overloaded` rather than queued: a burst of
+sign-ins against a 64 MiB-per-hash Argon2 is how a machine stops answering
+anything at all.
 
 A custom `SessionIssuer` is called inside a transaction owned by the access
 use case, even when the context carries an ambient executor. It must use the
@@ -329,6 +379,36 @@ has not decided what `Secure` and `SameSite` should be.
 | the paths | the access cookie to `Cookies.Prefix`, the rotating one to that subject's rotation endpoint alone. A credential attached to every request reaches every log and proxy in front of the API |
 | `HttpOnly` | always. A credential cookie a script can read is what this is for avoiding, and an option to turn it off is an option somebody would find |
 | `SameSite` | `Strict` unless `Cookies.SameSite` says otherwise. `None` without `Secure` panics at start-up, because a browser discards such a cookie and every session would end at the next request with nothing in any log to say why |
+
+### A cookie is ambient, so a write says where it came from
+
+A cookie the browser attaches by itself is authority the page that caused the
+request never had to read. `SameSite` narrows which pages can cause one and
+answers nothing under `None`, so the surface checks the request itself: an unsafe
+method, one of this deployment's own cookies on the request, and no
+`Authorization` header is a request that must say where it came from.
+
+```go
+accesshttp.Cookies{
+    Prefix:    "/api/v1",
+    Secure:    true,
+    SameSite:  accesshttp.SameSiteNone,
+    CrossSite: accesshttp.CrossSite{Origins: []string{"https://app.example"}},
+}
+```
+
+| | |
+|---|---|
+| `Sec-Fetch-Site: same-origin` or `none` | served; the browser has already said the request came from here |
+| `Origin` in `CrossSite.Origins` | served; the front end this deployment is built for |
+| anything else, including no `Origin` at all | `403`, code `cross_site_request` |
+| an `Authorization` header | served without the check — a header is not ambient |
+| `GET`, `HEAD`, `OPTIONS`, `TRACE` | served without the check |
+| no cookie of ours on the request | served without the check |
+
+`CrossSite.Unsafely` is the waiver: a written reason turns the check off for a
+deployment whose CSRF defence is somewhere else. It takes a sentence rather than
+a `bool` so that the reason exists to read later.
 
 ### The other end: a guard that reads the cookie
 
@@ -409,12 +489,25 @@ type Config struct {
 | `session.idle_ttl` | `ACCESS_SESSION_IDLE_TTL` | `168h` | closes an unused session |
 | `session.touch_interval` | `ACCESS_SESSION_TOUCH_INTERVAL` | `5m` | how stale `last_used_at` may get |
 | `password.min_length` | `ACCESS_PASSWORD_MIN_LENGTH` | `10` | the floor, in characters |
+| `password.max_length` | `ACCESS_PASSWORD_MAX_LENGTH` | `256` | the ceiling, in bytes, checked before hashing |
+| `login.max_identifier_length` | `ACCESS_LOGIN_MAX_IDENTIFIER_LENGTH` | `320` | the identifier ceiling, in bytes |
 
 Length and nothing else: a composition rule shortens the search space it claims
 to widen. Check whatever else you like in your `Registrar`.
 
+The two ceilings are enforced in the same place on both sides. Enrolment refuses
+a field past one as a `too_long` violation naming the field; a sign-in refuses it
+as `bad_credentials`, because nothing past the enrolment ceiling can be a stored
+identifier and the answer must not tell a caller which half was wrong.
+
 `Config.Clock` is not loaded from anywhere. It is the test seam — every expiry
-rule here is otherwise untestable without sleeping.
+rule here is otherwise untestable without sleeping. It is also the only clock:
+issuing a session, deciding one is closed, stamping a revocation and listing what
+is still live all read it, so a frozen clock freezes the whole module and not
+half of it. `Deps.Now()` reads `Config` on every call rather than a copy taken
+when the graph was built, and there is no method for setting a second one — a
+clock that could be replaced on `Deps` alone is a clock the issuer would not
+share.
 
 ## The schema
 
@@ -433,7 +526,17 @@ default — and its `role_id` is `ON DELETE RESTRICT`: deleting the role a sign-
 grants is refused rather than silently turned into "new accounts get nothing".
 
 `credentials` is unique on `(subject_type, provider, identifier)`: two
-independent domains may both know an `ops@example.com` ([[D-067]]).
+independent domains may both know an `ops@example.com` ([[D-067]]). It carries a
+second, partial unique index — `(subject_type, subject_id) WHERE provider =
+'password'` — because an account has one password. Enrolling a second is refused
+as a conflict, and a reset or a change that finds more than one refuses rather
+than picking. Adding this index to a schema that has been running needs the
+duplicates found first:
+
+```sql
+SELECT subject_type, subject_id FROM credentials
+WHERE provider = 'password' GROUP BY 1, 2 HAVING count(*) > 1;
+```
 
 `subject_type`/`subject_id` cannot be a foreign key, and the file says so:
 nothing at the database level removes a subject's grants when the subject goes.
@@ -462,6 +565,11 @@ never resolves one ([[D-074]]).
 | `AsSubject(ctor)` | a mounted subject joins the group |
 | `AsGrants(ctor)` | an `access.ModuleGrants` joins the group |
 | `Registered` | both groups, as an `fx.In` parameter object |
+| `Protection` | the optional `access.AttemptLimiter` and `access.AttemptObserver` the graph is asked for |
+
+Provide an `access.AttemptLimiter` — over Redis, say — and the runtime is built
+with it; provide neither and sign-ins are unlimited, which is the same default
+`access.New` has ([[D-089]]).
 
 **The ordering is what this exists to express.** Everything that must know about
 every subject — the resolver, the admin guard, the password reset — depends on

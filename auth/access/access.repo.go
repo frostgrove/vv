@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"sort"
+	"time"
 
 	"github.com/frostgrove/vv/auth"
 	"github.com/frostgrove/vv/crud"
@@ -200,12 +202,36 @@ func (this *Store) SessionByToken(ctx context.Context, digest string) (Session, 
 	return this.Sessions.First(ctx, specs.As(Session_.TokenHash.Eq(digest)))
 }
 
-func (this *Store) LiveSessionsOf(ctx context.Context, ref SubjectRef) ([]Session, error) {
-	return this.Sessions.GetAll(ctx,
+func (this *Store) LiveSessionsOf(
+	ctx context.Context,
+	ref SubjectRef,
+	now time.Time,
+	idle time.Duration,
+) ([]Session, error) {
+	options := []crud.Option{
 		ofSubject(ref),
 		specs.As(Session_.RevokedAt.IsNull()),
-		crud.OrderBy(Session_.LastUsedAt.Desc()),
+		specs.As(Session_.ExpiresAt.Gt(now)),
+	}
+	if idle > 0 {
+		options = append(options, specs.As(Session_.LastUsedAt.Gt(now.Add(-idle))))
+	}
+	return this.Sessions.GetAll(ctx, append(options, crud.OrderBy(Session_.LastUsedAt.Desc()))...)
+}
+
+func (this *Store) SessionsRevokedSince(ctx context.Context, since, now time.Time) ([]Session, error) {
+	return this.Sessions.GetAll(ctx,
+		specs.As(Session_.RevokedAt.Gte(since)),
+		specs.As(Session_.ExpiresAt.Gt(now)),
+		crud.Select(Session_.ID.Name(), Session_.SubjectType.Name()),
+		crud.OrderBy(Session_.RevokedAt.Asc()),
 	)
+}
+
+func ambiguousPassword(ref SubjectRef, found int) error {
+	return fmt.Errorf(
+		"access: %s holds %d password credentials; a password change would leave the others signing in",
+		ref, found)
 }
 
 func IsNotFound(err error) bool { return errors.Is(err, crud.ErrNotFound) }

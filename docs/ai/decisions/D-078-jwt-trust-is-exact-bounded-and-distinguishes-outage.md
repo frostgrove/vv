@@ -155,7 +155,9 @@ is an invalid standard identity.
 - Do not install a partial JWKS when any entry has an empty or duplicate `kid`.
 - Do not treat a present malformed token `kid` as though the header omitted it.
 - Do not turn `ErrKeySourceUnavailable` into `auth.ErrUnauthenticated`, including
-  on rate-limited retries and concurrent waiters.
+  on rate-limited retries and concurrent waiters, and including in an
+  authenticator built *over* the parser: a session strategy that collapses every
+  parse error into its own refusal undoes this decision one layer up.
 - Do not bind shared JWKS work to one waiter's cancellation, or hide a caller's
   own cancellation behind stale trust or an unavailable error.
 - Do not serve stale trust material without both a finite maximum and the typed
@@ -172,6 +174,7 @@ is an invalid standard identity.
 | `auth/authjwt/jwks.go` | bounded detached singleflight, freshness, stale policy, document/key validation and `ErrKeySourceUnavailable` |
 | `auth/authjwt/parser.go` | `Warm` and the split between provider failure, caller cancellation and credential refusal |
 | `auth/authjwt/authenticator.go` | the non-empty subject rule on `Standard` |
+| `auth/access/accessjwt/authenticator.go` | the session strategy's own half of the split: only an error that already carries `auth.ErrUnauthenticated` becomes the silent 401, and everything else — a provider outage, the caller's own cancellation — travels on |
 
 ## Proven by
 
@@ -204,6 +207,9 @@ is an invalid standard identity.
   in `authgrpc`.
 - `TestStandardRefusesATokenWithoutASubject` in
   `auth/authjwt/claims_test.go`.
+- `TestAKeyProviderOutageIsNotAnExpiredSession` and
+  `TestACancelledRequestIsNotAnAuthenticationRefusal` in
+  `auth/access/accessjwt/audience_test.go`, for the strategy over the parser.
 
 ## See also
 

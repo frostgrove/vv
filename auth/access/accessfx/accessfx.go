@@ -27,6 +27,14 @@ func AsGrants(constructor any) any {
 	return fx.Annotate(constructor, fx.ResultTags(grantsGroup))
 }
 
+type Protection struct {
+	fx.In
+
+	Limiter access.AttemptLimiter `optional:"true"`
+
+	Observer access.AttemptObserver `optional:"true"`
+}
+
 type Registered struct {
 	fx.In
 
@@ -37,11 +45,12 @@ type Registered struct {
 func Module(configuration access.Config, options ...auth.Option) fx.Option {
 	return fx.Module("vv.access",
 		fx.Provide(
-			func(source crud.Source, logger *slog.Logger) (*access.Runtime, error) {
+			func(source crud.Source, logger *slog.Logger, guarded Protection) (*access.Runtime, error) {
 				return access.New(access.RuntimeSpec{
-					Source: source,
-					Config: configuration,
-					Logger: logger,
+					Source:     source,
+					Config:     configuration,
+					Logger:     logger,
+					Protection: access.Protection{Limiter: guarded.Limiter, Observer: guarded.Observer},
 				})
 			},
 			newGrants,

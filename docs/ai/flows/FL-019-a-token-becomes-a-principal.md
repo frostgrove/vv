@@ -1,21 +1,22 @@
 # FL-019 — A token becomes a principal
 
 **Entry point:** `auth/http/authnet/authnet.go:Middleware`, `auth/http/authgin/authgin.go:Middleware`, `auth/http/authfiber/authfiber.go:Middleware` and `auth/rpc/authgrpc/interceptor.go:Unary`
-**Implements:** [[UC-019]] · **Governed by:** [[D-055]] [[D-056]] [[D-076]] [[D-045]] [[D-021]] [[D-044]] [[D-075]] [[D-078]]
+**Implements:** [[UC-019]] · **Governed by:** [[D-055]] [[D-056]] [[D-076]] [[D-045]] [[D-021]] [[D-044]] [[D-075]] [[D-078]] [[D-099]]
 
 ## The path
 
-1. **`Middleware`** — `auth/http/authnet/authnet.go:43` — the binding's only
+1. **`Middleware`** — `auth/http/authnet/authnet.go:11` — the binding's only
    framework-shaped decision: which handler type it is and where the context
    comes from. It resolves a renderer once and calls `Guard.Validate` at
    construction. Nil and zero-value guards fail here, before a request can call
    a nil authenticator. Gin, Fiber, Unary and Stream do the same.
-2. **`Guard.Authenticate`** — `auth/guard.go:90` — everything that is not
+2. **`Guard.Authenticate`** — `auth/guard.go:101` — everything that is not
    framework-shaped. It is handed a `func(name string) string`, which is all
    four transports have in common. The Guard reached here is a finished copy of
    a private construction draft: `auth.Option` is opaque and cannot be retained
    as a post-publication `*Guard` mutator. `Lookup` is still the low-level source
-   hook ([[D-076]]).
+   hook ([[D-076]]), and `LookupOrRefuse` is the same hook for a source that can
+   answer "more than one credential" instead of a credential ([[D-099]]).
 3. **the per-guard idempotence check** — `auth/guard.go:authenticationMark` —
    the context carries an immutable chain of concrete guards and the principal
    state each installed. A consecutive repeat of the latest guard verifies
@@ -23,31 +24,36 @@
    replacing the principal after A's marker, is `ErrAmbiguousGuardOrder` as an
    internal fault. Auth does not guess whether B is stronger or weaker
    ([[D-076]]).
-4. **`Guard.credential`** — `auth/guard.go:116` — the configured `Lookup`, or
-   `ParseAuthorization` over the configured header. `Lookup` *replaces* the
+4. **`Guard.credential`** — `auth/guard.go:159` — the configured lookup, or
+   `ParseAuthorization` over the configured header. A lookup *replaces* the
    header rather than adding to it, which is why the one lookup this library
    ships falls back explicitly: `auth/http/authhttp/cookie.go:Cookie` reads a
    named cookie out of the `Cookie` header with `http.ParseCookie`, supplies the
    `Bearer` scheme no cookie carries, and reads the Authorization header when
    there is no such cookie — so a browser holding its access token in an
    HttpOnly cookie ([[D-075]]) and a native client sending a bearer are served by
-   one guard. It lives in `authhttp` because `auth` takes no HTTP dependency
-   ([[D-055]]); on `authgrpc` the metadata key is one no client sends, and the
-   fallback is what keeps that guard working.
-5. **`ParseAuthorization`** — `auth/credential.go:55` — splits on the first
+   one guard. A request that presents both, or the same cookie name twice, is
+   refused rather than ranked ([[D-099]]); `UnsafeCookieWinsOverAuthorization` is
+   the named legacy precedence. The refusal is possible because the lookup seam
+   is `auth.Lookout` — `(Credential, bool, error)` — registered with
+   `LookupOrRefuse`, over which `Lookup` is the thin no-refusal wrapper. It lives
+   in `authhttp` because `auth` takes no HTTP dependency ([[D-055]]); on
+   `authgrpc` the metadata key is one no client sends, and the fallback is what
+   keeps that guard working.
+5. **`ParseAuthorization`** — `auth/credential.go:33` — splits on the first
    space, trims, and refuses a header with no space: a bare token is a scheme
    with nothing under it, and a truncating proxy produces exactly that.
-6. **absent, and the fork** — `auth/guard.go:97` — no credential is
+6. **absent, and the fork** — `auth/guard.go:142` — no credential is
    `Unauthenticated` unless the guard is `Optional`, in which case the context
    passes through unchanged and carries no principal.
-7. **`Authenticator.Authenticate`** — `auth/credential.go:36` — the provider.
-   `auth/apikey/apikey.go:96` for a shared secret;
-   `auth/authjwt/authenticator.go:22` for a JWT. `auth.Chain` has already copied
+7. **`Authenticator.Authenticate`** — `auth/credential.go:24` — the provider.
+   `auth/apikey/apikey.go:78` for a shared secret;
+   `auth/authjwt/authenticator.go:10` for a JWT. `auth.Chain` has already copied
    its caller's variadic slice and discarded nil-like members. A member that
    answers `(nil-like Principal, nil)` is a refusal and the next member runs.
-8. **`Parser.Parse`** — `auth/authjwt/parser.go:167` — verification. The methods
+8. **`Parser.Parse`** — `auth/authjwt/parser.go:98` — verification. The methods
    come from the `KeySource` and never from the token
-   (`auth/authjwt/parser.go:128`); for JWKS, `jwks.key` additionally requires the
+   (`auth/authjwt/parser.go:72`); for JWKS, `jwks.key` additionally requires the
    exact method cached beside the selected key. EC derives it from `crv`,
    Ed25519 derives `EdDSA`, and RSA requires the provider's `alg`; explicit
    `null` or empty policy members are not omission. A present malformed `kid`
@@ -56,19 +62,19 @@
    `Unauthenticated`. A JWKS provider or document failure carries
    `ErrKeySourceUnavailable` through instead: no credential verdict was possible
    ([[D-078]]).
-9. **`decode`** — `auth/authjwt/parser.go:204` — the verified claim map becomes
+9. **`decode`** — `auth/authjwt/parser.go:134` — the verified claim map becomes
    the caller's own struct, through `json.Decoder.UseNumber` so an integer claim
    stays an integer.
 10. **the mapper** — the caller's `func(context.Context, C) (auth.Principal,
     error)`, or `Claims.Grant` under `authjwt.Standard`
-    (`auth/authjwt/authenticator.go:54`), which first refuses an empty subject
+    (`auth/authjwt/claims.go:97`), which first refuses an empty subject
     and then folds the role map in once. A custom mapper is the explicit path
     for an issuer that derives identity from another claim.
-11. **a bad credential, even when optional** — `auth/guard.go:103` — the
+11. **a bad credential, even when optional** — `auth/guard.go:149` — the
     provider's error is returned whether or not the guard is optional. A forged
     token never becomes anonymous. A nil-like Principal with no error is also a
     refusal; it cannot mark the guard successful.
-12. **`auth.WithPrincipal`** — `auth/context.go:22` — the one context key in the
+12. **`auth.WithPrincipal`** — `auth/context.go:17` — the one context key in the
     tree that carries an identity. It and `PrincipalFrom` use the shared
     interface-aware nil predicate, so a typed-nil pointer is absent rather than
     an apparent principal waiting to panic in a policy.
@@ -80,7 +86,15 @@
     `c.Request = c.Request.WithContext(ctx)`, `c.SetContext(ctx)`, or the
     replaced `grpc.ServerStream`. This is the step with a wrong answer that
     compiles; see the table below.
-15. **`authhttp.Refuse`** — `auth/http/authhttp/authhttp.go:66` — on the refusing
+15. **`Guard.refuse`** — `auth/refusal.go` — every refusing path above goes
+    through it: it hands each registered `auth.Observer` a `Reason` — a kind from
+    a closed vocabulary, a `Detail` written in `auth`, and the error the caller
+    is about to get — and returns that error unchanged. Registered with
+    `auth.Observe` at construction, so no binding decides for itself what to do
+    with a cause nobody asked it about ([[D-056]]). It carries no credential, it
+    runs on the request's goroutine, and `auth.Sampled` is the decorator for a
+    surface under a stuffing run.
+16. **`authhttp.Refuse`** — `auth/http/authhttp/authhttp.go:28` — on the refusing
     path, the status, the headers and the envelope, written here rather than
     deferred.
 
@@ -90,7 +104,7 @@
 |---|---|---|---|
 | `authnet` | `r.Context()` | `r.WithContext(ctx)` | `authhttp.Refuse`, handler not called |
 | `authgin` | `c.Request.Context()` | `c.Request = c.Request.WithContext(ctx)` | `c.Error(err)`, `authhttp.Refuse`, `c.Abort()` |
-| `authfiber` | `c.Context()` | `c.SetContext(ctx)` — **not `Locals`** | `authfiber.refuse`, `c.Status().JSON()` |
+| `authfiber` | `c.Context()` | `c.SetContext(ctx)` — **not `Locals`** | `authfiber.refuse`, `Response().Header.Add` then `c.Status().JSON()` |
 | `authgrpc` | `ss.Context()` / call ctx | returned ctx, or a wrapping `ServerStream` | error returned; `crudgrpc.Errors` renders it |
 
 The Fiber row is the one that matters. `Locals` is where a Fiber middleware
@@ -101,6 +115,38 @@ to every policy. Both spellings compile and both look right in review.
 `auth/http/authfiber/middleware_test.go` is what fails when it is wrong — verified by
 changing `SetContext` to `Locals` and watching it.
 
+The refusal row hides a second one. `authhttp.Refuse` *adds* each rendered header
+value; Fiber's `Ctx.Set` overwrites, so writing the rendered map through it kept
+only the last value of a repeated header — a 401 offering two challenges arrived
+offering one, and nothing about the response looked wrong. `refuse` therefore
+writes through `c.Response().Header.Add`, and all three bindings carry
+`TestARefusalCarriesEveryHeaderTheRendererAskedFor` over their own response
+writer.
+
+### The preflight the guard must not answer, and must not route either
+
+A browser sends `OPTIONS` with no credential before a cross-origin write. A guard
+mounted ahead of the CORS middleware refuses it, the request it was asking about
+never happens, and the failure reads as a CORS misconfiguration.
+`authnet.AnswerPreflight`, `authgin.AnswerPreflight` and
+`authfiber.AnswerPreflight` decorate the middleware rather than changing it:
+`authhttp.Preflight` says yes only to `OPTIONS` carrying an `Origin` and an
+`Access-Control-Request-Method` and no `Authorization`, and everything else, an
+`OPTIONS` with a credential included, goes through the guard. A match does not
+continue down the chain — it goes to the handler the consumer named, which
+answers it and ends the request; on Gin the wrapper calls `Abort` after it,
+because a Gin middleware that merely returns lets the route run. That is
+[[D-103]]: both headers the predicate reads are the client's to set, so a
+continuing preflight is an unauthenticated `OPTIONS` reaching whatever hand-written
+handler the router has for that path.
+
+`SkipPreflight` is the same wrapper with nobody named to answer, kept because
+mounting is meant to be one statement: it answers `authhttp.PreflightStatus`
+(`204`) and no `Access-Control-Allow-*` header, so a consumer who has not said
+who answers CORS gets a browser-visible CORS failure rather than an open door.
+Ordering CORS ahead of auth does the same job where the chain is the consumer's
+to order.
+
 `authgrpc` writes no status. The refusal is an error carrying
 `errs.KindUnauthorized`, and `crudgrpc.Errors` is what turns it into
 `UNAUTHENTICATED` — so the gRPC binding has no status table of its own and
@@ -110,13 +156,14 @@ changing `SetContext` to `Locals` and watching it.
 
 `make check-triplets` holds `authnet`, `authgin` and `authfiber` to the same test
 names, and exempts `binding_test.go` — which is where a difference goes, named.
-The check found both of the rows below on the day it was written; neither had
+The check found the first two rows on the day it was written; neither had
 been recorded anywhere.
 
 | Binding | What lives in its `binding_test.go` | Why it cannot be mirrored |
 |---|---|---|
 | `authnet` | `TestARefusalIsNotRenderedTwiceUnderTheErrorMiddleware` | It composes the auth middleware under `crudnet.Errors`, which needs both halves of the stack in one test binary. On net/http both are in the root module. Doing it for Gin would mean `authgin`'s tests requiring `crudgin`, and [[D-051]] is the rule against exactly that — a consumer mounting auth on Gin must not be made to take the CRUD binding, and a test dependency is still a dependency in the graph they resolve. The behaviour is the same on all three; only one of them can say so. |
 | `authgin` | `TestTheCauseIsFiledWithGinsErrorBag` | Gin carries an error bag on the context that its own logging middleware reads. net/http and Fiber have no equivalent, so there is nothing to mirror it to. |
+| `authnet` | `TestATypedNilPreflightAnswerIsStillNothingToAnswerWith` | The preflight answer is an `http.Handler` here and a func type on Gin and Fiber. A nil func compares equal to nil; a nil `*T` in an interface does not, so only this binding has a typed nil to refuse, and it refuses it with `internal/nilvalue`, the typed-nil predicate `auth`'s context and observer seams already use. |
 
 `authfiber` has no `binding_test.go`, and that is the honest state: everything it
 does differently is the `SetContext` row above, which every binding's copy of
@@ -148,6 +195,11 @@ does differently is the `SetContext` row above, which every binding's copy of
 - **No credential.** `auth.ErrUnauthenticated`, 401, handler not run — unless
   optional, in which case the chain proceeds with no principal and the
   repository refuses instead.
+- **Two credentials.** One source carrying two values, a cookie beside an
+  Authorization header, or two cookies of the configured name: a 401 wrapping
+  `ErrCredentialCardinality`, and the authenticator is not reached. An optional
+  guard refuses it too — an ambiguous credential is a bad credential, not an
+  absent one ([[D-099]]).
 - **A credential that does not verify.** The same 401, the same body, whether it
   was forged, expired, for another audience, or names an unknown key.
 - **A key set that cannot be reached or parsed.** `authjwt.JWKS` returns
@@ -198,7 +250,10 @@ does differently is the `SetContext` row above, which every binding's copy of
 | `auth/context.go` | the context key and nil-like-safe `WithPrincipal`, `PrincipalFrom`, `Require` |
 | `auth/principal.go` | `Principal`, nil-like-safe quantifiers, `Role`, `Permission`, `Claims`, `RoleMap` |
 | `internal/nilvalue/nilvalue.go` | the shared typed-nil predicate used by auth seams |
-| `auth/errors.go` | `ErrUnauthenticated`, `Unauthenticated` |
+| `auth/errors.go` | `ErrUnauthenticated`, `Unauthenticated`, `AmbiguousCredential` and the cardinality refusal built from it |
+| `auth/refusal.go` | `Reason`, `ReasonKind`, `Observer`, `ObserverFunc`, `Observe`, `Sampled`, `Guard.refuse` — where the reason goes, since it does not go in the body |
+| `auth/http/authhttp/preflight.go` | `Preflight`, `HeaderOrigin`, `HeaderRequestMethod`, `PreflightStatus` — what a CORS preflight looks like, and what answers one nobody was named for, once, for the three bindings |
+| `auth/http/authhttp/cookie.go` | the cookie lookup, its refusal of a second credential, and the named legacy precedence |
 | `auth/apikey/apikey.go` | the shared-secret authenticator and its `Store` |
 | `auth/authjwt/parser.go` | verification and the decode into C |
 | `auth/authjwt/key.go` | `KeySource` — the key and the methods, inseparable |
@@ -209,7 +264,7 @@ does differently is the `SetContext` row above, which every binding's copy of
 | `port/log.go` | `port.Logger` — where the two lines `Refuse` writes go when the refusal itself cannot be encoded or written. The application's logger, never the process-wide one ([[D-062]]) |
 | `auth/http/authnet/authnet.go` | the net/http middleware |
 | `auth/http/authgin/authgin.go` | the Gin middleware |
-| `auth/http/authfiber/authfiber.go` | the Fiber middleware, and `SetContext` |
+| `auth/http/authfiber/authfiber.go` | the Fiber middleware, `SetContext`, and the refusal written with `Header.Add` |
 | `auth/http/authfiber/locale.go` | the refusal's locale, read from the header |
 | `auth/rpc/authgrpc/interceptor.go` | `Unary`, `Stream`, `Skip` |
 | `auth/authjwt/go.mod` | the module boundary that keeps golang-jwt off everybody else |
@@ -234,8 +289,18 @@ does differently is the `SetContext` row above, which every binding's copy of
 - `TestDifferentGuardsAuthenticateIndependently` — all three HTTP bindings and
   gRPC. It is the control on the idempotence optimisation: a principal from one
   guard cannot bypass a second guard.
-- `TestARefusalCarriesEveryHeaderTheRendererAskedFor`,
-  `TestARefusalWithNoBodyIsTheStatusAndNothingElse`,
+- `TestARefusalCarriesEveryHeaderTheRendererAskedFor` — `auth/http/authhttp/refuse_test.go`
+  for the shared writer, and once per binding in `auth/http/authnet/refuse_test.go`,
+  `auth/http/authgin/refuse_test.go` and `auth/http/authfiber/refuse_test.go`, each
+  over the response writer that binding actually holds. The Fiber one is the
+  `Ctx.Set` guard: with `Set` in place of `Add` it reports one challenge where
+  the renderer asked for two.
+- `TestARequestPresentingTwoCredentialsIsRefusedRatherThanRanked` and
+  `TestTheLegacyCookiePrecedenceIsAvailableOnlyByNamingIt` —
+  `auth/http/authhttp/cookie_test.go`, with
+  `TestACookieLookupStillReadsTheAuthorizationHeader` as the control that the
+  fallback still works.
+- `TestARefusalWithNoBodyIsTheStatusAndNothingElse`,
   `TestARefusalThatWillNotEncodeIs500AndSaysNothing`,
   `TestARefusalIsRenderedInTheLanguageTheRequestAskedFor` and
   `TestRendererForKeepsOneRendererForTheOrdinaryCase` —
@@ -243,6 +308,20 @@ does differently is the `SetContext` row above, which every binding's copy of
   binding's middleware test reaches, because a binding is handed the default
   renderer and these need one that answers a second challenge, no body, or a
   body the encoder refuses.
+- `TestEveryRefusalReachesTheObserverWithTheReasonTheCallerNeverSees` and
+  `TestASampledObserverSeesOneRefusalInEveryRun` — `auth/observer_test.go`. The
+  first asserts the successful request is *not* observed and that the presented
+  token is nowhere in what the observer was handed.
+- `TestACorsPreflightIsAnsweredByTheHandlerNamedForItAndABareOptionsIsNot` — all
+  three HTTP bindings, each with the two controls: a bare `OPTIONS` is still
+  refused, and an `OPTIONS` carrying a credential is authenticated like any other
+  request and does reach the route. The preflight arm asserts the route did *not*
+  run, which is what [[D-103]] rests on.
+- `TestAPreflightNobodyAnsweredStopsAtTheDoorInsteadOfAtTheRoute` — all three,
+  over `SkipPreflight`: a forged `Origin` and `Access-Control-Request-Method`
+  answer `204` and reach no handler.
+- `TestAPreflightAnswerThatIsNotThereRefusesToStart` — all three; a nil answer is
+  a wiring mistake and is refused at construction, like a nil guard.
 - `TestAnOptionalGuardStillRefusesABadCredential` — `auth/guard_test.go`.
 - `TestASecondGuardDoesNotAuthenticateAgain` — `auth/guard_test.go`.
 - `TestADifferentGuardAuthenticatesAgain` — `auth/guard_test.go`; the final

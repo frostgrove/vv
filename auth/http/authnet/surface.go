@@ -23,6 +23,10 @@ func Over(mux *http.ServeMux) *Surface {
 
 func (this *Surface) Mux() *http.ServeMux { return this.mux }
 
+func (this *Surface) Handler() http.Handler { return sealed{this.mux} }
+
+type sealed struct{ http.Handler }
+
 func (this *Surface) Handle(pattern string, handler http.Handler) {
 	this.mux.Handle(pattern, handler)
 	this.routes = append(this.routes, routeOf(pattern))
@@ -39,6 +43,10 @@ func (this *Surface) Routes() []authhttp.Route {
 
 func (this *Surface) Verify(declared []authhttp.Endpoint, options ...authhttp.VerifyOption) error {
 	return authhttp.Verify(declared, this.Routes(), options...)
+}
+
+func (this *Surface) VerifyAreas(areas ...authhttp.Area) error {
+	return authhttp.VerifyAreas(this.Routes(), areas...)
 }
 
 func routeOf(pattern string) authhttp.Route {

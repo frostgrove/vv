@@ -54,19 +54,33 @@ declaration, not to the sign-in code.
    sign-up. Naming none is a supported state, not a misconfiguration, and it
    grants nothing.
 10. A failed sign-in says nothing about which half was wrong, and costs the same
-    whether or not the identifier exists.
-11. A caller can only close their own sessions. A session id belonging to
+    whether or not the identifier exists — including when the identifier or the
+    password is longer than anything the deployment accepts, which is refused
+    before it is hashed rather than after.
+11. Guessing is bounded. A deployment can cap attempts per identifier and per
+    address without the library learning what a Redis is, can watch what is
+    refused, and cannot be brought down by the cost of its own password hashing:
+    the number of hashes running at once has a ceiling, and work past it is
+    refused as busy rather than queued without limit.
+12. An account has one password. Resetting it ends every way of signing into that
+    account with the old one — there is no second identifier left working, and a
+    reset that would leave one is refused rather than reported as done.
+13. A caller can only close their own sessions. A session id belonging to
     somebody else answers as though it did not exist, rather than confirming
     that it does.
-12. Choosing signed tokens instead is one declaration. It changes what a client
+14. Choosing signed tokens instead is one declaration. It changes what a client
     receives and what a verifier checks, and changes nothing about how the
     author writes sign-up, sign-in or authorization.
-13. With signed tokens, a credential used twice is detected. Two browser tabs
-    refreshing at the same moment is not an error; a credential replayed after it
-    was spent closes the session it belonged to.
-14. Routes exist for a framework the author already uses, and choosing one does
+15. With signed tokens, a credential used twice is detected. Two browser tabs
+    refreshing at the same moment is not an error — including when both of them
+    read the session at the same instant, where the one that loses the race
+    leaves with a working credential rather than a sign-out; a credential
+    replayed after it was spent closes the session it belonged to. A rotation
+    that cannot be answered spends nothing: the credential the caller holds still
+    works.
+16. Routes exist for a framework the author already uses, and choosing one does
     not drag in the others.
-15. One deployment serves a browser and a native client without either of them
+17. One deployment serves a browser and a native client without either of them
     holding a credential the other's threat model forbids. Where a session's two
     credentials go is said per request — both in HttpOnly cookies, the rotating
     one alone, or both in the body — a request that says nothing gets the most
@@ -76,6 +90,35 @@ declaration, not to the sign-in code.
     the page can make the browser send a cookie it cannot read, and an endpoint
     that honoured "put it in the body" would hand that script a durable
     credential. See [[D-075]].
+18. A signed token names the service it was minted for, and a verifier requires
+    that name. Two services that share a signing key do not share each other's
+    sessions, and a deployment that wants a token no service claims says so with
+    a name that reads as unsafe.
+19. A stored password hash is data like any other. A row nothing wrote correctly
+    is an unreadable credential — not a wrong password, and never a process that
+    stops.
+20. A write made with a cookie the browser attached by itself says where it came
+    from. A deployment that delivers credentials in cookies refuses an unsafe
+    request that carries one of its own cookies, presents no header credential
+    and can name neither a same-origin fetch nor an origin the deployment
+    listed. A read, a request with no such cookie and a request carrying a header
+    credential are not asked, and a deployment whose CSRF defence is elsewhere
+    turns the check off by writing down why.
+21. What is listed as an active session is one that could still be used. A row
+    past its expiry or its idle deadline is not shown to its owner as somewhere
+    they are signed in, and the clock that decides it is the one that issued it.
+22. A revocation the issuing strategy could not be told about is not lost. The
+    sign-out still succeeds, the failure is logged, and it can be replayed from
+    the rows afterwards — telling a deny-list twice costs nothing, and a
+    credential that has expired anyway is left out.
+23. A session's stated end is its real end. However a caller refreshes, no
+    credential they hold verifies past the moment the session expires or past the
+    idle deadline the deployment configured, and a configuration in which one
+    lifetime outlives another does not start.
+24. A lifetime the deployment did not write and a lifetime it wrote wrongly get
+    different answers. Leaving one out takes the documented default; writing a
+    duration below zero stops the start and names the field and the value, rather
+    than becoming that default and being reported nowhere.
 
 ## Status
 

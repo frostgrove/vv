@@ -46,9 +46,11 @@ page of a caller who asked for it to be kept away from one.
 
 **A half delivered to the body clears the cookie it did not go into.** Without
 that, a browser signing in again as a body caller keeps the previous session's
-access cookie for the rest of its five minutes — and a guard reading the cookie
-prefers it to the header, so the page would hold a fresh token and go on acting
-as the session it just replaced.
+access cookie for the rest of its five minutes — and it would then send both
+that cookie and the header it just filled, which the guard refuses as two
+credentials ([[D-099]]). Before that refusal existed the cookie quietly won, and
+the page went on acting as the session it had just replaced; either way the
+clearing is what keeps the caller working.
 
 **Rotation is not a choice.** `accesshttp.Rotating` forces the rotating half to
 the channel the presented credential arrived on. What the request still decides
@@ -79,7 +81,8 @@ ends at the first rotation.
 **Because a guard that reads a cookie is what makes the closed delivery usable at
 all.** Both credentials in cookies means no Authorization header, so
 `authhttp.Cookie(name)` exists and falls back to the header — a deployment
-serving a browser and a native client runs one guard for both.
+serving a browser and a native client runs one guard for both. One request still
+uses one of the two: presenting both is a refusal ([[D-099]]).
 
 ## What this rules out
 
@@ -109,8 +112,9 @@ serving a browser and a native client runs one guard for both.
 - `auth/access/http/access{net,gin,fiber}/*_test.go` — the delivery header is
   read and the cookie is written by each transport, with the attributes intact.
 - `auth/http/authhttp/cookie_test.go` — the guard reads the cookie, still reads
-  the Authorization header, and does not take another cookie's value.
+  the Authorization header, does not take another cookie's value, and refuses a
+  request that presents both ([[D-099]]).
 
 ## See also
 
-[[FL-023]] · [[UC-023]] · [[D-066]] · [[D-045]] · [[D-055]]
+[[FL-023]] · [[UC-023]] · [[D-066]] · [[D-045]] · [[D-055]] · [[D-099]]

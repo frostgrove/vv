@@ -29,6 +29,7 @@ policy that reads the caller.
 | `Guard` | the transport-neutral half of a middleware |
 | `WithPrincipal`, `PrincipalFrom`, `Require` | the one context key in the tree that carries an identity |
 | `ErrUnauthenticated`, `Unauthenticated` | the 401, and the sentinel it wraps |
+| `Observer`, `Reason`, `Observe`, `Sampled` | where the reason a request was refused goes, since it never goes in the body |
 
 ## The principal
 
@@ -193,6 +194,15 @@ auth.Lookup(func(get func(string) string) (auth.Credential, bool) {
 })
 ```
 
+`auth.LookupOrRefuse` is the same seam for a source that can answer *neither* a
+credential nor "nothing here" — its function returns `(Credential, bool, error)`,
+and an error is the request's refusal. `auth.Lookup` is the thin wrapper over it
+for a source with nothing to refuse. `authhttp.Cookie` is the one this library
+ships: a cookie beside an `Authorization` header is two credentials and is
+refused rather than ranked ([[D-099]]). Build the refusal with
+`auth.AmbiguousCredential(reason)`, so it carries `ErrCredentialCardinality` like
+every other "more than one credential" answer.
+
 **`Optional` does not accept a bad credential.** A token that fails to verify is
 a 401 whether or not the endpoint is optional: treating it as anonymous would
 mean a stale session silently sees the public view instead of a prompt to sign
@@ -227,6 +237,29 @@ renders identically: `unauthenticated`, *"authentication is required"*
 To recover the reason in a log, `errors.As` down to the `*errs.Fault` and call
 `Unwrap`. Note that `errors.Unwrap` does **not** reach it: a fault unwraps to a
 slice, which the single-error form does not walk.
+
+### Watching refusals
+
+The client is told nothing, so somebody has to be told something — and leaving
+that to each binding is how one transport filed the cause with its framework's
+error bag and two logged nothing at all. `Observe` puts it on the guard, where
+every transport passes through:
+
+```go
+guard := auth.NewGuard(authn, auth.Observe(auth.Sampled(100, observer)))
+```
+
+| | |
+|---|---|
+| `Reason` | `Kind`, a `Detail` written here, and the `Err` the caller was answered with |
+| `ReasonNoCredential`, `ReasonAmbiguousCredential`, `ReasonRejected`, `ReasonNoPrincipal`, `ReasonGuardUnusable` | the kinds, and they are the whole vocabulary |
+| `Observer` / `ObserverFunc` | `Refused(ctx, Reason)`, called on the refusing path only |
+| `Sampled(oneIn, observer)` | a decorator, for a surface under a credential-stuffing run |
+
+**A `Reason` never carries a credential.** `Detail` is one of a handful of
+sentences written in this package; the token, the cookie and the header are not
+in it and must not be put there. The observer runs on the request's own
+goroutine, so an implementation that blocks blocks the refusal.
 
 ## Wiring it to a repository
 

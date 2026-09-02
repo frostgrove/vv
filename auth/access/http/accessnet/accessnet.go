@@ -46,6 +46,17 @@ func newJar(table accesshttp.Table, options settings) jar {
 	return jar{credentials: accesshttp.NewCredentials(table, options.cookies)}
 }
 
+func (this jar) protect(r *http.Request) error {
+	return this.credentials.Protect(r.Method, r.Header.Get,
+		func(name string) string {
+			presented, err := r.Cookie(name)
+			if err != nil {
+				return ""
+			}
+			return presented.Value
+		})
+}
+
 func (this jar) requested(r *http.Request) (accesshttp.Delivery, error) {
 	return this.credentials.Requested(r.Header.Get)
 }
@@ -115,6 +126,10 @@ func (this *Handler) dispatch(name string) http.HandlerFunc {
 }
 
 func (this *Handler) SignIn(w http.ResponseWriter, r *http.Request) {
+	if err := this.jar.protect(r); err != nil {
+		this.refuse(w, r, err)
+		return
+	}
 	var body access.SignInRequest
 	if err := porthttp.DecodeJSON(r.Body, &body); err != nil {
 		this.refuse(w, r, err)
@@ -135,6 +150,10 @@ func (this *Handler) SignIn(w http.ResponseWriter, r *http.Request) {
 }
 
 func (this *Handler) SignOut(w http.ResponseWriter, r *http.Request) {
+	if err := this.jar.protect(r); err != nil {
+		this.refuse(w, r, err)
+		return
+	}
 	response, err := this.endpoints.SignOut(r.Context())
 	if err != nil {
 		this.refuse(w, r, err)
@@ -145,6 +164,10 @@ func (this *Handler) SignOut(w http.ResponseWriter, r *http.Request) {
 }
 
 func (this *Handler) SignOutAll(w http.ResponseWriter, r *http.Request) {
+	if err := this.jar.protect(r); err != nil {
+		this.refuse(w, r, err)
+		return
+	}
 	everywhere := r.URL.Query().Get("all") == "true"
 	response, err := this.endpoints.SignOutAll(r.Context(), everywhere)
 	if err != nil {
@@ -159,6 +182,10 @@ func (this *Handler) SignOutAll(w http.ResponseWriter, r *http.Request) {
 }
 
 func (this *Handler) ChangeSecret(w http.ResponseWriter, r *http.Request) {
+	if err := this.jar.protect(r); err != nil {
+		this.refuse(w, r, err)
+		return
+	}
 	var body access.ChangeSecretRequest
 	if err := porthttp.DecodeJSON(r.Body, &body); err != nil {
 		this.refuse(w, r, err)
@@ -191,6 +218,10 @@ func (this *Handler) ListSessions(w http.ResponseWriter, r *http.Request) {
 }
 
 func (this *Handler) KillSession(w http.ResponseWriter, r *http.Request) {
+	if err := this.jar.protect(r); err != nil {
+		this.refuse(w, r, err)
+		return
+	}
 	if err := this.endpoints.KillSession(r.Context(), r.PathValue("id")); err != nil {
 		this.refuse(w, r, err)
 		return
@@ -241,6 +272,10 @@ func (this *RegisterHandler[P]) Mount(mux *http.ServeMux) {
 func (this *RegisterHandler[P]) Route() accesshttp.Route { return this.route }
 
 func (this *RegisterHandler[P]) Register(w http.ResponseWriter, r *http.Request) {
+	if err := this.jar.protect(r); err != nil {
+		authhttp.Refuse(w, r, this.renderer, err)
+		return
+	}
 	var payload P
 	if err := porthttp.DecodeJSON(r.Body, &payload); err != nil {
 		authhttp.Refuse(w, r, this.renderer, err)
@@ -284,6 +319,10 @@ func (this *RefreshHandler) Mount(mux *http.ServeMux) {
 func (this *RefreshHandler) Route() accesshttp.Route { return this.route }
 
 func (this *RefreshHandler) Refresh(w http.ResponseWriter, r *http.Request) {
+	if err := this.jar.protect(r); err != nil {
+		authhttp.Refuse(w, r, this.renderer, err)
+		return
+	}
 	var body access.RefreshRequest
 
 	if r.Body != nil && r.ContentLength != 0 {

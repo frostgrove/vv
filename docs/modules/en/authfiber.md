@@ -91,6 +91,13 @@ A refusal is written here rather than returned, for
 `crudfiber.ErrorHandler` both leave an already-written response alone, so this
 composes with either.
 
+**A repeated refusal header keeps every value.** The rendered headers go on with
+`c.Response().Header.Add`; `Ctx.Set` overwrites, so a 401 offering two
+`WWW-Authenticate` challenges arrived offering the last one and looked fine.
+`TestARefusalCarriesEveryHeaderTheRendererAskedFor` in
+`auth/http/authfiber/refuse_test.go` is what fails when it is wrong, and the same
+test name stands over the other two bindings' response writers.
+
 **A consecutive double install with the same guard authenticates once.** A
 different guard performs its own check. A -> B -> A is refused because no
 assurance order can be inferred; mount cumulative checks once each and use one
@@ -102,19 +109,50 @@ construction; nil and `new(auth.Guard)` panic before traffic.
 | | |
 |---|---|
 | `Routes(app)` | what this application actually serves, as `[]authhttp.Route` |
-| `Verify(app, declared, opts…)` | that, compared against the declarations, in one call |
+| `Verify(app, declared, opts…)` | that, compared against the declarations: the prefix's relative ones, and the `authhttp.AtRoot` ones for everything outside it |
+| `VerifyAreas(app, areas…)` | the same, over every mounted route — see [authhttp](authhttp.md) |
+| `AnswerPreflight(handler, preflight)` | wraps the middleware so a browser's CORS preflight is answered by the handler you name instead of being asked for a credential |
+| `SkipPreflight(handler)` | the same wrapper with nobody named: the preflight is answered `204` and reaches no route |
 
 It reads Fiber's own table rather than a list kept alongside it. That is the
 whole point: a declaration is only worth checking against a second statement
 arrived at independently, and a recorder wrapped around registration would agree
 with the declaration exactly when both were wrong.
 
-HEAD and OPTIONS are left out. Fiber registers a HEAD for every GET itself, once
-its start-up process has run, and the flag that marks one as generated is
-unexported — so from outside a generated HEAD and a hand-written one are the same
-value. A HEAD-only route therefore cannot be declared here, which is the same
-reason it cannot be mounted alone. OPTIONS is a CORS middleware's answer, not an
-endpoint ([[D-073]]).
+The HEAD Fiber invents is left out; everything a consumer mounted is not. Fiber
+registers a HEAD for every GET once its start-up process has run, and the flag
+that marks one as generated is unexported — so the generated half is recognised
+by its shape instead: a HEAD whose path also carries a GET. A HEAD with no GET
+beside it, and an OPTIONS handler, are surface like any other and have to declare
+their access. What this cannot separate is a hand-written HEAD on a path that
+also serves GET; it is covered by that path's GET declaration, and that is the
+accepted limit ([[D-073]]).
+
+## Letting a CORS preflight through
+
+A browser sends `OPTIONS` with no credential before a cross-origin write. A guard
+mounted in front of the CORS middleware answers it with a 401, the browser never
+makes the request it was asking about, and the failure looks like a CORS
+misconfiguration.
+
+```go
+app.Use(authfiber.AnswerPreflight(authfiber.Middleware(guard), cors.New()))
+```
+
+A preflight is `OPTIONS`, an `Origin`, an `Access-Control-Request-Method` and no
+`Authorization` header, and nothing else. One that matches skips the guard and
+goes to the handler you named, which answers it; **the chain ends there and no
+route runs** ([[D-103]]). An `OPTIONS` carrying a credential is a request and is
+authenticated like one.
+
+`SkipPreflight(handler)` is the same wrapper with nobody named to answer, and
+answers `204` itself with no `Access-Control-Allow-*` header. That is a visible
+CORS failure in the browser rather than an unauthenticated `OPTIONS` running a
+hand-written handler: the two headers the predicate reads are set by the client,
+so anything reachable past them is reachable by anyone.
+
+Ordering the CORS middleware before the guard does the same job and is the better
+answer where the chain is yours to order; this is for the chain that is not.
 
 ## See also
 

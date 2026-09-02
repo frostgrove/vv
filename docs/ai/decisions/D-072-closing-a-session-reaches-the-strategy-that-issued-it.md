@@ -6,7 +6,7 @@
 them can be named. A strategy that cannot see a closed row from its own verifier
 declares a `RevocationSink` on `Issued`, and `Mount` registers it against that
 subject. The announcement never happens inside the transaction that wrote the
-rows.
+rows, and an announcement that failed is replayable from those rows.
 
 ## The decision
 
@@ -71,10 +71,34 @@ the announcement runs, the rows are committed and the caller is signed out.
 Answering "could not sign you out" to somebody who is signed out is worse than
 the window a failed announcement leaves, and that window is bounded by the
 credential's own lifetime rather than open-ended. It is logged at error level
-with the ids. This is the opposite of the *incoming* rule — `revokeredis.Revoked`
+with the ids, and it is replayable — see below. This is the opposite of the *incoming* rule — `revokeredis.Revoked`
 returns an error rather than a `false`, because a deny-list that cannot be read
 must not admit everybody — and the two are not in tension: refusing to answer a
 question is safe, refusing to finish a completed action is not.
+
+## What closes the window a failed announcement leaves
+
+The log line is where the failure is seen and not where it ends. The sessions
+table is the journal: a revoked row carries both the moment it closed
+(`revoked_at`) and the moment the credential dies anyway (`expires_at`), which is
+everything an announcement needs. `Deps.ReannounceRevocations(ctx, since)` —
+reached from a composition root as `Runtime.ReannounceRevocations` — reads the
+rows revoked since a moment and not yet expired and tells each subject's sink
+again.
+
+Three properties make it safe to run from a scheduled job:
+
+- **It is idempotent.** Adding a session id a deny-list already holds costs a
+  duplicate entry and nothing else, so windows may overlap freely — every minute
+  for the last hour is the right shape.
+- **It hands back the failure.** Unlike `announce`, it returns the error, because
+  its caller is a worker that can retry rather than a person who has already been
+  signed out.
+- **It leaves the dead alone.** A row past its `expires_at` needs no deny-list
+  entry: nothing can present that credential any more.
+
+There is no outbox table, and adding one would be a schema this module imposes on
+every consumer to cover a window the credential's own TTL already bounds.
 
 ## What it forbids
 
@@ -84,7 +108,10 @@ question is safe, refusing to finish a completed action is not.
   not a leftover; it is where the ids come from.
 - Do not call `Deps.announce` inside a transaction.
 - Do not turn a sink failure into a failed sign-out, and do not swallow it
-  silently either — it is logged with the ids.
+  silently either — it is logged, and it is replayable from the rows.
+- Do not make the replay stateful. Its only inputs are `revoked_at` and
+  `expires_at`; a "delivered" column would be a second write on the sign-out
+  path and a second thing to get wrong.
 - Do not assign a strategy's `core` to `Issued.Revocations` unconditionally. A
   typed nil in that interface is not absence, and `Mount` rejects it rather
   than publishing a broken callback.
@@ -96,8 +123,9 @@ question is safe, refusing to finish a completed action is not.
 | File | What it holds |
 |---|---|
 | `auth/access/access.strategy.go` | `RevocationSink`, `Issued.Revocations` |
-| `auth/access/access.revocation.go` | `revocationSinks`, `revoked`, `Deps.announce` |
-| `auth/access/access.runtime.go` | `Mount` registers the sink; `Runtime.SetPassword` reaches the same registry |
+| `auth/access/access.revocation.go` | `revocationSinks`, `revoked`, `Deps.announce`, `Deps.tell`, `Deps.ReannounceRevocations` |
+| `auth/access/access.repo.go` | `Store.SessionsRevokedSince` — the journal query the replay reads |
+| `auth/access/access.runtime.go` | `Mount` registers the sink; `Runtime.SetPassword` and `Runtime.ReannounceRevocations` reach the same registry |
 | `auth/access/usecase.logout-all.go` | `Deps.revoke` — the read, the write by id, the count |
 | `auth/access/usecase.logout.go`, `usecase.change-password.go`, `usecase.set-password.go` | the announcing call sites |
 | `auth/access/accessjwt/accessjwt.go` | `core.SessionsRevoked` — the deadline from `AccessTTL` |
@@ -109,7 +137,11 @@ question is safe, refusing to finish a completed action is not.
   an opaque deployment pays nothing and cannot fail on a sink it never had.
 - `access.TestOnlyTheOwningSubjectsStrategyIsTold` — two subjects, two sinks.
 - `access.TestASinkIsNotToldWhenTheTransactionRollsBack` — the ordering rule.
-- `access.TestAFailingSinkDoesNotFailTheSignOut`.
+- `access.TestAFailingSinkDoesNotFailTheSignOut`, and
+  `access.TestARevocationTheSinkMissedIsReplayedFromTheSessionsTable` beside it:
+  the same unreachable sink, told again from the rows once it is back.
+  `access.TestReplayingRevocationsHandsBackTheFailureRatherThanSwallowingIt` is
+  the half that makes a worker able to retry.
 - `access.TestClosingASessionReadsTheRowsBeforeItWritesThem` — what keeps
   somebody from collapsing the two statements.
 - `access.TestMountRegistersTheStrategysRevocationSink`, with
