@@ -112,6 +112,7 @@ func (this *Cache[K, V]) Resolve(ctx context.Context, key K, load Loader[K, V]) 
 	if err != nil {
 		return Result[V]{}, err
 	}
+	defer core.forgetMemoized(ctx, address)
 	return core.resolveAddress(ctx, address, key, load)
 }
 

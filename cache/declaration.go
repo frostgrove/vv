@@ -232,10 +232,13 @@ func (this *Definition[K, V]) isActivated() bool {
 }
 
 func normalizeCapabilities(values []Capability) ([]Capability, error) {
+	if len(values) > MaxDeclaredCapabilities {
+		return nil, ErrTooLarge
+	}
 	result := append([]Capability(nil), values...)
 	sort.Slice(result, func(left, right int) bool { return result[left] < result[right] })
 	for index, capability := range result {
-		if capability != BatchReadCapability || (index > 0 && capability == result[index-1]) {
+		if !capability.valid() || (index > 0 && capability == result[index-1]) {
 			return nil, ErrInvalid
 		}
 	}

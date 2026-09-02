@@ -18,6 +18,9 @@ type ActivationSpec struct {
 	Runtime     Runtime
 	Sets        []Set
 	Providers   []Provider
+	Resources   []ResourceDeclaration
+
+	RequireDeclaredResources bool
 }
 
 type ActivationError struct {
@@ -75,6 +78,8 @@ func Activate(ctx context.Context, spec ActivationSpec) error {
 	problems = append(problems, validateDeclarations(declarations)...)
 	providers, providerProblems := indexProviders(spec.Providers)
 	problems = append(problems, providerProblems...)
+	domains, resourceProblems := indexResources(spec.Resources)
+	problems = append(problems, resourceProblems...)
 	if len(problems) > 0 {
 		return newActivationError(problems)
 	}
@@ -87,6 +92,7 @@ func Activate(ctx context.Context, spec ActivationSpec) error {
 	}
 	plans := make([]activationPlan, 0, len(declarations))
 	namespaces := make(map[activatedNamespace]string, len(declarations))
+	cacheOwners := make(map[ResourceID]string, len(declarations))
 	for _, declaration := range declarations {
 		descriptor := declaration.Describe()
 		provider, err := selectProvider(descriptor.ProviderKind, descriptor.ProviderID, providers)
@@ -95,6 +101,9 @@ func Activate(ctx context.Context, spec ActivationSpec) error {
 			continue
 		}
 		if descriptor.ProviderKind != NoProviderKind {
+			if _, taken := cacheOwners[provider.resourceIdentity()]; !taken {
+				cacheOwners[provider.resourceIdentity()] = declaration.declarationName()
+			}
 			namespace := activatedNamespace{
 				resource:   provider.resourceIdentity(),
 				purpose:    descriptor.Purpose,
@@ -113,6 +122,10 @@ func Activate(ctx context.Context, spec ActivationSpec) error {
 		}
 		plans = append(plans, plan)
 	}
+	if spec.RequireDeclaredResources {
+		problems = append(problems, undeclaredResourceProblems(domains, cacheOwners)...)
+	}
+	problems = append(problems, evictionDomainProblems(domains, cacheOwners)...)
 	if len(problems) > 0 {
 		return newActivationError(problems)
 	}

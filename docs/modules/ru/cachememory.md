@@ -23,6 +23,10 @@ expired entries удаляются до вытеснения живых. Не п
 возвращает собственные byte slices. `Reset` очищает storage, `Close` очищает его
 навсегда, `Stats` показывает entries, charged bytes, limits и closed state.
 
+Backend закрывает capability `HealthChecker`: `CheckBackend` проходит, пока
+store открыт, и возвращает `cache.ErrClosed` после закрытия — так у
+`Cache.Check` появляется, что спросить. См. [[D-093]] и [[D-096]].
+
 `WithClock` нужен для детерминированных expiry-тестов. `WithObserver` сообщает
 операции storage, причины eviction и charges. Callbacks выполняются вне lock,
 panic изолируется, re-entry для этого backend безопасен. Cancellation

@@ -2,7 +2,8 @@
 
 **Entry points:** `cache.Auto`, `cache.Define`, `cache.Activate`,
 `cache.Cache.Resolve`
-**Governed by:** [[D-021]] [[D-084]] [[D-085]]
+**Governed by:** [[D-021]] [[D-084]] [[D-085]] [[D-093]] [[D-094]] [[D-095]]
+[[D-096]] [[D-104]]
 
 What happens between a top-level typed declaration and a hit, stale value,
 negative result or application load, including every place the operation is
@@ -23,6 +24,15 @@ bounded.
    flattens every set, resolves providers, prevents two declarations from
    sharing one physical namespace, prepares every core and only then publishes
    all of them under one activation gate. A failed preparation publishes none.
+5. **Eviction domains** — `cache/resource.go` — `ActivationSpec.Resources` says
+   which tenants a physical resource identity carries. A cache resolved onto a
+   resource declared with `DurableWorkTenant` or `DurableSecurityTenant` is
+   refused with the rest of the activation problems, and no waiver excuses it;
+   two durable tenants share one resource only behind `SharedDurableSecurity`,
+   whose reason is validated and whose presence is refused where it excuses
+   nothing. `RequireDeclaredResources` makes an undeclared resource a refusal
+   too, naming the cache that resolved to it. [[D-104]] says why the check has to
+   be a declaration.
 
 `Cache.Describe` in `cache/descriptor.go` exposes the declaration before
 activation and the resolved namespace, provider, backend, clock policy and
@@ -64,6 +74,56 @@ effective limits afterwards.
 duplicates on output, and chooses a declared `BatchReader` or bounded fallback
 without changing result semantics.
 
+## The execution memo
+
+`cache/memo.go` holds an optional L0 for one execution. `WithMemo` puts a
+bounded `Memo` on a context and its owner closes it; `Close` empties the
+container and turns every later read and write into a no-op.
+
+1. `lookupStable` consults the memo after transient admission and before it
+   takes the address's coordination state, so a memoized answer costs no
+   coordination at all. A stored envelope is decoded fresh, so freshness is
+   recomputed against the clock and a `Hit` may legitimately become `Stale`
+   later in the same execution.
+2. `lookupAddress` returns the decoded result together with the envelope it
+   read, and `confirmReadAndMemoize` decides both questions at once under the
+   coordination lock: the read's generation is still current, and the envelope
+   is remembered. A read a concurrent write superseded is retried and never
+   remembered. A backend miss, a corrupt envelope and every error path fill
+   nothing, and a memoized envelope that fails to decode is dropped before the
+   corruption policy runs.
+3. `batchGet` splits the unique addresses into what the memo holds and what it
+   lacks, asks the backend only for the remainder, merges, and reports which
+   addresses it actually read. `confirmBatchReadAndMemoize` remembers exactly
+   those, and only once every address in the batch is still on the generation
+   the round began with. `decodeBatch` applies the cumulative batch bounds to
+   the merged map unchanged.
+4. `Put`, `Forget`, `Resolve` and every `ResolveMany` write drop the memo entry
+   for the address they touch. Loads never read the memo.
+
+Memo bytes are the memo's own budget and are not charged to
+`MaxTransientBytes`; [[D-085]] bounds one operation's work, the memo is retained
+across many.
+
+## Resolve for a batch
+
+`cache/resolve_many.go` reads once through `LookupMany`, then:
+
+1. `planMissing` walks the results in caller order, deduplicates the `Miss`
+   addresses, records every input index that maps to each and charges the keys
+   against `MaxBatchKeyBytes`.
+2. `loadBatch` calls the typed `BatchLoader` once, inside the value-blind loader
+   deadline, containing a panic. A wrong result count, an unset `Presence`, a
+   loader error or an expired loader context fails the whole call.
+3. `encodeLoaded` encodes every answer and charges the cumulative envelope size
+   against `MaxBatchResultBytes` **before** `commitLoaded` performs the first
+   write. A clean absence with negative caching disabled becomes a `Negative`
+   result and writes nothing.
+4. `commitLoaded` writes each envelope through the ordinary mutation fence
+   (`beginMutationAs`/`commitMutationAs`, reported as `load_many`), so a
+   superseded write is a no-op rather than an error. It does not join
+   per-address flights.
+
 ## Resolve and a shared flight
 
 1. `cache/resolve.go` performs the same read first. A result ends the operation;
@@ -85,10 +145,28 @@ The `Disabled` branch skips lookup, coordination and storage but uses the same
 value-blind timed loader boundary, transient admission, cancellation precedence
 and load-event classification.
 
+## Capabilities and the probe
+
+`cache/capability.go` answers `Supports` for a built-in capability by walking
+the decorator chain for its typed interface, and for every other capability from
+the set the backend declared through `CapabilityDeclarer`. A declared built-in
+name, a malformed name, an over-long declaration and a panicking declarer all
+contribute nothing. `cache/activation.go` checks `Definition.Requires` against
+the resolved provider through that same function, so an unmet requirement is a
+start-up error.
+
+`cache/health.go:Check` is the neutral probe: it refuses while the cache is not
+activated, passes for a disabled policy or a backend with no `HealthChecker`,
+and otherwise calls the backend under the backend deadline and reports the
+sanitized `ErrBackend` category. The composition root decides what that answer
+is worth; [[D-096]] says why the cache does not.
+
 ## Observer and context boundary
 
-`cache/cache.go:observe` contains observer panic and invokes callbacks outside
-cache locks. Ordinary operation events may carry the operation caller's context.
+`cache/observers.go:Observers` composes at most `MaxObservers` children,
+synchronously, in registration order, isolating each child's panic and starting
+nothing. `cache/cache.go:observe` contains observer panic and invokes
+callbacks outside cache locks. Ordinary operation events may carry the operation caller's context.
 Terminal shared-load events use the flight's detached, value-blind context.
 Callbacks are synchronous so they remain part of the admitted operation; they
 must not block or re-enter the emitting cache. `Stats` does not begin an
@@ -107,10 +185,15 @@ the complete state before emitting events.
 | File | What it holds |
 |---|---|
 | `cache/declaration.go`, `activation.go` | magic-first declaration and atomic provider resolution |
+| `cache/resource.go` | declared resource tenants and the eviction-domain refusal |
 | `cache/policy.go`, `descriptor.go` | profiles, explicit overrides and inspectable effective policy |
 | `cache/address.go`, `scope.go`, `key.go` | typed identity and fixed backend address |
 | `cache/transient.go` | permanent waiter reservation and per-operation admission |
 | `cache/lookup.go`, `resolve.go`, `mutation.go` | read, local flight and mutation fence |
+| `cache/resolve_many.go` | one batch loader call, cumulative bound before the first write |
+| `cache/memo.go` | the bounded execution container and its close barrier |
+| `cache/capability.go` | built-in capability interfaces and the driver-declared set |
+| `cache/observers.go`, `cache/health.go` | bounded observer fan-out and the neutral probe |
 | `cache/envelope.go`, `codec.go` | versioned wire value and bounded codecs |
 | `cache/context.go`, `runtime.go` | injected clock, finite contexts and watcher teardown |
 | `cache/cachememory/backend.go` | bounded process backend |
@@ -123,5 +206,21 @@ the complete state before emitting events.
   `cache/transient_test.go` cover flight races, mutation fences, context
   isolation, cancellation, saturation, timers and bounded codecs.
 - `cache/batch_test.go` covers capability and fallback parity.
+- `cache/capability_test.go` covers the declared capability set, the refusal of
+  a declared built-in name and requirements beyond `batch_read` at activation.
+- `cache/memo_test.go` covers the L0 consult, the miss that is never
+  remembered, the confirmed absence that is, mutation invalidation, the close
+  barrier and the entry bound.
+- `cache/memo_currency_test.go` covers the read a concurrent write supersedes:
+  neither `Lookup` nor `LookupMany` answers from the envelope their own
+  coordination discarded.
+- `cache/resource_test.go` covers the eviction domain: a cache refused the
+  resource that holds durable state, the waiver that only two durable tenants
+  may use, the resource declarations that are refused on their own shape, and
+  the undeclared resource that passes until the root asks for declarations.
+- `cache/resolve_many_test.go` covers order, deduplication, all-or-error and the
+  cumulative bound proved before the first write.
+- `cache/observers_test.go` and `cache/health_test.go` cover the fan-out and
+  probe seams.
 - `cache/cachememory/backend_test.go` and its conformance test cover ownership,
   LRU, expiry, limits, cancellation and observer behaviour.

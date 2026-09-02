@@ -56,11 +56,37 @@ incident without silently removing cancellation and resource limits.
     evicts deterministically and does not publish a requested write after that
     write is cancelled or rejected. Already completed expiry cleanup or access
     promotion may remain observable when later cancellation wins.
+11. A declaration may require what a backend can do beyond storing bytes, and a
+    provider that cannot do it is refused at start-up. A capability the core
+    itself calls is only ever satisfied by the backend implementing it; a
+    capability only the application uses is the driver's to publish.
+12. One execution may install a bounded remembering scope so repeated reads of
+    the same address within it cost one backend read. It remembers only what the
+    backend actually stored and only a read the subsystem confirmed was still
+    current — never a miss, never an error, never a read a concurrent write
+    superseded — its owner closes it, and after that it answers nothing. Two
+    reads in one execution never move backwards in time. Any write in that
+    execution drops what it held for that address.
+13. Filling many missing addresses at once asks the application once, keeps
+    caller order and duplicates, proves the whole batch fits before storing any
+    of it, and fails as a whole rather than returning some answers and an error.
+14. The application can compose several independent observers over one event
+    stream without one of them being able to swallow another, reorder them or
+    move them off the operation, and can ask the subsystem whether it can serve
+    without the subsystem deciding what that answer is worth.
+15. A physical storage resource holds caching or durable state, never both. The
+    composition root says which tenants live on each resource identity, and a
+    cache placed on one that holds queued work or revoked sessions is refused at
+    start-up rather than left to a memory-pressure event. Only two durable
+    tenants may share one resource, and only with a written reason. A root that
+    cannot afford an undescribed resource can require every resource a cache
+    lands on to be declared, and start-up then fails on the omission.
 
 ## Out of scope
 
 - A cache is not a source of truth, a revocation list, rate limiter, job queue,
-  lease service, audit log or workflow store.
+  lease service, audit log or workflow store, and it does not share their
+  eviction domain.
 - Load coalescing is local to one process. Cross-process coordination needs a
   subsystem with its own failure model.
 - A generic context-value projector is not provided. It would make security and
@@ -77,7 +103,8 @@ incident without silently removing cancellation and resource limits.
 
 ## Status
 
-Covered by the typed facade and bounded in-process backend. Shared PostgreSQL
-and Redis storage, request-scoped memoization and bulk resolve are separate
+Covered by the typed facade and bounded in-process backend, including the
+execution memo, batch resolve, the driver-declared capability set and the
+observer and probe seams. Shared PostgreSQL and Redis storage remain separate
 features; their absence does not weaken this use case's local bounded-work
 contract.

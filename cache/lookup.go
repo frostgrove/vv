@@ -47,9 +47,48 @@ func (this *cacheCore[K, V]) lookupStable(ctx context.Context, address Address) 
 		return Result[V]{}, failure("lookup", err)
 	}
 	defer lease.release()
+	if result, memoized, err := this.lookupMemoized(ctx, address); memoized {
+		return result, err
+	}
 	state := this.acquireState(address)
 	defer this.releaseState(address, state)
 	return this.lookupStableStateAdmitted(ctx, address, state)
+}
+
+func (this *cacheCore[K, V]) lookupMemoized(ctx context.Context, address Address) (Result[V], bool, error) {
+	memo := MemoFrom(ctx)
+	if memo == nil {
+		return Result[V]{}, false, nil
+	}
+	key := this.memoKeyFor(address)
+	encoded, ok := memo.load(key)
+	if !ok {
+		return Result[V]{}, false, nil
+	}
+	if len(encoded) == 0 || len(encoded) > this.maxEnvelopeBytes {
+		memo.forget(key)
+		result, err := this.corruptRead(ctx, LookupOperation)
+		return result, true, err
+	}
+	result, payloadBytes, err := decodeEnvelope(encoded, this.runtime, this.values, this.valueDescriptor, this.policy)
+	if err != nil {
+		memo.forget(key)
+		if !errors.Is(err, ErrCorrupt) {
+			this.observe(ctx, Event{Operation: LookupOperation, Outcome: ErrorOutcome, Reason: RuntimeReason, Items: 1, Memoized: true})
+			return Result[V]{}, true, failure("lookup", err)
+		}
+		corrupt, corruptErr := this.corruptRead(ctx, LookupOperation)
+		return corrupt, true, corruptErr
+	}
+	this.observe(ctx, Event{
+		Operation:    LookupOperation,
+		Outcome:      outcomeForState(result.State),
+		Items:        1,
+		EncodedBytes: int64(len(encoded)),
+		PayloadBytes: int64(payloadBytes),
+		Memoized:     true,
+	})
+	return result, true, nil
 }
 
 func (this *cacheCore[K, V]) lookupStableStateAdmitted(ctx context.Context, address Address, state *addressState) (Result[V], error) {
@@ -58,8 +97,8 @@ func (this *cacheCore[K, V]) lookupStableStateAdmitted(ctx context.Context, addr
 		if err != nil {
 			return Result[V]{}, failure("lookup", err)
 		}
-		result, err := this.lookupAddressAdmitted(ctx, address)
-		if !this.readCurrent(ticket) {
+		result, encoded, err := this.lookupAddress(ctx, address)
+		if !this.confirmReadAndMemoize(ctx, ticket, address, encoded) {
 			continue
 		}
 		return result, err
@@ -67,33 +106,42 @@ func (this *cacheCore[K, V]) lookupStableStateAdmitted(ctx context.Context, addr
 }
 
 func (this *cacheCore[K, V]) lookupAddressAdmitted(ctx context.Context, address Address) (Result[V], error) {
+	result, _, err := this.lookupAddress(ctx, address)
+	return result, err
+}
+
+func (this *cacheCore[K, V]) lookupAddress(ctx context.Context, address Address) (Result[V], []byte, error) {
 	backendCtx, cancel, contextErr := this.backendContext(ctx)
 	if contextErr != nil {
 		this.observe(ctx, Event{Operation: LookupOperation, Outcome: ErrorOutcome, Reason: RuntimeReason, Items: 1})
-		return Result[V]{}, failure("lookup", contextErr)
+		return Result[V]{}, nil, failure("lookup", contextErr)
 	}
 	encoded, found, err := backendGet(this.backend, backendCtx, address, ReadLimit{MaxBytes: this.maxEnvelopeBytes})
 	cancel()
 	if err != nil {
-		return this.readFailure(ctx, LookupOperation, err)
+		result, readErr := this.readFailure(ctx, LookupOperation, err)
+		return result, nil, readErr
 	}
 	if !found {
 		if len(encoded) != 0 {
-			return this.corruptRead(ctx, LookupOperation)
+			result, corruptErr := this.corruptRead(ctx, LookupOperation)
+			return result, nil, corruptErr
 		}
 		this.observe(ctx, Event{Operation: LookupOperation, Outcome: MissOutcome, Items: 1})
-		return Result[V]{State: Miss}, nil
+		return Result[V]{State: Miss}, nil, nil
 	}
 	if len(encoded) == 0 || len(encoded) > this.maxEnvelopeBytes {
-		return this.corruptRead(ctx, LookupOperation)
+		result, corruptErr := this.corruptRead(ctx, LookupOperation)
+		return result, nil, corruptErr
 	}
 	result, payloadBytes, err := decodeEnvelope(encoded, this.runtime, this.values, this.valueDescriptor, this.policy)
 	if err != nil {
 		if !errors.Is(err, ErrCorrupt) {
 			this.observe(ctx, Event{Operation: LookupOperation, Outcome: ErrorOutcome, Reason: RuntimeReason, Items: 1})
-			return Result[V]{}, failure("lookup", err)
+			return Result[V]{}, nil, failure("lookup", err)
 		}
-		return this.corruptRead(ctx, LookupOperation)
+		corrupt, corruptErr := this.corruptRead(ctx, LookupOperation)
+		return corrupt, nil, corruptErr
 	}
 	this.observe(ctx, Event{
 		Operation:    LookupOperation,
@@ -102,7 +150,7 @@ func (this *cacheCore[K, V]) lookupAddressAdmitted(ctx context.Context, address 
 		EncodedBytes: int64(len(encoded)),
 		PayloadBytes: int64(payloadBytes),
 	})
-	return result, nil
+	return result, encoded, nil
 }
 
 func (this *cacheCore[K, V]) readFailure(ctx context.Context, operation Operation, err error) (Result[V], error) {
@@ -169,7 +217,7 @@ func (this *Cache[K, V]) LookupMany(ctx context.Context, keys []K) ([]Result[V],
 		if err != nil {
 			return nil, failure("lookup many", err)
 		}
-		encoded, err := core.batchGet(ctx, unique)
+		encoded, backendRead, err := core.batchGet(ctx, unique)
 		if !core.batchReadCurrent(states, generations) {
 			continue
 		}
@@ -177,15 +225,17 @@ func (this *Cache[K, V]) LookupMany(ctx context.Context, keys []K) ([]Result[V],
 			return nil, err
 		}
 		decoded := core.decodeBatch(ctx, addresses, encoded, results)
-		current := core.batchReadCurrent(states, generations)
-		if !current {
-			continue
-		}
 		if decoded.err != nil {
+			if !core.batchReadCurrent(states, generations) {
+				continue
+			}
 			if decoded.reason != "" {
 				core.observe(ctx, Event{Operation: LookupManyOperation, Outcome: ErrorOutcome, Reason: decoded.reason, Items: len(addresses)})
 			}
 			return nil, decoded.err
+		}
+		if !core.confirmBatchReadAndMemoize(ctx, states, generations, backendRead, encoded) {
+			continue
 		}
 		core.observe(ctx, Event{
 			Operation:    LookupManyOperation,
@@ -236,7 +286,50 @@ func (this *cacheCore[K, V]) batchAddresses(ctx context.Context, keys []K) ([]Ad
 	return addresses, unique, nil
 }
 
-func (this *cacheCore[K, V]) batchGet(ctx context.Context, addresses []Address) (map[Address][]byte, error) {
+func (this *cacheCore[K, V]) batchGet(ctx context.Context, addresses []Address) (map[Address][]byte, []Address, error) {
+	memoized, remaining := this.splitMemoized(MemoFrom(ctx), addresses)
+	if len(remaining) == 0 {
+		return memoized, nil, nil
+	}
+	encoded, err := this.batchGetBackend(ctx, remaining)
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(memoized) == 0 {
+		return encoded, remaining, nil
+	}
+	if encoded == nil {
+		encoded = make(map[Address][]byte, len(memoized))
+	}
+	for address, value := range memoized {
+		encoded[address] = value
+	}
+	return encoded, remaining, nil
+}
+
+func (this *cacheCore[K, V]) splitMemoized(memo *Memo, addresses []Address) (map[Address][]byte, []Address) {
+	if memo == nil {
+		return nil, addresses
+	}
+	memoized := make(map[Address][]byte, len(addresses))
+	remaining := make([]Address, 0, len(addresses))
+	for _, address := range addresses {
+		encoded, ok := memo.load(this.memoKeyFor(address))
+		if !ok {
+			remaining = append(remaining, address)
+			continue
+		}
+		if len(encoded) == 0 || len(encoded) > this.maxEnvelopeBytes {
+			memo.forget(this.memoKeyFor(address))
+			remaining = append(remaining, address)
+			continue
+		}
+		memoized[address] = encoded
+	}
+	return memoized, remaining
+}
+
+func (this *cacheCore[K, V]) batchGetBackend(ctx context.Context, addresses []Address) (map[Address][]byte, error) {
 	limit := BatchReadLimit{
 		MaxItems:      len(addresses),
 		MaxItemBytes:  this.maxEnvelopeBytes,
@@ -407,12 +500,6 @@ func (this *cacheCore[K, V]) beginRead(ctx context.Context, state *addressState)
 			return readTicket{}, err
 		}
 	}
-}
-
-func (this *cacheCore[K, V]) readCurrent(ticket readTicket) bool {
-	this.coord.mu.Lock()
-	defer this.coord.mu.Unlock()
-	return ticket.state.generation == ticket.generation && !ticket.state.writeActive && !ticket.state.invalidating
 }
 
 func (this *cacheCore[K, V]) beginBatchRead(ctx context.Context, states []*addressState) ([]uint64, error) {

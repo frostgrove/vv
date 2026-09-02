@@ -24,6 +24,10 @@ respect item and total read limits and return owned byte slices. `Reset` clears
 the store, `Close` clears it permanently, and `Stats` reports entries, charged
 bytes, configured limits and closed state.
 
+The backend answers the `HealthChecker` capability: `CheckBackend` passes while
+the store is open and reports `cache.ErrClosed` afterwards, so `Cache.Check` has
+something to consult. See [[D-093]] and [[D-096]].
+
 `WithClock` supports deterministic expiry tests. `WithObserver` reports storage
 operations, eviction reasons and charges. Callbacks run outside the backend
 lock, panics are contained and re-entry is safe for this backend. Cancellation

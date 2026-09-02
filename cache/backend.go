@@ -37,27 +37,9 @@ type Backend interface {
 	Delete(context.Context, Address) error
 }
 
-type BatchReader interface {
-	GetMany(context.Context, []Address, BatchReadLimit) (map[Address][]byte, error)
-}
-
 type BackendWrapper interface {
 	Backend
 	Next() Backend
-}
-
-type Capability string
-
-const BatchReadCapability Capability = "batch_read"
-
-func Supports(backend Backend, capability Capability) bool {
-	switch capability {
-	case BatchReadCapability:
-		_, ok := BatchReaderOf(backend)
-		return ok
-	default:
-		return false
-	}
 }
 
 type BackendTopology uint8
@@ -88,10 +70,6 @@ type BackendDescriber interface {
 	DescribeBackend() BackendDescription
 }
 
-func BatchReaderOf(backend Backend) (BatchReader, bool) {
-	return CapabilityOf[BatchReader](backend)
-}
-
 func BackendDescriptionOf(backend Backend) (description BackendDescription, ok bool) {
 	current := backend
 	seen := make(map[backendIdentity]struct{})
@@ -109,27 +87,6 @@ func BackendDescriptionOf(backend Backend) (description BackendDescription, ok b
 		current = next
 	}
 	return BackendDescription{}, false
-}
-
-func CapabilityOf[T any](backend Backend) (T, bool) {
-	var zero T
-	current := backend
-	seen := make(map[backendIdentity]struct{})
-	for depth := 0; depth < 64 && !nilInterface(current); depth++ {
-		if repeatedBackend(current, seen) {
-			return zero, false
-		}
-		capability, ok := any(current).(T)
-		if ok && !nilInterface(capability) {
-			return capability, true
-		}
-		next, found := nextBackend(current)
-		if !found {
-			return zero, false
-		}
-		current = next
-	}
-	return zero, false
 }
 
 type backendIdentity struct {

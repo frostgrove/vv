@@ -79,6 +79,7 @@ var (
 	_ cache.Backend          = (*Backend)(nil)
 	_ cache.BatchReader      = (*Backend)(nil)
 	_ cache.BackendDescriber = (*Backend)(nil)
+	_ cache.HealthChecker    = (*Backend)(nil)
 )
 
 type entry struct {
@@ -475,6 +476,21 @@ func (backend *Backend) Reset() error {
 	backend.charged = 0
 	backend.mu.Unlock()
 	backend.emit(context.Background(), Event{Operation: ResetOperation, Outcome: CompleteOutcome, Reason: ResetReason, Items: items, ChargedBytes: charged})
+	return nil
+}
+
+func (backend *Backend) CheckBackend(ctx context.Context) error {
+	if err := validateContext(ctx); err != nil {
+		return fail("check backend", err)
+	}
+	if backend == nil {
+		return fail("check backend", cache.ErrClosed)
+	}
+	backend.mu.Lock()
+	defer backend.mu.Unlock()
+	if backend.closed {
+		return fail("check backend", cache.ErrClosed)
+	}
 	return nil
 }
 

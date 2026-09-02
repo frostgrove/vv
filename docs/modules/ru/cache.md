@@ -59,6 +59,35 @@ err := cache.Activate(ctx, cache.ActivationSpec{
 недостающая capability дают одну ошибку старта, а не сюрприз на первом запросе.
 `Describe` показывает итоговую декларацию и все эффективные лимиты.
 
+### Домены вытеснения
+
+`Provider.Resource` называет физический ресурс, с которым говорит provider, —
+один Redis, одну базу, один процесс. Скажите, что ещё там живёт, и активация
+откажет кешу, который разделил бы домен вытеснения с durable-состоянием:
+
+```go
+Resources: []cache.ResourceDeclaration{
+	{Resource: "redis-cache", Tenants: []cache.ResourceTenant{cache.CacheTenant}},
+	{Resource: "redis-durable", Tenants: []cache.ResourceTenant{
+		cache.DurableWorkTenant, cache.DurableSecurityTenant,
+	}, Waiver: cache.SharedDurableSecurity("один redis, пока не поднят кластер задач")},
+},
+```
+
+Кеш вытесняется намеренно, а очередь задач и список отзывов этого не переживают.
+Вытесненная запись отзыва читается как «не отозван», поэтому общий `maxmemory`
+превращает нехватку памяти в вернувшуюся сессию. Три вида состояния — три
+идентичности ресурса: `CacheTenant`, `DurableWorkTenant` и
+`DurableSecurityTenant`. Кеш, попавший на ресурс, объявленный с любым из
+durable-tenant'ов, отвергается, и никакой waiver этого не извиняет.
+`SharedDurableSecurity` извиняет только совместное проживание durable work и
+durable security на одном ресурсе; причина обязательна, а waiver там, где ничего
+не разделяется, сам становится отказом. Необъявленный ресурс не проверен — это
+не доказательство, что он отдельный: поставьте
+`RequireDeclaredResources: true`, и активация откажет кешу, чей ресурс никто не
+описал, — забытая декларация станет ошибкой старта, а не молчанием.
+См. [[D-104]].
+
 ## Чтение и загрузка
 
 `Lookup` никогда не вызывает application-код. `Resolve` сначала читает backend
@@ -84,6 +113,61 @@ result, err := ProductCards.Resolve(ctx, ProductCardKey{ID: productID}, func(ctx
 `BatchReadCapability` может прочитать всё одной операцией. `Put` и `Forget`
 ограждены от параллельных loader'ов: старый loader не перезапишет более новую
 мутацию.
+
+`ResolveMany` — пакетная форма. Она читает один раз, вызывает типизированный
+`BatchLoader[K, V] func(ctx, []K) ([]LoadResult[V], error)` не более одного раза
+с дедуплицированными недостающими ключами в порядке первого появления и
+возвращает по одному результату на каждый входной ключ во входном порядке:
+
+```go
+results, err := ProductCards.ResolveMany(ctx, keys, func(ctx context.Context, missing []ProductCardKey) ([]cache.LoadResult[ProductCard], error) {
+	cards, err := products.FindCards(ctx, missing)
+	if err != nil {
+		return nil, err
+	}
+	return cards, nil
+})
+```
+
+Loader обязан вернуть ровно один `LoadResult` на каждый переданный ключ.
+Неверное количество, неустановленный `Presence`, ошибка или panic отменяют весь
+вызов — и к этому моменту ничего не записано: каждый ответ кодируется и
+проверяется по совокупному `MaxBatchResultBytes` до первой записи в backend.
+`ResolveMany` закрывает `Miss`; `Stale` возвращается как есть и обновляется
+через `Resolve`. Она не присоединяется к per-address flights, поэтому два
+параллельных пакетных вызова могут каждый обратиться к своему loader'у.
+См. [[D-095]].
+
+## Execution memo
+
+HTTP-запрос или попытка выполнения job'а может на своё время поставить перед
+backend'ом ограниченный L0:
+
+```go
+memo, err := cache.NewMemo(cache.MemoLimit{MaxEntries: 128, MaxBytes: 1 << 20})
+if err != nil {
+	return err
+}
+defer memo.Close()
+ctx = cache.WithMemo(ctx, memo)
+```
+
+Любой кеш, читающий из этого контекста, отвечает на повторный адрес без
+обращения к backend'у. Memo хранит копии encoded envelope, поэтому свежесть
+пересчитывается на каждом чтении и два вызова не делят изменяемое значение.
+Он помнит только то, что backend действительно сохранил: **miss** не
+запоминается никогда — его прямо сейчас может заполнять параллельная запись, —
+а подтверждённый loader'ом **negative** запоминается. Ошибки и повреждённые
+envelope не запоминаются, как и чтение, которое обогнала параллельная запись:
+проигравший гонку lookup читает заново, и запоминается только подтверждённый
+ответ, поэтому два чтения в одной execution не идут назад во времени.
+
+`Put`, `Forget`, `Resolve` и `ResolveMany` сбрасывают запись memo по своему
+адресу, а загрузки memo не читают. `Close` идемпотентен, очищает контейнер и
+превращает любое дальнейшее чтение и запись в no-op, поэтому переживший запрос
+goroutine ничего не удерживает. `Stats` показывает записи, удержанные байты,
+попадания, сохранения и отказы. Байты memo — его собственный бюджет и не
+относятся к `MaxTransientBytes`. См. [[D-094]].
 
 Singleflight действует только внутри процесса и для одного типизированного
 адреса. `MaxFlights` ограничивает группы loader'ов, а не вызывающих клиентов.
@@ -141,7 +225,41 @@ caller cancellation, value-blind context и transient admission. Это безо
 Observers вызываются синхронно вне locks, panic изолируется. Callback обязан
 быть ограниченным и неблокирующим и не должен повторно входить в тот же кеш во
 время события; чтение `Stats` безопасно. События общей загрузки предназначены
-для метрик и намеренно не несут request values.
+для метрик и намеренно не несут request values. `Event.Memoized` отмечает
+ответ, выданный execution memo, а не backend'ом.
+
+Несколько независимых observers собираются базовым веером, а не цепочкой,
+принадлежащей одному из них:
+
+```go
+runtime.Observer = cache.MustObservers(applicationMetrics, exporter)
+```
+
+`Observers` копирует и проверяет конечный список при сборке, отказывает при
+более чем `MaxObservers` детях, пропускает nil и typed-nil, вызывает детей
+синхронно в порядке регистрации и изолирует panic каждого, так что следующие
+всё равно отработают. Веер не запускает ни goroutine, ни очередь, ни retry, ни
+таймер. См. [[D-096]].
+
+## Проба
+
+`Check(ctx) error` говорит, может ли этот кеш обслуживать, и ничего не говорит о
+том, насколько это важно:
+
+```go
+health.Contribution{
+	Name:       "product-cards",
+	Code:       "cache",
+	Importance: health.Degrading,
+	Probe:      health.ProbeFunc(ProductCards.Check),
+}
+```
+
+До активации она отказывает `ErrNotActivated`, при `Disabled` и при backend'е
+без `HealthChecker` проходит, иначе вызывает backend в рамках backend deadline и
+возвращает санированную категорию `ErrBackend` — но не собственное сообщение
+драйвера. Importance, публичный код и транспорт принадлежат composition root
+([[D-091]], [[D-096]]).
 
 ## Явная сборка
 
@@ -174,4 +292,26 @@ cards, err := cache.New(
 - Backend объявляет topology, источник времени expiry и поддержку
   size/capacity. Shared backend дополнительно требует явной границы clock skew.
 
-См. [[UC-024]], [[FL-025]], [[D-084]] и [[D-085]].
+### Capabilities
+
+Backend может уметь больше, чем хранить envelope. Шесть capabilities встроены —
+`BatchReader`, `CompareAndSwapper`, `Maintainer`, `HealthChecker`,
+`TagInvalidator` и `Transactional` — у каждой есть константа
+(`BatchReadCapability`, `CompareAndSwapCapability`, `MaintenanceCapability`,
+`HealthCapability`, `TagInvalidationCapability`, `TransactionCapability`) и
+типизированный поиск (`BatchReaderOf`, `CompareAndSwapperOf` и так далее),
+проходящий декораторы через `Next()`.
+
+Всё остальное называет драйвер. Backend, реализующий `CapabilityDeclarer`,
+публикует собственные строки capabilities, и `Supports` отвечает по этому
+набору. Объявленное имя никогда не даёт встроенную capability: встроенные
+доказываются только методом, поэтому драйвер не может заявить `batch_read` без
+`GetMany`. `DeclaredCapabilitiesOf` отбрасывает встроенные имена, некорректные
+имена, слишком длинное объявление и объявление, упавшее в panic.
+
+`DefinitionSpec.Requires` может назвать любую из них; провайдер, который
+требование не закрывает, отвергается на активации, а не на первом вызове.
+См. [[D-093]].
+
+См. [[UC-024]], [[FL-025]], [[D-084]], [[D-085]], [[D-093]], [[D-094]],
+[[D-095]], [[D-096]] и [[D-104]].

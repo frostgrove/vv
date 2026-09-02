@@ -27,6 +27,7 @@ const (
 	LookupOperation     Operation = "lookup"
 	LookupManyOperation Operation = "lookup_many"
 	LoadOperation       Operation = "load"
+	LoadManyOperation   Operation = "load_many"
 	PutOperation        Operation = "put"
 	ForgetOperation     Operation = "forget"
 )
@@ -63,6 +64,7 @@ type Event struct {
 	Items        int
 	EncodedBytes int64
 	PayloadBytes int64
+	Memoized     bool
 }
 
 type Observer interface {

@@ -55,3 +55,13 @@ func backendDelete(backend Backend, ctx context.Context, address Address) (err e
 	err = backend.Delete(ctx, address)
 	return sanitizedError(err, ErrBackend)
 }
+
+func backendCheck(checker HealthChecker, ctx context.Context) (err error) {
+	defer func() {
+		if recover() != nil {
+			err = ErrBackend
+		}
+	}()
+	err = checker.CheckBackend(ctx)
+	return sanitizedError(err, ErrBackend)
+}

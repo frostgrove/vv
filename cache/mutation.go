@@ -35,6 +35,7 @@ func (this *Cache[K, V]) Put(ctx context.Context, key K, value V) error {
 		return failure("put", err)
 	}
 	defer lease.release()
+	defer core.forgetMemoized(ctx, address)
 	write, err := core.beginMutation(ctx, address)
 	if err != nil {
 		return err
@@ -53,13 +54,17 @@ func (this *Cache[K, V]) Put(ctx context.Context, key K, value V) error {
 }
 
 func (this *cacheCore[K, V]) beginMutation(ctx context.Context, address Address) (mutation, error) {
+	return this.beginMutationAs(ctx, address, PutOperation)
+}
+
+func (this *cacheCore[K, V]) beginMutationAs(ctx context.Context, address Address, operation Operation) (mutation, error) {
 	state := this.acquireState(address)
 	for {
 		this.coord.mu.Lock()
 		if ctx.Err() != nil {
 			this.coord.mu.Unlock()
 			this.releaseState(address, state)
-			return mutation{}, failure("put", ctx.Err())
+			return mutation{}, failure(string(operation), ctx.Err())
 		}
 		if !state.invalidating && state.stagedMutation == 0 {
 			state.generation++
@@ -74,13 +79,17 @@ func (this *cacheCore[K, V]) beginMutation(ctx context.Context, address Address)
 		this.coord.mu.Unlock()
 		if err := this.waitCoordination(ctx, changed); err != nil {
 			this.releaseState(address, state)
-			return mutation{}, failure("put", err)
+			return mutation{}, failure(string(operation), err)
 		}
 	}
 }
 
 func (this *cacheCore[K, V]) commitMutation(ctx context.Context, write mutation, encoded []byte, expiry Expiry) error {
-	claimed, err := this.claimMutation(ctx, write)
+	return this.commitMutationAs(ctx, write, encoded, expiry, PutOperation)
+}
+
+func (this *cacheCore[K, V]) commitMutationAs(ctx context.Context, write mutation, encoded []byte, expiry Expiry, operation Operation) error {
+	claimed, err := this.claimMutationAs(ctx, write, operation)
 	if err != nil {
 		return err
 	}
@@ -93,18 +102,18 @@ func (this *cacheCore[K, V]) commitMutation(ctx context.Context, write mutation,
 	}()
 	backendCtx, cancel, contextErr := this.backendContext(ctx)
 	if contextErr != nil {
-		return failure("put", contextErr)
+		return failure(string(operation), contextErr)
 	}
 	currentExpiry, live, expiryErr := expiryForWrite(this.runtime, expiry)
 	if expiryErr != nil {
 		cancel()
-		return failure("put", expiryErr)
+		return failure(string(operation), expiryErr)
 	}
 	if !live {
 		cancel()
 		this.finishMutation(write)
 		ended = true
-		return failure("put", errSuperseded)
+		return failure(string(operation), errSuperseded)
 	}
 	err = backendPut(this.backend, backendCtx, write.address, encoded, currentExpiry)
 	cancel()
@@ -112,35 +121,35 @@ func (this *cacheCore[K, V]) commitMutation(ctx context.Context, write mutation,
 	ended = true
 	if err == nil {
 		this.observe(ctx, Event{
-			Operation:    PutOperation,
+			Operation:    operation,
 			Outcome:      StoredOutcome,
 			Items:        1,
 			EncodedBytes: int64(len(encoded)),
 		})
 		return nil
 	}
-	this.observe(ctx, Event{Operation: PutOperation, Outcome: ErrorOutcome, Reason: BackendReason, Items: 1})
+	this.observe(ctx, Event{Operation: operation, Outcome: ErrorOutcome, Reason: BackendReason, Items: 1})
 	if ctx.Err() != nil {
-		return failure("put", ctx.Err())
+		return failure(string(operation), ctx.Err())
 	}
 	if this.policy.WriteFailure == Ignore {
 		return nil
 	}
-	return failure("put", err)
+	return failure(string(operation), err)
 }
 
-func (this *cacheCore[K, V]) claimMutation(ctx context.Context, write mutation) (mutation, error) {
+func (this *cacheCore[K, V]) claimMutationAs(ctx context.Context, write mutation, operation Operation) (mutation, error) {
 	for {
 		this.coord.mu.Lock()
 		if write.state.generation != write.generation || write.state.stagedMutation != write.generation || write.state.invalidating {
 			this.coord.mu.Unlock()
 			this.abandonMutation(write)
-			return mutation{}, failure("put", errSuperseded)
+			return mutation{}, failure(string(operation), errSuperseded)
 		}
 		if err := ctx.Err(); err != nil {
 			this.coord.mu.Unlock()
 			this.abandonMutation(write)
-			return mutation{}, failure("put", err)
+			return mutation{}, failure(string(operation), err)
 		}
 		if !write.state.writeActive {
 			write.state.stagedMutation = 0
@@ -158,7 +167,7 @@ func (this *cacheCore[K, V]) claimMutation(ctx context.Context, write mutation) 
 		this.coord.mu.Unlock()
 		if err := this.waitCoordination(ctx, changed); err != nil {
 			this.abandonMutation(write)
-			return mutation{}, failure("put", err)
+			return mutation{}, failure(string(operation), err)
 		}
 	}
 }
@@ -209,6 +218,7 @@ func (this *Cache[K, V]) Forget(ctx context.Context, key K) error {
 		return failure("forget", err)
 	}
 	defer lease.release()
+	defer core.forgetMemoized(ctx, address)
 	state, err := core.beginInvalidation(ctx, address)
 	if err != nil {
 		return err

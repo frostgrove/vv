@@ -2,9 +2,10 @@
 
 **Covers:** `github.com/frostgrove/vv/cache`, `github.com/frostgrove/vv/cache/cachememory`
 **Sweep:** happy paths · edge cases · release readiness
-**Verdict:** ready for bounded in-process caching. Shared PostgreSQL/Redis
-backends, request memoization and `ResolveMany` remain later capabilities and
-are not implied by this verdict.
+**Verdict:** ready for bounded in-process caching, including the execution memo,
+`ResolveMany`, the driver-extensible capability set and the observer/probe
+seams. Shared PostgreSQL/Redis backends remain later capabilities and are not
+implied by this verdict.
 
 ## What a consumer is trying to do
 
@@ -54,6 +55,28 @@ input order and duplicates and uses `BatchReader` when the backend declares it.
 Fallback reads have the same result semantics. Capability discovery is bounded
 and refuses wrapper cycles.
 
+### H-CACHE-07 — Fill a batch of misses in one call
+
+`ResolveMany` reads once, deduplicates the missing addresses, calls the typed
+`BatchLoader` once in first-seen order and returns one result per input key in
+input order. A wrong answer count, an unset presence, a loader error or a panic
+refuses the whole batch with nothing written, and the cumulative encoded bound
+is proved before the first write. It does not join per-address flights.
+
+### H-CACHE-08 — Read the same address twice in one request
+
+An execution installs a bounded `Memo` on its context and closes it. Repeated
+reads of one address cost one backend read; a backend miss is never remembered
+and a confirmed absence is; every write in that execution drops what the memo
+held for its address; after `Close` the memo answers nothing.
+
+### H-CACHE-09 — Compose observers and answer a probe
+
+`Observers` composes at most eight children synchronously in registration order
+with each panic isolated and no goroutine, queue or timer. `Check` reports
+whether the cache can serve — not-activated, the backend's sanitized failure, or
+nil — and the composition root decides what that is worth.
+
 ### H-CACHE-05 — Disable storage safely
 
 `Disabled` invokes the loader directly and stores nothing. The loader still has
@@ -69,7 +92,10 @@ covered by its backend conformance suite.
 
 ## Edge cases that define the contract
 
-- A declaration is inactive until the entire activation graph commits.
+- A declaration is inactive until the entire activation graph commits, and a
+  required capability the resolved provider cannot meet is a start-up error. A
+  capability the core itself calls is proved only by the backend implementing
+  it; a capability only the application uses is the driver's to declare.
 - Shared providers require bounded clock skew; process memory uses the process
   clock and capacity-only retention is allowed only where the backend supports
   it.
@@ -108,7 +134,11 @@ interfaces, cycles, UTF-8, field selection, wire/decoded separation and
 round-trip admissibility. `cachememory` runs both its implementation suite and
 the shared backend conformance suite.
 
+The memo, batch resolve, capability and seam suites cover the L0 consult and its
+refusals, batch order/deduplication/all-or-error and the cumulative bound proved
+before the first write, a declared capability reaching `Supports` through a
+decorator, a declared built-in name that does not, ordered panic-isolated
+fan-out and the probe's answers.
+
 The remaining cache roadmap is additive. A shared backend must pass the same
-backend conformance contract and may not move SQL into the facade. Memoization
-and bulk resolve need their own ownership and bounded-work decisions before this
-sweep can call them ready.
+backend conformance contract and may not move SQL into the facade.
