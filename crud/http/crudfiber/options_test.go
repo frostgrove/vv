@@ -543,3 +543,80 @@ func TestAnUnconfiguredBulkDeleteIsStillCapped(t *testing.T) {
 		t.Fatalf("three ids under the default cap answered %d: %s", r.status, r.body)
 	}
 }
+
+// The shape H-CRUDHTTP-18 asks for: reads plus the two deletes, and no write
+// route at all. It is not `ReadOnly` with a hole — a resource whose create is a
+// hand-written upload still wants PATCH gone, because the update DTO carries the
+// soft-delete column and would delete rows past the route that guards deletion.
+func TestExposingMountsExactlyTheOperationsItNames(t *testing.T) {
+	app, fake := mount(t, Exposing[Widget, int64, WidgetUpdate](port.Reads|port.Deletes))
+
+	ok(t, app, http.MethodGet, "/widgets", "", http.StatusOK)
+	ok(t, app, http.MethodGet, "/widgets/42", "", http.StatusOK)
+	ok(t, app, http.MethodGet, "/widgets/count", "", http.StatusOK)
+	ok(t, app, http.MethodPost, "/widgets/query", `{"limit":5}`, http.StatusOK)
+	ok(t, app, http.MethodDelete, "/widgets/42", "", http.StatusOK)
+	ok(t, app, http.MethodPost, "/widgets/bulk-delete", `{"ids":[1]}`, http.StatusOK)
+
+	for _, tc := range []struct {
+		name, method, target, body string
+	}{
+		{"create", http.MethodPost, "/widgets", `{"name":"bolt"}`},
+		{"update", http.MethodPatch, "/widgets/42", `{"name":"renamed"}`},
+		{"replace", http.MethodPut, "/widgets/42", `{"name":"replaced"}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// Not an exact status: whether an unmounted verb is 404 or 405 depends
+			// on the router and on whether any method survives on that path, and
+			// the three bindings disagree. What must hold everywhere is that the
+			// operation does not run. [[FL-013]] carries the difference.
+			r := do(t, app, tc.method, tc.target, tc.body)
+			if r.status < 400 {
+				t.Fatalf("%s %s answered %d though it was not exposed: %s",
+					tc.method, tc.target, r.status, r.body)
+			}
+		})
+	}
+
+	want := []string{"Get", "GetByID", "Count", "Get", "Delete", "Delete"}
+	if got := fake.methods(); !slices.Equal(got, want) {
+		t.Fatalf("the exposed set made the calls %v, want %v", got, want)
+	}
+}
+
+// Reads alone drops the two POSTs a ReadOnly resource keeps — the half of
+// H-CRUDHTTP-18 a gateway rule of "POST means a write" trips over.
+func TestExposingCanDropTheReadPosts(t *testing.T) {
+	app, _ := mount(t, Exposing[Widget, int64, WidgetUpdate](port.OpList|port.OpGet|port.OpCount))
+
+	ok(t, app, http.MethodGet, "/widgets", "", http.StatusOK)
+	ok(t, app, http.MethodGet, "/widgets/42", "", http.StatusOK)
+	ok(t, app, http.MethodGet, "/widgets/count", "", http.StatusOK)
+
+	for _, tc := range []struct{ name, target string }{
+		{"query", "/widgets/query"},
+		{"count as a document", "/widgets/count"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if r := do(t, app, http.MethodPost, tc.target, `{"limit":5}`); r.status < 400 {
+				t.Fatalf("POST %s answered %d though only the GET reads were exposed", tc.target, r.status)
+			}
+		})
+	}
+}
+
+func TestReadOnlyAndExposingTogetherIsRefusedAtDeclaration(t *testing.T) {
+	defer func() {
+		recovered := recover()
+		if recovered == nil {
+			t.Fatal("a resource declaring both ReadOnly and Exposing was mounted")
+		}
+		if !strings.Contains(fmt.Sprint(recovered), "state the set once") {
+			t.Fatalf("the panic did not say what was wrong: %v", recovered)
+		}
+	}()
+	mount(t,
+		ReadOnly[Widget, int64, WidgetUpdate](),
+		Exposing[Widget, int64, WidgetUpdate](port.Reads|port.Deletes),
+	)
+}

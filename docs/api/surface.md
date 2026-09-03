@@ -822,6 +822,7 @@ type Option[M any, ID comparable, U any] func(*options[M, ID, U])
     func AllowClientID[M any, ID comparable, U any]() Option[M, ID, U]
     func BeforeSave[M any, ID comparable, U any](fn func(*http.Request, *M) error) Option[M, ID, U]
     func BeforeUpdate[M any, ID comparable, U any](fn func(*http.Request, ID, *U) error) Option[M, ID, U]
+    func Exposing[M any, ID comparable, U any](operations port.Operations) Option[M, ID, U]
     func MaxBody[M any, ID comparable, U any](n int) Option[M, ID, U]
     func MaxBulk[M any, ID comparable, U any](n int) Option[M, ID, U]
     func ReadOnly[M any, ID comparable, U any]() Option[M, ID, U]
@@ -1522,6 +1523,7 @@ type Stats struct{ ... }
 
 ## github.com/frostgrove/vv/port
 ```go
+const Reads = OpList | OpQuery | OpCount | OpCountQuery | OpGet ...
 const DefaultMaxBulk = 1024
 const MaxViolations = 100
 var ErrBadRequest = errors.New("bad request")
@@ -1563,6 +1565,8 @@ type GetCommand[ID comparable] struct{ ... }
 type ListCommand struct{ ... }
 type Mapper[In, M any] interface{ ... }
     func Identity[M any]() Mapper[M, M]
+type Operations uint16
+    const OpList Operations = 1 << iota ...
 type PathBuilder[M any] struct{ ... }
     func Paths[M any]() *PathBuilder[M]
 type PathMap map[string]errs.Path
@@ -2280,6 +2284,7 @@ type Option[M any, ID comparable, U any] func(*options[M, ID, U])
     func AllowClientID[M any, ID comparable, U any]() Option[M, ID, U]
     func BeforeSave[M any, ID comparable, U any](fn func(fiber.Ctx, *M) error) Option[M, ID, U]
     func BeforeUpdate[M any, ID comparable, U any](fn func(fiber.Ctx, ID, *U) error) Option[M, ID, U]
+    func Exposing[M any, ID comparable, U any](operations port.Operations) Option[M, ID, U]
     func MaxBody[M any, ID comparable, U any](n int) Option[M, ID, U]
     func MaxBulk[M any, ID comparable, U any](n int) Option[M, ID, U]
     func ReadOnly[M any, ID comparable, U any]() Option[M, ID, U]
@@ -2318,6 +2323,7 @@ type Option[M any, ID comparable, U any] func(*options[M, ID, U])
     func AllowClientID[M any, ID comparable, U any]() Option[M, ID, U]
     func BeforeSave[M any, ID comparable, U any](fn func(*gin.Context, *M) error) Option[M, ID, U]
     func BeforeUpdate[M any, ID comparable, U any](fn func(*gin.Context, ID, *U) error) Option[M, ID, U]
+    func Exposing[M any, ID comparable, U any](operations port.Operations) Option[M, ID, U]
     func MaxBody[M any, ID comparable, U any](n int) Option[M, ID, U]
     func MaxBulk[M any, ID comparable, U any](n int) Option[M, ID, U]
     func ReadOnly[M any, ID comparable, U any]() Option[M, ID, U]
@@ -2364,6 +2370,7 @@ type Option[M any, ID comparable, U any] func(*options[M, ID, U])
     func AllowClientID[M any, ID comparable, U any]() Option[M, ID, U]
     func BeforeSave[M any, ID comparable, U any](fn func(context.Context, *M) error) Option[M, ID, U]
     func BeforeUpdate[M any, ID comparable, U any](fn func(context.Context, ID, *U) error) Option[M, ID, U]
+    func Exposing[M any, ID comparable, U any](operations port.Operations) Option[M, ID, U]
     func MaxBulk[M any, ID comparable, U any](n int) Option[M, ID, U]
     func ReadOnly[M any, ID comparable, U any]() Option[M, ID, U]
     func WithQuery[M any, ID comparable, U any](config *query.Config) Option[M, ID, U]

@@ -283,8 +283,17 @@ type Rules struct {
     AllowClientID bool           // AllowClientID
     MaxBulk       int            // MaxBulk, read through BulkCap()
     MaxBody       int            // MaxBody
+    Expose        Operations     // Exposing, empty for every operation
 }
 ```
+`Rules.Mounted()` answers the operation set a binding registers: `Expose` when it
+was named, otherwise every operation, or the reads alone under `ReadOnly`.
+`Operations` is a bitmask — the ten `Op*` constants plus `Reads`, `Writes`,
+`Deletes` and `AllOperations` — so a resource states its surface in one term
+rather than in eleven switches ([[D-113]]). `Rules.RefuseContradictions(who)` is
+the start-up panic when `ReadOnly` and `Expose` name different sets: both say
+what is mounted, and a declaration that says it twice says it once too often.
+
 
 `Rules.Service()` turns the two that belong to the service into
 `port.ServiceOption`s. `Rules.RefuseServiceOptions(who)` is the start-up panic a

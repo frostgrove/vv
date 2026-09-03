@@ -104,6 +104,7 @@ app.Use("/articles", crudfiber.New(articleService{…}).Routes())
 | `BeforeSave(fn)`       | `func(fiber.Ctx, *M) error`, при create и replace                                                                                                                                          |
 | `BeforeUpdate(fn)`     | `func(fiber.Ctx, ID, *U) error`                                                                                                                                                                |
 | `ReadOnly()`           | зарегистрировать только чтения, ничего больше                                                                                                            |
+| `Exposing(ops)`        | зарегистрировать ровно названные операции — `port.Reads`, `port.Writes`, `port.Deletes` и десять `port.Op*` складываются через `\|`                     |
 | `AllowClientID()`      | разрешить create выбрать собственный сгенерированный базой ключ                                                                               |
 | `MaxBulk(n)`           | ограничить`POST /bulk-delete` — по умолчанию `port.DefaultMaxBulk` (1024), «без предела» не бывает                                                 |
 | `MaxBody(n)`           | ограничить тело запроса, которое читает этот хендлер, в байтах; по умолчанию 4 МиБ, тело сверх лимита — 413 ([[D-063]]) |

@@ -100,6 +100,7 @@ a framework binder validates, and validation is not the binding's to add.
 | Content-Type | `application/json; charset=utf-8` | the same | the same | n/a |
 | body past the cap | 413, the envelope | the same | the same | `ResourceExhausted` |
 | routes / methods | 10 routes | 10 routes | 10 routes | 8 methods |
+| `Exposing(ops)` reach | all ten bits | all ten | all ten | eight — `OpQuery` and `OpCountQuery` name no method here, so those bits mount nothing ([[D-113]]) |
 | query-string door | yes | yes | yes | **no** — one document, always |
 | `/x` vs `/x/` | both | `/x`, and 301 from `/x/` | both | n/a |
 | unmounted verb | 405 | 404, or 405 with `HandleMethodNotAllowed` | 405 | `Unimplemented` |

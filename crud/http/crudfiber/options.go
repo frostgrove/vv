@@ -71,6 +71,10 @@ func ReadOnly[M any, ID comparable, U any]() Option[M, ID, U] {
 	return func(o *options[M, ID, U]) { o.ReadOnly = true }
 }
 
+func Exposing[M any, ID comparable, U any](operations port.Operations) Option[M, ID, U] {
+	return func(o *options[M, ID, U]) { o.Expose = operations }
+}
+
 func AllowClientID[M any, ID comparable, U any]() Option[M, ID, U] {
 	return func(o *options[M, ID, U]) { o.AllowClientID = true }
 }

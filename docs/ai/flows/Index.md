@@ -285,6 +285,7 @@ phase 3 landed FL-014 and before phase 5 landed FL-015.
 | `port/porthttp/body.go` | FL-001, FL-002, FL-011, FL-012, FL-013, FL-015 |
 | `port/porthttp/locale_test.go` | FL-013, FL-015 |
 | `port/doc.go` | FL-015 |
+| `port/operations.go` | FL-013, FL-015, FL-024 |
 | `port/rules.go` | FL-013, FL-015 |
 | `port/log.go` | FL-013, FL-019 |
 | `port/service.go` | FL-001, FL-002, FL-003, FL-011, FL-015 |

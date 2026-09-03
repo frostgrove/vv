@@ -489,3 +489,29 @@ func TestARelationScopeStillAppliesUnderAGate(t *testing.T) {
 		t.Fatalf("the preload ran unscoped under a gate: %s", got)
 	}
 }
+
+func TestDeletingNoIDsIsStillAuthorized(t *testing.T) {
+	policy := security.RequirePermission[Doc, int64]("doc:delete")
+
+	t.Run("a caller without the permission is refused", func(t *testing.T) {
+		rec := crudtest.Postgres()
+		_, err := bound(rec, policy).Delete(as(editor))
+		if !errors.Is(err, crud.ErrForbidden) {
+			t.Fatalf("deleting no ids answered %v, want a denial", err)
+		}
+		if len(rec.Statements()) != 0 {
+			t.Fatal("a refused delete still went to the database")
+		}
+	})
+
+	t.Run("control: a caller holding it gets an empty success", func(t *testing.T) {
+		rec := crudtest.Postgres()
+		n, err := bound(rec, policy).Delete(as(deleter))
+		if err != nil || n != 0 {
+			t.Fatalf("deleting no ids answered %d, %v, want 0 and no error", n, err)
+		}
+		if len(rec.Statements()) != 0 {
+			t.Fatalf("deleting no ids cost %d statements", len(rec.Statements()))
+		}
+	})
+}

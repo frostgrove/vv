@@ -297,8 +297,12 @@ func TestDeletingNothingIsAMissForOneRowAndZeroForASet(t *testing.T) {
 		if err != nil || n != 0 {
 			t.Fatalf("deleting an empty set answered %d, %v, want 0 and no error", n, err)
 		}
-		if len(repository.calls) != 0 {
-			t.Fatalf("an empty set reached the repository as %v", repository.methods())
+		// The empty set is passed down rather than answered here. The gate is a
+		// decorator on the repository, and a service that short-circuits above
+		// it authorizes nothing: bulk-deleting nothing answered 200 to a caller
+		// with no principal at all.
+		if len(repository.calls) != 1 || repository.calls[0].method != "Delete" {
+			t.Fatalf("an empty set reached the repository as %v, want one Delete", repository.methods())
 		}
 	})
 }

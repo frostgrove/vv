@@ -105,6 +105,7 @@ crudgin.New(articleService{…}).Mount(r, "/articles")
 | `BeforeSave(fn)` | `func(*gin.Context, *M) error`, при create и replace |
 | `BeforeUpdate(fn)` | `func(*gin.Context, ID, *U) error` |
 | `ReadOnly()` | зарегистрировать только чтение и ничего больше |
+| `Exposing(ops)` | зарегистрировать ровно названные операции — `port.Reads`, `port.Writes`, `port.Deletes` и десять `port.Op*` складываются через `\|` |
 | `AllowClientID()` | разрешить create самому выбрать ключ, генерируемый базой |
 | `MaxBulk(n)` | ограничить `POST /bulk-delete` — по умолчанию `port.DefaultMaxBulk` (1024), «без предела» не бывает |
 | `MaxBody(n)` | ограничить тело запроса, которое читает этот хендлер, в байтах; по умолчанию 4 МиБ, тело сверх лимита — 413 ([[D-063]]) |

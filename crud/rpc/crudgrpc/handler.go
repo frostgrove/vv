@@ -68,6 +68,7 @@ func ServingWire[In, P, R, M any, ID comparable, U any](service Service[M, ID, U
 }
 
 func build[M any, ID comparable, U any, In any, P any, R any](service Service[M, ID, U], mapper Mapper[In, M], patcher PatchMapper[P, U], presenter Presenter[M, R], o options[M, ID, U]) *ResourceFor[M, ID, U, In, P, R] {
+	o.RefuseContradictions("crudgrpc")
 	h := &ResourceFor[M, ID, U, In, P, R]{service: service, mapper: mapper, patcher: patcher, presenter: presenter, opt: o, render: o.renderer}
 	if h.render == nil {
 		h.render = rendererFor(port.Hops(service, mapper))

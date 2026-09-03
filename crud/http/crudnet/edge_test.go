@@ -186,8 +186,11 @@ func TestABulkDeleteWithNoIDsAtAllIsAnEmptySuccess(t *testing.T) {
 			if out.Deleted != 0 {
 				t.Fatalf("deleted = %d, want 0", out.Deleted)
 			}
-			if len(fake.calls) != 0 {
-				t.Fatalf("a bulk delete with no ids called %v", fake.methods())
+			// It reaches the repository, and that is the point: the security
+			// gate decorates the repository, so a bulk delete answered above it
+			// is a bulk delete nothing authorized.
+			if call := fake.only(t, "Delete"); len(call.IDs) != 0 {
+				t.Fatalf("a bulk delete with no ids named %v", call.IDs)
 			}
 		})
 	}

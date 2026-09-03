@@ -295,8 +295,12 @@ func TestDeletingNothingIsAMissForOneRowAndZeroForASet(t *testing.T) {
 			if got := out.GetFields()["deleted"].GetNumberValue(); got != 0 {
 				t.Fatalf("deleting an empty set answered %v deleted", got)
 			}
-			if calls := empty.repository.calls; len(calls) != 0 {
-				t.Fatalf("an empty set reached the repository as %v", calls)
+			// It reaches the repository, and that is the point: the security gate
+			// decorates the repository, so a bulk delete answered above it is a
+			// bulk delete nothing authorized.
+			calls := empty.repository.calls
+			if len(calls) != 1 || calls[0].Method != "Delete" {
+				t.Fatalf("an empty set reached the repository as %v, want one Delete", calls)
 			}
 		})
 	}

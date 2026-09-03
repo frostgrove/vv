@@ -70,6 +70,7 @@ func ServingWire[In, P, R, M any, ID comparable, U any](service Service[M, ID, U
 }
 
 func build[M any, ID comparable, U any, In any, P any, R any](service Service[M, ID, U], mapper Mapper[In, M], patcher PatchMapper[P, U], presenter Presenter[M, R], o options[M, ID, U]) *ResourceFor[M, ID, U, In, P, R] {
+	o.RefuseContradictions("crudgin")
 	h := &ResourceFor[M, ID, U, In, P, R]{service: service, mapper: mapper, patcher: patcher, presenter: presenter, opt: o}
 	if h.opt.errorHandler == nil {
 		rd := h.opt.renderer
@@ -86,18 +87,35 @@ func (this *ResourceFor[M, ID, U, In, P, R]) Mount(r gin.IRouter, prefix string)
 }
 
 func (this *ResourceFor[M, ID, U, In, P, R]) Register(r gin.IRoutes) {
-	if !this.opt.ReadOnly {
+	mounted := this.opt.Mounted()
+	if mounted.Has(port.OpCreate) {
 		r.POST("", this.Create)
+	}
+	if mounted.Has(port.OpBulkDelete) {
 		r.POST("/bulk-delete", this.BulkDelete)
 	}
-	r.POST("/query", this.Query)
-	r.GET("/count", this.CountGet)
-	r.POST("/count", this.CountPost)
-	r.GET("", this.List)
-	r.GET("/:id", this.GetByID)
-	if !this.opt.ReadOnly {
+	if mounted.Has(port.OpQuery) {
+		r.POST("/query", this.Query)
+	}
+	if mounted.Has(port.OpCount) {
+		r.GET("/count", this.CountGet)
+	}
+	if mounted.Has(port.OpCountQuery) {
+		r.POST("/count", this.CountPost)
+	}
+	if mounted.Has(port.OpList) {
+		r.GET("", this.List)
+	}
+	if mounted.Has(port.OpGet) {
+		r.GET("/:id", this.GetByID)
+	}
+	if mounted.Has(port.OpUpdate) {
 		r.PATCH("/:id", this.Update)
+	}
+	if mounted.Has(port.OpReplace) {
 		r.PUT("/:id", this.Replace)
+	}
+	if mounted.Has(port.OpDelete) {
 		r.DELETE("/:id", this.Delete)
 	}
 }

@@ -8,12 +8,17 @@ import (
 	"github.com/frostgrove/vv/auth"
 	"github.com/frostgrove/vv/auth/http/authhttp"
 	"github.com/frostgrove/vv/crud"
+	"github.com/frostgrove/vv/port"
 )
 
 type Table struct {
 	Prefix string
 
 	ReadOnly bool
+
+	// Expose mirrors port.Rules.Expose, so a declaration is derived from the
+	// same set the resource is mounted with. Empty means every route.
+	Expose port.Operations
 }
 
 const (
@@ -40,28 +45,38 @@ type Policy interface {
 	RequiredFor(action crud.Action) ([]auth.Permission, bool)
 }
 
+// The order is the order the bindings register in, and it is load-bearing on
+// the two routers that match by insertion: "/count" has to be seen before
+// "/:id", or a count reaches GetByID with the literal as an id.
+var tableRoutes = []struct {
+	operation port.Operations
+	method    string
+	suffix    string
+	name      string
+	action    crud.Action
+}{
+	{port.OpCreate, http.MethodPost, "", Create, crud.ActionCreate},
+	{port.OpBulkDelete, http.MethodPost, "/bulk-delete", BulkDelete, crud.ActionDelete},
+	{port.OpQuery, http.MethodPost, "/query", Query, crud.ActionRead},
+	{port.OpCount, http.MethodGet, "/count", Count, crud.ActionRead},
+	{port.OpCountQuery, http.MethodPost, "/count", CountQuery, crud.ActionRead},
+	{port.OpList, http.MethodGet, "", List, crud.ActionRead},
+	{port.OpGet, http.MethodGet, "/:id", Get, crud.ActionRead},
+	{port.OpUpdate, http.MethodPatch, "/:id", Update, crud.ActionUpdate},
+	{port.OpReplace, http.MethodPut, "/:id", Replace, crud.ActionUpdate},
+	{port.OpDelete, http.MethodDelete, "/:id", Delete, crud.ActionDelete},
+}
+
 func (this Table) Routes() []Route {
 	prefix := strings.TrimSuffix(this.Prefix, "/")
-	routes := make([]Route, 0, 10)
-	if !this.ReadOnly {
-		routes = append(routes,
-			Route{http.MethodPost, prefix, Create, crud.ActionCreate},
-			Route{http.MethodPost, prefix + "/bulk-delete", BulkDelete, crud.ActionDelete},
-		)
-	}
-	routes = append(routes,
-		Route{http.MethodPost, prefix + "/query", Query, crud.ActionRead},
-		Route{http.MethodGet, prefix + "/count", Count, crud.ActionRead},
-		Route{http.MethodPost, prefix + "/count", CountQuery, crud.ActionRead},
-		Route{http.MethodGet, prefix, List, crud.ActionRead},
-		Route{http.MethodGet, prefix + "/:id", Get, crud.ActionRead},
-	)
-	if !this.ReadOnly {
-		routes = append(routes,
-			Route{http.MethodPatch, prefix + "/:id", Update, crud.ActionUpdate},
-			Route{http.MethodPut, prefix + "/:id", Replace, crud.ActionUpdate},
-			Route{http.MethodDelete, prefix + "/:id", Delete, crud.ActionDelete},
-		)
+	rules := port.Rules{ReadOnly: this.ReadOnly, Expose: this.Expose}
+	mounted := rules.Mounted()
+	routes := make([]Route, 0, len(tableRoutes))
+	for _, candidate := range tableRoutes {
+		if !mounted.Has(candidate.operation) {
+			continue
+		}
+		routes = append(routes, Route{candidate.method, prefix + candidate.suffix, candidate.name, candidate.action})
 	}
 	return routes
 }

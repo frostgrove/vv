@@ -69,6 +69,7 @@ func ServingWire[In, P, R, M any, ID comparable, U any](service Service[M, ID, U
 }
 
 func build[M any, ID comparable, U any, In any, P any, R any](service Service[M, ID, U], mapper Mapper[In, M], patcher PatchMapper[P, U], presenter Presenter[M, R], o options[M, ID, U]) *ResourceFor[M, ID, U, In, P, R] {
+	o.RefuseContradictions("crudnet")
 	h := &ResourceFor[M, ID, U, In, P, R]{service: service, mapper: mapper, patcher: patcher, presenter: presenter, opt: o}
 	if h.opt.errorHandler == nil {
 		rd := h.opt.renderer
@@ -91,22 +92,39 @@ func (this *ResourceFor[M, ID, U, In, P, R]) Mount(mux *http.ServeMux, prefix st
 		collection = append(collection, p)
 	}
 
-	if !this.opt.ReadOnly {
+	mounted := this.opt.Mounted()
+	if mounted.Has(port.OpCreate) {
 		for _, c := range collection {
 			mux.HandleFunc("POST "+c, this.Create)
 		}
+	}
+	if mounted.Has(port.OpBulkDelete) {
 		mux.HandleFunc("POST "+p+"/bulk-delete", this.BulkDelete)
 	}
-	mux.HandleFunc("POST "+p+"/query", this.Query)
-	mux.HandleFunc("GET "+p+"/count", this.CountGet)
-	mux.HandleFunc("POST "+p+"/count", this.CountPost)
-	for _, c := range collection {
-		mux.HandleFunc("GET "+c, this.List)
+	if mounted.Has(port.OpQuery) {
+		mux.HandleFunc("POST "+p+"/query", this.Query)
 	}
-	mux.HandleFunc("GET "+p+"/{id}", this.GetByID)
-	if !this.opt.ReadOnly {
+	if mounted.Has(port.OpCount) {
+		mux.HandleFunc("GET "+p+"/count", this.CountGet)
+	}
+	if mounted.Has(port.OpCountQuery) {
+		mux.HandleFunc("POST "+p+"/count", this.CountPost)
+	}
+	if mounted.Has(port.OpList) {
+		for _, c := range collection {
+			mux.HandleFunc("GET "+c, this.List)
+		}
+	}
+	if mounted.Has(port.OpGet) {
+		mux.HandleFunc("GET "+p+"/{id}", this.GetByID)
+	}
+	if mounted.Has(port.OpUpdate) {
 		mux.HandleFunc("PATCH "+p+"/{id}", this.Update)
+	}
+	if mounted.Has(port.OpReplace) {
 		mux.HandleFunc("PUT "+p+"/{id}", this.Replace)
+	}
+	if mounted.Has(port.OpDelete) {
 		mux.HandleFunc("DELETE "+p+"/{id}", this.Delete)
 	}
 }

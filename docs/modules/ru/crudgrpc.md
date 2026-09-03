@@ -99,6 +99,7 @@ crudgrpc.Serving(svc).Register(srv, "Article")
 | `BeforeSave(fn)` | `func(context.Context, *M) error` |
 | `BeforeUpdate(fn)` | `func(context.Context, ID, *U) error` |
 | `ReadOnly()` | регистрирует только три чтения |
+| `Exposing(ops)` | регистрирует ровно названные операции; у этого транспорта нет методов `query` и `count-query`, поэтому эти два бита не монтируют ничего |
 | `AllowClientID()` | разрешить create'у самому задать ключ, генерируемый базой |
 | `MaxBulk(n)` | ограничить `BulkDelete` — по умолчанию `port.DefaultMaxBulk` (1024), «без предела» не бывает |
 | `WithRenderer(r)` | заменить рендерер статуса |

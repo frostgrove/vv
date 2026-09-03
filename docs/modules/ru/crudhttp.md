@@ -84,7 +84,7 @@ import "github.com/frostgrove/vv/crud/http/crudhttp"
 
 | | |
 |---|---|
-| `Table{Prefix, ReadOnly}` | где смонтирован ресурс и есть ли у него записи |
+| `Table{Prefix, ReadOnly, Expose}` | где смонтирован ресурс и какие из десяти маршрутов у него есть. `Expose` — это `port.Operations`, зеркало `Exposing` у биндинга: декларация выводится из того же набора, которым ресурс смонтирован |
 | `Table.Routes()` | тот же список, который обходит `Register`: `Method`, `Path`, `Name`, `Action` |
 | `Table.GuardedBy(policy)` | этот список как `[]authhttp.Endpoint`, где права прочитаны из политики, которой закрыт репозиторий |
 | `Table.Guarded(read, write, del)` | то же самое поверх трёх прав, написанных руками, когда проверка живёт в другом месте |
@@ -96,6 +96,9 @@ import "github.com/frostgrove/vv/crud/http/crudhttp"
 declared, err := crudhttp.Table{Prefix: "/roles"}.GuardedBy(RolePolicy())
 
 crudhttp.Table{Prefix: "/permissions", ReadOnly: true}.Guarded(PermRoleRead, "", "")
+
+// чтения и оба удаления, и ни одного маршрута, который пишет колонку
+crudhttp.Table{Prefix: "/contracts", Expose: port.Reads | port.Deletes}.GuardedBy(Policy())
 ```
 
 `GuardedBy` отказывает, если смонтированный маршрут выполняет действие, которого

@@ -11,6 +11,11 @@ type Rules struct {
 	AllowClientID bool
 	MaxBulk       int
 
+	// Expose names the operations mounted, and is empty for all of them.
+	// ReadOnly is the same switch for the commonest case; setting both is a
+	// declaration that says two things, and RefuseContradictions refuses it.
+	Expose Operations
+
 	MaxBody int
 }
 
@@ -24,6 +29,29 @@ func (this *Rules) BulkCap() int {
 		return this.MaxBulk
 	}
 	return DefaultMaxBulk
+}
+
+func (this *Rules) Mounted() Operations {
+	if this == nil {
+		return AllOperations
+	}
+	if this.Expose != 0 {
+		return this.Expose
+	}
+	if this.ReadOnly {
+		return Reads
+	}
+	return AllOperations
+}
+
+func (this *Rules) RefuseContradictions(who string) {
+	if this == nil {
+		return
+	}
+	if this.ReadOnly && this.Expose != 0 {
+		panic(who + ": ReadOnly and Expose name different sets of operations (" +
+			Reads.String() + " against " + this.Expose.String() + ") — state the set once")
+	}
 }
 
 func (this *Rules) Service() []ServiceOption {

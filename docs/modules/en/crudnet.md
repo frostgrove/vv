@@ -106,6 +106,7 @@ line of change.
 | `BeforeSave(fn)` | `func(*http.Request, *M) error`, on create and replace |
 | `BeforeUpdate(fn)` | `func(*http.Request, ID, *U) error` |
 | `ReadOnly()` | register the reads and nothing else |
+| `Exposing(ops)` | register exactly the operations named — `port.Reads`, `port.Writes`, `port.Deletes` and the ten `port.Op*` compose with `\|` |
 | `AllowClientID()` | let a create choose its own database-generated key |
 | `MaxBulk(n)` | cap `POST /bulk-delete` — the default is `port.DefaultMaxBulk` (1024); there is no "unlimited" |
 | `MaxBody(n)` | cap the request body this handler reads, in bytes; the default is 4 MiB and a body past it is 413 ([[D-063]]) |

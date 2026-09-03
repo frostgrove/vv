@@ -99,6 +99,7 @@ take their framework's context.
 | `BeforeSave(fn)` | `func(context.Context, *M) error` |
 | `BeforeUpdate(fn)` | `func(context.Context, ID, *U) error` |
 | `ReadOnly()` | register the three reads only |
+| `Exposing(ops)` | register exactly the operations named; this transport has no `query` or `count-query` method, so those two bits mount nothing |
 | `AllowClientID()` | let a create choose its own database-generated key |
 | `MaxBulk(n)` | cap `BulkDelete` — the default is `port.DefaultMaxBulk` (1024); there is no "unlimited" |
 | `WithRenderer(r)` | replace the status renderer |

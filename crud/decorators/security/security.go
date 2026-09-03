@@ -890,11 +890,15 @@ func (this *gate[M, ID]) UpdateAll(ctx context.Context, dataTransferObject any, 
 }
 
 func (this *gate[M, ID]) Delete(ctx context.Context, ids ...ID) (int64, error) {
-	if len(ids) == 0 {
-		return 0, nil
-	}
+	// Authorization comes before the empty-list shortcut, not after it. A caller
+	// the gate would refuse is refused whatever it names, and a deletion of
+	// nothing is still a deletion being asked for: answering it 0 rows and no
+	// error told an anonymous caller the route was theirs to call.
 	if err := this.authorize(ctx, Delete); err != nil {
 		return 0, err
+	}
+	if len(ids) == 0 {
+		return 0, nil
 	}
 	scope, rel, err := this.writeScopes(ctx)
 	if err != nil {

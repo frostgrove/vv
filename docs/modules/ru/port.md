@@ -289,8 +289,17 @@ type Rules struct {
     AllowClientID bool           // AllowClientID
     MaxBulk       int            // MaxBulk, читается через BulkCap()
     MaxBody       int            // MaxBody
+    Expose        Operations     // Exposing, пусто — значит все операции
 }
 ```
+`Rules.Mounted()` отвечает, какие операции биндинг регистрирует: `Expose`, если он
+назван, иначе все, а под `ReadOnly` — одни чтения. `Operations` — битовая маска:
+десять констант `Op*` плюс `Reads`, `Writes`, `Deletes` и `AllOperations`, — так
+ресурс описывает свою поверхность одним выражением, а не одиннадцатью
+переключателями ([[D-113]]). `Rules.RefuseContradictions(who)` — паника на старте,
+когда `ReadOnly` и `Expose` называют разные наборы: оба говорят, что смонтировано,
+и объявление, сказавшее это дважды, сказало это на раз больше, чем нужно.
+
 
 `Rules.Service()` превращает те две, что принадлежат сервису, в
 `port.ServiceOption`. `Rules.RefuseServiceOptions(who)` — паника на старте,

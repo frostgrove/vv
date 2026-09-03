@@ -238,10 +238,12 @@ func (this *DefaultService[M, ID, U]) Delete(ctx context.Context, cmd DeleteComm
 	return n, nil
 }
 
+// DeleteMany hands an empty list to the repository rather than answering it here.
+// The security gate decorates the repository, so a shortcut in this method is a
+// shortcut past the gate: bulk-deleting nothing used to answer 200 to a caller
+// with no principal at all. Deleting no ids is a no-op that costs no statement,
+// which is what makes passing it down free.
 func (this *DefaultService[M, ID, U]) DeleteMany(ctx context.Context, cmd BulkDeleteCommand[ID]) (int64, error) {
-	if len(cmd.IDs) == 0 {
-		return 0, nil
-	}
 	return this.repository.Delete(ctx, cmd.IDs...)
 }
 

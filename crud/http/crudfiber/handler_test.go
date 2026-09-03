@@ -420,13 +420,13 @@ func TestBulkDeletePassesEveryIDInOneCall(t *testing.T) {
 	}
 }
 
-func TestBulkDeleteWithNoIDsNeverReachesTheRepository(t *testing.T) {
+func TestBulkDeleteWithNoIDsStillReachesTheGate(t *testing.T) {
 	app, fake := mount(t)
 
 	r := ok(t, app, http.MethodPost, "/widgets/bulk-delete", `{"ids":[]}`, http.StatusOK)
 
-	if len(fake.calls) != 0 {
-		t.Fatalf("an empty bulk delete still called %v", fake.methods())
+	if call := fake.only(t, "Delete"); len(call.IDs) != 0 {
+		t.Fatalf("an empty bulk delete named %v", call.IDs)
 	}
 	var out struct {
 		Deleted int64 `json:"deleted"`

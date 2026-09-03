@@ -135,7 +135,13 @@ selects native COPY or portable SQL ([[D-083]]).
 ## Delete — by id, but not by `Delete`
 
 **`gate.Delete`** — `crud/decorators/security/security.go:Delete`
-There is a fast path: with no scope and no `Inspect` it forwards to
+Authorization runs first, before the empty-id-set shortcut and before any fast
+path. The order is the fix for a real hole: both this gate and
+`port.DefaultService.DeleteMany` used to answer an empty set above the check, and
+`POST /x/bulk-delete {"ids":[]}` therefore answered 200 to a caller with no
+principal at all. Deleting nothing is still a deletion being asked for, and the
+answer to it says whether the route was the caller's to call.
+There is then a fast path: with no scope and no `Inspect` it forwards to
 `Core.Delete(ids…)`, which still ANDs the *blueprint's* scope
 (`crud/sqlrepo/repository.go:Delete`). If the id set crosses the dialect bind
 budget, that storage path repeats the blueprint and relation scopes in every
@@ -162,6 +168,10 @@ scope are simply not matched, so the reported count is honest.
 - **`Inspect` sees whole rows.** Every place that hands rows to `Inspect` goes
   through `gate.whole` (`crud/decorators/security/security.go:whole`), which
   appends `crud.SelectAll()`.
+- **Authorization precedes every shortcut.** A `len(ids) == 0` return placed
+  above `authorize` — in the gate or in the service layer that calls it — is an
+  unauthenticated success, because the gate is a decorator on the repository and
+  a service that answers above it authorizes nothing.
 - **Delete is re-expressed as DeleteAll.** Anything that "simplifies" it back to
   `Core.Delete(ids…)` drops the policy scope from the statement while keeping the
   check in front of it — a row hidden from reads becomes deletable by id.
@@ -231,6 +241,7 @@ scope are simply not matched, so the reported count is honest.
 - `TestUpdateIsScopedAndFreezesTheScopeField` — `crud/decorators/security/security_test.go`.
 - `TestAGatedFilteredWriteRefusesPagingRatherThanWritingEveryRowItShowedTheRule` — `crud/decorators/security/updateall_test.go` — the caller's `Limit` on a gated `UpdateAll` and `DeleteAll`, with a control that the same write without it goes through and `Inspect` saw both rows.
 - `TestDeleteIsScoped` — `crud/decorators/security/security_test.go` — Delete re-expressed as DeleteAll.
+- `TestDeletingNoIDsIsStillAuthorized` — `crud/decorators/security/gate_edge_test.go` — the empty set is refused for the caller who may not delete, with a control that the caller who may gets an empty success costing no statement.
 - `TestDeleteChunksAfterChargingScopeAndSoftDeleteBinds` —
   `crud/sqlrepo/bind_budget_test.go` — declaration scope, tombstone and ids all
   share the budget, and every chunk keeps them.

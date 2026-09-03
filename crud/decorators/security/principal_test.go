@@ -20,6 +20,13 @@ var editor = auth.Claims{
 	Attrs:       map[string]any{"tenant": int64(7)},
 }
 
+var deleter = auth.Claims{
+	Sub:         "u-2",
+	Roles:       []auth.Role{"admin"},
+	Permissions: []auth.Permission{"doc:read", "doc:write", "doc:delete"},
+	Attrs:       map[string]any{"tenant": int64(7)},
+}
+
 func as(p auth.Principal) context.Context {
 	return auth.WithPrincipal(context.Background(), p)
 }

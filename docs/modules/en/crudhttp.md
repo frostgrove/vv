@@ -74,7 +74,7 @@ New code should import [porthttp](porthttp.md) directly.
 
 | | |
 |---|---|
-| `Table{Prefix, ReadOnly}` | where a resource is mounted, and whether the writes are there |
+| `Table{Prefix, ReadOnly, Expose}` | where a resource is mounted, and which of the ten routes are there. `Expose` is `port.Operations` and mirrors the binding's `Exposing`, so the declaration is derived from the set the resource is actually mounted with |
 | `Table.Routes()` | the same list `Register` walks: `Method`, `Path`, `Name`, `Action` |
 | `Table.GuardedBy(policy)` | that list as `[]authhttp.Endpoint`, with the permissions read off the policy the repository is gated with |
 | `Table.Guarded(read, write, del)` | the same, over three permissions you write, when the enforcement is somewhere else |
@@ -86,6 +86,9 @@ New code should import [porthttp](porthttp.md) directly.
 declared, err := crudhttp.Table{Prefix: "/roles"}.GuardedBy(RolePolicy())
 
 crudhttp.Table{Prefix: "/permissions", ReadOnly: true}.Guarded(PermRoleRead, "", "")
+
+// reads and both deletes, and no route that writes a column
+crudhttp.Table{Prefix: "/contracts", Expose: port.Reads | port.Deletes}.GuardedBy(Policy())
 ```
 
 `GuardedBy` refuses when a route the table mounts performs an action the policy

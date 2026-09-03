@@ -106,6 +106,7 @@ Gin и gRPC без единой строки изменений.
 | `BeforeSave(fn)` | `func(*http.Request, *M) error`, при create и replace |
 | `BeforeUpdate(fn)` | `func(*http.Request, ID, *U) error` |
 | `ReadOnly()` | регистрирует только чтение и ничего больше |
+| `Exposing(ops)` | регистрирует ровно названные операции — `port.Reads`, `port.Writes`, `port.Deletes` и десять `port.Op*` складываются через `\|` |
 | `AllowClientID()` | разрешить create выбрать собственный ключ, генерируемый базой |
 | `MaxBulk(n)` | ограничивает `POST /bulk-delete` — по умолчанию `port.DefaultMaxBulk` (1024), «без предела» не бывает |
 | `MaxBody(n)` | ограничить тело запроса, которое читает этот хендлер, в байтах; по умолчанию 4 МиБ, тело сверх лимита — 413 ([[D-063]]) |

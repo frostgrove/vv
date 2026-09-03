@@ -6,6 +6,8 @@ import (
 
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/types/known/structpb"
+
+	"github.com/frostgrove/vv/port"
 )
 
 const ServicePrefix = "vv.crud.v1."
@@ -35,14 +37,29 @@ func (this *ResourceFor[M, ID, U, In, P, R]) Desc(name string) *grpc.ServiceDesc
 		})
 	}
 
-	add("List", this.List)
-	add("Count", this.Count)
-	add("Get", this.Get)
-	if !this.opt.ReadOnly {
+	mounted := this.opt.Mounted()
+	if mounted.Has(port.OpList) {
+		add("List", this.List)
+	}
+	if mounted.Has(port.OpCount) {
+		add("Count", this.Count)
+	}
+	if mounted.Has(port.OpGet) {
+		add("Get", this.Get)
+	}
+	if mounted.Has(port.OpCreate) {
 		add("Create", this.Create)
+	}
+	if mounted.Has(port.OpUpdate) {
 		add("Update", this.Update)
+	}
+	if mounted.Has(port.OpReplace) {
 		add("Replace", this.Replace)
+	}
+	if mounted.Has(port.OpDelete) {
 		add("Delete", this.Delete)
+	}
+	if mounted.Has(port.OpBulkDelete) {
 		add("BulkDelete", this.BulkDelete)
 	}
 	return desc
