@@ -87,6 +87,76 @@ undeclared resource is unchecked, not proven separate — set
 nobody described, so a forgotten declaration is a start-up error rather than
 silence. See [[D-104]].
 
+## The fx binding
+
+```go
+import "github.com/frostgrove/vv/cache/cachefx"   // uber/fx: the groups and the activation
+```
+
+`cachefx` is a module of its own because it takes uber/fx ([[D-033]]). It is
+what calls `Activate` in a running process: without it the eviction-domain rule
+above is checked by nothing.
+
+```go
+fx.Options(
+    fx.Provide(cachefx.AsSet(func() cache.Set { return catalog.Caches })),
+    fx.Provide(cachefx.AsProvider(newRedisCacheProvider)),
+    cachefx.Resources(
+        cache.ResourceDeclaration{Resource: "redis-cache", Tenants: []cache.ResourceTenant{cache.CacheTenant}},
+        cache.ResourceDeclaration{Resource: "redis-sessions", Tenants: []cache.ResourceTenant{cache.DurableSecurityTenant}},
+        cache.ResourceDeclaration{Resource: "postgres-jobs", Tenants: []cache.ResourceTenant{cache.DurableWorkTenant}},
+    ),
+    cachefx.Auto("catalog", "production"),
+)
+```
+
+| | |
+|---|---|
+| `AsSet(ctor)` · `AsProvider(ctor)` · `AsResource(ctor)` | annotate a constructor into the sets, providers or resources group |
+| `Resources(declarations…)` | supply declarations the composition root writes itself |
+| `Contributions` | the three groups and an optional `cache.Observer`, as an `fx.In` parameter object |
+| `Spec` | `Application`, `Environment`, `Runtime`, `Sets`, `Providers`, `Resources`, `Undeclared` |
+| `Caching(spec)` / `Auto(application, environment)` | the magic form: assemble the spec and activate |
+| `Undeclared` | `Refused` (the default) · `Accepted` |
+| `Activating(ctor)` | the low-level form: the constructor builds the whole `cache.ActivationSpec` |
+
+**Declarations are required here.** `RequireDeclaredResources` is off in
+`cache` so the rule can be adopted one resource at a time; a graph that reaches
+for this binding has finished adopting it, so `Caching` turns it on and silence
+about a resource fails the start. A deployment still in the middle of adoption
+writes `Undeclared: cachefx.Accepted` — a word, not a forgotten zero value.
+
+**A declaration is data, so nothing has to import the cache to be counted.**
+The revocation list and the job queue are the two tenants the rule protects, and
+neither imports `cache`: the composition root writes their `ResourceDeclaration`
+with `Resources`, and a package that does speak for itself contributes through
+`AsResource` or by writing the group tag out —
+``fx.ResultTags(`group:"vv.cache.resources"`)`` — which needs no import of `cachefx`
+either. Nothing is inferred from a provider: a binding that quietly declared
+`CacheTenant` for every resource it saw would satisfy the check with the very
+thing being checked. See [[D-111]].
+
+**Activation is a start hook.** The caches are published when the application
+starts, not while its graph is being built, so a refusal is a start failure fx
+unwinds — every pool and client already started is stopped again. The refusal is
+a `*cache.ActivationError` and its `Problems()` name every cache and resource at
+once.
+
+The low-level form is the same binding without the assembly:
+
+```go
+cachefx.Activating(func(contributed cachefx.Contributions) (cache.ActivationSpec, error) {
+    return cache.ActivationSpec{
+        Application: "catalog",
+        Environment: "production",
+        Sets:        []cache.Set{catalog.Caches},
+        Providers:   contributed.Providers,
+        Resources:   contributed.Resources,
+        RequireDeclaredResources: true,
+    }, nil
+})
+```
+
 ## Reading and loading
 
 `Lookup` never invokes application code. `Resolve` first reads the backend and
@@ -314,4 +384,4 @@ names and an over-long or panicking declaration.
 requirement is refused at activation, not at the first call. See [[D-093]].
 
 See [[UC-024]], [[FL-025]], [[D-084]], [[D-085]], [[D-093]], [[D-094]],
-[[D-095]], [[D-096]] and [[D-104]].
+[[D-095]], [[D-096]], [[D-104]] and [[D-111]].

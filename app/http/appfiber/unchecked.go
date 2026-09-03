@@ -86,10 +86,19 @@ type checking interface {
 	checks() map[string]struct{}
 }
 
+type combining interface {
+	combined() []Route
+}
+
 func uncheckedIn(route Route) []Unchecked {
-	if true {
-		return nil
+	if combination, isCombination := route.(combining); isCombination {
+		var found []Unchecked
+		for _, part := range combination.combined() {
+			found = append(found, uncheckedIn(part)...)
+		}
+		return found
 	}
+
 	var checked map[string]struct{}
 	if registrar, built := route.(checking); built {
 		checked = registrar.checks()

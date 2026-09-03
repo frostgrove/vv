@@ -1,9 +1,9 @@
 # FL-025 — A cache declaration becomes a bounded value
 
 **Entry points:** `cache.Auto`, `cache.Define`, `cache.Activate`,
-`cache.Cache.Resolve`
+`cachefx.Caching`, `cache.Cache.Resolve`
 **Governed by:** [[D-021]] [[D-084]] [[D-085]] [[D-093]] [[D-094]] [[D-095]]
-[[D-096]] [[D-104]]
+[[D-096]] [[D-104]] [[D-111]]
 
 What happens between a top-level typed declaration and a hit, stale value,
 negative result or application load, including every place the operation is
@@ -33,6 +33,17 @@ bounded.
    nothing. `RequireDeclaredResources` makes an undeclared resource a refusal
    too, naming the cache that resolved to it. [[D-104]] says why the check has to
    be a declaration.
+6. **The binding** — `cache/cachefx/cachefx.go` — is what calls `Activate` in a
+   running process. `AsSet`, `AsProvider` and `AsResource` file contributions
+   into three fx groups, `Resources` supplies the declarations the composition
+   root writes for a package that does not import `cache` at all, and
+   `Contributions` is how any of it is read back. `Caching` assembles the
+   `ActivationSpec` with `RequireDeclaredResources` on unless the spec says
+   `Undeclared: Accepted`; `Auto` is the two-argument form of it; `Activating`
+   takes a constructor that builds the whole spec by hand. `activate` appends
+   one start hook, so a refused graph fails the start it can unwind rather than
+   the construction it cannot. [[D-111]] says why the declaration is contributed
+   rather than derived from the providers already in the graph.
 
 `Cache.Describe` in `cache/descriptor.go` exposes the declaration before
 activation and the resolved namespace, provider, backend, clock policy and
@@ -197,6 +208,7 @@ the complete state before emitting events.
 | `cache/envelope.go`, `codec.go` | versioned wire value and bounded codecs |
 | `cache/context.go`, `runtime.go` | injected clock, finite contexts and watcher teardown |
 | `cache/cachememory/backend.go` | bounded process backend |
+| `cache/cachefx/cachefx.go` | the fx groups, the required declarations and the one start hook |
 
 ## Tests that walk this flow
 
@@ -220,6 +232,14 @@ the complete state before emitting events.
   the undeclared resource that passes until the root asks for declarations.
 - `cache/resolve_many_test.go` covers order, deduplication, all-or-error and the
   cumulative bound proved before the first write.
+- `cache/cachefx/cachefx_test.go` covers the binding: two modules that name
+  nothing of each other meeting at one activation, the durable resource that
+  fails the start, the undeclared resource that fails it until the deployment
+  accepts one, the declaration contributed through the raw group tag, the
+  hand-built spec, and the caches that exist only after the start. It also
+  covers the two ends of the hook: a spec the binding cannot act on is refused
+  at `fx.New` before any hook runs, and a refusal on the start hook closes the
+  pool the provider's own hook had already opened.
 - `cache/observers_test.go` and `cache/health_test.go` cover the fan-out and
   probe seams.
 - `cache/cachememory/backend_test.go` and its conformance test cover ownership,

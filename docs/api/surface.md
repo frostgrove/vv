@@ -445,6 +445,9 @@ func UsesPortableBatch(options ...BatchOption) bool
 func WithExecutor(ctx context.Context, e Executor) context.Context
 func WithExecutorFor(ctx context.Context, ds any, e Executor) context.Context
 func WithUnsafeExecutor(ctx context.Context, e Executor) context.Context
+type Action uint8
+    const ActionRead Action = iota ...
+    func Actions() []Action
 type AggregateRow struct{ ... }
 type AggregateSpec struct{ ... }
 type Aggregation struct{ ... }
@@ -690,11 +693,11 @@ type Option func(*settings)
 
 ## github.com/frostgrove/vv/crud/decorators/security
 ```go
+const Read = crud.ActionRead ...
 var ErrForbidden = fmt.Errorf("security: %w", crud.ErrForbidden)
 func Denied(action Action, reason string) error
 func Gate[M any, ID comparable](p Policy[M, ID]) crud.Middleware[M, ID]
-type Action uint8
-    const Read Action = iota ...
+type Action = crud.Action
 type Policy[M any, ID comparable] struct{ ... }
     func Combine[M any, ID comparable](ps ...Policy[M, ID]) Policy[M, ID]
     func Freeze[M any, ID comparable](fields ...string) Policy[M, ID]
@@ -702,8 +705,9 @@ type Policy[M any, ID comparable] struct{ ... }
     func PerAction[M any, ID comparable](m map[Action]auth.Permission) Policy[M, ID]
     func ReadOnly[M any, ID comparable]() Policy[M, ID]
     func RequireAnyPermission[M any, ID comparable](ps ...auth.Permission) Policy[M, ID]
-    func RequirePermission[M any, ID comparable](ps ...auth.Permission) Policy[M, ID]
+    func RequirePermission[M any, ID comparable](permissions ...auth.Permission) Policy[M, ID]
     func RequireRole[M any, ID comparable](rs ...auth.Role) Policy[M, ID]
+    func Requiring[M any, ID comparable](requires map[Action][]auth.Permission) Policy[M, ID]
     func ScopeAttr[M any, ID comparable](field, attr string) Policy[M, ID]
     func ScopeField[M any, ID comparable](field string, value func(context.Context) (any, error)) Policy[M, ID]
     func ScopeRelationAttr[M any, ID comparable](path, field, attr string) Policy[M, ID]
@@ -783,8 +787,7 @@ type Envelope = porthttp.Envelope
 type EnvelopeRenderer = porthttp.EnvelopeRenderer
     func NewRenderer(options ...RenderOption) *EnvelopeRenderer
 type Groups = porthttp.Groups
-type Need uint8
-    const NeedRead Need = iota ...
+type Policy interface{ ... }
 type RenderOption = porthttp.RenderOption
     func WithCodes(c *errs.Codes) RenderOption
     func WithMaxViolations(n int) RenderOption
@@ -1663,6 +1666,9 @@ type Declaring interface{ ... }
 type Drainer interface{ ... }
 type Durability string
     const NonDurable Durability = "non-durable" ...
+type Loop struct{ ... }
+    func NewLoop(spec LoopSpec) *Loop
+type LoopSpec struct{ ... }
 type Observer interface{ ... }
 type ObserverFunc func(state RunnerState)
 type PeriodicSpec struct{ ... }
@@ -1682,6 +1688,14 @@ type Supervisor struct{ ... }
 type Ticker interface{ ... }
     func SystemTicks(interval time.Duration) Ticker
 type Ticks func(interval time.Duration) Ticker
+```
+
+## github.com/frostgrove/vv/runtime/runtimecheck
+```go
+func SkipsHiddenAndVendored(name string) bool
+type Activation struct{ ... }
+    func EmptyInvokeActivations(root string) ([]Activation, error)
+type Scanner struct{ ... }
 ```
 
 ## github.com/frostgrove/vv/storage
@@ -1791,6 +1805,7 @@ type Seeders struct{ ... }
 ```go
 const DefaultHealthPath = "/health"
 const OrderAuth = 100
+var ErrCombine = errors.New("routes cannot be contributed as one")
 var ErrRouteSet = errors.New("a route set was given an operation it cannot mount")
 var ErrUnchecked = errors.New("an operation declares a permission nothing in front of it checks")
 func AsMiddleware(constructor any) any
@@ -1814,10 +1829,17 @@ type Policy struct{ ... }
     func Public(why string) Policy
     func Requires(permissions ...auth.Permission) Policy
 type Resolvers struct{ ... }
+type RootRouteSetSpec struct{ ... }
 type Route interface{ ... }
+    func Combine(routes ...Route) (Route, error)
     func Health(spec HealthSpec) (Route, error)
+    func MustCombine(routes ...Route) Route
 type RouteSet struct{ ... }
+    func MustRootRouteSet(spec RootRouteSetSpec) *RouteSet
+    func MustRouteSet(spec RouteSetSpec) *RouteSet
+    func NewRootRouteSet(spec RootRouteSetSpec) (*RouteSet, error)
     func NewRouteSet(spec RouteSetSpec) (*RouteSet, error)
+    func RootRoutes(fiberApp *fiber.App, options ...porthttp.RenderOption) *RouteSet
     func Routes(prefix string, options ...porthttp.RenderOption) *RouteSet
 type RouteSetSpec struct{ ... }
 type Spec struct{ ... }
@@ -2086,12 +2108,30 @@ type Window struct{ ... }
 
 ## github.com/frostgrove/vv/auth/access/accessjwt/revokeredis
 ```go
+const EvictionParameter = "maxmemory-policy" ...
 const DefaultPrefix = "access:revoked:"
 const MinimumTTL = time.Second
+var ErrEvicting = errors.New("the revocation list is on a server that evicts keys") ...
+var ErrUnreachable = errors.New("the revocation list is not reachable")
+type EvictionPolicy struct{ ... }
 type List struct{ ... }
     func New(client redis.UniversalClient, options ...Option) (*List, error)
 type Option func(*List)
+    func Logger(logger *slog.Logger) Option
+    func OnUnknownPolicy(choice UnknownPolicy) Option
     func Prefix(prefix string) Option
+type UnknownPolicy string
+    const Reported UnknownPolicy = "reported" ...
+type Verdict string
+    const Retaining Verdict = "retaining" ...
+```
+
+## github.com/frostgrove/vv/auth/access/accessjwt/revokeredis/revokeredisfx
+```go
+func Auto() fx.Option
+func Revoking(options ...revokeredis.Option) fx.Option
+func Verifying() fx.Option
+type Dependencies struct{ ... }
 ```
 
 ## github.com/frostgrove/vv/auth/access/http/accessfiber
@@ -2188,6 +2228,21 @@ type Option func(*config)
     func Skip(fullMethods ...string) Option
 ```
 
+## github.com/frostgrove/vv/cache/cachefx
+```go
+func Activating(constructor any) fx.Option
+func AsProvider(constructor any) any
+func AsResource(constructor any) any
+func AsSet(constructor any) any
+func Auto(application, environment string) fx.Option
+func Caching(spec Spec) fx.Option
+func Resources(declarations ...cache.ResourceDeclaration) fx.Option
+type Contributions struct{ ... }
+type Spec struct{ ... }
+type Undeclared string
+    const Refused Undeclared = "refused" ...
+```
+
 ## github.com/frostgrove/vv/crud/adapter/crudpgx
 ```go
 type Executor struct{ ... }
@@ -2201,6 +2256,7 @@ type Tx struct{ ... }
 
 ## github.com/frostgrove/vv/crud/adapter/crudsql/crudsqlfx
 ```go
+const DefaultSchemaTimeout = 15 * time.Second
 func Module(configuration *vvdb.Config) fx.Option
 func Open(lifecycle fx.Lifecycle, configuration *vvdb.Config) (*sql.DB, error)
 ```
@@ -2347,12 +2403,17 @@ type Spec struct{ ... }
 
 ## github.com/frostgrove/vv/jobs/jobsfx
 ```go
+const WorkersRunnerName = "vv.jobs.workers" ...
 func AsBackend(constructor any) any
 func AsConsumer(constructor any) any
 func AsDeclaration(constructor any) any
 func AsSchedule(constructor any) any
 func Bundle(catalog jobs.Catalog, optionValues []BundleOption, ...) fx.Option
 func Module(spec Spec) fx.Option
+func SchedulerRunner(scheduler *jobs.Scheduler, ready <-chan struct{}) (runtime.Runner, error)
+func WorkersRunner(workers *jobs.Workers, ready <-chan struct{}) (runtime.Runner, error)
+type Activation string
+    const Enabled Activation = "enabled" ...
 type AdmissionProvider interface{ ... }
 type Backend interface{ ... }
 type Binding[D, P any] struct{ ... }
@@ -2402,9 +2463,11 @@ const DefaultHousekeepingInterval = time.Minute
 const DefaultHousekeepingMaxBatches = 64
 const DefaultHousekeepingSweepTimeout = 30 * time.Second
 const MaxHousekeepingBatches = 1024
+const RetentionRunnerName = "vv.jobspg.retention"
 func Application(settings ApplicationSettings) fx.Option
 func Module(settings Settings) fx.Option
 func New(settings Settings, database *sql.DB, source crud.Source, catalog jobs.Catalog) (*jobspg.Driver, error)
+func RetentionRunner(sweeper jobs.RetentionSweeper, settings HousekeepingSettings) (runtime.Runner, error)
 type ApplicationSettings struct{ ... }
 type DeploymentProfile string
     const DevelopmentProfile DeploymentProfile = "development" ...
@@ -2430,6 +2493,7 @@ type Spec struct{ ... }
 ```go
 func AsRunner(constructor any) any
 func Auto() fx.Option
+func ShuttingDownOnFailure(shutdowner fx.Shutdowner, log *slog.Logger) runtime.Observer
 func Supervising(spec Spec) fx.Option
 type FailurePolicy string
     const ShutDownOnFailure FailurePolicy = "shut-down" ...
@@ -2451,7 +2515,11 @@ type Config struct{ ... }
 func Module(settings Settings) fx.Option
 func NewBackend(settings Settings, client *minio.Client) (*storageminio.Backend, error)
 func NewClient(settings Settings) (*minio.Client, error)
+type BucketPolicy string
+    const BucketMustExist BucketPolicy = "" ...
 type Settings struct{ ... }
+type Transport string
+    const TransportTLS Transport = "" ...
 ```
 
 ## github.com/frostgrove/vv/utils/vvcfg

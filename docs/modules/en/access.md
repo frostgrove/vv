@@ -22,6 +22,7 @@ rather than as claims in a token.
 |---|---|
 | [accessjwt](accessjwt.md) | signed access tokens over a rotating refresh credential |
 | [revokeredis](revokeredis.md) | a revocation list for it, in Redis |
+| [revokeredisfx](revokeredis.md#the-fx-form) | that list in an fx graph, checked at start-up |
 | [accessnet](accessnet.md) / [accessgin](accessgin.md) / [accessfiber](accessfiber.md) | the routes, one module per framework |
 
 ---

@@ -10,6 +10,7 @@ import (
 
 	"github.com/frostgrove/vv/jobs"
 	"github.com/frostgrove/vv/jobs/jobspg"
+	"github.com/frostgrove/vv/runtime"
 )
 
 const DefaultHousekeepingInterval = time.Minute
@@ -17,20 +18,14 @@ const DefaultHousekeepingSweepTimeout = 30 * time.Second
 const DefaultHousekeepingMaxBatches = 64
 const MaxHousekeepingBatches = 1024
 
+const RetentionRunnerName = "vv.jobspg.retention"
+
 type housekeepingConfig struct {
 	disabled     bool
 	interval     time.Duration
 	sweepTimeout time.Duration
 	batchSize    int
 	maxBatches   int
-}
-
-type retentionRuntime struct {
-	sweeper    jobs.RetentionSweeper
-	shutdowner fx.Shutdowner
-	config     housekeepingConfig
-	cancel     context.CancelFunc
-	done       chan error
 }
 
 func normalizeHousekeeping(settings HousekeepingSettings) (housekeepingConfig, error) {
@@ -68,54 +63,71 @@ func normalizeHousekeeping(settings HousekeepingSettings) (housekeepingConfig, e
 	return housekeepingConfig{interval: interval, sweepTimeout: sweepTimeout, batchSize: batchSize, maxBatches: maxBatches}, nil
 }
 
-func bindRetentionLifecycle(lifecycle fx.Lifecycle, shutdowner fx.Shutdowner, sweeper jobs.RetentionSweeper, config housekeepingConfig) {
-	runtime := &retentionRuntime{sweeper: sweeper, shutdowner: shutdowner, config: config}
-	lifecycle.Append(fx.Hook{OnStart: runtime.start, OnStop: runtime.stop})
-}
-
-func (runtime *retentionRuntime) start(ctx context.Context) error {
-	if runtime.config.disabled {
-		return nil
+// RetentionRunner is the explicit form under Module: a graph assembled by hand
+// hands the result to any supervisor.
+func RetentionRunner(sweeper jobs.RetentionSweeper, settings HousekeepingSettings) (runtime.Runner, error) {
+	config, err := normalizeHousekeeping(settings)
+	if err != nil {
+		return nil, err
 	}
-	runContext, cancel := context.WithCancel(context.WithoutCancel(ctx))
-	runtime.cancel = cancel
-	runtime.done = make(chan error, 1)
-	go runtime.run(runContext)
-	return nil
+	return newRetentionRunner(sweeper, config)
 }
 
-func (runtime *retentionRuntime) run(ctx context.Context) {
-	timer := time.NewTimer(runtime.config.interval)
+func newRetentionRunner(sweeper jobs.RetentionSweeper, config housekeepingConfig) (*retentionRunner, error) {
+	if config.disabled {
+		return nil, fmt.Errorf("jobspgfx: %w: housekeeping is disabled and has no runner", jobs.ErrInvalid)
+	}
+	if sweeper == nil {
+		return nil, fmt.Errorf("jobspgfx: %w: a retention runner without a sweeper", jobs.ErrInvalid)
+	}
+	return &retentionRunner{sweeper: sweeper, config: config}, nil
+}
+
+type retentionRunner struct {
+	sweeper jobs.RetentionSweeper
+	config  housekeepingConfig
+}
+
+func (this *retentionRunner) Name() string { return RetentionRunnerName }
+
+func (this *retentionRunner) Declaration() runtime.Declaration { return runtime.PerReplicaTimer }
+
+// Run measures the interval from the end of a drain rather than from a tick, so
+// a sweep that outlasts its own period does not find the next one already
+// queued and start again the instant it returns.
+func (this *retentionRunner) Run(ctx context.Context) error {
+	timer := time.NewTimer(this.config.interval)
 	defer timer.Stop()
 	for {
 		select {
 		case <-ctx.Done():
-			runtime.done <- nil
-			return
+			return ctx.Err()
 		case <-timer.C:
-			cycleContext, cancel := context.WithTimeout(ctx, runtime.config.sweepTimeout)
-			err := drainRetention(cycleContext, runtime.sweeper, runtime.config.batchSize, runtime.config.maxBatches)
-			cycleTimedOut := errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil
-			cancel()
-			if cycleTimedOut {
-				timer.Reset(runtime.config.interval)
-				continue
+			if err := this.sweep(ctx); err != nil {
+				return err
 			}
-			if errors.Is(err, jobspg.ErrNotReady) {
-				timer.Reset(runtime.config.interval)
-				continue
-			}
-			if err == nil {
-				timer.Reset(runtime.config.interval)
-				continue
-			}
-			if ctx.Err() == nil {
-				_ = runtime.shutdowner.Shutdown(fx.ExitCode(1))
-			}
-			runtime.done <- err
-			return
+			timer.Reset(this.config.interval)
 		}
 	}
+}
+
+// sweep separates the two failures that must not stop the schedule — a pass
+// that ran out of its own budget, and a backend that is not migrated yet — from
+// the one that must, which the supervisor turns into a shutdown.
+func (this *retentionRunner) sweep(ctx context.Context) error {
+	cycle, cancel := context.WithTimeout(ctx, this.config.sweepTimeout)
+	defer cancel()
+
+	err := drainRetention(cycle, this.sweeper, this.config.batchSize, this.config.maxBatches)
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil:
+		return nil
+	case errors.Is(err, jobspg.ErrNotReady):
+		return nil
+	}
+	return err
 }
 
 func drainRetention(ctx context.Context, sweeper jobs.RetentionSweeper, batchSize, maxBatches int) error {
@@ -147,18 +159,55 @@ func sweepRetention(ctx context.Context, sweeper jobs.RetentionSweeper, limit in
 	return sweeper.SweepTerminalRetention(ctx, limit)
 }
 
-func (runtime *retentionRuntime) stop(ctx context.Context) error {
-	if runtime.cancel == nil {
+// supervision is optional in the graph and mandatory at start: a container that
+// holds the runner and no supervisor built from the runner group is a container
+// that would sweep nothing and say nothing, which is the failure the runner
+// contract exists to remove.
+type supervision struct {
+	fx.In
+
+	Supervisor *runtime.Supervisor `optional:"true"`
+}
+
+func bindRetentionSupervision(lifecycle fx.Lifecycle, injected supervision) {
+	guard := &retentionSupervision{supervisor: injected.Supervisor}
+	lifecycle.Append(fx.Hook{OnStart: guard.start, OnStop: guard.stop})
+}
+
+type retentionSupervision struct {
+	supervisor *runtime.Supervisor
+}
+
+func (this *retentionSupervision) start(context.Context) error {
+	if _, known := this.state(); known {
 		return nil
 	}
-	runtime.cancel()
-	select {
-	case err := <-runtime.done:
-		if errors.Is(err, context.Canceled) {
-			return nil
-		}
-		return err
-	case <-ctx.Done():
-		return ctx.Err()
+	if this.supervisor == nil {
+		return fmt.Errorf(
+			"jobspgfx: %w: %s has no supervisor; add runtimefx.Supervising to the graph, or switch housekeeping off",
+			jobs.ErrInvalid, RetentionRunnerName)
 	}
+	return fmt.Errorf(
+		"jobspgfx: %w: %s never reached the supervisor; the graph provides a *runtime.Supervisor that was not built from the runner group",
+		jobs.ErrInvalid, RetentionRunnerName)
+}
+
+func (this *retentionSupervision) stop(context.Context) error {
+	state, known := this.state()
+	if !known || state.Phase != runtime.PhaseFailed {
+		return nil
+	}
+	return fmt.Errorf("jobspgfx: retention housekeeping stopped: %w", state.Err)
+}
+
+func (this *retentionSupervision) state() (runtime.RunnerState, bool) {
+	if this.supervisor == nil {
+		return runtime.RunnerState{}, false
+	}
+	for _, state := range this.supervisor.States() {
+		if state.Name == RetentionRunnerName {
+			return state, true
+		}
+	}
+	return runtime.RunnerState{}, false
 }

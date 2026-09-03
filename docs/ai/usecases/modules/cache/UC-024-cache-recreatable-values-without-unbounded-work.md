@@ -81,6 +81,13 @@ incident without silently removing cancellation and resource limits.
     tenants may share one resource, and only with a written reason. A root that
     cannot afford an undescribed resource can require every resource a cache
     lands on to be declared, and start-up then fails on the omission.
+16. Wiring the subsystem into a dependency graph is what activates it. The
+    caches a deployment declares, the backends it built and the tenants of each
+    resource are contributions the graph carries rather than a call the root
+    has to remember; the declaration a durable subsystem lives behind is a
+    value, so nothing has to import the cache to be counted as a tenant of the
+    storage it shares; and a deployment that would share an eviction domain
+    fails to start instead of failing to check.
 
 ## Out of scope
 
@@ -105,6 +112,9 @@ incident without silently removing cancellation and resource limits.
 
 Covered by the typed facade and bounded in-process backend, including the
 execution memo, batch resolve, the driver-declared capability set and the
-observer and probe seams. Shared PostgreSQL and Redis storage remain separate
+observer and probe seams. The uber/fx binding carries the sets,
+providers and resource declarations and activates with declared resources
+required, so the eviction-domain rule runs in a deployment rather than only in
+the subsystem's own tests. Shared PostgreSQL and Redis storage remain separate
 features; their absence does not weaken this use case's local bounded-work
 contract.

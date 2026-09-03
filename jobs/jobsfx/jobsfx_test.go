@@ -15,6 +15,8 @@ import (
 	"github.com/frostgrove/vv/jobs"
 	"github.com/frostgrove/vv/jobs/jobsfx"
 	"github.com/frostgrove/vv/jobs/jobsmemory"
+	vvruntime "github.com/frostgrove/vv/runtime"
+	"github.com/frostgrove/vv/runtime/runtimefx"
 )
 
 type injectedJob struct {
@@ -146,12 +148,14 @@ func TestBundleInjectsTypedHandlersAndAppliesConcurrency(t *testing.T) {
 		jobsfx.Bundle(catalog, []jobsfx.BundleOption{jobsfx.Concurrency(map[jobs.Name]int{standard.Name(): 3})}, standard, adapter),
 		jobsfx.Module(jobsfx.Spec{
 			Namespace: namespace,
+			Consuming: jobsfx.Enabled,
 			Workers: jobs.WorkersSpec{
 				Build:        build,
 				Identity:     testIdentityRestorer(),
 				PollInterval: jobs.MinimumPollInterval,
 			},
 		}),
+		runtimefx.Auto(),
 		fx.Populate(&queue, &workers, &runtimeCatalog),
 	)
 	if err = app.Err(); err != nil {
@@ -235,8 +239,10 @@ func TestConfiguredCatalogDoesNotDependOnHandlerConstruction(t *testing.T) {
 		),
 		jobsfx.Module(jobsfx.Spec{
 			Namespace: namespace,
+			Consuming: jobsfx.Enabled,
 			Workers:   jobs.WorkersSpec{Build: build, Identity: testIdentityRestorer()},
 		}),
+		runtimefx.Auto(),
 	)
 	if err := app.Err(); err != nil {
 		t.Fatal(err)
@@ -274,7 +280,8 @@ func TestConfiguredBindingsDiscoverProvidedAndManualAdmissionSnapshots(t *testin
 			jobsfx.AsConsumer(func() jobs.Consumer { return manualConsumer }),
 			jobsfx.AsBackend(jobsmemory.NewDefault),
 		),
-		jobsfx.Module(jobsfx.Spec{Namespace: namespace, Workers: jobs.WorkersSpec{Build: build, Identity: testIdentityRestorer()}}),
+		jobsfx.Module(jobsfx.Spec{Namespace: namespace, Consuming: jobsfx.Enabled, Workers: jobs.WorkersSpec{Build: build, Identity: testIdentityRestorer()}}),
+		runtimefx.Auto(),
 		fx.Populate(&workers),
 	)
 	if err := app.Err(); err != nil {
@@ -321,12 +328,14 @@ func TestConfiguredBindingsNeverInvokeLegacyAdmissionCallbacks(t *testing.T) {
 				fx.Provide(jobsfx.AsBackend(jobsmemory.NewDefault)),
 				jobsfx.Module(jobsfx.Spec{
 					Namespace: namespace,
+					Consuming: jobsfx.Enabled,
 					Workers: jobs.WorkersSpec{
 						Build:        build,
 						Identity:     testIdentityRestorer(),
 						PollInterval: jobs.MinimumPollInterval,
 					},
 				}),
+				runtimefx.Auto(),
 				fx.Populate(&workers),
 			)
 			if err = app.Err(); err != nil {
@@ -380,7 +389,8 @@ func TestConfiguredBindingRejectsDuplicateSnapshotAdmission(t *testing.T) {
 		fx.Supply(&conflictingAdmissionJob{reader: snapshot.Reader()}),
 		jobsfx.Bundle(jobs.MustCatalog(binding), nil, binding),
 		fx.Provide(jobsfx.AsBackend(jobsmemory.NewDefault)),
-		jobsfx.Module(jobsfx.Spec{Namespace: namespace, Workers: jobs.WorkersSpec{Build: build, Identity: testIdentityRestorer()}}),
+		jobsfx.Module(jobsfx.Spec{Namespace: namespace, Consuming: jobsfx.Enabled, Workers: jobs.WorkersSpec{Build: build, Identity: testIdentityRestorer()}}),
+		runtimefx.Auto(),
 	)
 	if err := app.Err(); !errors.Is(err, jobs.ErrInvalid) {
 		t.Fatalf("duplicate snapshot admission = %v", err)
@@ -410,7 +420,8 @@ func TestBundleAllowsManualConsumerOverride(t *testing.T) {
 			jobsfx.AsConsumer(func() jobs.Consumer { return manual }),
 			jobsfx.AsBackend(jobsmemory.NewDefault),
 		),
-		jobsfx.Module(jobsfx.Spec{Namespace: namespace, Workers: jobs.WorkersSpec{Build: build, Identity: testIdentityRestorer()}}),
+		jobsfx.Module(jobsfx.Spec{Namespace: namespace, Consuming: jobsfx.Enabled, Workers: jobs.WorkersSpec{Build: build, Identity: testIdentityRestorer()}}),
+		runtimefx.Auto(),
 		fx.Populate(&workers),
 	)
 	if err = app.Err(); err != nil {
@@ -444,7 +455,8 @@ func TestModulePreparesOptionalBackendBeforeQueueActivation(t *testing.T) {
 			jobsfx.AsDeclaration(func() jobs.Declaration { return automatic }),
 			jobsfx.AsBackend(func() *preparingBackend { return backend }),
 		),
-		jobsfx.Module(jobsfx.Spec{Namespace: namespace, Workers: jobs.WorkersSpec{Build: build, Identity: testIdentityRestorer()}}),
+		jobsfx.Module(jobsfx.Spec{Namespace: namespace, Consuming: jobsfx.Enabled, Workers: jobs.WorkersSpec{Build: build, Identity: testIdentityRestorer()}}),
+		runtimefx.Auto(),
 	)
 	if err = app.Err(); err != nil {
 		t.Fatal(err)
@@ -558,12 +570,14 @@ func TestModuleBuildsAndRunsTheDefaultJobRuntime(t *testing.T) {
 		),
 		jobsfx.Module(jobsfx.Spec{
 			Namespace: namespace,
+			Consuming: jobsfx.Enabled,
 			Workers: jobs.WorkersSpec{
 				Build:        build,
 				Identity:     testIdentityRestorer(),
 				PollInterval: jobs.MinimumPollInterval,
 			},
 		}),
+		runtimefx.Auto(),
 		fx.Populate(&catalog, &queue, &workers, &backend),
 	)
 	if err = app.Err(); err != nil {
@@ -651,12 +665,14 @@ func TestModuleUsesTheConfiguredCatalogWithoutRebuildingIt(t *testing.T) {
 		jobsfx.Module(jobsfx.Spec{
 			Namespace: namespace,
 			Catalog:   configured,
+			Consuming: jobsfx.Enabled,
 			Workers: jobs.WorkersSpec{
 				Build:        build,
 				Identity:     testIdentityRestorer(),
 				PollInterval: jobs.MinimumPollInterval,
 			},
 		}),
+		runtimefx.Auto(),
 		fx.Populate(&catalog),
 	)
 	if err = app.Err(); err != nil {
@@ -814,13 +830,16 @@ func TestModuleStartsAndStopsTheScheduler(t *testing.T) {
 			jobsfx.AsBackend(jobsmemory.NewDefault),
 		),
 		jobsfx.Module(jobsfx.Spec{
-			Namespace: namespace,
+			Namespace:  namespace,
+			Consuming:  jobsfx.Enabled,
+			Scheduling: jobsfx.Enabled,
 			Workers: jobs.WorkersSpec{
 				Build:        build,
 				Identity:     testIdentityRestorer(),
 				PollInterval: jobs.MinimumPollInterval,
 			},
 		}),
+		runtimefx.Auto(),
 	)
 	if err = app.Err(); err != nil {
 		t.Fatal(err)
@@ -854,7 +873,7 @@ func TestModuleStartsAndStopsTheScheduler(t *testing.T) {
 	started = false
 }
 
-func TestSchedulerFailureRequestsApplicationShutdown(t *testing.T) {
+func TestASchedulerThatDiesIsNamedByTheSupervisorAndTakesTheProcessDown(t *testing.T) {
 	automatic := testAutomatic(t, "jobsfx.scheduler-failure", func(context.Context, string) error { return nil })
 	scheduleName, err := jobs.ParseName("jobsfx.invalid-clock")
 	if err != nil {
@@ -878,6 +897,7 @@ func TestSchedulerFailureRequestsApplicationShutdown(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	var supervisor *vvruntime.Supervisor
 	app := fx.New(
 		fx.NopLogger,
 		fx.Provide(
@@ -887,7 +907,9 @@ func TestSchedulerFailureRequestsApplicationShutdown(t *testing.T) {
 			jobsfx.AsBackend(jobsmemory.NewDefault),
 		),
 		jobsfx.Module(jobsfx.Spec{
-			Namespace: namespace,
+			Namespace:  namespace,
+			Consuming:  jobsfx.Enabled,
+			Scheduling: jobsfx.Enabled,
 			Workers: jobs.WorkersSpec{
 				Build:        build,
 				Identity:     testIdentityRestorer(),
@@ -895,6 +917,8 @@ func TestSchedulerFailureRequestsApplicationShutdown(t *testing.T) {
 			},
 			Scheduler: jobs.SchedulerSpec{Clock: invalidClock{}},
 		}),
+		runtimefx.Auto(),
+		fx.Populate(&supervisor),
 	)
 	if err = app.Err(); err != nil {
 		t.Fatal(err)
@@ -912,14 +936,21 @@ func TestSchedulerFailureRequestsApplicationShutdown(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("scheduler failure did not request shutdown")
 	}
+	failure := runnerState(t, supervisor, jobsfx.SchedulerRunnerName)
+	if failure.Phase != vvruntime.PhaseFailed || !errors.Is(failure.Err, jobs.ErrInvalid) {
+		t.Fatalf("the scheduler died as %s with %v", failure.Phase, failure.Err)
+	}
+	if failure.Declaration.Placement != vvruntime.Singleton {
+		t.Fatalf("the scheduler is placed as %q", failure.Declaration.Placement)
+	}
 	stopContext, cancelStop := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancelStop()
-	if err = app.Stop(stopContext); !errors.Is(err, jobs.ErrInvalid) {
-		t.Fatalf("stop = %v", err)
+	if err = app.Stop(stopContext); err != nil {
+		t.Fatal(err)
 	}
 }
 
-func TestWorkerFailureRequestsApplicationShutdown(t *testing.T) {
+func TestAWorkerPoolThatDiesIsNamedByTheSupervisorAndTakesTheProcessDown(t *testing.T) {
 	automatic := testAutomatic(t, "jobsfx.failure", func(context.Context, string) error { return nil })
 	namespace, err := jobs.NamespaceOf("jobsfx", "failure")
 	if err != nil {
@@ -929,6 +960,7 @@ func TestWorkerFailureRequestsApplicationShutdown(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	var supervisor *vvruntime.Supervisor
 	app := fx.New(
 		fx.NopLogger,
 		fx.Provide(
@@ -938,12 +970,15 @@ func TestWorkerFailureRequestsApplicationShutdown(t *testing.T) {
 		),
 		jobsfx.Module(jobsfx.Spec{
 			Namespace: namespace,
+			Consuming: jobsfx.Enabled,
 			Workers: jobs.WorkersSpec{
 				Build:        build,
 				Identity:     testIdentityRestorer(),
 				PollInterval: jobs.MinimumPollInterval,
 			},
 		}),
+		runtimefx.Auto(),
+		fx.Populate(&supervisor),
 	)
 	if err = app.Err(); err != nil {
 		t.Fatal(err)
@@ -961,11 +996,26 @@ func TestWorkerFailureRequestsApplicationShutdown(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("worker failure did not request shutdown")
 	}
+	failure := runnerState(t, supervisor, jobsfx.WorkersRunnerName)
+	if failure.Phase != vvruntime.PhaseFailed || !errors.Is(failure.Err, jobs.ErrDriver) {
+		t.Fatalf("the worker pool died as %s with %v", failure.Phase, failure.Err)
+	}
 	stopContext, cancelStop := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancelStop()
 	if err = app.Stop(stopContext); !errors.Is(err, jobs.ErrDriver) {
 		t.Fatalf("stop = %v", err)
 	}
+}
+
+func runnerState(t *testing.T, supervisor *vvruntime.Supervisor, name string) vvruntime.RunnerState {
+	t.Helper()
+	for _, state := range supervisor.States() {
+		if state.Name == name {
+			return state
+		}
+	}
+	t.Fatalf("the supervisor never heard of a runner called %q", name)
+	return vvruntime.RunnerState{}
 }
 
 type panickingBackend struct {

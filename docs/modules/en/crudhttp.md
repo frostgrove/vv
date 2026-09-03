@@ -75,25 +75,41 @@ New code should import [porthttp](porthttp.md) directly.
 | | |
 |---|---|
 | `Table{Prefix, ReadOnly}` | where a resource is mounted, and whether the writes are there |
-| `Table.Routes()` | the same list `Register` walks: `Method`, `Path`, `Name`, `Need` |
-| `Table.Guarded(read, write, del)` | that list as `[]authhttp.Endpoint`, for the boot gate |
-| `Need` | `NeedRead`, `NeedWrite`, `NeedDelete` |
+| `Table.Routes()` | the same list `Register` walks: `Method`, `Path`, `Name`, `Action` |
+| `Table.GuardedBy(policy)` | that list as `[]authhttp.Endpoint`, with the permissions read off the policy the repository is gated with |
+| `Table.Guarded(read, write, del)` | the same, over three permissions you write, when the enforcement is somewhere else |
+| `Policy` | `RequiredFor(crud.Action) ([]auth.Permission, bool)` — what `GuardedBy` asks; `security.Policy` answers it |
+| `Route.Action` | `crud.ActionRead`, `crud.ActionCreate`, `crud.ActionUpdate`, `crud.ActionDelete` |
 | route names | `List`, `Get`, `Count`, `CountQuery`, `Query`, `Create`, `Update`, `Replace`, `Delete`, `BulkDelete` |
 
 ```go
-crudhttp.Table{Prefix: "/roles"}.Guarded(PermRoleRead, PermRoleWrite, PermRoleDelete)
+declared, err := crudhttp.Table{Prefix: "/roles"}.GuardedBy(RolePolicy())
+
 crudhttp.Table{Prefix: "/permissions", ReadOnly: true}.Guarded(PermRoleRead, "", "")
 ```
+
+`GuardedBy` refuses when a route the table mounts performs an action the policy
+does not declare: the routes are named, and nothing is returned. An action
+declared with no permissions becomes `authhttp.Authenticated`, which is what
+`RequirePermission()` naming nothing means. `Guarded` maps create and update
+onto `write` and both deletes onto `del`; `GuardedBy` does not collapse them.
 
 Path parameters are spelled `:id`, which is Fiber's and Gin's spelling and the
 canonical one here; `crudnet` rewrites it, the way `accessnet` does.
 
-**The paths come from the table and the permissions come from you, and that split
-is the point.** A declaration written out by hand agrees with the router only
-until somebody adds a route; one derived from the router agrees with it always,
-including when both are wrong. What is worth stating twice is which permission
-guards which route — the paths are checked against the real routing table anyway
-([[D-073]]).
+**The paths come from the table and the permissions come from the gate.** A
+declaration written out by hand agrees with the router only until somebody adds
+a route; one derived from the router agrees with it always, including when both
+are wrong — so the paths are checked against the real routing table rather than
+written twice ([[D-073]]). The permissions used to be the half worth stating
+twice, because nothing could compare a route's declaration with the check that
+runs behind it. `security.Policy` now carries its requirement as data, so
+`GuardedBy` reads the enforced list instead of asking for a second copy of it
+([[D-107]]).
+
+A route that is not a CRUD resource has no table to read: it is guarded inside
+the use case's own body, and `vv generate routes` derives its declaration from
+that guard instead ([[D-109]], [cmd/vv](vv-cli.md)).
 
 ## See also
 
@@ -103,3 +119,4 @@ guards which route — the paths are checked against the real routing table anyw
 - [crudnet](crudnet.md) · [crudfiber](crudfiber.md) · [crudgin](crudgin.md) — the shells over this
 - [[FL-013]] a request through another binding · [[FL-015]] a request through the port layer
 - [[D-059]] the HTTP projection belongs to `port` · [[D-045]] the shared half is transport-neutral
+- [[D-107]] a resource declares the permissions its gate enforces · [[FL-024]] the boot gate · [[FL-020]] where the policy's value comes from

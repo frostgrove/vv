@@ -15,12 +15,14 @@ this writes them. With `-adapter` it writes the rest of the resource too: the
 request body, the mapper, **the inverse of that mapping**, a service shell and
 the wiring.
 
-There are three subcommands, and they write different artefacts:
+There are five subcommands, and they write different artefacts:
 
 | Command | Writes | Page |
 |---|---|---|
 | `vv generate` (or no subcommand) | `vv_gen.go` — the update DTO, the metamodel, the repository blueprint | this one |
 | `vv generate resource` | `vv_wire_gen.go` and `resource.manifest.yml` — the **public** create, patch and response bodies | [below](#generate-resource) |
+| `vv generate routes` | `vv_routes_gen.go` and `routes.manifest.yml` — the operation an application route and its guard both read | [below](#generate-routes) |
+| `vv generate module` | `vv_module_gen.go` and `module.manifest.yml` — the module a composition root registers | [below](#generate-module) |
 | `vv generate cache` | `vv_cache_gen.go` and `cache.manifest.yml` — the cache scope set | [cache](cache.md) |
 
 For a package, it reads exported structs in `model.go`, `*.model.go`, and
@@ -90,8 +92,8 @@ crud.Preload(Article_.Comments.Path())
 
 The handle records the model the path lands on, so pointing one at the wrong
 model is refused at package initialisation. It is embedded, so a target model
-with a column called `Path` shadows the method — the generated file says so in
-that group's doc comment, and `RelPath()` is the spelling nothing shadows.
+with a column called `Path` shadows the method. The generated file says nothing
+about it, and `RelPath()` is the spelling nothing shadows.
 
 **And a coverage assertion**, whether or not `-adapter` is on:
 
@@ -334,8 +336,256 @@ widest set that is possible — and the result is written to
 | `-recursive` | **on** | walk model files below `-dir` and generate beside each package |
 | `-check` | off | render and compare, writing nothing; both artefacts are checked |
 
+Under `-recursive` the walk finishes before it refuses. One run names every
+stale package, and every body still waiting for confirmation, prefixed by the
+directory it is in — the same rule the model generator follows, so a tree does
+not take one run per package to unblock.
+
 Both artefacts are refused if the file under that name was not written by this
 generator, so an authored `resource.manifest.yml` is never overwritten.
+
+## generate routes
+
+For a use case that is **not** a CRUD resource. A CRUD route reads its
+permission off the policy its repository is gated with ([[D-107]],
+[crudhttp](crudhttp.md)). An operation — a dead-jobs listing, a password reset —
+has no table to derive from: it guards itself in its own body, and the route
+beside it declares the same permission a second time by hand. This generates the
+value both of them read instead ([[D-109]]).
+
+```bash
+go run github.com/frostgrove/vv/cmd/vv generate routes -dir ./src/mod
+```
+
+Given
+
+```go
+func (this *DeadJobsUseCase) List(ctx context.Context) (DeadJobsView, error) {
+    if _, err := access.Require(ctx, PermJobsRead); err != nil {
+        return DeadJobsView{}, err
+    }
+    …
+}
+
+func (this *Handler) Access() []authhttp.Endpoint {
+    return []authhttp.Endpoint{
+        authhttp.Requires(fiber.MethodGet, "/ops/jobs/dead", PermJobsRead),
+    }
+}
+```
+
+the guard is read, the declaration naming the same permission is paired with it,
+and the pair is written to `routes.manifest.yml`:
+
+```json
+{
+  "format": 1,
+  "generated_by": "vv generate routes",
+  "package": "ops",
+  "operations": [
+    {
+      "operation": "DeadJobsUseCase.List",
+      "policy": ["PermJobsRead"],
+      "method": "GET",
+      "path": "/ops/jobs/dead",
+      "source": "inferred-from-guard",
+      "guard_fingerprint": "9f21c4…",
+      "confirmed": false
+    }
+  ]
+}
+```
+
+Until `confirmed: true` sits beside it, `vv_routes_gen.go` is a file that does
+not compile:
+
+```go
+var VVRouteSet vvRouteSet = "confirm every operation in routes.manifest.yml"
+```
+
+Confirmed, it is the carrier:
+
+```go
+var OperationDeadJobsUseCaseList = Operation{…}
+
+func Operations() []Operation
+func Declarations() []authhttp.Endpoint
+```
+
+which both sides then read, and neither writes:
+
+```go
+func (this *Handler) Access() []authhttp.Endpoint { return Declarations() }
+
+access.Require(ctx, OperationDeadJobsUseCaseList.Permissions()...)
+```
+
+After that the run sees a guard bound to the operation, records `source:
+bound-to-operation`, and stops asking: what the confirmation stood in for is a
+compiler fact now.
+
+- **The guard is the source.** The route is derived from it, never the other way
+  round — the permission that runs is the one that is documented ([[D-073]]).
+- **A declaration nothing enforces is an error.** A route declaring a permission
+  no use case in the package checks fails generation, naming the route and the
+  line. That direction is the dangerous one: an audited surface whose audit is of
+  the wrong list.
+- **A confirmation does not outlive what it was given for.** `guard_fingerprint`
+  covers the operation, the guard's policy and the *inferred* route. Change the
+  permission the guard enforces and the confirmation drops and the build stops. A
+  method and path you wrote into the manifest yourself are outside it, so filling
+  in a route the generator could not infer does not invalidate the confirmation
+  you wrote in the same edit.
+- **A permission the generator cannot resolve stops the run.** A policy written
+  as `perm.Read` needs one package behind `perm`. An import alias is bound per
+  file, so if two files of the package bind `perm` to two different paths, the
+  generated file — which has one import block — could only pick one, and the
+  operation would be declared and enforced under a permission its guard never
+  named. The run is refused instead, naming both paths and the file each is
+  written in. An alias no policy is written with is left alone.
+- **The generator imports no authorization package.** `-guard` is a string. If
+  your permissions are checked by something other than `auth/access`, name it.
+
+### Flags
+
+| Flag | Default | Does |
+|---|---|---|
+| `-dir` | `.` | the package directory to read |
+| `-out` | `vv_routes_gen.go` | the generated Go file name |
+| `-manifest` | `routes.manifest.yml` | the manifest file name |
+| `-guard` | `github.com/frostgrove/vv/auth/access` | import path whose function a use case calls to enforce a permission |
+| `-guard-func` | `Require` | the function name inside `-guard`; its arguments after the context are the policy |
+| `-declare` | `github.com/frostgrove/vv/auth/http/authhttp` | import path whose `Requires` declares a route |
+| `-auth` | `github.com/frostgrove/vv/auth` | import path that owns `Permission` |
+| `-recursive` | **on** | walk packages below `-dir` that call the guard and generate beside each one |
+| `-check` | off | render and compare, writing nothing; both artefacts are checked |
+
+The walk collects rather than stops: one run names every operation waiting for
+confirmation and, under `-check`, every stale package, each prefixed by its
+directory. A confirmation outranks drift, because there is nothing worth
+comparing while an operation is still waiting for a person.
+
+## generate module
+
+For the composition root. [[D-106]] gave a bounded context a value — a
+`module.Definition` naming constructors, sorted into five kinds, with a
+`Profile` deciding which of them a process runs. This is where the list comes
+from, so that it is not a two-hundred-line `fx.Module` sheet nobody reads
+([[D-110]]).
+
+```bash
+go run github.com/frostgrove/vv/cmd/vv generate module -dir ./src/mod/workspace
+```
+
+The whole package tree under `-dir` is read. A **contribution** is a top-level
+function whose first result is a *named* type — `*ContractRepo`,
+`health.Contribution`, `translation.Store`. A function returning `string`,
+`[]Language`, `any` or only an `error` is a helper, not something a container
+builds, and is never offered. In subpackages it must be exported; in the
+module's own package an unexported one is reachable and is offered too.
+
+The **kind** is read off that result type:
+
+| The constructor returns | The kind | Carried by |
+|---|---|---|
+| `health.Contribution` | `check` | every replica |
+| `runtime.Runner` | `worker` | a profile with the `worker` role |
+| `app.Seeder` | `seeder` | a profile with the `seeder` role |
+| `appfiber.Route` | `route` | a profile with the `api` role |
+| anything else named | `provide` | every replica |
+
+Each becomes a row in `module.manifest.yml`:
+
+```json
+{
+  "format": 1,
+  "generated_by": "vv generate module",
+  "package": "workspace",
+  "module": "workspace",
+  "order": 0,
+  "contributions": [
+    {
+      "symbol": "contract.NewContractRepo",
+      "kind": "provide",
+      "source": "inferred-from-signature",
+      "signature_fingerprint": "4c81aa…",
+      "excluded": false,
+      "confirmed": false
+    }
+  ]
+}
+```
+
+Three answers are available to you there:
+
+- **`confirmed: true`** — yes, this belongs in the module as that kind.
+- **a different `kind`** — the inference was wrong. The row's `source` becomes
+  `declared-in-manifest` and the generator stops re-deriving it.
+- **`excluded: true`** — this is not a contribution. An excluded row is never
+  waited for and never generated, and the exclusion survives a signature change.
+
+Until every included row is confirmed, `vv_module_gen.go` is a file that does
+not compile:
+
+```go
+var VVModule vvModule = "confirm every contribution in module.manifest.yml"
+```
+
+Confirmed, it is the definition:
+
+```go
+var VVModule = vvmodule.MustDefine(vvmodule.Spec{
+    Name:  "workspace",
+    Order: 0,
+    Provide: []any{contract.NewContractRepo, …},
+    Workers: []any{pipeline.NewDebtSweeper},
+    Checks:  []any{converterCheck},
+})
+```
+
+which the composition root hands to `appfx.Option(workspace.VVModule, profile)`
+— see [app](app.md) and [[FL-030]].
+
+On a module that already exists, the first pass is mostly an exclusion pass: a
+pure function returning a named domain type looks exactly like a constructor
+from the outside, and the generator would rather ask about one than stay silent
+about a constructor nobody wired. It asks once per symbol.
+
+- **A constructor nobody placed stops the build.** That is what this is for: a
+  new exported constructor appears as an unconfirmed row rather than as a
+  feature that silently is not wired.
+- **A confirmation does not outlive the signature it was given for.**
+  `signature_fingerprint` covers the symbol, the inferred kind and the whole
+  signature. Change what a constructor takes or returns and that one row is
+  asked again — and only that one.
+- **The marker types are strings.** If your health contribution is your own
+  type, pass `-check-type your/pkg.Contribution`; pass `-` to infer that kind
+  from nothing. The generator imports none of them.
+
+### Flags
+
+| Flag | Default | Does |
+|---|---|---|
+| `-dir` | `.` | the module directory; its whole package tree is read |
+| `-out` | `vv_module_gen.go` | the generated Go file name |
+| `-manifest` | `module.manifest.yml` | the manifest file name |
+| `-name` | the directory name | the module's name |
+| `-order` | `0` | the order the module takes in a catalog |
+| `-import` | from the nearest `go.mod` | import path of `-dir`, used to name its subpackages |
+| `-module` | `github.com/frostgrove/vv/app/module` | import path of the package that owns `Definition` |
+| `-check-type` | `github.com/frostgrove/vv/health.Contribution` | result type that makes a constructor a check |
+| `-route-type` | `github.com/frostgrove/vv/app/http/appfiber.Route` | result type that makes a constructor a route |
+| `-worker-type` | `github.com/frostgrove/vv/runtime.Runner` | result type that makes a constructor a worker |
+| `-seeder-type` | `github.com/frostgrove/vv/app.Seeder` | result type that makes a constructor a seeder |
+| `-recursive` | off | treat every package directly under `-dir` as its own module |
+| `-check` | off | render and compare, writing nothing; both artefacts are checked |
+
+`-recursive` is one level deep, not a walk: a module is a package *tree*, so
+recursing would make every subpackage a module of its own. `vv generate module
+-dir ./src/mod -recursive -check` is the CI line for a whole `src/mod`. The walk
+collects rather than stops — every contribution waiting for a person and, under
+`-check`, every stale module, each prefixed by its directory — and a
+confirmation outranks drift.
 
 ## Generated repository
 
@@ -388,5 +638,5 @@ make generate   # regenerate every DTO and metamodel in the tree
 - [specs](specs.md) — what the metamodel plugs into
 - [port](port.md) — `PathMap`, `Mapper` and `MustCoverUpdate`
 - [wire](wire.md) — `PatchMapper`, `Presenter` and the three coverage assertions
-- [[UC-014]] keep generated artefacts in sync · [[FL-010]] model to DTO and metamodel · [[FL-029]] model to public wire body
-- [[D-018]] DTOs and metamodels are generated · [[D-050]] the generated adapter is total · [[D-105]] the persistence patch is not the public body
+- [[UC-014]] keep generated artefacts in sync · [[FL-010]] model to DTO and metamodel · [[FL-029]] model to public wire body · [[FL-031]] guard to declared operation · [[FL-032]] package tree to confirmed module
+- [[D-018]] DTOs and metamodels are generated · [[D-050]] the generated adapter is total · [[D-105]] the persistence patch is not the public body · [[D-109]] a route is inferred from its guard · [[D-110]] a module is inferred from what its packages construct

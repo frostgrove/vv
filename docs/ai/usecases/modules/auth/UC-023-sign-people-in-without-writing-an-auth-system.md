@@ -119,6 +119,14 @@ declaration, not to the sign-in code.
     different answers. Leaving one out takes the documented default; writing a
     duration below zero stops the start and names the field and the value, rather
     than becoming that default and being reported nowhere.
+25. A deny-list that could be emptied behind the deployment's back does not
+    start. A revocation store held on a server configured to discard keys under
+    memory pressure is refused at start-up, naming what that server is set to
+    do — a discarded revocation reads exactly like a session nobody closed. A
+    server that will not say how it behaves is a third answer rather than a
+    passing one: it is reported by default and a deployment can ask to be
+    refused instead, while a store that answers nothing at all is refused
+    whatever the deployment asked for.
 
 ## Status
 

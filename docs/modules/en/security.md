@@ -54,6 +54,7 @@ directly when it is intentionally unrestricted.
 | | What it is | Cost |
 |---|---|---|
 | **Scope** | a predicate ANDed into every read and every scoped write | free — it is part of the statement |
+| **Requires** | coarse and readable: the permissions each action needs, as data | before SQL, and readable by a route declaration ([[D-107]]) |
 | **Authorize** | coarse: may this principal do this kind of thing at all | before SQL; an assigned-key `Save` preflights both possible branches (`Create` and `Update`) |
 | **Inspect** | fine: per entity, seeing the actual row | one call per row it is asked about |
 
@@ -81,7 +82,27 @@ policy := security.Policy[Doc, int64]{
 }
 ```
 
-Actions are `security.Read`, `Create`, `Update`, `Delete`.
+Actions are `security.Read`, `Create`, `Update`, `Delete`, `Restore` — aliases of
+`crud.Action`, so a transport can name one without importing this package.
+
+`Requires` runs before `Authorize` and refuses an action it does not name, so a
+`Requires` present and empty refuses everything and an absent one turns that
+half off. `RequirePermission`, `PerAction` and `Requiring` also fill `Authorize`
+from that same map, so a consumer can call the policy's own authorizer in a test
+without standing a gate up; the map stays the source and the closure is derived
+from it. `Policy.RequiredFor(action)` answers the same map as a value, and that
+is what `crudhttp.Table.GuardedBy` reads to build a route's access declaration:
+the permission a route declares and the permission this gate demands are one
+list ([[D-107]]).
+
+```go
+policy := security.Policy[Doc, int64]{
+    Requires: map[security.Action][]auth.Permission{
+        security.Read:   {"doc:read"},
+        security.Delete: {"doc:read", "doc:purge"},
+    },
+}
+```
 
 **A `Scope` returning nil or an unconditional predicate is refused by default.**
 This keeps a failed tenant lookup — or an accidental `crud.True()` — from
@@ -213,6 +234,7 @@ still the escape hatch. But the value almost always *is* the caller, and
 | `RequireAnyPermission[M, ID](perms...)` | refuse unless the caller holds **at least one** |
 | `RequireRole[M, ID](roles...)` | refuse unless the caller is in one of the roles |
 | `PerAction[M, ID](map[Action]auth.Permission)` | one permission per verb; a verb the map does not name is refused |
+| `Requiring[M, ID](map[Action][]auth.Permission)` | the explicit form under the two above: any number of permissions per verb |
 | `ScopeAttr[M, ID](field, claim)` | `ScopeField` narrowed by a claim off the principal |
 | `ScopeRelationAttr[M, ID](path, field, claim)` | the same across a relation |
 | `ScopeSubject[M, ID](field)` | narrow to rows the caller owns |
@@ -239,7 +261,7 @@ principal-driven scope written by hand is read-only unless it also supplies
 narrowing as a create policy. `ScopeAttr` supplies that inspection and is the
 ordinary tenant-safe declaration.
 
-Four things that are easy to get wrong and are decided here:
+Five things that are easy to get wrong and are decided here:
 
 - **A claim the principal does not carry is a denial, not a zero value.** A
   missing tenant must never compile to `WHERE tenant_id = 0`, which matches
@@ -249,7 +271,16 @@ Four things that are easy to get wrong and are decided here:
   [[UC-004]]'s guarantee 16.
 - **`PerAction` refuses a verb it does not name**, even for a caller holding
   every permission in the map. A verb added to the seam later is refused rather
-  than inherited ([[D-030]]).
+  than inherited ([[D-030]]). `RequiredFor` says the same thing to a route
+  declaration: nothing is declared for that verb, and `GuardedBy` refuses to
+  declare a route that performs it.
+- **`Combine` intersects what its policies declare and unions the permissions.**
+  Two declaring policies each refuse a verb the other names alone, so a verb only
+  one of them declares is guarded by neither, and a verb both declare needs both
+  permissions. `RequireAnyPermission` and `RequireRole` declare nothing, because
+  neither quantifier is a list of permissions that all have to be held — a
+  resource gated with one of them and mounted with `GuardedBy` is refused rather
+  than declared wrongly.
 - **The two quantifiers disagree about the empty case.** Naming no permission in
   `RequirePermission` refuses nothing, so a list built from configuration that
   happens to be empty adds no rule; naming none in `RequireAnyPermission`

@@ -239,7 +239,13 @@ declared eviction domains ([[D-104]]) exist. Activation now refuses a cache
 placed on the resource identity that holds queued work or revoked sessions, so
 the three-resource rule is checked rather than remembered, and
 `RequireDeclaredResources` lets a root refuse an undeclared one instead of
-treating silence as separation. The composition root itself now has a doctor —
+treating silence as separation. `cachefx` is what makes that rule run in a
+deployment rather than only in the subsystem's tests: sets, providers and
+resource declarations are fx group contributions, the activation is a start
+hook that requires declared resources unless the spec writes
+`cachefx.Accepted`, and the durable packages the rule protects contribute a
+declaration as data rather than by importing the cache ([[D-111]]). The
+composition root itself now has a doctor —
 `module.Doctor` prints what a deployment profile would activate across the
 module catalog without building any of it ([[D-106]]) — but its reach stops at
 the composition: it does not yet collect each subsystem's schema version,
@@ -249,7 +255,22 @@ durable context, worker observation vocabulary/config and its runtime emission,
 scheduling and Admin/redrive contracts. PostgreSQL's bounded
 Get/Redrive/PurgeTerminal controls and count-bounded List, memory/PostgreSQL
 drivers, worker execution and the Fx binding have landed, and `jobsredis` is now
-a committed workspace module. List currently materializes full payload-bearing
+a committed workspace module. The Fx binding no longer infers a deployment role:
+`jobsfx.Spec.Consuming` and `Spec.Scheduling` name it, an unstated role over a
+container that holds a consumer or a schedule is refused, and an enabled role is
+a `runtime.Runner` the supervisor starts ([[D-108]]). `jobspgfx`'s retention
+housekeeping is in the same group as `vv.jobspg.retention`, so no Fx module in
+`jobs` starts a goroutine it then has to watch by itself ([[D-092]]). The other
+half of that decision — nothing is activated by an empty `fx.Invoke` — is now
+checked in both shapes it is written, the function literal and the named
+`func reached(*Client) {}` a per-file walk never saw, and `runtime/runtimecheck`
+exports the scan so a composition root outside this repository can hold the
+invariant over its own tree — and the application in `project/` now does, over
+its own. Nothing in either tree is tolerated: `crudsqlfx` was the last one, and
+its `fx.Invoke(func(crud.Source) {})` became `verify`, which forces the source
+and owns the connection check on the start context.
+
+List currently materializes full payload-bearing
 records without an aggregate byte budget. `jobs.Admin` is an exact optional
 executable capability, not a promise made by every backend or discoverable
 through an opaque wrapper.
@@ -342,3 +363,52 @@ If activated, one optional `i18n` module implements the existing message seam
 and owns CLDR/catalogue boilerplate. Applications pass it to current renderers;
 there are no `i18nhttp`, `i18ngrpc`, `i18notel` or tenancy/i18n combination
 packages.
+
+## 17. What is still two statements about one operation
+
+Inside a `RouteSet` the declaration and the check are two projections of one
+`Policy` ([[D-100]]). Outside it they are two statements, and three things narrow
+that rather than close it:
+
+- `appfiber.Combine` lets a contributor keep every operation the registrar covers
+  inside the registrar, so the hand-written pair shrinks to the shape that
+  genuinely cannot be expressed — a CRUD table's own `Register`, a sub-router
+  around a third-party handler.
+- `crudhttp.Table.GuardedBy` derives that shape's declaration from the gate's own
+  permissions ([[D-107]]), so nobody writes the permission twice there either.
+- `vv generate routes` pairs a guard with the declaration beside it and makes the
+  pairing a compiler fact once a person has confirmed it ([[D-109]]).
+- `appfiber.RootRoutes` removes the last shape that had no registrar at all: `/`,
+  `/favicon.ico`, `/live` and `/ready` were mounted on the `*fiber.App` by hand
+  and declared `AtRoot` in a second list, because a prefixed set cannot express
+  `/` ([[D-100]]).
+
+What remains open is the default. `Mount` reports a declaration it mounted no
+check for, but `NamingUnchecked` — a log line — is the default rule, because a
+permission enforced inside a use case is a true statement `appfiber` cannot see
+and refusing it would refuse correct code. `RefusingUnchecked` is the rule a
+consumer whose surface has finished migrating should provide, and
+`ExcusingUnchecked` is the scaffolding in between. The item closes when a
+consumer can reach `RefusingUnchecked` without an excuse — that is, when every
+hand-written pair is either a `RouteSet`, a `GuardedBy` table, or a generated
+operation — and the default can be flipped.
+
+Making `RouteSet` the only way to obtain a `Route` was proposed as the fix and is
+refused: it moves the second list into whatever the library did not anticipate
+rather than removing it, and a contributor with no legal way to express its shape
+mounts past the registrar entirely. The reasoning is in [[D-100]].
+
+## 18. One factory vocabulary, outside `jobs` and `cache`
+
+`Define`/`MustDefine`, `New`/`Must…`, `Auto`, `Profile`, `With`, `Describe`,
+`Check` and `Run`/`Drain` are the vocabulary, and `app`, `jobs`, `cache`,
+`health` and `runtime` now speak it: `appfiber.Serving` is the magic layer over
+`Mounting` and `Listening` rather than one factory that sometimes listens, and
+`NewRouteSet`, `Combine` and the module builder all carry the `Must` twin.
+
+One place outside those subsystems does not, and is recorded here for its
+owner: the consuming application still names its wiring `Register()` and
+`Providers()`, and builds its Fiber app through `MustInit` rather than
+`MustNew`. What is left there is the vocabulary and nothing else — `MustInit`
+panics on the error its `New` twin returns, so it is a `Must` in every way but
+the name.

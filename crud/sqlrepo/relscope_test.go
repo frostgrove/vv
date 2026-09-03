@@ -221,6 +221,41 @@ func TestACallerCannotWidenARelationScope(t *testing.T) {
 	}
 }
 
+func TestTwoRelationScopesOnOnePathBothNarrowTheFarSide(t *testing.T) {
+	posts := sqlrepo.Define[Post, int64, struct{}]("posts",
+		sqlrepo.RelationScope("Remarks", crud.Eq("Spam", false)),
+		sqlrepo.RelationScope("Remarks", crud.Eq("Body", "kept")))
+
+	t.Run("preload", func(t *testing.T) {
+		rec := crudtest.Postgres().Push(
+			crudtest.Rows([]any{int64(1), "t", false, int64(0)}),
+			crudtest.Rows(),
+		)
+		if _, err := posts.Bind(rec).GetAll(context.Background(), crud.Preload("Remarks")); err != nil {
+			t.Fatal(err)
+		}
+		statement := mustSQL(t, rec, 1)
+		wantSQL(t, statement.SQL,
+			`SELECT "id", "post_id", "spam", "body" FROM "remarks" WHERE "post_id" IN ($1) `+
+				`AND ("spam" = $2 AND "body" = $3)`)
+		if args := statement.Args; len(args) != 3 || args[1] != false || args[2] != "kept" {
+			t.Fatalf("bound %#v, want both declarations in the order they were declared", args)
+		}
+	})
+
+	t.Run("filter hop", func(t *testing.T) {
+		rec := crudtest.Postgres().Push(crudtest.Rows())
+		if _, err := posts.Bind(rec).GetAll(context.Background(),
+			crud.Where(crud.Eq("Remarks.Body", "buy pills"))); err != nil {
+			t.Fatal(err)
+		}
+		wantSQL(t, rec.Last().SQL,
+			`SELECT "id", "title", "hidden", "author_id" FROM "posts" WHERE EXISTS (`+
+				`SELECT 1 FROM "remarks" AS rx1 WHERE rx1."post_id" = "posts"."id" `+
+				`AND (rx1."spam" = $1 AND rx1."body" = $2) AND rx1."body" = $3)`)
+	})
+}
+
 func TestRelationScopeRefusesAPathTheModelDoesNotHave(t *testing.T) {
 	_, err := sqlrepo.TryDefine[Post, int64, struct{}]("posts",
 		sqlrepo.RelationScope("Remrks", crud.Eq("Spam", false)))

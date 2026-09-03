@@ -83,9 +83,10 @@ row, and the model would be stale. The insert path detects the empty result and
 re-reads.
 
 **Why `Save` has no options.** A caller does not get to narrow a write: the
-repository's own declaration does. `security.Gate` still refuses rather than
-filters, because its narrowing is per-principal and arrives with the request —
-see [[D-008]].
+repository's own declaration does. `security.Gate`'s narrowing is per-principal
+and arrives with the request, so it does not become an option either — the gate
+hands it down as a `crud.ScopedSave`, and `repository.saveScopedUpdate` puts it
+in the `UPDATE`'s own `WHERE` beside the declared one. See [[D-008]].
 
 ## The explicit verbs under Save
 

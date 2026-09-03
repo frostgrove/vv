@@ -175,11 +175,10 @@ function body does not prevent generation.
    **Every nested group opens with `specs.Rel[Root, Target]`**, the relation's
    own path as a handle, so `Article_.Comments.Path()` is `"Comments"`. The root
    group gets none: it is reached through no relation and has no path to answer.
-   While the group's fields are walked, a column named `Path` or `String` is
-   recorded — the handle is embedded, so such a column shadows the promoted
-   method — and the group's doc comment then names `RelPath()` as the spelling
-   that still works. The note is derived from field order, so the output stays
-   byte-identical across runs ([[D-014]]).
+   A column named `Path` or `String` shadows the promoted method: the handle is
+   embedded and the column is a field one level nearer, so Go resolves the
+   nearer one. Nothing in the output says so — no group carries a doc comment —
+   and `RelPath()` is the spelling that still works.
 
    `specs.Metamodel` binds the handle in `bindRel`
    (`crud/decorators/specs/metamodel.go`): the path is the group's own prefix,
@@ -312,7 +311,7 @@ function body does not prevent generation.
 | metamodel field that no longer maps | `specs.Metamodel` at package init | panic at start-up in the consumer's package |
 | a relation handle declaring the wrong target model | `bindRel` at package init | panic naming the path, the model it reaches and the one declared |
 | a relation handle in the root attribute group | `bindRel` at package init | panic saying the root model is not a relation |
-| a target model with a column called `Path` | not caught; the generated doc comment says so | `Article_.Comments.Path()` does not compile for that relation; `RelPath()` does |
+| a target model with a column called `Path` | not caught, and nothing in the output announces it | `Article_.Comments.Path()` does not compile for that relation; `RelPath()` does |
 | a column the model gained, with nothing regenerated | `port.MustCoverUpdate` at package init | panic at start-up naming the column ([[D-050]]) |
 | a column the inverse map does not cover, or an entry naming one no request carries | `port.MustPathMap` at package init | panic at start-up naming the entry |
 | `-adapter` on a model with no key the generator can name | `renderAdapter` | `-adapter needs a key it can name: tag one field of X db:",pk"` |
@@ -347,7 +346,6 @@ function body does not prevent generation.
 - `TestSkipRemovesAFieldEverywhere` — `internal/codegen/codegen_test.go`.
 - `TestRelationsBecomeNestedAttributeStructs` — `internal/codegen/codegen_test.go`.
 - `TestRelationGroupsCarryATypedPath` — `internal/codegen/codegen_test.go` — the handle, with the root as its control.
-- `TestATargetColumnNamedPathIsCalledOut` — `internal/codegen/codegen_test.go` — the shadowing note, with the unaffected direction of the same schema as its control.
 - `TestARelationHandleAnswersItsCanonicalPath`, `TestARelationHandleDeclaringTheWrongTargetIsRefused`, `TestARelationHandleAtTheRootIsRefused` — `crud/decorators/specs/edge_test.go` — the binding half.
 - `TestARelationScopeAcceptsAGeneratedPath` — `crud/sqlrepo/relscope_test.go` — the handle driving a real declaration, against the literal spelling as control.
 - `TestRelationCyclesAreCutShort` — `internal/codegen/codegen_test.go`.

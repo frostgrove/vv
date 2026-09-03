@@ -85,6 +85,7 @@ func TestAProductionOverrideMigratesAndIsRecordedForTheGraphToRead(t *testing.T)
 
 func buildProfiledApplication(t *testing.T, settings jobspgfx.ApplicationSettings) (*jobspg.Driver, jobspgfx.SchemaManagementDecision) {
 	t.Helper()
+	settings.Consuming = jobsfx.Disabled
 	database := &sql.DB{}
 	source := crudsql.Postgres(database)
 	definition := testDefinition(t, "jobspgfx.profile."+settings.Environment)

@@ -12,6 +12,7 @@ import (
 	"github.com/frostgrove/vv/jobs"
 	"github.com/frostgrove/vv/jobs/jobsfx"
 	"github.com/frostgrove/vv/jobs/jobspg"
+	"github.com/frostgrove/vv/runtime/runtimefx"
 )
 
 type Settings struct {
@@ -31,11 +32,15 @@ type HousekeepingSettings struct {
 	MaxBatches   int
 }
 
+// Module wires the driver every deployment needs, and retention housekeeping
+// only where it was not switched off. Housekeeping is a background activity, so
+// what it wires is a contribution to the supervisor's runner group rather than a
+// goroutine this module starts ([[D-092]]).
 func Module(settings Settings) fx.Option {
 	constructor := func(database *sql.DB, source crud.Source, catalog jobs.Catalog) (*jobspg.Driver, error) {
 		return New(settings, database, source, catalog)
 	}
-	return fx.Module("vv.jobspg",
+	options := []fx.Option{
 		fx.Provide(
 			fx.Annotate(
 				constructor,
@@ -51,8 +56,14 @@ func Module(settings Settings) fx.Option {
 				return normalizeHousekeeping(settings.Housekeeping)
 			},
 		),
-		fx.Invoke(bindRetentionLifecycle),
-	)
+	}
+	if !settings.Housekeeping.Disabled {
+		options = append(options,
+			fx.Provide(runtimefx.AsRunner(newRetentionRunner)),
+			fx.Invoke(bindRetentionSupervision),
+		)
+	}
+	return fx.Module("vv.jobspg", options...)
 }
 
 func New(settings Settings, database *sql.DB, source crud.Source, catalog jobs.Catalog) (*jobspg.Driver, error) {

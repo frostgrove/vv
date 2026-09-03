@@ -85,10 +85,12 @@ live database in its most common form — an ORM's soft-delete tombstones stayin
 invisible while the ORM itself can still see them, and a client filter for the
 tombstones returning nothing.
 
-**The warning is the create path.** Because the rule cannot reach an upsert, a
-save carrying the key of a hidden row overwrites it — and under an
-access-control gate, worse: the gate's check for "does this row already exist"
-goes *through* the rule, so a tombstone reads as absent and the gate treats the
-write as a fresh create. A resurrection, silently, through the ordinary create
-endpoint. This is not covered by a test, and it is the gap the owner should close
-first if soft delete is a real use of this library.
+**The warning is the create path, and it is now about permission rather than
+data.** The hidden row can no longer be brought back: the declaration takes the
+tombstone column out of every generic write, so a save carrying the key of a
+hidden row rewrites its other columns and leaves it hidden, and only the restore
+verb clears the flag. What is still open is who authorised that write. The
+gate's check for "does this row already exist" goes *through* the rule, so with
+no row-level scope on the policy a tombstone reads as absent and the write is
+authorised as a fresh create. That is not covered by a test, and it is the gap
+to close first if soft delete is a real use of this library.

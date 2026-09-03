@@ -25,6 +25,8 @@ type ApplicationSettings struct {
 	Queue                          jobs.QueueSpec
 	Workers                        jobs.WorkersSpec
 	Scheduler                      jobs.SchedulerSpec
+	Consuming                      jobsfx.Activation
+	Scheduling                     jobsfx.Activation
 }
 
 func Application(settings ApplicationSettings) fx.Option {
@@ -64,6 +66,9 @@ func Application(settings ApplicationSettings) fx.Option {
 			Queue:     settings.Queue,
 			Workers:   workers,
 			Scheduler: settings.Scheduler,
+
+			Consuming:  settings.Consuming,
+			Scheduling: settings.Scheduling,
 		}),
 	)
 }

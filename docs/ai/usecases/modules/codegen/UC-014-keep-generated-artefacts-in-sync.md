@@ -1,7 +1,7 @@
 # UC-014 — Keep generated artefacts in sync with the model
 
 **Actor:** the application author, and whoever reviews the pull request
-**Covered by:** [[FL-010]] [[FL-004]] [[FL-015]] [[FL-029]] [[FL-002]]
+**Covered by:** [[FL-010]] [[FL-004]] [[FL-015]] [[FL-029]] [[FL-031]] [[FL-032]] [[FL-002]]
 
 ## Scenario
 The partial-update DTO, the typed metamodel and — when the author asks for them
@@ -79,6 +79,21 @@ that a diff of it is reviewable rather than noise.
     and reports which files are behind their models without writing any of them,
     naming every package rather than the first — so a build can fail on drift
     that nobody would otherwise notice until start-up.
+19. A permission an operation enforces and the permission its route declares are
+    not written twice. Where they still are, the generator reads the guard the
+    use case runs, pairs it with the declaration beside it and writes the pair
+    down for a person to confirm once; until somebody has, the generated file
+    does not compile. A declaration naming a permission no use case in the
+    package enforces is an error rather than something to confirm, and once the
+    use case reads the generated operation the confirmation is never asked for
+    again.
+20. Which constructors a bounded context contributes to the container is not a
+    list somebody maintains by hand. The generator reads what the module's
+    package tree actually builds, proposes what each contribution is for, and
+    writes it down for a person to confirm once — or to say it is not a
+    contribution at all. Until every included one is answered the generated file
+    does not compile, so a constructor nobody placed stops the build instead of
+    becoming a feature that silently is not wired.
 
 ## Out of scope
 
@@ -104,6 +119,8 @@ that a diff of it is reviewable rather than noise.
 | [[FL-004]] | the start-up validation that catches a stale artefact naming a field the model lost |
 | [[FL-015]] | what the generated mapping and its inverse are for once the process is running |
 | [[FL-029]] | the public bodies, the narrowing that derives them, the manifest that records it and the confirmation that widens it |
+| [[FL-031]] | the route inferred from a guard, the manifest that records the pair and the confirmation that binds them |
+| [[FL-032]] | the contributions read off a module's package tree, the manifest that records each one's kind and the confirmation that places it |
 | [[FL-002]] | where the public patch body becomes the one the repository writes |
 
 ## Status
@@ -149,6 +166,15 @@ confirmation, the fingerprint that drops a confirmation when its derivation
 moves, the refusal of a field no body could map, and the check mode that writes
 nothing all carry a control of their own. The generated file is built and run,
 so the coverage assertions are exercised rather than argued.
+
+**Guarantee 20 — covered.** The inference, the confirmation, the hand-written
+kind that outranks it, the exclusion that is an answer rather than a workaround,
+the fingerprint that drops one row's confirmation and not the rest, the walk that
+names every module rather than the first, and the check mode that writes nothing
+each carry a test. The helper, the primitive result and the unexported
+subpackage function are the controls that the walk is selective rather than
+exhaustive, and the generated definition is built and run, so the roles it
+activates are exercised rather than argued.
 
 One smaller thing, still open: the metamodel attribute type is chosen from the
 field type's *spelling*, so a named type over an integer, or a timestamp reached

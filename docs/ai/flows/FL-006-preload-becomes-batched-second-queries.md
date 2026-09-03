@@ -166,6 +166,9 @@ structs.
 - `TestPreloadDepthIsCapped` — `crud/preload_test.go`.
 - `TestABarePreloadWinsOverANarrowedOneForTheSamePath` — `crud/preload_edge_test.go`.
 - `TestTwoNarrowedPreloadsOfOnePathStillBothApply` — `crud/preload_edge_test.go`.
+- `TestTwoRelationScopesOnOnePathBothNarrowTheFarSide` —
+  `crud/sqlrepo/relscope_test.go` — the declaration half of the same rule: two
+  blueprint relation scopes for one path compose into the second statement.
 - `TestPreloadRefusesEveryUnsupportedGenericOptionBeforeRowsOrSQL` and
   `TestNestedPreloadRowsCapsTheIntermediateHop` — `crud/preload_test.go`.
 - `TestFoldedPreloadsKeepDirectAndRemoteSemanticsIdentical` and

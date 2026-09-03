@@ -284,7 +284,7 @@ request costs, and four shapes are worth knowing before a table gets large.
 | `?search=go` with no `searchFields` | `LIKE '%go%'` on **every string column** of the root model, ORed | no B-tree index serves a leading wildcard. Use a trigram or full-text index, or set `Searchable` to the one or two columns that are really searched |
 | a relation filter | a correlated `EXISTS` per hop ([[D-005]]) | an index on the target's join column, and on the filtered column |
 | a relation sort | a scalar subquery per outer row | the same, and consider denormalising if it is a default sort |
-| `?page=5000` | `LIMIT 20 OFFSET 99980` | nothing helps; `OFFSET` is O(n) on every engine. This is what cursors are for ([[D-028]]) |
+| `?page=5000` | refused by default — `MaxOffset` is 10 000 and `LIMIT 20 OFFSET 99980` is past it | raising `MaxOffset` buys the depth and not the speed: `OFFSET` is O(n) on every engine. This is what cursors are for ([[D-028]]) |
 
 The first three run **twice** on a paginated read: once for the page and once
 for the total. `SkipTotal` halves them.

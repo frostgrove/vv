@@ -67,9 +67,10 @@ group at depth zero, and Go resolves the shallower one. A target with a column
 called `Path` therefore shadows the method for that one relation. Embedding is
 still the right shape — `Article_.Comments.Path()` is what a reader expects, and
 the alternative spellings were all worse at every other call site — so the case
-is handled rather than designed around: `String` is the second chance, `RelPath`
-is the spelling nothing shadows, and the generator emits a note in the affected
-group's doc comment so the reader finds it where they are already looking.
+is handled rather than designed around: `String` is the second chance and
+`RelPath` is the spelling nothing shadows. The generated file says nothing about
+it — no group carries a doc comment — so the reader meets the shadowing as the
+one call that stops compiling.
 
 **Why generated rather than hand-written.** A DTO is mechanical — one field per
 writable column, with the nullability rule from [[D-002]] applied. Hand-writing
@@ -256,9 +257,6 @@ directions, and final rendered support imports are validated before any write.
 - `TestRelationGroupsCarryATypedPath` in `internal/codegen/codegen_test.go` —
   with the root as its control, since the root is reached through no relation and
   must not be handed a path.
-- `TestATargetColumnNamedPathIsCalledOut` in `internal/codegen/codegen_test.go` —
-  the shadowing case is announced where the group is declared, with the other
-  direction of the same schema as the control.
 - `TestARelationHandleAnswersItsCanonicalPath`,
   `TestARelationHandleDeclaringTheWrongTargetIsRefused` and
   `TestARelationHandleAtTheRootIsRefused` in

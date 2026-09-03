@@ -225,8 +225,9 @@ produces. `TestRelationsBecomeNestedAttributeStructs`,
 (`codegen_test.go:220`, `:333`, `:315`); `TestRelationGroupsCarryATypedPath`
 (`:261`) uses the root as its control, since the root is reached through no
 relation and must not be handed a path. The shadowing case — a target model with
-a column called `Path` — is announced in the group's own doc comment
-(`render.go:263-267`, `TestATargetColumnNamedPathIsCalledOut`). Guarantee 2 is
+a column called `Path` — is announced nowhere: the generator writes no doc
+comment on a group, so the consumer meets it as the one call that stops
+compiling and `RelPath()` is the way out. Guarantee 2 is
 `specs`'s to keep: this module's share is emitting the embed with the right two
 type arguments (`render.go:203`); the compile-time check on the model it lands on
 is `specs.Rel[M, T]` (`crud/decorators/specs/metamodel.go:161`), validated at

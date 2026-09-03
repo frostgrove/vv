@@ -102,7 +102,7 @@ whose own path walks back into that model would otherwise recurse.
 - `crud/decorators/security/security.go:Policy.RelationScopes` and
   `crud/decorators/security/security.go:gate.narrow`.
 - `crud/decorators/security/policies.go:ScopeRelationField` and
-  `crud/decorators/security/policies.go:relationFieldName`.
+  `crud/decorators/security/policies.go:relationField`.
 
 ## Proven by
 
@@ -138,6 +138,10 @@ whose own path walks back into that model would otherwise recurse.
 - `TestACallerCannotWidenARelationScope` in `crud/sqlrepo/relscope_test.go` and
   `TestACallerCannotWidenARelationNarrowing` in
   `crud/decorators/security/relscope_test.go`.
+- `TestTwoRelationScopesOnOnePathBothNarrowTheFarSide` in
+  `crud/sqlrepo/relscope_test.go` — two declarations for one path compose by AND
+  rather than the later one replacing the earlier, on the preload and on the
+  filter hop, with the bind order asserted.
 - `TestAPreloadOfTheRepositorysOwnModelCarriesItsScope` and
   `TestANestedPreloadOfTheSameModelCarriesTheScopeAtEveryLevel` in
   `crud/sqlrepo/relscope_test.go` — the self-relation case.

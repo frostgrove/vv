@@ -377,9 +377,12 @@ the probe.
 Differences 1 through 4 each have their own test, so a future change that
 accidentally *hides* one is also caught:
 
-- `TestNullsOrderingIsPostgresOnly` in `crud/predicate_test.go` and
-  `TestWhereNULLsSortIsTheEnginesChoiceAndTheHintIsPostgresOnly` in
-  `test/integration/dialect_edge_test.go`.
+- `TestMySQLPreservesNullsOrdering` and `TestSQLitePreservesNullsOrdering` in
+  `crud/predicate_test.go` — the emulated `col IS NULL` key each engine gets
+  where PostgreSQL renders the native clause; and
+  `TestNullOrderingUsesEngineDefaultsUntilTheCallerChoosesAPortableHint` in
+  `test/integration/dialect_edge_test.go`, which reads the rows back: the two
+  engines disagree until the caller asks, and agree once the caller has.
 - `TestForUpdateIsANoOpOnSQLite` in `test/integration/driver_sqlite_test.go`.
 - `TestLikeFollowsTheCollationAndLikeIgnoreCaseOverridesIt` in
   `test/integration/dialect_edge_test.go` — asserts *both* halves: the portable

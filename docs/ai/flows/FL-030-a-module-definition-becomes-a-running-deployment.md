@@ -121,3 +121,9 @@ packages ([[D-096]]).
 
 `app/module/module_test.go`, `app/module/catalog_test.go`,
 `app/module/doctor_test.go`, `app/appfx/module_test.go`.
+
+## See also
+
+[[FL-032]] — where a `Spec` comes from: `vv generate module` reads a bounded
+context's package tree and writes the `Definition` this flow starts with.
+

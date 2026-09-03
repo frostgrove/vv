@@ -28,10 +28,11 @@ not cover writes `Mount` and `Access` by hand. What the registrar removes is the
 common case, where the two were two hand-kept lists in one file.
 
 1. **`Routes(prefix)`** — `app/http/appfiber/routeset.go:Routes` — the shorthand,
-   over `NewRouteSet(RouteSetSpec)` under it. The shorthand carries a bad prefix
-   to the build so a chain of registrations reads as one expression; the
-   constructor refuses it at the call. Both go through
-   `app/http/appfiber/routeset.go:newRouteSet`.
+   over `NewRouteSet(RouteSetSpec)` under it, with
+   `app/http/appfiber/routeset.go:MustRouteSet` as the panicking form of the
+   constructor. The shorthand carries a bad prefix to the build so a chain of
+   registrations reads as one expression; the constructor refuses it at the call.
+   All three go through `app/http/appfiber/routeset.go:newRouteSet`.
 2. **`RouteSet.GET` / `POST` / `PUT` / `PATCH` / `DELETE`**, over
    `app/http/appfiber/routeset.go:RouteSet.Handle` — one call takes the path, a
    `Policy` and the handler. The prefix is joined here, once, and the joined
@@ -55,6 +56,60 @@ common case, where the two were two hand-kept lists in one file.
 6. **`registeredRoutes.Access`** — the same records, projected to
    `authhttp.Endpoint`. Nothing reads it back: `Mount` still hands it to
    `authfiber.Verify` and no request path touches it ([[D-073]]).
+
+## Registering what answers outside the prefix
+
+`RootRoutes(app)` — `app/http/appfiber/routeset.go:RootRoutes`, over
+`NewRootRouteSet(RootRouteSetSpec)` with `MustRootRouteSet` beside it — is the
+same registrar for the paths a caller reaches before it knows there is an API.
+`registeredRoutes.Mount` mounts them on the `*fiber.App` the set was given rather
+than on the router it is handed, because an orchestrator probing a container and a
+browser asking for an icon address the process and know no prefix.
+`registeredRoutes.Access` projects each declaration through `authhttp.AtRoot`, so
+`Verify` compares it in the root area rather than under the prefix ([[D-073]]).
+`RouteSet.pathProblem` is the one other difference: `/` is a path a root set
+accepts and a prefixed one refuses, because there it would be a prefix with an
+empty segment after it.
+
+## Contributing several shapes as one route
+
+`Combine(routes…)` — `app/http/appfiber/combine.go:Combine`, with `MustCombine`
+as the panicking form — makes one `Route` out of several. It is there so a
+contributor that has to mount something the registrar cannot express — a CRUD
+table's own `Register`, a sub-router built around a third-party handler — keeps
+the rest of its operations inside a `RouteSet` instead of dropping the whole
+handler back to two hand-kept lists.
+
+`combinedRoutes.Mount` mounts each part in the order given and
+`combinedRoutes.Access` concatenates their declarations. Two parts declaring the
+same method and path are refused at `Combine`, wrapping `ErrCombine`: the second
+registration answers nothing, and the gate below compares a set of endpoints
+against the table, so it would not see the collision. Combining nothing, and
+combining a nil part, are refused there too rather than at mount time.
+
+`app/http/appfiber/unchecked.go:uncheckedIn` walks the parts instead of asking
+the wrapper, so a declaration nothing checks is reported against the part that
+wrote it. That is what lets an excuse name the one part that needs it rather than
+the whole contributor.
+
+## A declaration nothing in front of the handler checks
+
+`app/http/appfiber/unchecked.go:uncheckedIn` compares what a route declares
+against what the registrar mounted a check for. A route the registrar built
+answers through `app/http/appfiber/routeset.go:registeredRoutes.checks`; a
+hand-written one has nothing to answer with, so every permission it names is
+collected as an `Unchecked`.
+
+`Mount` hands that to the contributed `UncheckedRule`, defaulting to
+`NamingUnchecked`, which logs each one. `RefusingUnchecked` fails the start
+instead, and `ExcusingUnchecked(reason, contributors…)` refuses all but the
+contributors named — and refuses those as well when the reason is blank, because
+an exemption nobody justified is the thing this is here to make visible.
+
+The default names rather than refuses because a permission enforced inside a use
+case is a true statement `appfiber` cannot see: [[D-073]] is what stops it from
+reading the declaration to find out. Moving the operation into a `RouteSet`, or
+onto a generated operation ([[D-109]]), is what closes the gap for good.
 
 ## Mounting
 
@@ -132,6 +187,18 @@ contribution that arrived empty is a wiring branch that fell through, and the
 only honest answer is to stop — a guard that came out nil used to be a process
 that started with the surface it protects answering unauthenticated.
 
+## What a consumer's own test has to read
+
+`Mounted.Contributions` is the same list `Mount` walks: the routes contributed as
+a `Route` and the ones a `RouteSet` projected into one. It is exported for the
+test a consumer writes about its own application — "does the router I serve agree
+with what I declared" — because the obvious version of that test reads `Routes`
+alone, sees nothing any registrar contributed, and reports a surface with no
+declarations that boot accepted a moment earlier. That happened: an application's
+probes and its ops routes moved behind registrars, and its own router test
+started naming four public paths as undeclared while the process started
+perfectly well.
+
 ## Where a CRUD resource's declaration comes from
 
 `crud/http/crudhttp/table.go:Table.Routes` is the same list
@@ -167,8 +234,10 @@ check and serves nothing on the port it was asked for.
 |---|---|
 | `app/ordered.go` | `Ordered[H]`, `Sorted` — the chain, and why a tie breaks by name |
 | `app/doc.go` | what the composition root may hold and what it may not become |
-| `app/http/appfiber/appfiber.go` | `Route`, `Middleware`, `OrderAuth`, the three annotations, `Mounted`, `Resolvers`, `Guarding`, `Spec`, `Serving`, `Mount`, `Listen` |
-| `app/http/appfiber/routeset.go` | `Policy`, `Requires`, `Authenticated`, `Public`, `RouteSetSpec`, `NewRouteSet`, `Routes`, `RouteSet`, `Route`, `MustRoute`, `ErrRouteSet`, `refuse` |
+| `app/http/appfiber/appfiber.go` | `Route`, `Middleware`, `OrderAuth`, the three annotations, `Mounted`, `Mounted.Contributions`, `Resolvers`, `Guarding`, `Spec`, `Serving`, `Mount`, `Listen` |
+| `app/http/appfiber/routeset.go` | `Policy`, `Requires`, `Authenticated`, `Public`, `RouteSetSpec`, `NewRouteSet`, `MustRouteSet`, `Routes`, `RootRouteSetSpec`, `NewRootRouteSet`, `MustRootRouteSet`, `RootRoutes`, `RouteSet`, `Route`, `MustRoute`, `ErrRouteSet`, `registeredRoutes` and its `checks`, `refuse` |
+| `app/http/appfiber/combine.go` | `Combine`, `MustCombine`, `ErrCombine`, `combinedRoutes` — several shapes contributed as one route |
+| `app/http/appfiber/unchecked.go` | `Unchecked`, `UncheckedRule`, `NamingUnchecked`, `RefusingUnchecked`, `ExcusingUnchecked`, `ErrUnchecked`, `uncheckedIn` |
 | `app/http/appfiber/health.go` | `HealthSpec`, `Health`, `DefaultHealthPath` — a contributed route that declares its own probes |
 | `auth/http/authhttp/surface.go` | `Endpoint`, `Route`, `Public`, `Requires`, `Authenticated`, `AtRoot`, `Verify`, `UnderPrefix`, `Area`, `Under`, `Rooted`, `VerifyAreas`, `ErrSurface` |
 | `auth/http/authfiber/surface.go` | `Routes`, `Verify`, `VerifyAreas` — Fiber's table |
@@ -204,8 +273,27 @@ check and serves nothing on the port it was asked for.
 | `…:TestRoutesCarriesAPrefixMistakeToTheBuild` | the shorthand refuses at `Route()` |
 | `…:TestARouteMountedPastTheRegistrarStillBreaksStartUp` | the router is still the independent witness |
 | `…:TestAnOperationWithoutAHandlerIsRefused` | a declaration that answers nothing is refused |
+| `…:TestARootOperationAnswersAtItsAbsolutePathAndNotUnderThePrefix` | a root set answers where it is probed and nowhere else |
+| `…:TestARootOperationIsDeclaredByTheAbsolutePathTheGateComparesItAgainst` | its declaration is `AtRoot` |
+| `…:TestTheAddressItselfIsAPathOnlyARootSetCanRegister` | `/` is a root path, with the prefixed set refusing it as the control |
+| `…:TestARootPathMountedPastTheRootSetStillBreaksStartUp` | the router is the witness outside the prefix too |
+| `…:TestARootSetWithoutTheApplicationItAnswersOnIsRefused` | the explicit constructor, and the panicking twin over it |
+| `…:TestARootSetRefusesAPathThatIsNotAnAddress` | an empty path is not the root |
+| `app/http/appfiber/combine_test.go:TestEveryPartOfACombinedContributionIsMountedAndDeclared` | one contribution, every part mounted and declared |
+| `…:TestAnOperationInsideACombinationStillRefusesThePrincipalItsPolicyExcludes` | the outer check survives being combined with another shape |
+| `…:TestACombinationNamesThePartThatLeftAnEndpointUnchecked` | the report blames the part, not the wrapper, with the registrar half as the control |
+| `…:TestTwoPartsOfOneContributionCannotDeclareTheSameOperation` | a collision the gate cannot see is refused where it is made |
+| `…:TestACombinationOfNothingIsRefusedRatherThanMountedAsAnEmptyRoute` | nothing, and a nil part, refuse at the constructor |
+| `…:TestMustCombineIsTheSameConstructorWithoutTheError` | the panicking form refuses exactly what the other one does |
+| `…:TestMustRouteSetIsTheSameConstructorWithoutTheError` | the same for the registrar's constructor |
+| `app/http/appfiber/unchecked_test.go:TestADeclaredPermissionNoMountedCheckAnswersForStopsTheStart` | `RefusingUnchecked` names the operation and the permission |
+| `…:TestAnOperationRegisteredThroughTheRegistrarIsNeverReportedAsUnchecked` | the control: what the registrar mounted is not reported |
+| `…:TestAnUncheckedDeclarationIsNamedEvenWhenNothingRefusesIt` | the default names it in the log |
+| `…:TestAnExcusedContributorPassesAndTheOneNobodyExcusedDoesNot` | an excuse covers who it names and nobody else |
+| `…:TestAnExcuseThatSaysNothingExcusesNobody` | an exemption without a reason exempts nothing |
 | `crud/http/crud{net,fiber,gin}/table_test.go:TestTheAccessDeclarationIsDerivedFromTheGatesOwnPermissions` | every mounted route is declared with the permission its own action requires, a policy naming a different one per action |
 | `…:TestAMountedRouteThePolicyLeavesUndeclaredIsRefusedAtAssembly` | an undeclared action is a refusal naming the route, with the read-only resource as the control |
+| `…:TestTheThreePermissionShorthandCollapsesEveryWriteOntoOnePermission` | `Guarded` still maps create and update onto `write` and both deletes onto `del` |
 | `auth/http/authhttp/surface_test.go` | the comparison itself: both directions, the trailing slash, the prefix and its control, every problem at once |
 | `auth/http/auth{net,gin,fiber}/surface_test.go` | the same five names on all three bindings — `make check-triplets` holds it |
 | `…:TestAHandMountedHeadOrOptionsRouteMustDeclareItsAccess` | a verb the framework might have generated, mounted by hand, is still surface |

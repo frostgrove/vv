@@ -88,6 +88,7 @@
 | [access](access.md) | `vv/auth/access` | **Модуль** — сессии, учётные данные, роли и права поверх семи таблиц, с ключом по субъекту, а не по пользователю |
 | [accessjwt](accessjwt.md) | `vv/auth/access/accessjwt` | **Модуль** — подписанные access-токены поверх ротируемого refresh, с детекцией реплея |
 | [revokeredis](revokeredis.md) | `vv/auth/access/accessjwt/revokeredis` | **Модуль** — список отзыва для него, в Redis |
+| [revokeredisfx](revokeredis.md#fx-форма) | `vv/auth/access/accessjwt/revokeredis/revokeredisfx` | **Модуль** — тот же список, собранный из Redis-клиента графа, и его проверка политики вытеснения хуком старта |
 | [accessnet](access.md) | `vv/auth/access/http/accessnet` | Роуты входа на `net/http`. Stdlib, поэтому едет внутри модуля access |
 | [accessgin](access.md) | `vv/auth/access/http/accessgin` | **Модуль** — те же роуты на Gin |
 | [accessfiber](access.md) | `vv/auth/access/http/accessfiber` | **Модуль** — те же роуты на Fiber v3 |
@@ -112,6 +113,7 @@
 |---|---|---|
 | [cache](cache.md) | `vv/cache` | Типизированные декларации, profiles, schemas, локальная координация loaders, stale/negative results и жёсткий transient admission. Только stdlib |
 | [cachememory](cachememory.md) | `vv/cache/cachememory` | Ограниченный process-local LRU backend с точным публичным charge accounting и batch reads |
+| [cachefx](cache.md) | `vv/cache/cachefx` | **Модуль** — группы наборов, провайдеров и ресурсов, обязательные декларации ресурсов и активация в графе uber/fx |
 
 ## Запрос — один документ, четыре транспорта
 
@@ -171,6 +173,7 @@
 | [healthfx](health.md) | `vv/health/healthfx` | **Модуль** — группа проверок и реестр в графе uber/fx |
 | [runtime](runtime.md) | `vv/runtime` | Контракт `Runner`, супервизор, который запускает, сливает и докладывает про фоновую работу, и per-replica периодический раннер. Только stdlib |
 | [runtimefx](runtime.md) | `vv/runtime/runtimefx` | **Модуль** — группа раннеров, привязанная к жизненному циклу fx: вкладу не нужен invoke, который его называет |
+| [runtimecheck](runtime.md) | `vv/runtime/runtimecheck` | Сторож D-092 как библиотека: разобрать любое дерево и назвать каждый `fx.Invoke`, активирующий компонент побочным эффектом |
 
 Собственного контейнера у библиотеки нет и не будет ([[D-037]]). Эти модули
 привязываются к тому, который выбрал потребитель: граф держит fx, а
@@ -180,7 +183,7 @@
 
 | Модуль | Импорт | Что это |
 |---|---|---|
-| [cmd/vv](vv-cli.md) | `vv/cmd/vv` | Генерирует update DTO, метамодель, публичные wire-тела с манифестом и — с `-adapter` — весь ресурс целиком |
+| [cmd/vv](vv-cli.md) | `vv/cmd/vv` | Генерирует update DTO, метамодель, публичные wire-тела с манифестом, операцию, которую читают и маршрут, и его guard, модуль, который регистрирует композиционный корень, и — с `-adapter` — весь ресурс целиком |
 | [vvflag](vvflag.md) | `vv/utils/vvflag` | Читает один типизированный флаг из `os.Args` до того, как им завладеет `flag.Parse` |
 | [vvcfg](vvcfg.md) | `vv/utils/vvcfg` | **Модуль** — загружает конфиг-файл в структуру: валидируется всё дерево, неизвестные ключи отвергаются, происхождение значений в отчёте |
 | [vvgoose](vvgoose.md) | `vv/utils/vvgoose` | **Модуль** — Goose CLI, миграции и генерация SQL-таблицы из Go-модели |

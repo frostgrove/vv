@@ -182,10 +182,18 @@ fx.Options(crudsqlfx.Module(&configuration.Db))
 **Module** — it takes uber/fx, so a consumer who opens their own pool never
 resolves one ([[D-074]]).
 
-It provides a `*sql.DB` and a `crud.Source` over it, pings the pool at
-construction and closes it on shutdown. `sql.Open` validates a DSN and connects
-to nothing, so without the ping a wrong host, a wrong password and a database
-that is not running all look like a healthy start-up.
+It provides a `*sql.DB` and a `crud.Source` over it, checks the connection at
+**start** and closes the pool on shutdown. `sql.Open` validates a DSN and
+connects to nothing, so without that check a wrong host, a wrong password and a
+database that is not running all look like a healthy start-up.
+
+The check is a start hook rather than a line in a constructor, because
+constructors run inside `fx.New`, which `fx.StartTimeout` does not reach — an
+unreachable server would hang the building of the graph, and the process would
+neither start nor exit. One thing cannot leave the constructor: `crud.Source` is
+a dependency of every repository in the graph, and building it means reading the
+schema. That read is bounded instead — by `Pool.ConnectTimeout` when the
+configuration states one, and by `DefaultSchemaTimeout` (15s) otherwise.
 
 It registers **no driver**. Which driver answers `sql.Open("pgx", …)` is yours
 and always was ([[D-057]]) — import it for its side effect beside this.

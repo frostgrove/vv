@@ -109,8 +109,15 @@ type RouteSetSpec struct {
 	Render []porthttp.RenderOption
 }
 
+type RootRouteSetSpec struct {
+	App *fiber.App
+
+	Render []porthttp.RenderOption
+}
+
 type RouteSet struct {
 	prefix   string
+	root     *fiber.App
 	renderer porthttp.Renderer
 	mounted  map[string]struct{}
 	entries  []operation
@@ -132,8 +139,49 @@ func NewRouteSet(spec RouteSetSpec) (*RouteSet, error) {
 	return set, nil
 }
 
+func MustRouteSet(spec RouteSetSpec) *RouteSet {
+	set, err := NewRouteSet(spec)
+	if err != nil {
+		panic(err)
+	}
+	return set
+}
+
 func Routes(prefix string, options ...porthttp.RenderOption) *RouteSet {
 	return newRouteSet(RouteSetSpec{Prefix: prefix, Render: options})
+}
+
+func NewRootRouteSet(spec RootRouteSetSpec) (*RouteSet, error) {
+	set := newRootRouteSet(spec)
+	if len(set.problems) > 0 {
+		return nil, set.refused()
+	}
+	return set, nil
+}
+
+func MustRootRouteSet(spec RootRouteSetSpec) *RouteSet {
+	set, err := NewRootRouteSet(spec)
+	if err != nil {
+		panic(err)
+	}
+	return set
+}
+
+func RootRoutes(fiberApp *fiber.App, options ...porthttp.RenderOption) *RouteSet {
+	return newRootRouteSet(RootRouteSetSpec{App: fiberApp, Render: options})
+}
+
+func newRootRouteSet(spec RootRouteSetSpec) *RouteSet {
+	set := &RouteSet{
+		root:     spec.App,
+		renderer: authhttp.RendererFor(spec.Render),
+		mounted:  map[string]struct{}{},
+	}
+	if spec.App == nil {
+		set.problems = append(set.problems,
+			"a root route set answers where nothing carries the prefix, so it needs the *fiber.App the process serves with")
+	}
+	return set
 }
 
 func newRouteSet(spec RouteSetSpec) *RouteSet {
@@ -175,7 +223,7 @@ func (this *RouteSet) Handle(method, path string, policy Policy, handler fiber.H
 		this.problems = append(this.problems, fmt.Sprintf("%q was registered without a method", full))
 		return this
 	}
-	if problem := segmentProblem(path); problem != "" {
+	if problem := this.pathProblem(path); problem != "" {
 		this.problems = append(this.problems, fmt.Sprintf("%s %q %s", method, path, problem))
 		return this
 	}
@@ -211,7 +259,20 @@ func (this *RouteSet) Route() (Route, error) {
 	if len(this.entries) == 0 {
 		return nil, fmt.Errorf("%w: the set under %q mounts nothing", ErrRouteSet, this.prefix)
 	}
-	return &registeredRoutes{entries: slices.Clone(this.entries), renderer: this.renderer}, nil
+	return &registeredRoutes{entries: slices.Clone(this.entries), renderer: this.renderer, root: this.root}, nil
+}
+
+func (this *RouteSet) pathProblem(path string) string {
+	if this.root == nil {
+		return segmentProblem(path)
+	}
+	switch path {
+	case "":
+		return "is empty, and a path answering outside every prefix is the whole address"
+	case "/":
+		return ""
+	}
+	return segmentProblem(path)
 }
 
 func (this *RouteSet) MustRoute() Route {
@@ -231,9 +292,13 @@ func (this *RouteSet) refused() error {
 type registeredRoutes struct {
 	entries  []operation
 	renderer porthttp.Renderer
+	root     *fiber.App
 }
 
 func (this *registeredRoutes) Mount(router fiber.Router) {
+	if this.root != nil {
+		router = this.root
+	}
 	for _, entry := range this.entries {
 		enforcement := entry.policy.enforcement(this.renderer)
 		if enforcement == nil {
@@ -258,7 +323,11 @@ func (this *registeredRoutes) checks() map[string]struct{} {
 func (this *registeredRoutes) Access() []authhttp.Endpoint {
 	endpoints := make([]authhttp.Endpoint, 0, len(this.entries))
 	for _, entry := range this.entries {
-		endpoints = append(endpoints, entry.policy.endpoint(entry.method, entry.path))
+		endpoint := entry.policy.endpoint(entry.method, entry.path)
+		if this.root != nil {
+			endpoint = authhttp.AtRoot(endpoint)
+		}
+		endpoints = append(endpoints, endpoint)
 	}
 	return endpoints
 }

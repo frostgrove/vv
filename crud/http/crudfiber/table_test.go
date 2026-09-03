@@ -138,3 +138,34 @@ func TestAMountedRouteThePolicyLeavesUndeclaredIsRefusedAtAssembly(t *testing.T)
 		t.Fatalf("a read-only resource mounts five routes and %d were declared", len(declared))
 	}
 }
+
+func TestTheThreePermissionShorthandCollapsesEveryWriteOntoOnePermission(t *testing.T) {
+	declared := (crudhttp.Table{Prefix: "/widgets"}).Guarded("widget:read", "widget:write", "widget:remove")
+
+	want := map[string]auth.Permission{
+		"POST /widgets":             "widget:write",
+		"POST /widgets/bulk-delete": "widget:remove",
+		"POST /widgets/query":       "widget:read",
+		"GET /widgets/count":        "widget:read",
+		"POST /widgets/count":       "widget:read",
+		"GET /widgets":              "widget:read",
+		"GET /widgets/:id":          "widget:read",
+		"PATCH /widgets/:id":        "widget:write",
+		"PUT /widgets/:id":          "widget:write",
+		"DELETE /widgets/:id":       "widget:remove",
+	}
+	if len(declared) != len(want) {
+		t.Fatalf("the table mounts %d routes and the shorthand declared %d", len(want), len(declared))
+	}
+	for _, endpoint := range declared {
+		route := endpoint.Method + " " + endpoint.Path
+		expected, mounted := want[route]
+		if !mounted {
+			t.Fatalf("the declaration carries %s, which the table does not mount", route)
+		}
+		if len(endpoint.Needs) != 1 || endpoint.Needs[0] != expected {
+			t.Fatalf("%s is declared as needing %v, and the shorthand was given %s for it",
+				route, endpoint.Needs, expected)
+		}
+	}
+}

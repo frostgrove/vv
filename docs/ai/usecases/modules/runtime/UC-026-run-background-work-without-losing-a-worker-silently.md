@@ -52,6 +52,22 @@ worker that never started.
     failure, the answer to "is it working" carries nothing from before the
     restart, and a start over activities the last shutdown never got back is
     refused instead of running each of them twice.
+13. A subsystem that was told to run an activity refuses to start when nothing in
+    the assembled program would run it, and names the activity in the refusal. A
+    deployment that meant to sweep, consume or keep a clock does not start as one
+    that quietly does none of it.
+14. The author can ask of their own program's source — not only of the
+    framework's — whether anything is still activated by a call that merely
+    mentions a type, in either shape it is written, and gets back the file and
+    line. Point 1 is then checked by the build instead of remembered.
+
+15. An activity whose lifetime belongs to one component — it starts when that
+    component starts and stops when it stops — may be owned by that component
+    without giving up any of the above: it still has a name, its panic is still
+    recovered and recorded, an early return is still a failure, its owner can
+    still read what happened to it, and the program can still make that failure
+    cost the process what any other failure costs. Starting a goroutine and
+    hoping stays ruled out.
 
 ## Out of scope
 

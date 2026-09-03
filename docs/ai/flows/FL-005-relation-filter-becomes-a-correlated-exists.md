@@ -179,6 +179,9 @@ honest on a to-many filter.
 - `TestANestedSortCarriesTheScopeIntoItsSubquery` — `crud/sqlrepo/relscope_test.go`.
 - `TestRelationScopeNarrowsBothThePreloadAndTheFilterHop` — `crud/sqlrepo/relscope_test.go`.
 - `TestACallerCannotWidenARelationScope` — `crud/sqlrepo/relscope_test.go`.
+- `TestTwoRelationScopesOnOnePathBothNarrowTheFarSide` —
+  `crud/sqlrepo/relscope_test.go` — two declarations for one path compose by AND
+  on the filter hop and on the preload, with the bind order asserted.
 - `TestToManyFilterDoesNotDuplicateOrInflateCount` — `test/integration/relations_test.go` — the reason for `EXISTS`.
 - `TestNestedFiltersAgainstDatabases` / `TestNestedSortAgainstDatabases` — `test/integration/relations_test.go`.
 - `TestDistinctRefusesASortThroughARelation` — `crud/sqlrepo/paging_edge_test.go`.

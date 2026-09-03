@@ -107,11 +107,44 @@ This decision is about the tests, so its evidence is the tests themselves:
   before proving vv's does not go through it.
 - `TestCombineOfNothingIsNoMorePermissiveThanTheZeroPolicy` in
   `crud/decorators/security/gate_edge_test.go`.
-- `TestAScopedSaveOfAnUnusedIDIsStillAnInsert` in
-  `crud/decorators/security/gate_edge_test.go` — the control for
-  `TestAScopeWithoutInspectStillRefusesAnOverwriteOfAHiddenRow`.
-- `TestSearchWithNothingToSearchProducesNoPredicate` in
-  `crud/query/compile_test.go` — the control for the search tests.
+- `TestScopedSaveKeepsAConcurrentCreateCreateOnly` in
+  `crud/decorators/security/security_test.go` — the control for
+  `TestSaveOfAnotherTenantsAssignedKeyLooksMissing`.
+- `TestSearchWithNothingToSearchIsRefused` in `crud/query/compile_test.go` — the
+  control for the search tests: with no usable field left the compiler refuses
+  instead of compiling an unfiltered read, so a green search test cannot be
+  green because its predicate vanished.
+- `TestEveryTestNameTheDocsCiteExists` in `scripts/docs_test.go` — the half of
+  this decision the docs carry. If a test is the specification, a doc naming one
+  is telling the reader where the specification is, and a rename turns that into
+  a dead end nothing else notices. It reads every backticked test name outside a
+  fenced example and asks the tree for it, with
+  `TestARenamedTestIsReportedAgainstTheDocThatStillCitesIt` and
+  `TestATestNameInsideAFencedExampleIsNotACitation` as its controls, so it cannot
+  pass by finding nothing. A name a doc raises on purpose without the tree
+  carrying it — a test a consumer is about to write, a name held up as the wrong
+  way to name one — is listed in the file with its reason.
+- `TestTheRoadmapCreditsNoPackageWithAnActivationTheScannerCannotFind` in
+  `scripts/roadmap_test.go` — the same idea for a roadmap item. It asks
+  `runtime/runtimecheck` whether the package an open item blames still writes the
+  empty `fx.Invoke` the item quotes, because a closed item left on the list sends
+  the next reader to fix what is already fixed. `[[D-092]]` is the invariant it
+  reads.
+- `TestEverySymbolTheDocsCiteIsDeclaredWhereTheDocSaysItIs` in
+  `scripts/docs_test.go` — the third form a doc points with. A citation shaped
+  `path/to/file.go:Symbol` is a claim that the file declares it, and the parser
+  answers rather than a grep. A path this tree does not hold is skipped, because
+  a guide legitimately names the reader's own file, and
+  `TestASymbolThatMovedOutOfTheFileTheDocNamesIsReported` is the control that the
+  skip is not swallowing everything.
+- `TestTheStatusADocPromisesIsTheOneTheFunctionItNamesReturns` in
+  `scripts/docs_test.go` — the same idea for behaviour rather than location. A
+  line naming one function and one status code is claiming what that function
+  refuses with, and the check reads the function: `Denied`/`ErrForbidden` is 403,
+  `ErrNotFound` is 404, and a body carrying both or neither is not judged.
+  `TestADocPromisingTheStatusTheFunctionRefusesIsReported` is its control. This
+  is the check that would have caught `[[D-008]]` promising a 403 for a hidden
+  row long after `gate.saveTarget` had started answering `crud.ErrNotFound`.
 
 ## An honest note on "mutation-checked"
 

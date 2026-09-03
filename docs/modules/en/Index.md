@@ -77,6 +77,7 @@ long form of it.
 | [access](access.md) | `vv/auth/access` | **Module** — sessions, credentials, roles and permissions over seven tables, keyed by subject rather than by user |
 | [accessjwt](accessjwt.md) | `vv/auth/access/accessjwt` | **Module** — signed access tokens over a rotating refresh credential, with replay detection |
 | [revokeredis](revokeredis.md) | `vv/auth/access/accessjwt/revokeredis` | **Module** — a revocation list for it, in Redis |
+| [revokeredisfx](revokeredis.md#the-fx-form) | `vv/auth/access/accessjwt/revokeredis/revokeredisfx` | **Module** — that list built from the graph's Redis client, and its eviction-policy check as a start hook |
 | [accessnet](access.md) | `vv/auth/access/http/accessnet` | The `net/http` sign-in routes. Stdlib, so it ships inside the access module |
 | [accessgin](access.md) | `vv/auth/access/http/accessgin` | **Module** — the same routes on Gin |
 | [accessfiber](access.md) | `vv/auth/access/http/accessfiber` | **Module** — the same routes on Fiber v3 |
@@ -101,6 +102,7 @@ the exception ([[D-048]], [[D-055]]).
 |---|---|---|
 | [cache](cache.md) | `vv/cache` | Typed declarations, profiles, schemas, local load coordination, stale/negative results and hard transient admission. Stdlib only |
 | [cachememory](cachememory.md) | `vv/cache/cachememory` | Bounded process-local LRU backend with exact public charge accounting and batch reads |
+| [cachefx](cache.md) | `vv/cache/cachefx` | **Module** — the set, provider and resource groups, the required resource declarations and the activation, in an uber/fx graph |
 
 ## The request — one document, four transports
 
@@ -161,6 +163,7 @@ of the library ([[D-058]]).
 | [healthfx](health.md) | `vv/health/healthfx` | **Module** — the check group and the registry, in an uber/fx graph |
 | [runtime](runtime.md) | `vv/runtime` | The `Runner` contract, a supervisor that starts, drains and reports background work, and a per-replica periodic runner. Stdlib only |
 | [runtimefx](runtime.md) | `vv/runtime/runtimefx` | **Module** — the runner group bound to the fx lifecycle, so a contributed runner needs no invoke that names it |
+| [runtimecheck](runtime.md) | `vv/runtime/runtimecheck` | The D-092 guard as a library: parse any tree and report every `fx.Invoke` that activates a component by side effect |
 
 The library holds no container of its own and never will ([[D-037]]). These bind
 to the one the consumer chose: fx keeps the graph, and `go get
@@ -170,7 +173,7 @@ github.com/frostgrove/vv` still resolves nothing ([[D-074]]).
 
 | Module | Import | What it is |
 |---|---|---|
-| [cmd/vv](vv-cli.md) | `vv/cmd/vv` | Generates the update DTO, the metamodel, the public wire bodies with their manifest, and — with `-adapter` — the whole resource |
+| [cmd/vv](vv-cli.md) | `vv/cmd/vv` | Generates the update DTO, the metamodel, the public wire bodies with their manifest, the operation a route and its guard both read, the module a composition root registers, and — with `-adapter` — the whole resource |
 | [vvflag](vvflag.md) | `vv/utils/vvflag` | Read one typed flag out of `os.Args` before `flag.Parse` owns it |
 | [vvcfg](vvcfg.md) | `vv/utils/vvcfg` | **Module** — load a config file into a struct: the whole tree validated, unknown keys refused, provenance reported |
 | [vvgoose](vvgoose.md) | `vv/utils/vvgoose` | **Module** — Goose CLI, migrations, and SQL-table generation from a Go model |

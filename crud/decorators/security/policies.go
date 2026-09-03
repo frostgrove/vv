@@ -3,6 +3,7 @@ package security
 import (
 	"context"
 	"reflect"
+	"slices"
 	"strings"
 
 	"github.com/frostgrove/vv/auth"
@@ -295,6 +296,16 @@ func intersectRequirements(sets []map[Action][]auth.Permission) map[Action][]aut
 		}
 		if everywhere {
 			out[action] = permissions
+		}
+	}
+	return out
+}
+
+func unionPermissions(first, second []auth.Permission) []auth.Permission {
+	out := append([]auth.Permission{}, first...)
+	for _, permission := range second {
+		if !slices.Contains(out, permission) {
+			out = append(out, permission)
 		}
 	}
 	return out

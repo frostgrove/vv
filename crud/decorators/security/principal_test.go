@@ -372,3 +372,26 @@ func TestCombiningDeclarationsKeepsOnlyWhatEveryDeclarationAllows(t *testing.T) 
 		}
 	})
 }
+
+func TestADeclaredRequirementIsAlsoReachableAsTheAuthorizerAConsumerCalls(t *testing.T) {
+	policy := security.PerAction[Doc, int64](map[security.Action]auth.Permission{
+		security.Read:   "doc:read",
+		security.Update: "doc:admin",
+	})
+	if policy.Authorize == nil {
+		t.Fatal("a policy built from a declaration exposes no authorizer, so a consumer testing its own policy has nothing to call")
+	}
+
+	if err := policy.Authorize(as(editor), security.Read); err != nil {
+		t.Fatalf("the caller holding doc:read was refused the action it declares: %v", err)
+	}
+	if err := policy.Authorize(as(editor), security.Update); !errors.Is(err, crud.ErrForbidden) {
+		t.Fatalf("the caller lacking doc:admin was allowed the action it does not hold: %v", err)
+	}
+	if err := policy.Authorize(as(editor), security.Delete); !errors.Is(err, crud.ErrForbidden) {
+		t.Fatalf("an action the declaration never names was allowed: %v", err)
+	}
+	if err := policy.Authorize(context.Background(), security.Read); err == nil {
+		t.Fatal("a caller with no principal at all was allowed")
+	}
+}

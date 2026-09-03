@@ -127,8 +127,8 @@ are three is the embedding. The handle is embedded in the group, so `Path` is
 promoted one level out, while every column of the *target* model is a field of
 that same group one level nearer — and Go resolves the nearer one. A target with
 a column called `Path` therefore shadows the method, and `Folder_.Files.Path()`
-stops compiling for that one relation. The generated file says so in that group's
-doc comment; `RelPath()` is the spelling nothing shadows.
+stops compiling for that one relation. The generated file says nothing about it;
+`RelPath()` is the spelling nothing shadows.
 
 A group only exists where the generator expanded the relation, which `-depth`
 controls, and a relation whose target model lives in another package is not

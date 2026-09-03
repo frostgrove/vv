@@ -2,7 +2,7 @@
 
 **Covers:** `github.com/frostgrove/vv/crud/query`
 **Sweep:** happy paths · edge cases · release readiness
-**Verdict:** not ready — a cleared filter chip (`?f=status:notIn:`) compiles to `1 = 1` and answers 200 with every row; empty boolean groups, malformed unary terms, invalid paging, and repeated scalar query keys can also silently change or remove the intended question. Four separate volume bounds remain unarmed on a stock mount: the page size, offset depth, `distinct`, and preload row count.
+**Verdict:** not ready — empty boolean groups, malformed unary terms, invalid paging and repeated scalar query keys can still silently change or remove the intended question. What this sweep filed as its blockers is closed: a cleared filter chip (`?f=status:notIn:`) is a 400 rather than a 200 with every row, a `?q=` the endpoint cannot serve is refused in both arms rather than answered with the whole table, and the four volume bounds a stock mount left unarmed now default — page size 100, offset depth 10 000, preload rows 1 000, `distinct` opt-in.
 
 ## What a consumer is actually trying to do
 
@@ -64,29 +64,30 @@ can also be posted as a JSON body to `POST /articles/query` when it stops
 fitting in a URL. Nothing is configured yet.
 **Must hold:**
 1. `?page=2&limit=20&sort=-createdAt&f=status:eq:draft` filters, sorts and pages.
-2. A request that names nothing leaves the repository's own page size in place —
-   it does not become `LIMIT 0` or "every row".
+2. A request that names nothing comes back paged — it does not become `LIMIT 0`
+   or "every row".
 3. A client cannot choose how many rows come back.
 4. Every accepted filter shape narrows. No spelling of an accepted filter means
    "no condition".
-**Today:** 🟡 partial — 1 and 2 hold; 3 and 4 do not, and both fail on exactly
-the stock mount this case describes
-**Evidence:** 1 is the query-string parse at `crud/query/querystring_test.go:197`
-`TestParseQueryReadsEveryParameter` and the shared `Compile` at
-`crud/query/compile.go:236-401`; the flat-term compiler both doors share is
-`querystring.go:46-125`. 2 is `crud/query/compile_test.go:128`
-`TestAnEmptyRequestKeepsTheRepositoryPageSize` — an empty document still renders
-`LIMIT 20`. 3 fails: `compile.go:353-354` passes the client's `limit` through
-unchanged and `sqlrepo.MaxLimit` is unset by default — see H-QUERY-07. 4 fails:
-`?f=status:notIn:` compiles to the constant `1 = 1` — see H-QUERY-17, which is
-this sweep's worst finding and lands on this mount with no config anywhere.
+**Today:** ✅ all four hold on the stock mount this case describes
+**Evidence:** 1 is the query-string parse at `crud/query/querystring_test.go:238`
+`TestParseQueryReadsEveryParameter`; the flat-term compiler both doors share is
+`querystring.go:46-125`. 2 and 3 are one clamp rather than two behaviours:
+`compile.go:474-477` replaces a `limit` that is zero or over the ceiling with
+`Config.maxLimit()`, which is 100 where the consumer named nothing
+(`compile.go:69`, `:117-122`). `TestAnEmptyRequestUsesTheEndpointPageCap`
+(`compile_test.go:114`) pins the empty document and
+`TestPagingAlwaysUsesTheEndpointLimit` (`:121`) pins the paged one, so the cap no
+longer waits for a `sqlrepo.MaxLimit` in a file this story never opens
+(H-QUERY-07). 4 holds because an empty value list is a refusal rather than a
+constant: `?f=status:notIn:` and its three siblings are rejected at the path,
+pinned by `TestAnEmptyValueListIsRefused` (`edge_test.go:167`) — H-QUERY-17.
 Value parity between the two doors is H-QUERY-12's; `select` narrowing the
 statement and not the response body is the crudhttp sweep's, and is the one
 thing `Selectable` does not buy.
-**If not ready:** For 3, `sqlrepo.MaxLimit(100)` in the `Define` — another file,
-and no doc requires it. For 4 there is nothing to write at the endpoint: the
-front end must omit a filter parameter rather than send it empty, on every chip,
-forever.
+**If not ready:** nothing to write. A consumer who wants a different ceiling sets
+`query.Config.MaxLimit`; one who writes no config gets 100 rather than whatever
+the client asked for.
 
 ### H-QUERY-02 — Lock the public endpoint down, and be told when the lock is wrong
 **Who:** the same developer, the week the endpoint goes public
@@ -155,39 +156,31 @@ thing anyone types into it is a name with a capital letter.
 4. A search field the endpoint did not permit is a refusal naming the field.
 5. A search this endpoint cannot serve is a refusal — never a 200 whose body is
    the whole table wearing the label "results".
-**Today:** 🟡 partial — 1, 2 and 4 hold; 3 and 5 do not
-**Evidence:** 1 and 2 hold: `crud/query/query_test.go:251`
-`TestSearchIsParenthesised` and `compile_test.go:137`
+**Today:** ✅ all five hold
+**Evidence:** 1 and 2: `crud/query/query_test.go:239`
+`TestSearchIsParenthesised` and `compile_test.go:188`
 `TestFilterTermsAndSearchAreAndedNotMerged` pin the parenthesised `WHERE` so the
-search node cannot leak out of the surrounding AND; `hostile_test.go:185`
-`TestWildcardsInAPatternAreEscaped` is the escaping, at `crud/predicate.go:436`.
-4 holds: `hostile_test.go:277` `TestSearchCannotReachOutsideItsList`. 3 fails:
-`compile.go:580` and `:616` both build the search with `crud.Contains`, which is
-`Like(field, "%"+escapeLike(s)+"%")` (`crud/predicate.go:436`) — a
-case-**sensitive** `LIKE`. `crud.LikeIgnoreCase` sits two lines above it and
-compares with `LOWER()` on both sides "which works on MySQL and PostgreSQL
-alike" (`crud/predicate.go:430-433`), and the search path does not use it, while
-`compile.go:565` claims in its own comment that search "builds a
-case-insensitive OR". So `?q=smith` misses "Smith" on PostgreSQL and usually
-matches it on MySQL under a default `_ci` collation: the same endpoint, two
-answers, decided by the engine. 5 fails in **both** arms of `search`, not only
-the fallback. With no field list, `compile.go:576-587` walks the root model's
-string columns, keeps the permitted ones, and returns a nil predicate if none
-survives. With an explicit list, `compile.go:599-627` joins a non-string column
-only `if v, err := coerceString(...); err == nil` (`:620`), and ends the same way
-— `if len(preds) == 0 { return nil, nil }` at `:624`. So
-`?q=smith&searchFields=views` on an int column answers with the whole table,
-from a **correct** config, on a query string a stranger sends.
-`compile_test.go:302` `TestSearchWithNothingToSearchProducesNoPredicate` pins the
-behaviour on purpose.
-**If not ready:** For 3, give up the search box and make the front end send
-`{"title": {"ilike": "%smith%"}}` — which reaches `crud.LikeIgnoreCase`
-(`crud/query/filter.go:279-280`) and hands the client the raw pattern, giving up
-the escaping guarantee 2 is about. For 5, list only text columns in
-`DefaultSearchFields` and never rely on the fallback; the fix is to refuse
-instead of returning nothing, in both arms, which is the posture [[D-013]] takes
-everywhere else in this package. UC-002 records this asymmetry as "worth knowing
-rather than fixing" — see **Contested**.
+search node cannot leak out of the surrounding AND; `hostile_test.go:164`
+`TestWildcardsInAPatternAreEscaped` is the escaping. 4:
+`hostile_test.go:247` `TestSearchCannotReachOutsideItsList`. 3: both arms of
+`search` build with `crud.ContainsIgnoreCase` (`compile.go:756` and `:781`),
+which is the `LOWER()`-on-both-sides comparison (`crud/predicate.go:449-450`), so
+`?q=smith` matches "Smith" on either engine instead of on whichever one has a
+`_ci` collation. 5: a search this endpoint cannot serve is refused in both arms
+rather than compiled away. With no field list, `compile.go:746-762` walks the
+root model's permitted string columns and answers
+`this endpoint has no searchable text fields` when none survives; with an
+explicit list, `compile.go:764-806` refuses a field that is not searchable and
+ends on `none of the requested fields can search %q` when nothing coerced.
+`TestSearchWithNothingToSearchIsRefused` (`compile_test.go:342`) pins the second
+arm — `searchFields=Views` on an int column — with
+`TestSearchJoinsNonTextColumnsOnlyWhenTheTermFits` (`:327`) as its control, so
+"refused" does not quietly become "refuses everything".
+**If not ready:** nothing to write. The `?q=` on a config that permits no text
+column is a 400 naming the problem, which is the posture [[D-013]] takes
+everywhere else in this package; UC-002's note that the empty-search asymmetry
+was "worth knowing rather than fixing" is answered by fixing it — see
+**Contested**.
 
 ### H-QUERY-04 — Filter across a relation and load it in the same request
 **Who:** whoever builds the "articles by author, with the author shown" screen
@@ -231,15 +224,15 @@ still sees only its own rows.
 **Must hold (this module's half):**
 1. No document shape — an `or`, a `not`, an empty filter, an empty `notIn` list —
    produces a predicate that escapes an enclosing AND or replaces it.
-**Today:** 🟡 partial — nothing escapes the AND; a `notIn` over an empty list
-stays inside it and is `1 = 1`, which narrows nothing
-**Evidence:** the nesting half is pinned by `hostile_test.go:413`
+**Today:** ✅ holds — nothing escapes the AND, and the one shape that used to
+narrow nothing inside it no longer compiles at all
+**Evidence:** the nesting half is pinned by `hostile_test.go:367`
 `TestOneClauseCannotEscapeAnother` — a nested `or` and a `not` each stay inside
-their own parentheses. The constant half is `crud/predicate.go:196-201`
-(`inNode.render` degrading an empty `NOT IN` to `1 = 1`), pinned as intended
-behaviour by `edge_test.go:118` `TestAnEmptyValueListBecomesAConstant`. The tenant
-scope still holds — `1 = 1 AND owner_id = $1` is still narrowed — so this is a
-widening within the client's own half of the AND, not a scope escape.
+their own parentheses. The empty `notIn` never reaches a predicate: the compiler
+refuses an empty value list in all four spellings, pinned by `edge_test.go:167`
+`TestAnEmptyValueListIsRefused`, so `inNode.render`'s degradation to a constant
+is unreachable from the wire and the client's half of the AND cannot be widened
+to nothing.
 **Preconditions owned elsewhere:** that the narrowing reaches the rows *and* the
 total is `port`'s and the bindings': `port/service.go:240-248` appends the
 caller's options after compiling and `crud.Where` ANDs ([[D-004]]), pinned by
@@ -291,48 +284,42 @@ the bounds on volume to be in the same declaration.
 5. A sort a client asks for means the same thing on every engine the library
    supports.
 6. All of these are declared where the endpoint's other bounds are declared.
-**Today:** ❌ for 1, 2, 3 and 5; ✅ for 4; 🟡 for 6
-**Evidence:** 1 fails. `compile.go:353-354` passes the client's `limit` through
-unchanged. The only cap is `sqlrepo.MaxLimit`, and `crud/sqlrepo/blueprint.go:53`
-says "Zero disables the cap" — zero is the default, and `crud/options.go:251-252`
-only clamps `if maxLimit > 0`. So a stock mount honours `?limit=1000000000`: one
-statement, every row, into memory. The package's own hostile suite never sends a
-large limit — `hostile_test.go:299`
-`TestTheDefaultBudgetsBoundAnUnconfiguredEndpoint` covers depth, conditions and
-preloads only. 2 fails and is not bounded anywhere: `compile.go:351` appends
-`crud.Page(r.Page)` unchanged, `crud/options.go:241-259` bounds `limit` only, and
-the module page already concedes of `?page=5000` that "nothing helps; `OFFSET`
-is O(n) on every engine" (`docs/modules/en/query.md:220`). `?page=10000000` is one
-URL edit away from the link the dashboard already publishes. 3 fails:
-`?distinct=1` is parsed at `querystring.go:199`, compiled at `compile.go:397-399`,
-and gated by nothing — there is no `AllowDistinct` field. It forces a sort or a
-hash over the whole result set, and on a paginated read the total becomes a
-derived table over the same set (`crud/sqlrepo/repository.go:561-577`). Under
-`DISTINCT` the projection also stops adding the primary key and the preload join
-columns (`repository.go:436-448`), so `?distinct=1&select=title` hands back rows
-the client cannot address. 4 **holds, with zero configuration**:
-`crud/sqlrepo/repository.go:540-556` (`sortOf`) appends `crud.Asc(PK)` to every
-paginated read whose sort does not already name the key, and `blueprint.go:176`
-sets `stableSort: true` by default; `sqlrepo.UnstablePagination()`
-(`blueprint.go:61-63`) is the opt-out. 5 fails: `{"sort":[{"field":"publishedAt",
-"desc":true,"nulls":"last"}]}` is validated and set at `compile.go:302-310`, and
-`crud/predicate.go:597-603` emits the clause **only when the dialect is
-postgres**. On MySQL the request is accepted with a 200 and ordered differently,
-and the caveat is written where no consumer reads it, in the `Order` method doc
-(`crud/predicate.go:524-531`). `compile_test.go:149` `TestSortNullsPlacement`
-asserts the PostgreSQL rendering and nothing asserts the MySQL one. 6 fails for
-1, 2 and 5: `blueprint.go` is a different file with a different lifetime from the
-allow-lists, and 2, 3 and 5 have no home at all.
-**If not ready:** `sqlrepo.MaxLimit(100)` in the `Define`, which every runnable
-example does (`_examples/sql-nethttp/main.go:58`) and no doc requires. [[D-060]]
-closed exactly this hole for `unpaged` and argued it in one sentence — "two open
-defaults that only protect in combination protect nothing" — while `limit` is
-the same request spelled as a number and is still open. For 2 and 3 there is
-nothing to write short of a `WithScope` that rewrites the request, which puts
-paging arithmetic in a transport. For 5, never offer `nulls` to a client on a
-MySQL deployment. UC-002 guarantee 17 and its Gap 6 both believe this is
-narrower than it is; `docs/ai/usecases/Index.md` gap 20 repeats the same framing.
-All three need correcting.
+**Today:** ✅ all six hold
+**Evidence:** 1: `compile.go:474-477` replaces a `limit` of zero, or one above
+the ceiling, with `Config.maxLimit()` — 100 where the consumer named nothing
+(`compile.go:69`, `:117-122`). `sqlrepo.MaxLimit` still means "no cap" at zero
+(`crud/sqlrepo/blueprint.go:53`) and is no longer the only cap, so a stock mount
+refuses `?limit=1000000000` without the consumer writing a line. 2:
+`compile.go:479-486` refuses an `offset` above `Config.maxOffset()` — 10 000 by
+default — and refuses the `page` that would reach past it, so the
+`?page=10000000` one URL edit away from the dashboard's own link is a 400 rather
+than an `OFFSET` scan. 3: `distinct` is opt-in. `compile.go:541-546` refuses it
+unless the endpoint declared `query.Config{AllowDistinct: true}`, naming the
+field in the message; the preload row count has its own ceiling at `:467-470`,
+1 000 by default. What `DISTINCT` costs is unchanged — it forces a sort or a hash
+over the whole result set and drops the primary key from the projection — which
+is why it is now a decision the endpoint makes rather than one the client makes.
+4 **holds, with zero configuration**: `crud/sqlrepo/repository.go:540-556`
+(`sortOf`) appends `crud.Asc(PK)` to every paginated read whose sort does not
+already name the key, and `blueprint.go:176` sets `stableSort: true` by default;
+`sqlrepo.UnstablePagination()` (`blueprint.go:61-63`) is the opt-out. 5:
+`Order.render` (`crud/predicate.go:1306-1328`) writes PostgreSQL's native
+`NULLS FIRST`/`NULLS LAST` and a leading `col IS NULL` key on MySQL and SQLite,
+so one request means one thing on every engine. `TestSortNullsPlacement`
+(`compile_test.go:200`) asserts the PostgreSQL rendering,
+`TestMySQLPreservesNullsOrdering` and `TestSQLitePreservesNullsOrdering`
+(`crud/predicate_test.go:289`, `:299`) the emulated ones, and
+`TestNullOrderingUsesEngineDefaultsUntilTheCallerChoosesAPortableHint`
+(`test/integration/dialect_edge_test.go:408`) reads the rows back on both
+engines. 6: 1, 2 and 3 are `query.Config` fields — `MaxLimit`, `MaxOffset`,
+`MaxPreloadRows`, `AllowDistinct` (`compile.go:40-48`) — declared beside the
+allow-lists, in the same literal.
+**If not ready:** nothing to write. A consumer who wants a ceiling other than
+the default names it in the same `query.Config` as the allow-lists. [[D-060]]
+closed this hole for `unpaged` and argued it in one sentence — "two open
+defaults that only protect in combination protect nothing" — and `limit`,
+`offset` and `distinct` are that sentence applied to the three other spellings
+of the same request.
 
 ### H-QUERY-08 — Infinite scroll that does not repeat rows
 **Who:** a mobile API developer
@@ -496,7 +483,7 @@ control that a declaring endpoint really gets the option. 3 does not:
 `crud/options.go:242-247` clamps an unpaged read down to `MaxLimit` when one is
 set, silently, and an unpaged read never reaches the `limit` clamp at all — it
 takes its own branch. So the two pieces of advice a consumer is given — cap the
-page with `sqlrepo.MaxLimit` (H-QUERY-07), declare `AllowUnpaged` for the export
+page with `sqlrepo.MaxLimit`, declare `AllowUnpaged` for the export
 — combine into an export that stops at the cap and says nothing. [[D-060]]
 records the cost; nothing warns at declaration. The same mechanism seen from the
 calling side is the remote sweep's blocker 1.
@@ -687,33 +674,22 @@ it: `?f=status:notIn:`. Or the other one: `?f=status:in:`.
 1. An accepted filter never widens the result.
 2. If the endpoint cannot make sense of what a chip sent, the client is told,
    the way it is told about every other unusable value.
-**Today:** ❌ missing — this is the sweep's worst finding
-**Evidence:** `ParseTerm` calls `splitList` on the value
-(`querystring.go:32,37`), and `splitList` returns nil for a blank string
-(`request.go:329-334`). The multi arm then passes an empty slice through
-`countValues(0)` — which only checks the ceiling — and `coerceAll`
-(`querystring.go:86-104`), and `buildMulti` calls `crud.NotIn(field)` with no
-values (`filter.go:294-295`). `inNode.render` degrades that to the constant
-`1 = 1` (`crud/predicate.go:201-208`). So a cleared multi-select answers 200 with
-**every row in the table**, from a correct config, on a query string a stranger
-sends. The mirror is worse to debug and better to survive: `?f=status:in:`
-renders `1 = 0`, the screen goes blank, and nothing was refused, so the developer
-cannot tell an empty result from a broken filter. Both are true on the JSON door
-too — `{"filter":{"status":{"notIn":[]}}}` goes through `decodeList`
-(`coerce.go:38-56`) to the same place. `edge_test.go:118`
-`TestAnEmptyValueListBecomesAConstant` pins all four spellings **as intended
-behaviour**, and its comment argues the case: `IN ()` is a syntax error
-everywhere, so it degrades to a constant. That is a true statement about SQL and
-the wrong answer for a request. Contrast the scalar arm one branch over:
-`?f=title:eq:` with the same empty value is a 400 (`querystring.go:106-109`,
-`edge_test.go:362`). UC-002 records this as Gap 4 and this file's round 1 skipped
-it entirely.
-**If not ready:** Nothing at the endpoint. The front end must omit the parameter
-rather than send it empty — on every chip, in every client, forever, with no
-refusal anywhere to catch the one that forgets. The fix is one decision and one
-line: an empty list on a multi-value operator is a refusal at the path, not a
-constant, exactly as an empty value on a scalar operator already is. That
-changes a pinned test, which is why it is a decision and not a patch.
+**Today:** ✅ closed — a cleared chip is a 400 naming the path, on both doors
+**Evidence:** every multi-value operator on both doors funnels into `buildMulti`,
+which refuses an empty list before it can build anything:
+`errf(where, "%s needs at least one value", kind)` (`filter.go:354-357`). So
+`?f=status:notIn:` and `?f=status:in:` are refused where `?f=title:eq:` already
+was, and the JSON spellings `{"filter":{"views":{"in":[]}}}`,
+`{"filter":{"views":[]}}`, `{"filter":{"views":{"nin":[]}}}` and
+`{"terms":[{"path":"views","op":"in"}]}` are refused with them.
+`TestAnEmptyValueListIsRefused` (`edge_test.go:167`) walks all four. The constant
+`inNode.render` would have produced for an empty `NOT IN` is still there and is
+still true about SQL — `IN ()` is a syntax error everywhere — but nothing on the
+wire can reach it, which was the whole argument: a true statement about SQL was
+the wrong answer for a request. UC-002 recorded this as Gap 4.
+**If not ready:** Nothing to write. A front end that keeps emitting the empty
+parameter now learns so from the first response instead of from a report that
+the list ignores its filter.
 
 ### H-QUERY-18 — The front end that builds the filter chips
 **Who:** the developer writing the list component, not the endpoint
@@ -1085,7 +1061,8 @@ makes twenty resources bearable.
 - **[[D-013]]** — an unknown name is a rejection. Every entry in a
   `WithQueryFor` map is a set of names, so all of them resolve at mount, and a
   selector key the map does not hold is a refusal rather than a nil config.
-  H-QUERY-17's empty list is the same principle applied to a value.
+  H-QUERY-17's empty list is the same principle applied to a value, and is now
+  applied there too.
 - **[[D-055]]** — a principal reaches a policy only through a context a
   transport binding wrote. `WithQueryFor`'s selector takes a `context.Context`
   for exactly that reason, and nothing in `query.Config` names an auth model:
@@ -1118,12 +1095,12 @@ severity lives, and the two disagree on purpose in one row below.
 | An export endpoint that serves every row | `AllowUnpaged: true` — one field, correct — silently truncated by a `MaxLimit` set for the page | small (severity: the blockers table calls the same mechanism a sharp edge, because the truncation is silent to a scheduled job) |
 | One option at the call site | `crudnet.WithQuery[Article, int64, ArticleUpdate](cfg)` — three type parameters on every option, per resource; the package documents a per-resource helper as the workaround (`crud/http/crudnet/options.go:30-46`) | small at one resource, large at twenty |
 | A delta config for a second role | Nothing. `query.Config`'s zero values all mean something, so no struct literal can express "the base plus one column" | large |
-| The page ceiling in the same declaration | `sqlrepo.MaxLimit(100)` in the `Define`; **absent by default**, and one repository cannot give two endpoints two ceilings | large |
-| A ceiling on how deep a client may page | Nothing, anywhere. `crud/options.go:241-259` bounds `limit` only | large |
-| A gate on `distinct` | Nothing. `?distinct=1` forces a sort or hash over the whole set, and the total becomes a derived table over the same set | large |
+| The page ceiling in the same declaration | `query.Config{MaxLimit: …}` beside the allow-lists, and 100 without one, so two endpoints over one repository can hold two ceilings | none |
+| A ceiling on how deep a client may page | `query.Config{MaxOffset: …}`, 10 000 by default, refusing the `page` that would reach past it as well as the `offset` | none |
+| A gate on `distinct` | `query.Config{AllowDistinct: true}`; without it `?distinct=1` is refused in a message naming the field | none |
 | Bounds that depend on the caller | A hand-written `port.Service` that must re-derive `NarrowForCount`/`NarrowForEntity`; unavailable at all under `Serving` | large |
-| A ceiling on preloaded rows | Nothing. `sqlrepo.RelationScope` narrows the far side without bounding it; `crud/preload.go:193-196` refuses the shapes that look like a ceiling | large |
-| A case-insensitive search box | Nothing. `crud.LikeIgnoreCase` exists and the search path does not call it; the escape hatch is `ilike` with a client-built pattern | large |
+| A ceiling on preloaded rows | `query.Config{MaxPreloadRows: …}`, 1 000 by default, applied to every compiled preload; a request may tighten its own and cannot raise it | none |
+| A case-insensitive search box | Exactly this — both arms of `search` build with `crud.ContainsIgnoreCase`, which lowers both sides | none |
 | A filter on a JSON column | Nothing, and no partial answer. `crud.Raw` is server-side and unresolved by design | large |
 | Seeing what a slow request asked for | Nothing in the package. Log the raw URL at the handler and lose the resolved paths | large |
 | A client discovering the endpoint's vocabulary | The lists are exported fields, so they are readable — but an empty list means "everything" with no way to expand it, entries are never canonicalised, and the effective caps are unexported | large |
@@ -1131,16 +1108,14 @@ severity lives, and the two disagree on purpose in one row below.
 **Overall:** Inside the document, this is the best-argued code in the
 repository: every refusal names a path, every value is typed by its column, a
 column type's own parser survives both doors, the search node cannot leak out of
-its AND, and the hostile suite is genuinely hostile. Two things it does not do.
-It does not bound *volume* — four separate bounds, none armed on a stock mount,
-and the one that is proposed for them lives in another file. And one accepted
-shape of a filter widens instead of narrowing, which is the failure the package
-was written to make impossible. Customising leaves the short path in four
-places, and the steepest is the one nobody expects: **two endpoints over one
-repository cannot differ in page size, default sort, or whether they serve whole
-result sets without a second `Define`** — one sentence that carries three rows of
-the table above and is the strongest argument for moving these bounds into
-`query.Config`.
+its AND, and the hostile suite is genuinely hostile. The two things it did not do
+it now does. Volume is bounded on a stock mount — page size, offset depth,
+preload rows and `distinct` are `query.Config` fields with defaults, in the same
+literal as the allow-lists — and the one accepted filter shape that widened
+instead of narrowing is refused at the path. What is left of the customising
+complaint is one row rather than three: **two endpoints over one repository
+still cannot differ in default sort without a second `Define`**, because
+`sqlrepo.DefaultSort` is the only home for it.
 
 ## Release blockers found here
 
@@ -1149,17 +1124,17 @@ the last column says whether they can work around it.
 
 | # | What | Severity | Why it blocks |
 |---|---|---|---|
-| 1 | An empty multi-value list widens: `?f=status:notIn:` and `{"status":{"notIn":[]}}` compile to `1 = 1` and answer 200 with every row (`querystring.go:86-104`, `filter.go:294`, `crud/predicate.go:201-208`) | blocker | **No workaround at the endpoint.** A cleared filter chip is the default behaviour of every filter UI, and this is the module's own headline failure — an accepted filter that returns the whole table. The mirror, `in:` → `1 = 0`, blanks the screen with no refusal. `edge_test.go:118` pins both as intended, so the fix is a decision, not a patch |
-| 2 | A preload has no row ceiling and no mechanism can express one today — `?preload=comments` on a page of 100 articles loads every comment of all hundred (`crud/query/request.go:233-238`, `crud/preload.go:193-196`) | blocker | Nearest mitigation is `sqlrepo.RelationScope`, which narrows the far side without bounding it. The module's remit is that an untrusted client cannot spend the server; `MaxPreloads` bounds relations, never rows |
-| 3 | `limit` has no ceiling on a stock mount — `?limit=1000000000` compiles to that `LIMIT`, and `sqlrepo.MaxLimit` is unset by default (`compile.go:353-354`, `crud/sqlrepo/blueprint.go:53`, `crud/options.go:251-252`) | blocker | Workaround: `sqlrepo.MaxLimit(100)`, in another file, per repository. [[D-060]] closed this hole for `unpaged` and left the same request spelled as a number. **The general sweep files the same defect as its blocker 5 (`H-GENERAL-09`) and grades it `blocker` too; the crudhttp sweep grades it `serious` at a third placement.** Three sweeps, three homes — reconcile before the tag |
+| 1 | **Closed:** an empty multi-value list is refused rather than compiled — `?f=status:notIn:`, `?f=status:in:` and the JSON spellings all reach `buildMulti`, which answers `in needs at least one value` (`filter.go:354-357`) | resolved | `TestAnEmptyValueListIsRefused` (`edge_test.go:167`) walks all four spellings. The constant `inNode.render` would produce is still correct about SQL and is no longer reachable from the wire |
+| 2 | **Closed:** a preload carries a row ceiling, 1 000 by default and lowerable per request — `crud.PreloadCap` is applied to every compiled preload (`compile.go:467-470`, `Config.MaxPreloadRows` at `:46`) | resolved | A request may tighten its own cap and cannot raise it; `MaxPreloads` still bounds how many relations, and this bounds how many rows each brings |
+| 3 | **Closed:** `limit` has a ceiling on a stock mount — a `limit` of zero or one above `Config.maxLimit()` becomes the cap, 100 where nothing is configured (`compile.go:474-477`, `:69`, `:117-122`) | resolved | The bound now lives beside the allow-lists rather than in a `Define` in another file, which is what the general sweep's `H-GENERAL-09` and the crudhttp sweep were arguing about. `sqlrepo.MaxLimit` remains the repository-wide backstop |
 | 4 | Stock defaults permit 65,536 bind parameters — `MaxConditions: 64` × `MaxInValues: 1024` — one over PostgreSQL's limit (`compile.go:85`, `:91`, `:541-546`) | serious | `MaxInValues`'s own doc comment says the cap exists so "the honest 400" does not arrive "from the driver, as a 500" (`compile.go:39-45`). `countValues` bounds one list and never the document, so a stranger farms 500s from a stock mount and the code comment says it cannot happen |
-| 5 | A search that resolves to no usable column returns the whole table instead of refusing — in both arms, so `?q=smith&searchFields=views` does it from a correct config (`compile.go:576-587`, `:599-627`, pinned by `compile_test.go:302`) | serious | **No workaround for the client-supplied path.** Silent wrong answer labelled "search results", triggered by a query string a stranger sends |
-| 6 | The search box is case-sensitive, and differently so per engine — `?q=smith` misses "Smith" on PostgreSQL and matches it on MySQL (`compile.go:580`, `:616`, `crud/predicate.go:436`) | serious | Workaround: make the client send `ilike` with its own raw pattern, giving up wildcard escaping. `crud.LikeIgnoreCase` exists; the search path does not use it, while `compile.go:565` claims it does |
+| 5 | **Closed:** a search that resolves to no usable column is refused in both arms — `this endpoint has no searchable text fields` for the fallback, `none of the requested fields can search %q` for a named list (`compile.go:758-760`, `:803-805`) | resolved | `TestSearchWithNothingToSearchIsRefused` (`compile_test.go:342`) pins the client-supplied path, with `TestSearchJoinsNonTextColumnsOnlyWhenTheTermFits` (`:327`) as the control |
+| 6 | **Closed:** the search box is case-insensitive on every engine — both arms build with `crud.ContainsIgnoreCase` (`compile.go:756`, `:781`), which lowers both sides (`crud/predicate.go:449-450`) | resolved | `?q=smith` matches "Smith" whatever the collation, so the client no longer has to send `ilike` with a raw pattern and give up wildcard escaping |
 | 7 | `Config.Check`/`MustCheck` is called by nothing but its own test and appears in no consumer-facing doc, while [[D-060]]'s **Proven by** records it as having closed the misspelled-entry failure | serious | Workaround: `func init() { must(cfg.Check(meta)) }`, per resource, once you know it exists. Otherwise the column stays closed forever and every request is blamed on the client. Wiring it after the first tag is a breaking change; before it, one line |
-| 8 | `distinct` is a client-settable cost knob with no gate and no field — `?distinct=1` forces a sort or hash over the whole result set, and the total becomes a derived table over the same set (`querystring.go:199`, `compile.go:397-399`, `crud/sqlrepo/repository.go:561-577`) | serious | **No workaround.** `AllowUnpaged` exists because a bound on how much work happens must be named; `distinct` is the second such knob and got no gate. It also silently changes what `select` means (`repository.go:436-448`) |
+| 8 | **Closed:** `distinct` is gated by the endpoint — `?distinct=1` is refused unless the config declares `AllowDistinct`, and the message names the field (`compile.go:541-546`, `Config.AllowDistinct` at `:48`) | resolved | What `DISTINCT` costs is unchanged; who may spend it is now the endpoint's decision, the way `AllowUnpaged` already was |
 | 9 | An `isNull` term whose value is not a Go boolean silently inverts the filter — `?f=deletedAt:isNull:yes` becomes `IS NOT NULL`, through **both** doors (`querystring.go:69-73`) | serious | Workaround: `?filter={json}`, or spell it `true`/`false` and hope no client does otherwise. Returns exactly the rows the caller meant to exclude, with no refusal anywhere |
 | 10 | Bounds cannot depend on the caller — `WithQuery` takes one static `*query.Config` in all four bindings and in `port`, and `Serving` refuses it entirely | serious | Workaround: a hand-written service that must re-derive `NarrowForCount`/`NarrowForEntity`, or nothing at all under `Serving`. **The seam is `port`'s, not this module's** |
-| 11 | No ceiling on offset depth anywhere — `?page=10000000&limit=100` walks to the offset (`compile.go:351`, `crud/options.go:241-259`) | sharp edge | **No workaround.** The module page already says "nothing helps; `OFFSET` is O(n) on every engine" (`docs/modules/en/query.md:220`), and it is one URL edit from the link the dashboard publishes. `MaxPageSize` would not close it: one caps memory, the other caps work |
+| 11 | **Closed:** offset depth has a ceiling — an `offset` above `Config.maxOffset()` is refused, as is the `page` that would reach past it, 10 000 by default (`compile.go:479-486`, `:70`, `:124-129`) | resolved | The module page's "nothing helps; `OFFSET` is O(n) on every engine" is still true of a permitted offset, and the permitted range is now bounded |
 | 12 | A flat term keeps only the text before the first comma, in **both** the scalar and the textual arm and through **both** doors (`querystring.go:110`, `:80-84`, `crud/query/request.go:140-148`) | sharp edge | Workaround: the nested `filter` object, reachable on a GET only as `?filter={json}`. The textual arm is a fifth divergence UC-002 Gap 3 and Index gap 19 do not list |
 | 13 | An empty allow-list grants every column the model gains later — a new `InternalNotes` hidden with `json:"-"` is still searchable, so a hit is an oracle for a column the API never renders (`compile.go:212-215`) | sharp edge | Workaround: name every column explicitly and re-review on every model change. [[D-060]] records the default as deliberately open and calls it expensive; nobody has written down that it is a disclosure |
 | 14 | No cap can be put on what a permitted column *costs* — any `Filterable` text column accepts `contains`/`ilike`, an unindexed leading-wildcard scan, run twice per paginated read (`crud/query/filter.go:275-290`) | sharp edge | **No workaround but removing the column.** A consumer who locked `Filterable` to three columns believes the endpoint is bounded, and it is not |
@@ -1198,15 +1173,15 @@ the crudhttp sweep carries as its own case. The per-caller config seam is the
 
 ## Contested
 
-- **Blocker 1 contradicts a test that pins the behaviour on purpose.**
-  `edge_test.go:118` `TestAnEmptyValueListBecomesAConstant` blesses all four
-  spellings, and its comment argues the case well: `IN ()` is a syntax error in
-  every database, so it degrades to a constant. I am filing it as this sweep's
-  worst finding anyway. The comment is right about SQL and wrong about requests:
-  the scalar arm one branch over refuses an empty value at the path
-  (`querystring.go:106-109`), so the package already has the correct answer and
-  applies it inconsistently. UC-002 Gap 4 agrees with me; the test does not. That
-  is a decision for the owner and it changes a green test either way.
+- **Blocker 1 contradicted a test that pinned the behaviour on purpose, and the
+  test lost.** The empty value list used to compile to a constant, blessed by a
+  test whose comment argued that `IN ()` is a syntax error in every database.
+  The comment was right about SQL and wrong about requests: the scalar arm one
+  branch over already refused an empty value at the path, so the package held
+  the correct answer and applied it inconsistently. `buildMulti` now refuses the
+  list (`filter.go:354-357`) and `TestAnEmptyValueListIsRefused`
+  (`edge_test.go:167`) pins the refusal in all four spellings. UC-002 Gap 4 was
+  right.
 - **H-QUERY-06 is kept here, cut to the question, marked as `port`'s to fix.**
   Three reviewers across two rounds said the case belongs in the port and
   binding sweeps because every line of evidence is outside `crud/query`. The
@@ -1214,13 +1189,12 @@ the crudhttp sweep carries as its own case. The per-caller config seam is the
   `query.Config` needs to know that the answer cannot vary by caller. Round 2
   removes the forty-line remedy from the case body — that lives once, in the port
   sweep — and keeps the question and the ownership line.
-- **H-QUERY-03 guarantee 5 stays a serious finding, against UC-002.** UC-002's
-  Status closes by calling the empty-search asymmetry "behaviourally proven and
-  worth knowing rather than fixing". UC-002 reasoned about the *fallback* arm,
-  where the endpoint's own config is the cause. The named-fields arm has the same
-  ending (`compile.go:624-626`) and is driven by `searchFields` on the wire, so a
-  stranger reaches it from a correct config — including the zero `Config` the
-  module page calls "a usable default".
+- **H-QUERY-03 guarantee 5 was filed against UC-002 and has since been fixed.**
+  UC-002's Status called the empty-search asymmetry "behaviourally proven and
+  worth knowing rather than fixing", reasoning about the *fallback* arm, where
+  the endpoint's own config is the cause. The named-fields arm had the same
+  ending and was driven by `searchFields` on the wire, so a stranger reached it
+  from a correct config. Both arms now refuse (`compile.go:758-760`, `:803-805`).
 - **A route-owned `port.Rules.PageCap` challenges [[D-060]]'s placement, and its
   default too.** Three sweeps propose three homes: a non-zero default on
   `sqlrepo.MaxLimit` (general), a clamp in `port.Rules` (crudhttp), and the

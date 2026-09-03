@@ -33,7 +33,7 @@ cases where a single-statement upsert cannot be made to mean what `Save` means.
    A client-owned key (a uuid, a slug) is a different matter and PUT still
    creates those.
 
-2. **(optional) `gate.Save`** — `crud/decorators/security/security.go:337`
+2. **(optional) `gate.Save`** — `crud/decorators/security/security.go:save`
    The unscoped-existence probe and the immutable-field check — [[FL-008]].
 
 3. **`repository.Save`** — `crud/sqlrepo/repository.go:Save` → `:saveStatement`
@@ -223,7 +223,7 @@ owned `DEFAULT VALUES` / `() VALUES ()` statements under one atomic boundary.
 | `Create` against a key that is already taken | the engine's duplicate-key error → `sqlfault.Wrap` | 409 |
 | `Create` / `Replace` through a decorator that did not forward the capability | `CreateOf` / `ReplaceOf` on the exact outer Core | `ErrNoCreateSupport` / `ErrNoReplaceSupport`, no I/O |
 | the row disappears between the write and the read-back, or lands outside the declared scope | `refreshByID` | 404 |
-| gate refuses an overwrite of a hidden row | `gate.saveTarget` (`security.go:423`) | 403 |
+| gate refuses an overwrite of a hidden row | `gate.saveTarget` | 404 — the probe's answer is not handed back ([[D-008]]) |
 | an unknown decorator did not preserve `InsertBatch` | exact `InsertBatchOf` check | `ErrNoBatchInsertSupport`, no I/O |
 | native bulk is unavailable before I/O | `nativeInsertBatch` | portable INSERT fallback |
 | native COPY fails after selection | pgx adapter / classifier | classified error; no retry as INSERT |

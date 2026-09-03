@@ -88,6 +88,76 @@ durable security на одном ресурсе; причина обязател
 описал, — забытая декларация станет ошибкой старта, а не молчанием.
 См. [[D-104]].
 
+## Привязка к fx
+
+```go
+import "github.com/frostgrove/vv/cache/cachefx"   // uber/fx: группы и активация
+```
+
+`cachefx` — отдельный модуль, потому что тянет uber/fx ([[D-033]]). Именно он
+вызывает `Activate` в работающем процессе: без него правило доменов вытеснения
+выше не проверяет ничего.
+
+```go
+fx.Options(
+    fx.Provide(cachefx.AsSet(func() cache.Set { return catalog.Caches })),
+    fx.Provide(cachefx.AsProvider(newRedisCacheProvider)),
+    cachefx.Resources(
+        cache.ResourceDeclaration{Resource: "redis-cache", Tenants: []cache.ResourceTenant{cache.CacheTenant}},
+        cache.ResourceDeclaration{Resource: "redis-sessions", Tenants: []cache.ResourceTenant{cache.DurableSecurityTenant}},
+        cache.ResourceDeclaration{Resource: "postgres-jobs", Tenants: []cache.ResourceTenant{cache.DurableWorkTenant}},
+    ),
+    cachefx.Auto("catalog", "production"),
+)
+```
+
+| | |
+|---|---|
+| `AsSet(ctor)` · `AsProvider(ctor)` · `AsResource(ctor)` | аннотируют конструктор в группу наборов, провайдеров или ресурсов |
+| `Resources(declarations…)` | декларации, которые композиционный корень пишет сам |
+| `Contributions` | три группы и необязательный `cache.Observer` как `fx.In`-объект параметров |
+| `Spec` | `Application`, `Environment`, `Runtime`, `Sets`, `Providers`, `Resources`, `Undeclared` |
+| `Caching(spec)` / `Auto(application, environment)` | магическая форма: собрать спецификацию и активировать |
+| `Undeclared` | `Refused` (по умолчанию) · `Accepted` |
+| `Activating(ctor)` | низкоуровневая форма: конструктор собирает весь `cache.ActivationSpec` |
+
+**Здесь декларации обязательны.** В `cache` флаг `RequireDeclaredResources`
+выключен, чтобы правило можно было внедрять ресурс за ресурсом; граф, который
+берёт эту привязку, внедрение уже закончил, поэтому `Caching` включает флаг, и
+молчание о ресурсе роняет старт. Развёртывание, которое ещё в середине
+внедрения, пишет `Undeclared: cachefx.Accepted` — словом, а не забытым нулевым
+значением.
+
+**Декларация — это данные, поэтому импортировать кеш ради неё никому не нужно.**
+Список отзывов и очередь задач — те самые два тенанта, ради которых правило и
+существует, и ни один из них не импортирует `cache`: их `ResourceDeclaration`
+пишет композиционный корень через `Resources`, а пакет, который говорит за себя
+сам, вкладывается через `AsResource` или прямо написанным тегом группы —
+``fx.ResultTags(`group:"vv.cache.resources"`)``, — для чего импорт `cachefx`
+тоже не нужен. Из провайдера ничего не выводится: привязка, которая тихо
+объявила бы `CacheTenant` для каждого увиденного ресурса, удовлетворяла бы
+проверку тем самым, что проверяется. См. [[D-111]].
+
+**Активация — хук старта.** Кеши публикуются, когда приложение стартует, а не
+когда собирается его граф, поэтому отказ — это падение старта, которое fx
+разматывает: всё уже поднятое останавливается обратно. Отказ приходит как
+`*cache.ActivationError`, и его `Problems()` называет сразу все кеши и ресурсы.
+
+Низкоуровневая форма — та же привязка без сборки:
+
+```go
+cachefx.Activating(func(contributed cachefx.Contributions) (cache.ActivationSpec, error) {
+    return cache.ActivationSpec{
+        Application: "catalog",
+        Environment: "production",
+        Sets:        []cache.Set{catalog.Caches},
+        Providers:   contributed.Providers,
+        Resources:   contributed.Resources,
+        RequireDeclaredResources: true,
+    }, nil
+})
+```
+
 ## Чтение и загрузка
 
 `Lookup` никогда не вызывает application-код. `Resolve` сначала читает backend
@@ -314,4 +384,4 @@ Backend может уметь больше, чем хранить envelope. Ше
 См. [[D-093]].
 
 См. [[UC-024]], [[FL-025]], [[D-084]], [[D-085]], [[D-093]], [[D-094]],
-[[D-095]], [[D-096]] и [[D-104]].
+[[D-095]], [[D-096]], [[D-104]] и [[D-111]].

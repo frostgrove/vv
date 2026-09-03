@@ -417,33 +417,39 @@ was deleted signs up again with the same email.
 7. The tombstone column is the repository's, not the client's — the way the version column is.
 8. What a tombstone does to a unique index is stated, because the row still holds the email.
 **Today:** 🟡 partial
-**Evidence:** 1, 2 and 4 hold and are proven. `blueprint.go:202-222` validates the
-column and folds `IS NULL` into the permanent scope in the same step, which is
-what makes 1 structural rather than remembered; `repository.go:933` is the stamp,
-under exactly the narrowing the `DELETE` would have had — the comment at
-`:920-932` names the bug that taught it. [[D-031]] and [[UC-016]] carry the
-reasoning; `test/integration/softdelete_test.go` runs it live, including the
-control `TestWithoutTheSettingADeleteStillRemovesTheRow` (`:217`).
-Point 3 **fails, and it is the sharpest hole in the module.** Soft delete is
-implemented as a fold into `Scope`, and `Scope` cannot reach `Save` — see
-H-SQLREPO-18. The tombstone column is an ordinary updatable column
-(`crud/meta.go:289-299` puts every non-PK, non-`generated`, non-`immutable`,
-non-`version` column into `s.Update`), so `r.upsertTail` (`repository.go:59`)
-renders `deleted_at = EXCLUDED.deleted_at` and a `Save` carrying a tombstone's
-key sets it from the model, which holds the zero value. The row is un-deleted and
-the read-back at `:667` — which passes `within = nil` — hands it back as a
-success. Reachable through the ordinary create endpoint for any client-owned key
-(`port/service.go:152-167`) and through `PUT` (`:190-211`).
-**The gate does not close this one, and its own probe is what makes it worse.**
-`gate.saveTarget` decides "does this row already exist" with
-`g.Core.Exists(ctx, byID, crud.PrimaryOnly())`
-(`crud/decorators/security/security.go:541`), which runs under the blueprint
-scope that hides the tombstone — so `existing == nil`, `action = Create`, and the
-write is authorised against the *create* permission. That is written down in
-[[UC-016]]'s Status ("The warning is the create path",
-`UC-016-hide-rows-permanently-at-the-repository-level.md:88-94`) and as open
-tension 17 in `docs/ai/usecases/Index.md:257-261`. There is no control test in
-`test/integration/softdelete_test.go`.
+**Evidence:** 1, 2 and 4 hold and are proven. `resolveSoftDelete`
+(`crud/sqlrepo/blueprint.go:146-192`) validates the column and folds `IS NULL`
+into the permanent read scope in the same step, which is what makes 1 structural
+rather than remembered; `repository.go:1546-1553` is the stamp, built under the
+same `where` the physical `DELETE` would have had, in the same branch. [[D-031]]
+and [[UC-016]] carry the reasoning; `test/integration/softdelete_test.go` runs it
+live, including the control `TestWithoutTheSettingADeleteStillRemovesTheRow`
+(`:209`).
+Point 3 **holds now, and it was the sharpest hole in the module.** The
+declaration takes the tombstone column out of `Insert`, `InsertGen` and `Update`
+(`crud/sqlrepo/blueprint.go:181-184`), so no generic write carries it: the
+single-statement upsert renders a tail without `deleted_at`, and so does the
+update half of the update-probe-insert sequence. `Scope` reaches `Save` as well
+— a declared scope, or a dialect whose upsert is not key-targeted, takes that
+sequence (`crud/sqlrepo/upsert.go:21`), and the read-back carries the declared
+scope instead of `nil` (`upsert.go:42`, `repository.go:1056`). The write
+narrowing deliberately does **not** carry the soft-delete predicate
+(`blueprint.go:127` takes `writeScope` before `resolveSoftDelete` folds
+`IS NULL` into the read scope), so a `Save` over a buried key rewrites that
+row's other columns rather than inserting a second row under the same key.
+`TestASaveOverATombstonedKeyRewritesTheRowWithoutBringingItBack`
+(`crud/sqlrepo/tombstone_test.go:246`) pins both halves, and
+`TestTombstoneCannotReenterThroughAHandWrittenPatch` (`:122`) pins the patch
+route.
+**What the gate still cannot see is who authorised that write.**
+`gate.saveTarget` (`crud/decorators/security/security.go:639-654`) decides "does
+this row already exist" through the repository, whose read scope hides the
+tombstone. With a row-level scope on the policy the gate falls back to
+`crud.ExistsUnscopedOf` and turns a hidden row into `ErrNotFound` (`:656-664`);
+with no scope it answers `nil`, `action = Create`, and the rewrite of a buried
+row is authorised against the *create* permission. Nothing is resurrected, so
+this is an authorisation question rather than a data one, and it is still
+untested in `test/integration/softdelete_test.go`.
 Point 5 works and is undocumented in the module reference: a second `Define` over
 the same table without the setting gives a tombstone-visible repository, which is
 this repository's own idiom — `SoftRows` and `RawRows` at
@@ -453,39 +459,40 @@ anywhere: the second blueprint has to repeat every safety-relevant setting
 its own `Bind`, and its `Delete` is a physical `DELETE`. The tombstone view is
 the one repository where a forgotten `security.Gate` is most dangerous, because
 it is the repository that can see the rows everything else hides.
-Point 6 has no verb — there is no `Restore`, and `Update` on the soft-deleting
-repository cannot reach a tombstoned row because the load is scoped.
-Point 7 **fails**: `crud/update.go:112-120` freezes the key, `generated`,
-`immutable` and `version` columns against an update DTO, and the tombstone column
-is none of those. [[D-031]]'s own "Why" names the outcome it chose against —
-"either putting the tombstone into the caller's update DTO — where a client could
-`PATCH` it — or adding a raw-column verb to the seam" — and the implementation
-did not close it. The default pushes the wrong way: the generated file asserts at
-package init that the DTO covers every writable column
-(`port.MustCoverUpdate`, `port/pathmap.go:228-232`; the shape is
-`test/gormstore/vv_gen.go:118-120`), so hand-removing the field panics at
-start-up unless the exclusion is declared at generation time.
-Point 8 is stated where it belongs and nowhere a consumer reads: the `SoftDelete`
-doc comment (`blueprint.go:108-110`) says a unique index still sees the
-tombstones and the answer is a partial index the library cannot write, and
-[[D-031]] forbids promising otherwise. The module reference's soft-delete section
-does not carry it.
-**If not ready:** For point 3, either narrow `Save` (see H-SQLREPO-18) or, at
-minimum, exclude the tombstone column from `upsertTail` the way `immutable` and
-`version` are already excluded — a save then cannot un-delete even though it can
-still overwrite. For point 7, freeze the column in `PlanFor`, which needs the
-plan to know which column it is; today `PlanFor` is handed the schema, which does
-not carry the setting. The generator flag that expresses this today is
-`-readonly DeletedAt`, **not** `-skip` — `-skip` leaves the field out of the
-metamodel too, so `sqlrepo.SoftDelete(Doc_.DeletedAt.Name())` stops compiling and
-the column becomes unfilterable (`cmd/vv/main.go:22-24`;
-`test/gormstore/model.go:6` is the fixture that gets it right).
-Points 6 and 7 are one item, not two: freezing the column removes the only
-restore path there is. A `Restore` verb is not cheap — [[D-030]] makes any
-addition to `crud.Core` an obligation on `security.gate`, and `coreVerbs` in
-`crud/decorators/security/obligation_test.go` fails the build until the override
-exists — and it has to check a permission of its own, because un-deleting through
-the update permission is point 7 wearing a different name.
+Point 6 **holds**: `Restore` is a verb of its own
+(`crud/sqlrepo/repository.go:1285`), reached through the optional-interface
+helpers in `crud/lifecycle.go` so a decorator cannot swallow it, and the gate
+authorises it as `ActionRestore` rather than as an update
+(`crud/action.go:10`, `crud/decorators/security/security.go:949`). Delete and
+restore both advance the version, which is what closes the Delete→Restore ABA
+window — `TestDeleteAndRestoreAdvanceVersionToCloseLifecycleABA`
+(`crud/sqlrepo/tombstone_test.go:79`), with
+`TestHardDeleteRepositoryRefusesRestore` (`:129`) as its control.
+Point 7 **holds**: `crud/update.go:122-123` freezes the tombstone column against
+an update DTO the way it freezes the key, `generated`, `immutable` and `version`,
+and the blueprint refuses at declaration time a soft-delete column the update
+plan still carries (`crud/sqlrepo/blueprint.go:175-178`). The generator pushes
+the same way rather than against it: a `tombstone` field is excluded from the
+DTO at generation (`internal/codegen/codegen.go:53`), so `port.MustCoverUpdate`
+has nothing to push back in.
+Point 8 is stated where a consumer never looks: [[D-031]] says a unique index
+still sees the tombstones, that the answer is a partial index this library cannot
+write, and that promising otherwise is forbidden. Nothing at the declaration says
+it any more — the setting carries no doc comment — and the module reference's
+soft-delete section does not carry it either.
+**If not ready:** what is left is documentation and one authorisation control.
+Point 5 needs the module reference to say that the tombstone-visible repository
+is a second `Define` over the same table, and what that costs. Point 8 needs the
+unique-index sentence to reach the module reference from [[D-031]], which is the
+only place it is written down. The
+remaining live gap is the gate authorising a rewrite of a buried row as a
+create when the policy declares no row scope: the control test belongs beside
+`test/integration/softdelete_test.go`, asserting which permission the write asks
+for.
+Points 6 and 7 stopped being one item once `Restore` existed: freezing the column
+no longer removes the only restore path, and [[D-030]]'s obligation on
+`security.gate` is met by an action of its own rather than by the update
+permission wearing a different name.
 
 ### H-SQLREPO-09 — Two people editing the same record
 **Who:** an engineer whose support tool and customer portal both write the same row
@@ -1548,7 +1555,7 @@ them.
 | # | What | Severity | Why it blocks |
 |---|---|---|---|
 | 1 | ~~`sqlrepo.Scope` does not reach `Save` or `SaveAll`, and the read-back passes `within = nil`~~ | **closed** | A declared `Scope` now makes a keyed `Save`/`SaveOnly`/`SaveAll` take the update-probe-insert branch (`crud/sqlrepo/upsert.go`), and the read-back passes the declared scope. `TestSaveCannotOverwriteARowOutsideTheDeclaredScope`, `TestSaveAllCannotOverwriteARowOutsideTheDeclaredScope` and `TestSaveReadsTheRowBackThroughTheDeclaredScope` (`crud/sqlrepo/upsert_test.go`). What remains is the insert half's *values*, which is `Policy.Inspect`'s job and is stated as such |
-| 2 | A `Save` carrying a tombstone's key resurrects the row and reads it back as a success (`crud/meta.go:289-299` → `repository.go:59`, `:667`) | blocker | Soft delete's read half holds and its write half does not. Reachable through the ordinary create endpoint for any client-owned key (`port/service.go:152-167`) and through `PUT` (`:190-211`). The gate makes it worse: `saveTarget`'s existence probe runs through the scope that hides the tombstone (`security.go:541`), so the write is authorised as a fresh create. Open tension 17; UC-016 says so in words; no control test |
+| 2 | ~~A `Save` carrying a tombstone's key resurrects the row and reads it back as a success~~ | **closed, with an authorisation remainder** | The declaration takes the tombstone column out of `Insert`, `InsertGen` and `Update` (`crud/sqlrepo/blueprint.go:181-184`), so no generic write carries it, and `Restore` is the only verb that clears it. `TestASaveOverATombstonedKeyRewritesTheRowWithoutBringingItBack` and `TestTombstoneCannotReenterThroughAHandWrittenPatch` (`crud/sqlrepo/tombstone_test.go`). What remains is not data loss: with no row scope on the policy, `saveTarget`'s probe still reads through the scope that hides the tombstone, so the rewrite of a buried row is authorised as a create. No control test |
 | 3 | A keyed `Save` writes every writable column from the model, and nothing says so (`crud/sqlrepo/repository.go:saveStatement` → `crud/meta.go` `buildSchema`) | blocker | "Set the id, change a field, save it" is the habit every ORM refugee brings, and it clears every column the model left at its zero value. Same data-loss shape [[UC-003]] exists to prevent, one verb over, reachable from `PUT /{id}`. The fix is a paragraph; the absence of the paragraph is the blocker |
 | 4 | Relations on a model are never written and never refused (`crud/meta.go:102-104`, `repository.go:631`) | serious | `Save(order)` with `order.Items` populated persists the order, returns nil, and the children do not exist. No cascade anywhere in `crud/`, and no sentence in the module reference, [[D-017]] or this module's docs. For an aggregate root that is the most common write in the application |
 | 5 | Historical: `SaveAll` and `Delete(ids...)` each built one unbounded statement | closed (FW-CORE-003) | Both now derive chunks from the dialect bind budget, preflight the complete plan and execute multiple chunks atomically. `crud/sqlrepo/bind_budget_test.go` pins exact boundaries, rollback and ambient-transaction behaviour; imports also have the checked `Repo.InsertBatch` path. |
@@ -1556,7 +1563,7 @@ them.
 | 7 | `Aggregate` applies the default page limit of 20 to group rows, with no total and no `HasNext` (`repository.go:1051-1055`) | serious | A dashboard silently loses groups past the twentieth and cannot tell. `crud.Unpaged()` fixes it, nothing tells anyone to pass it, and on this verb alone `Unpaged` also discards the declared `MaxLimit` (`:1052-1054` versus `crud/options.go:238-247`) — one option word with two meanings on one repository |
 | 8 | `Get(crud.Unpaged())` against a repository with `MaxLimit` returns a truncated page reporting itself as the whole answer (`repository.go:217-218`, `crud/page.go:33`, `:38`) | serious | Same silent-truncation shape as row 7, in the read path. Reachable from the wire as `?unpaged=true` / `?all=true` under `AllowUnpaged` — the flag an export endpoint turns on. The pinning test asserts only that a `LIMIT` was emitted, never the response |
 | 9 | Historical: `SaveAll` read-back differed by dialect and left its `generated`-column result implicit | closed (explicit contract) | `SaveAll` is now deliberately write-only on every dialect, as its repository doc comment and `TestGeneratedKeySaveAllKeepsItsWriteOnlySemanticsAcrossChunks` state. `InsertBatch` has the same no-mutation contract; callers needing stored values use row-oriented `Save` or assigned keys. H-SQLREPO-06 now owns the import use case. |
-| 10 | The soft-delete column is not frozen against the update DTO (`crud/update.go:112-120`) | serious | `PATCH {"deletedAt":"..."}` deletes a row through the *update* permission — the outcome [[D-031]]'s "Why" names as the thing it chose against. `port.MustCoverUpdate` pushes the column back in unless `-readonly` is declared at generation time |
+| 10 | ~~The soft-delete column is not frozen against the update DTO~~ | **closed** | `PlanFor` refuses a DTO field that maps onto the `tombstone` column (`crud/update.go:122-123`), the blueprint refuses a soft-delete column the plan still carries (`crud/sqlrepo/blueprint.go:175-178`), and the generator leaves a `tombstone` field out of the DTO (`internal/codegen/codegen.go:53`), so `port.MustCoverUpdate` has nothing to push back in. `TestTombstoneCannotReenterThroughAHandWrittenPatch` (`crud/sqlrepo/tombstone_test.go`) |
 | 11 | No conflict target but the primary key (`repository.go:59`), and the key-less branch carries no conflict clause at all (`:619`) | serious | "Insert or update, keyed on the email" has no in-library answer, and the substitute is a read-then-write race — whose read is also replica-eligible — or a hand-written statement. Closing it amends [[D-011]] and widens the exported `crud.Dialect`: cheap before the tag |
 | ~~12~~ | ~~`UpdateAll` and `DeleteAll` accept a `Limit` and emit none~~ | **closed by [[D-087]]** | the filtered writes resolve their options through `crud.MutationOptions` and refuse paging, cursors, sorting, projection and preloads by name before a statement exists; this was option 3 of [[D-026]] |
 | 13 | Two false statements remain in the module reference: `UpdateAll` says it does not advance a version, and `Scope` claims every scoped write | serious | The historical `SaveAll`/COPY sentence was corrected with FW-CORE-003: it now states write-only, budgeted SQL and points imports to `InsertBatch`. The other two claims still contradict `repository.go` and row 1, so this finding remains active but no longer counts the closed bulk documentation defect. |
@@ -1666,18 +1673,18 @@ them.
 **Setup:** Base configuration narrows a repository to live rows and service configuration adds a tenant scope.
 **What the consumer does:** It passes two `sqlrepo.Scope` settings, expecting both declarations to remain a permanent narrowing.
 **What must happen:** The guards compose by AND, or the declaration refuses the duplicate. A later safety setting must not erase an earlier one.
-**Today:** ❌ wrong or unhandled
-**Evidence:** `Scope` assigns one `settings.scope` field at `crud/sqlrepo/blueprint.go:68-85`; `TryDefine` applies settings left to right at `:183-185`; reads use only that final field at `crud/sqlrepo/repository.go:286-292`. No test covers two `Scope` settings. This conflicts with [[D-004]], whose invariant is that a narrowing never replaces another narrowing.
-**Blast radius:** data leak
+**Today:** ✅ handled
+**Evidence:** `Scope` ANDs into the setting it finds rather than assigning it — `crud/sqlrepo/blueprint.go:48-50` is `s.scope = crud.And(s.scope, p)` — so declaration order cannot erase a narrowing, which is what [[D-004]] requires. `TestRepeatedScopesComposeByAND` (`crud/sqlrepo/blueprint_edge_test.go:653`) pins the composed `WHERE`, with `TestACallerFilterCannotWidenTheScope` (`:637`) beside it as the widening control.
+**Blast radius:** none
 
 ### E-SQLREPO-06 — Two guards on the same relation both remain true
 **Shape:** seam
 **Setup:** One declaration narrows `Comments` to a tenant and another narrows the same path to visible comments.
 **What the consumer does:** It passes two `sqlrepo.RelationScope("Comments", ...)` settings, expecting both guarantees to apply to a preload and a relation filter.
 **What must happen:** The guards compose by AND, or the declaration refuses the duplicate path. Repeating a relation guard must not widen the far-side query.
-**Today:** ❌ wrong or unhandled
-**Evidence:** `RelationScope` appends declarations at `crud/sqlrepo/blueprint.go:115-134`, then `resolveRelationScopes` repeatedly calls `AtPath` at `:228-236`. `RelationScopes.AtPath` overwrites its path map entry at `crud/scope.go:43-52`; only the separate blueprint/request merge ANDs same-path scopes at `:107-138`. No local test covers two blueprint relation scopes on one path.
-**Blast radius:** data leak
+**Today:** ✅ handled
+**Evidence:** `RelationScopes.AtPath` composes into the entry it finds (`crud/scope.go:14-24`, `out.paths[path] = both(out.paths[path], p)`), and `ForModel` does the same (`:42-52`), so both declarations `resolveRelationScopes` replays (`crud/sqlrepo/blueprint.go:204-213`) survive. `TestTwoRelationScopesOnOnePathBothNarrowTheFarSide` (`crud/sqlrepo/relscope_test.go`) pins the composed `WHERE` on the preload and on the filter hop and asserts the bind order, so a return to assignment fails rather than leaking; `TestACallerCannotWidenARelationScope` is the widening control beside it.
+**Blast radius:** none
 
 ### E-SQLREPO-07 — Two first requests may cross one relation safely
 **Shape:** concurrency
@@ -1756,38 +1763,42 @@ them.
 **Setup:** A table has primary key `id` and a separate unique `email`. A caller saves `id=1` with an email already owned by `id=2`.
 **What the consumer does:** They expect the non-primary unique collision to be refused, as it is on PostgreSQL, rather than have a primary-key Save update whichever row MySQL selected by `email`.
 **What must happen:** The cross-dialect difference must be refused or made explicit at the call site; a consumer cannot safely treat `Save(id=1)` as targeting only id 1 when MySQL permits another unique key to choose the conflict row.
-**Today:** ❌ wrong or unhandled
-**Evidence:** `Save` always asks the dialect for one upsert tail keyed from the model primary key (`crud/sqlrepo/repository.go:609-624`, `:52-60`). PostgreSQL renders `ON CONFLICT (pk)` and declares that only the primary key is swallowed (`crud/dialect.go:75-98`); MySQL renders targetless `ON DUPLICATE KEY UPDATE` (`:126-154`), and the `UpsertScope` contract states that it swallows every unique key (`crud/dialect.go:36-47`). No integration case exercises a Save that collides only on a second unique key.
-**Blast radius:** data loss
+**Today:** ✅ handled
+**Evidence:** `Save` asks the dialect first. `crud.UpsertTargetsPrimaryKey` (`crud/dialect.go:65-68`) is false for a dialect whose upsert swallows every unique key, and `needsConditionalUpsert` (`crud/sqlrepo/upsert.go:10-22`) sends that case, and any repository with a declared `Scope`, down `upsertByPrimaryKey` (`:58-98`) instead: `UPDATE … WHERE pk = ?`, a presence probe, then `INSERT`, in one transaction. A collision on a second unique key therefore surfaces as the engine's duplicate-key error rather than rewriting the row that key belongs to. `TestSaveNeverReachesARowByAKeyTheCallerDidNotName` (`crud/sqlrepo/upsert_test.go:42`) and `TestSaveInsertsWhenNoRowCarriesTheKeyOnADialectThatCannotTargetTheKey` (`:62`) pin it; `TestADialectThatTargetsThePrimaryKeyKeepsTheSingleStatementUpsert` (`:231`) is the control that the single-statement path is still taken where it is safe.
+**Blast radius:** none
 
 ## Edge verdict
 
-The worst new holes are declaration-time: two table scopes, or two relation
-scopes on the same path, replace rather than compose, so a configuration made of
-individually safe pieces can return rows it was meant to hide. Boundary and
-configuration failures are also uneven: nil `Setting` and source values panic,
-a negative maximum removes a cap, and a maximum finite page can overflow into an
-unlimited read. Versioned `Update` is protected, but full-model `Save` and
-`Replace` bypass that protection; on MySQL a second unique key can additionally
-select a different row for the upsert. The normal first-use relation race and
-middleware order are properly closed with source-level tests. Timeout ambiguity
-is only a post-write commit-state concern; malformed foreign `RETURNING`
-cardinality is an unverified executor contract, not a supported-adapter blocker.
+The declaration-time holes are closed: a second table scope and a second relation
+scope on the same path both AND into the first, so a configuration made of
+individually safe pieces stays as narrow as its narrowest piece, and both halves
+are pinned. Boundary and configuration failures are still uneven: nil
+`Setting` and source values panic, a negative maximum removes a cap, and a
+maximum finite page can overflow into an unlimited read. Versioned `Update` is
+protected and `Replace` is now the version-aware full-model verb, but
+`DefaultService.Replace` still routes `PUT` through `Save`, which is
+version-agnostic by [[D-011]]. A `Save` no longer reaches a row by any key but
+the one the caller named: a dialect whose upsert is not key-targeted gets
+update-probe-insert instead. The normal first-use relation race and middleware
+order are properly closed with source-level tests. Timeout ambiguity is only a
+post-write commit-state concern; malformed foreign `RETURNING` cardinality is an
+unverified executor contract, not a supported-adapter blocker.
 
 ## Release blockers found here (edge)
 | # | What | Severity | Why it blocks |
 |---|---|---|---|
-| 1 | A second `sqlrepo.Scope` replaces the first (`crud/sqlrepo/blueprint.go:68-85`) | blocker | Two independently configured permanent guards can leave one guard absent from every read. This is a direct row-leak path and contradicts [[D-004]]'s rule that narrowing only composes. |
-| 2 | A second `RelationScope` for one path replaces the first (`crud/sqlrepo/blueprint.go:228-236`; `crud/scope.go:43-52`) | blocker | A tenant or visibility predicate on a preloaded or relation-filtered table can be erased by another declaration for the same path. The far-side query then returns rows the first declaration existed to hide. |
+| 1 | ~~A second `sqlrepo.Scope` replaces the first~~ | **closed** | `Scope` ANDs into the setting it finds (`crud/sqlrepo/blueprint.go:48-50`), which is what [[D-004]] requires. `TestRepeatedScopesComposeByAND` (`crud/sqlrepo/blueprint_edge_test.go`) pins the composed `WHERE`. |
+| 2 | ~~A second `RelationScope` for one path replaces the first~~ | **closed** | `AtPath` and `ForModel` both AND into the entry they find (`crud/scope.go:14-24`, `:42-52`). `TestTwoRelationScopesOnOnePathBothNarrowTheFarSide` (`crud/sqlrepo/relscope_test.go`) pins the preload and the filter hop, so a return to assignment fails instead of leaking. |
 | 3 | A stale versioned full-model `Save` succeeds and overwrites newer fields (`crud/sqlrepo/repository.go:Save`; `port/service.go:Replace`) | blocker, narrowed | `crud.Repo.Replace` is now the version-aware verb and returns `ErrStaleVersion` (`crud/sqlrepo/upsert.go`, `TestReplaceRefusesAWriteAgainstARowSomebodyElseAdvanced`). `Save` stays version-agnostic by [[D-011]], and `DefaultService.Replace` (`PUT`) still routes through `Save`, so the HTTP half of this is open. |
 | 4 | ~~MySQL `Save` can absorb a collision on a non-primary unique key and update that conflicting row~~ | **closed** | `Save` no longer emits `ON DUPLICATE KEY UPDATE`. A dialect whose upsert is not key-targeted (`crud.UpsertTargetsPrimaryKey` is false) gets `UPDATE … WHERE pk = ?`, a probe, and an `INSERT`, so a secondary-unique collision raises a 409 instead of rewriting the colliding row. `TestSaveNeverReachesARowByAKeyTheCallerDidNotName` and `TestSaveInsertsWhenNoRowCarriesTheKeyOnADialectThatCannotTargetTheKey` (`crud/sqlrepo/upsert_test.go`); the control is `TestADialectThatTargetsThePrimaryKeyKeepsTheSingleStatementUpsert`. |
 | 5 | `SkipTotal` overflows at `math.MaxInt` and emits no limit (`crud/sqlrepo/repository.go:171-177`; `crud/render.go:104-110`) | serious | A finite request can become a whole-table read and exhaust service memory. |
 
 ## Edge DX constraints
 
-`Scope` and same-path `RelationScope` must have one declaration rule: AND-compose
-every repeated narrowing or refuse the duplicate; table scope must not be
-last-wins while relation scope is map-overwrite. The historical illustrative
+`Scope` and same-path `RelationScope` now share one declaration rule — every
+repeated narrowing AND-composes, neither is last-wins — and the rule is what
+keeps a configuration assembled from independent pieces as narrow as its
+narrowest piece. The historical illustrative
 `BatchSize(500)` proposal stays withdrawn: callers do not guess a
 number. The repository derives chunks from the dialect bind budget, preflights
 them and owns the atomic unit. `crud.PortableBatch()` and
@@ -1796,10 +1807,12 @@ pgx COPY remains the default for `InsertBatch`.
 
 Any alternative conflict target or version-aware full Save is a direct [[D-011]]
 challenge: `Save` is a single no-option JPA-shaped upsert, so it cannot be added
-as a local convenience. A tombstone-view/Restore proposal also challenges
-[[D-031]]'s statement-owned soft delete and needs [[D-030]]'s new-verb permission
-and decorator obligations. These decisions must be amended explicitly before a
-DX proposal becomes an API. The current source confirms `Scope` assignment
-(`crud/sqlrepo/blueprint.go:68-85`), same-path overwrite
-(`crud/scope.go:43-52`), and the existing one-statement `SaveAll` assembly
-(`crud/sqlrepo/repository.go:1124-1175`).
+as a local convenience. `Restore` settled the other half of that paragraph: it is
+a verb of its own with an action of its own (`crud/sqlrepo/repository.go:1285`,
+`crud/action.go:10`), which is what [[D-030]]'s new-verb permission and decorator
+obligations require, and it did not make soft delete a decorator, so [[D-031]]
+stands. A tombstone *view* is still a second `Define`, not an option. The current
+source confirms AND-composing `Scope` (`crud/sqlrepo/blueprint.go:48-50`),
+AND-composing same-path relation scopes (`crud/scope.go:14-24`), and the
+conditional upsert that replaced the one-statement keyed `Save` where it was not
+safe (`crud/sqlrepo/upsert.go:10-98`).

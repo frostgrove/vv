@@ -102,8 +102,9 @@ and the generated mappers from phase 8.
   therefore partial: an undeclared head passes through.
 - `port/pathmap.go:PathMap` — the third hop, the adapter's, generated and
   therefore total: an undeclared head declines ([[D-050]]).
-- `port/porthttp/render.go:EnvelopeRenderer.violations` — where the chain is
-  applied, and where the fallback is held back from a path a declared hop owned.
+- `port/porthttp/render.go:EnvelopeRenderer.Render` → `port/violations.go:Violations`
+  — where the chain is applied, and where the fallback is held back from a path a
+  declared hop owned.
 - `internal/codegen/adapter.go` — where the inverse is written, beside the
   mapping it inverts.
 

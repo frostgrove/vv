@@ -281,3 +281,113 @@ func TestASignedInOperationMustSayWhyBeingSignedInIsEnough(t *testing.T) {
 		t.Fatal("an operation that asks only for a signed-in caller was accepted without saying why that is enough")
 	}
 }
+
+func TestARootOperationAnswersAtItsAbsolutePathAndNotUnderThePrefix(t *testing.T) {
+	fiberApp := fiber.New()
+	var ran bool
+	set := appfiber.RootRoutes(fiberApp).
+		GET("/", appfiber.Public("the address itself answers which service is behind it"), answering(&ran)).
+		GET("/live", appfiber.Public("a liveness probe is the orchestrator, and it has no account"), answering(&ran))
+
+	if err := fx.New(
+		fx.Supply(fiberApp),
+		provide(appfiber.AsRoute(routeFrom(t, set))),
+		mounting(),
+	).Err(); err != nil {
+		t.Fatalf("a set of root operations did not start: %v", err)
+	}
+
+	if got := request(t, fiberApp, "/"); got != http.StatusOK {
+		t.Fatalf("the address itself answered %d, and it is what the root set registered", got)
+	}
+	if got := request(t, fiberApp, "/live"); got != http.StatusOK {
+		t.Fatalf("/live answered %d", got)
+	}
+	if got := request(t, fiberApp, prefix+"/live"); got != http.StatusNotFound {
+		t.Fatalf("%s/live answered %d; a root operation answers where it is probed and nowhere else", prefix, got)
+	}
+	if !ran {
+		t.Fatal("no handler behind the root set ever ran")
+	}
+}
+
+func TestARootOperationIsDeclaredByTheAbsolutePathTheGateComparesItAgainst(t *testing.T) {
+	fiberApp := fiber.New()
+	set := appfiber.RootRoutes(fiberApp).
+		GET("/favicon.ico", appfiber.Public("a browser asks for it before anybody has signed in"), handler)
+
+	route, err := set.Route()
+	if err != nil {
+		t.Fatalf("the root set was refused: %v", err)
+	}
+
+	declared := route.Access()
+	if len(declared) != 1 {
+		t.Fatalf("the root set declared %d endpoints, want 1", len(declared))
+	}
+	if !declared[0].Absolute {
+		t.Fatal("a root operation was declared relative to the prefix, so the gate would look for it " +
+			"under /api/v1 and refuse the path it actually answers on")
+	}
+	if declared[0].Path != "/favicon.ico" {
+		t.Fatalf("the declared path is %q, and the mounted one is /favicon.ico", declared[0].Path)
+	}
+}
+
+func TestTheAddressItselfIsAPathOnlyARootSetCanRegister(t *testing.T) {
+	_, err := appfiber.Routes("").GET("/", appfiber.Public("a probe of the registrar"), handler).Route()
+	if err == nil {
+		t.Fatal("a prefixed set accepted /, and the path it would have mounted ends in a slash")
+	}
+
+	fiberApp := fiber.New()
+	if _, err := appfiber.RootRoutes(fiberApp).
+		GET("/", appfiber.Public("a probe of the registrar"), handler).Route(); err != nil {
+		t.Fatalf("the root set refused the address itself, which is the one path it exists for: %v", err)
+	}
+}
+
+func TestARootPathMountedPastTheRootSetStillBreaksStartUp(t *testing.T) {
+	fiberApp := fiber.New()
+	set := appfiber.RootRoutes(fiberApp).
+		GET("/live", appfiber.Public("a liveness probe has no account"), handler)
+	fiberApp.Get("/metrics", handler)
+
+	err := fx.New(
+		fx.Supply(fiberApp),
+		provide(appfiber.AsRoute(routeFrom(t, set))),
+		mounting(),
+	).Err()
+
+	if err == nil {
+		t.Fatal("a fifth path answering outside the prefix started the application without declaring anything")
+	}
+	if !strings.Contains(err.Error(), "/metrics") {
+		t.Fatalf("the refusal does not name the path nobody declared: %v", err)
+	}
+}
+
+func TestARootSetWithoutTheApplicationItAnswersOnIsRefused(t *testing.T) {
+	if _, err := appfiber.NewRootRouteSet(appfiber.RootRouteSetSpec{}); err == nil {
+		t.Fatal("a root set was built without the *fiber.App it has to mount on, and it would have mounted nothing")
+	}
+	if _, err := appfiber.NewRootRouteSet(appfiber.RootRouteSetSpec{App: fiber.New()}); err != nil {
+		t.Fatalf("the constructor refused a root set that has everything it needs: %v", err)
+	}
+
+	defer func() {
+		if recovered := recover(); recovered == nil {
+			t.Fatal("MustRootRouteSet accepted what NewRootRouteSet refuses")
+		}
+	}()
+	appfiber.MustRootRouteSet(appfiber.RootRouteSetSpec{})
+}
+
+func TestARootSetRefusesAPathThatIsNotAnAddress(t *testing.T) {
+	_, err := appfiber.RootRoutes(fiber.New()).
+		GET("", appfiber.Public("a probe of the registrar"), handler).Route()
+
+	if err == nil {
+		t.Fatal("a root operation was registered with no path at all")
+	}
+}

@@ -159,8 +159,8 @@ never resolves one ([[D-074]]).
 
 | | |
 |---|---|
-| `Settings` | endpoint, credentials, region, TLS, bucket, prefix, link TTL, `SkipEnsureBucket` |
-| `Module(settings)` | provides `*minio.Client`, `*storageminio.Backend` and `storage.Backend`, and makes the bucket exist at start-up |
+| `Settings` | endpoint, credentials, region, `Transport`, bucket, prefix, link TTL, `Bucketing` |
+| `Module(settings)` | provides `*minio.Client`, `*storageminio.Backend` and `storage.Backend`, and makes the bucket exist at start-up when asked to |
 | `NewClient(settings)` / `NewBackend(settings, client)` | the same two constructors, without fx |
 
 It provides a `storage.Backend` and not a `Store`: a Store is scoped to one
@@ -168,10 +168,19 @@ namespace, and a namespace belongs to whichever bounded context owns those
 objects. Credentials, the bucket and the connection are infrastructure; what is
 kept in them is not.
 
-The bucket is created if it is missing, unless `SkipEnsureBucket` is set. The
-alternative — carry on and find out on the first upload — turns a deployment that
-is not finished into a failed write an hour later with a worse error, and the
-check also proves the endpoint and the credentials.
+**Both settings that could be wrong in the dangerous direction are named modes
+whose zero value is the production answer.** `Transport` is TLS unless it says
+`TransportPlaintext`; the `UseSSL bool` it replaced sent credentials over plain
+HTTP for any `Settings` whose author forgot the field. `Bucketing` creates
+nothing unless it says `BucketOnDemand`; the `SkipEnsureBucket bool` it replaced
+made writing to somebody's object store the default and the refusal the opt-out.
+A value neither constant names is refused by `NewClient` rather than resolved to
+one of the two, so a typo cannot choose.
+
+Creating the bucket is still worth asking for. The alternative — carry on and
+find out on the first upload — turns a deployment that is not finished into a
+failed write an hour later with a worse error, and the check also proves the
+endpoint and the credentials.
 
 ## See also
 

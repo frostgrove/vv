@@ -2,6 +2,7 @@ package codegen
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -56,15 +57,33 @@ func RunResource(o *ResourceOptions) error {
 		if err != nil {
 			return err
 		}
+		var waiting, stale []string
 		for _, dir := range dirs {
 			one := *o
 			one.Dir, one.Out, one.Manifest, one.Recursive = dir, outName, manifestName, false
-			if err := RunResource(&one); err != nil {
-				if strings.Contains(err.Error(), "no models found in ") {
-					continue
+			err := RunResource(&one)
+			var confirmation *ConfirmationError
+			var drift *DriftError
+			switch {
+			case err == nil:
+			case errors.As(err, &confirmation):
+				for _, body := range confirmation.Bodies {
+					waiting = append(waiting, filepath.Base(dir)+"."+body)
 				}
+			case errors.As(err, &drift):
+				stale = append(stale, drift.Paths...)
+			case strings.Contains(err.Error(), "no models found in "):
+			default:
 				return err
 			}
+		}
+		if len(waiting) != 0 {
+			sort.Strings(waiting)
+			return &ConfirmationError{Manifest: manifestName, Bodies: waiting}
+		}
+		if len(stale) != 0 {
+			sort.Strings(stale)
+			return &DriftError{Paths: stale}
 		}
 		return nil
 	}

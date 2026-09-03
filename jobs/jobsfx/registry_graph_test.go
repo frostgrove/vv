@@ -9,6 +9,7 @@ import (
 	"github.com/frostgrove/vv/jobs"
 	"github.com/frostgrove/vv/jobs/jobsfx"
 	"github.com/frostgrove/vv/jobs/jobsmemory"
+	"github.com/frostgrove/vv/runtime/runtimefx"
 )
 
 type registryCatalogHandler struct{ catalog jobs.Catalog }
@@ -37,8 +38,10 @@ func TestRegistryCatalogDoesNotDependOnHandlerConstruction(t *testing.T) {
 		),
 		jobsfx.Module(jobsfx.Spec{
 			Namespace: namespace,
+			Consuming: jobsfx.Enabled,
 			Workers:   jobs.WorkersSpec{Build: build, Identity: testIdentityRestorer()},
 		}),
+		runtimefx.Auto(),
 	)
 	if err := app.Err(); err != nil {
 		t.Fatal(err)

@@ -1,6 +1,6 @@
 # D-073 — A mounted route declares its access, or start-up fails
 
-**Status:** accepted, narrowed by [[D-100]] and [[D-107]]
+**Status:** accepted, narrowed by [[D-100]], [[D-107]] and [[D-109]]
 **Invariant:** every mounted route names either the permissions it requires or the
 reason it is open, and the router is compared against those declarations at
 assembly. A route nobody declared is a start-up failure; so is a declaration whose
@@ -87,8 +87,11 @@ added. What no machine could check, while the requirement lived inside an
 authorizer closure, is which permission guards which route — and that is what
 `Guarded` asked a consumer to write. [[D-107]] moved the requirement into data,
 so a CRUD resource now derives its permissions from the gate that enforces them
-and `GuardedBy` writes them for it. The sentence still stands for every route
-that is not a CRUD resource.
+and `GuardedBy` writes them for it. For a route that is not a CRUD resource,
+[[D-109]] answers the same question the other way: the guard inside the use case
+is read, the declaration beside it is paired with it, and `vv generate routes`
+writes the one operation both then name. The sentence stands only until a
+package has been through that generator.
 
 ## What this proves, and what it does not
 

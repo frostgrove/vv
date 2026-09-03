@@ -277,7 +277,9 @@ builds, including the one behind `Runtime.SetPassword`.
 | `auth/http/authhttp/cookie.go` | the guard's other end of a cookie-borne access token |
 | `auth/access/accessjwt/rotation.go` | `Classify`, the pure half of rotation |
 | `auth/access/accessjwt/accessjwt.go` | issuing, the audience, the answer-then-swap order, the re-read after a lost swap, the replay response |
-| `auth/access/accessjwt/revokeredis/` | the deny-list |
+| `auth/access/accessjwt/revokeredis/revokeredis.go` | the deny-list: one key per revoked session, `Revoked`, `Revoke`, `Ping` |
+| `auth/access/accessjwt/revokeredis/eviction.go` | what the list asks its own server before it is trusted, and the three answers ([[D-112]]) |
+| `auth/access/accessjwt/revokeredis/revokeredisfx/revokeredisfx.go` | that question as a start hook, and the list built from the graph's client |
 
 ## Tests that walk this flow
 
@@ -327,3 +329,15 @@ builds, including the one behind `Runtime.SetPassword`.
   logged.
 - `auth/http/authhttp/cookie_test.go` — the guard reads the cookie, still reads
   the Authorization header, and refuses a request that presents both.
+- `auth/access/accessjwt/revokeredis/eviction_test.go` — the deny-list's own
+  server is asked what it evicts before it is trusted: an evicted key reads as a
+  session nobody revoked (the control the rest of the file rests on), every
+  evicting policy is refused with `noeviction` as the positive control, a server
+  that will not answer is `Unknown` and warned about rather than passed, a
+  deployment can turn that into a refusal, an absent server is refused outright,
+  and nothing is asked of the server until the check is run.
+- `auth/access/accessjwt/revokeredis/revokeredisfx/revokeredisfx_test.go` — the
+  same check as a start hook: the graph builds without touching Redis, the start
+  is what fails on an evicting server, a retaining one starts and publishes a
+  list that revokes and reads back, and the low-level form checks a list the root
+  built itself.

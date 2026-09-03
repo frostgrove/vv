@@ -4,10 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"go.uber.org/fx"
 
 	"github.com/frostgrove/vv/jobs"
+	"github.com/frostgrove/vv/runtime"
+	"github.com/frostgrove/vv/runtime/runtimefx"
 )
 
 const (
@@ -41,19 +44,50 @@ func AsBackend(constructor any) any {
 	return fx.Annotate(constructor, fx.As(new(Backend)), fx.As(fx.Self()))
 }
 
+// Activation is the deployment role said out loud. A container that happens to
+// hold a consumer is not a worker replica, and a container that happens to hold
+// a schedule is not the process that owns the clock.
+type Activation string
+
+const (
+	Enabled  Activation = "enabled"
+	Disabled Activation = "disabled"
+)
+
+func (this Activation) check(field string) error {
+	switch this {
+	case "", Enabled, Disabled:
+		return nil
+	}
+	return fmt.Errorf("jobsfx: %w: Spec.%s is %q, which is neither jobsfx.Enabled nor jobsfx.Disabled",
+		jobs.ErrInvalid, field, string(this))
+}
+
 type Spec struct {
 	Namespace jobs.Namespace
 	Catalog   jobs.Catalog
 	Queue     jobs.QueueSpec
 	Workers   jobs.WorkersSpec
 	Scheduler jobs.SchedulerSpec
+
+	Consuming Activation
+
+	Scheduling Activation
 }
 
+// Module wires the queue every deployment needs, and the roles the spec names.
+// A role the spec leaves unstated is not wired: nothing here starts a goroutine
+// of its own, and what Consuming and Scheduling activate is a contribution to
+// the runner group a supervisor owns ([[D-092]]).
 func Module(spec Spec) fx.Option {
 	if spec.Namespace.IsZero() {
 		return fx.Error(fmt.Errorf("jobsfx: %w: namespace is required", jobs.ErrInvalid))
 	}
-	return fx.Module("vv.jobs",
+	if err := errors.Join(spec.Consuming.check("Consuming"), spec.Scheduling.check("Scheduling")); err != nil {
+		return fx.Error(err)
+	}
+
+	options := []fx.Option{
 		fx.Provide(
 			func(registered declarationContributions) (jobs.Catalog, error) {
 				return resolveCatalog(spec.Catalog, registered)
@@ -65,32 +99,93 @@ func Module(spec Spec) fx.Option {
 				configured.Sender = backend
 				return jobs.NewQueue(configured)
 			},
-			func(catalog jobs.Catalog, backend Backend, registered consumerContributions) (*jobs.Workers, error) {
-				consumers := resolveConsumers(catalog, registered.Consumers)
-				if len(consumers) == 0 {
-					return nil, nil
-				}
-				configured := spec.Workers
-				configured.Namespace = spec.Namespace
-				configured.Catalog = catalog
-				configured.Driver = backend
-				return jobs.NewWorkers(configured, consumers...)
+			func(catalog jobs.Catalog, backend Backend, queue *jobs.Queue, consumers consumerContributions, schedules scheduleContributions) (deployment, error) {
+				return spec.deployment(catalog, backend, queue, consumers, schedules)
 			},
-			func(queue *jobs.Queue, registered scheduleContributions) (scheduledRuntime, error) {
-				if len(registered.Schedules) == 0 {
-					return scheduledRuntime{}, nil
-				}
-				configured := spec.Scheduler
-				configured.Queue = queue
-				scheduler, err := jobs.NewScheduler(configured, registered.Schedules...)
-				if err != nil {
-					return scheduledRuntime{}, err
-				}
-				return scheduledRuntime{scheduler: scheduler}, nil
+			func(built deployment) *jobs.Workers { return built.workers },
+			func(built deployment) *jobs.Scheduler { return built.scheduler },
+			func(backend Backend, queue *jobs.Queue, built deployment) *queueLifecycle {
+				return newQueueLifecycle(backend, queue, built.supervised())
 			},
 		),
-		fx.Invoke(bindLifecycle),
-	)
+	}
+	if spec.Consuming == Enabled {
+		options = append(options, fx.Provide(runtimefx.AsRunner(supervisedWorkers)))
+	}
+	if spec.Scheduling == Enabled {
+		options = append(options, fx.Provide(runtimefx.AsRunner(supervisedScheduler)))
+	}
+	if spec.Consuming == Enabled || spec.Scheduling == Enabled {
+		options = append(options, fx.Invoke(bindSupervisedQueue))
+	} else {
+		options = append(options, fx.Invoke(bindQueue))
+	}
+	return fx.Module("vv.jobs", options...)
+}
+
+// deployment is the role decision made once: what the spec named, checked
+// against what the container actually holds, so that a graph carrying a
+// consumer nobody activated is refused rather than quietly producing only.
+type deployment struct {
+	workers   *jobs.Workers
+	scheduler *jobs.Scheduler
+}
+
+func (this deployment) supervised() []string {
+	var names []string
+	if this.workers != nil {
+		names = append(names, WorkersRunnerName)
+	}
+	if this.scheduler != nil {
+		names = append(names, SchedulerRunnerName)
+	}
+	return names
+}
+
+func (this Spec) deployment(catalog jobs.Catalog, backend Backend, queue *jobs.Queue, consumers consumerContributions, schedules scheduleContributions) (deployment, error) {
+	workers, workersErr := this.workers(catalog, backend, consumers)
+	scheduler, schedulerErr := this.scheduler(queue, schedules)
+	if err := errors.Join(workersErr, schedulerErr); err != nil {
+		return deployment{}, err
+	}
+	return deployment{workers: workers, scheduler: scheduler}, nil
+}
+
+func (this Spec) workers(catalog jobs.Catalog, backend Backend, registered consumerContributions) (*jobs.Workers, error) {
+	consumers := resolveConsumers(catalog, registered.Consumers)
+	if this.Consuming != Enabled {
+		if this.Consuming == Disabled || len(consumers) == 0 {
+			return nil, nil
+		}
+		return nil, fmt.Errorf(
+			"jobsfx: %w: %d job consumers are wired and Spec.Consuming names neither jobsfx.Enabled nor jobsfx.Disabled; a deployment role is declared, not read off the graph",
+			jobs.ErrInvalid, len(consumers))
+	}
+	if len(consumers) == 0 {
+		return nil, fmt.Errorf("jobsfx: %w: Spec.Consuming is jobsfx.Enabled and no job consumer was contributed", jobs.ErrInvalid)
+	}
+	configured := this.Workers
+	configured.Namespace = this.Namespace
+	configured.Catalog = catalog
+	configured.Driver = backend
+	return jobs.NewWorkers(configured, consumers...)
+}
+
+func (this Spec) scheduler(queue *jobs.Queue, registered scheduleContributions) (*jobs.Scheduler, error) {
+	if this.Scheduling != Enabled {
+		if this.Scheduling == Disabled || len(registered.Schedules) == 0 {
+			return nil, nil
+		}
+		return nil, fmt.Errorf(
+			"jobsfx: %w: %d schedules are wired and Spec.Scheduling names neither jobsfx.Enabled nor jobsfx.Disabled; a deployment role is declared, not read off the graph",
+			jobs.ErrInvalid, len(registered.Schedules))
+	}
+	if len(registered.Schedules) == 0 {
+		return nil, fmt.Errorf("jobsfx: %w: Spec.Scheduling is jobsfx.Enabled and no schedule was contributed", jobs.ErrInvalid)
+	}
+	configured := this.Scheduler
+	configured.Queue = queue
+	return jobs.NewScheduler(configured, registered.Schedules...)
 }
 
 type declarationContributions struct {
@@ -171,52 +266,73 @@ func resolveConsumers(catalog jobs.Catalog, explicit []jobs.Consumer) []jobs.Con
 	return consumers
 }
 
-type scheduledRuntime struct {
-	scheduler *jobs.Scheduler
+type queueLifecycle struct {
+	backend    Backend
+	queue      *jobs.Queue
+	supervised []string
+	supervisor *runtime.Supervisor
+	activation *jobs.QueueActivation
+	activated  chan struct{}
 }
 
-type schedulerRunResult struct {
-	err       error
-	cancelled bool
+func newQueueLifecycle(backend Backend, queue *jobs.Queue, supervised []string) *queueLifecycle {
+	return &queueLifecycle{
+		backend:    backend,
+		queue:      queue,
+		supervised: supervised,
+		activated:  make(chan struct{}),
+	}
 }
 
-type lifecycleRuntime struct {
-	backend         Backend
-	queue           *jobs.Queue
-	workers         *jobs.Workers
-	scheduler       *jobs.Scheduler
-	shutdowner      fx.Shutdowner
-	activation      *jobs.QueueActivation
-	schedulerCancel context.CancelFunc
-	schedulerDone   chan schedulerRunResult
+func bindQueue(lifecycle fx.Lifecycle, queue *queueLifecycle) {
+	lifecycle.Append(fx.Hook{OnStart: queue.start, OnStop: queue.stop})
 }
 
-func bindLifecycle(lifecycle fx.Lifecycle, shutdowner fx.Shutdowner, backend Backend, queue *jobs.Queue, workers *jobs.Workers, scheduled scheduledRuntime) {
-	runtime := &lifecycleRuntime{backend: backend, queue: queue, workers: workers, scheduler: scheduled.scheduler, shutdowner: shutdowner}
-	lifecycle.Append(fx.Hook{OnStart: runtime.start, OnStop: runtime.stop})
+func bindSupervisedQueue(lifecycle fx.Lifecycle, queue *queueLifecycle, supervisor *runtime.Supervisor) {
+	queue.supervisor = supervisor
+	bindQueue(lifecycle, queue)
 }
 
-func (runtime *lifecycleRuntime) start(ctx context.Context) error {
-	if preparer, ok := runtime.backend.(backendPreparer); ok {
+func (this *queueLifecycle) start(ctx context.Context) error {
+	if err := this.verifySupervision(); err != nil {
+		return err
+	}
+	if preparer, ok := this.backend.(backendPreparer); ok {
 		if err := prepareBackend(ctx, preparer); err != nil {
 			return fmt.Errorf("jobsfx: prepare backend: %w", err)
 		}
 	}
-	activation, err := runtime.queue.Activate()
+	activation, err := this.queue.Activate()
 	if err != nil {
 		return fmt.Errorf("jobsfx: activate queue: %w", err)
 	}
-	runtime.activation = activation
-	if runtime.workers != nil {
-		go runtime.runWorkers(context.WithoutCancel(ctx))
-	}
-	if runtime.scheduler != nil {
-		schedulerContext, cancel := context.WithCancel(context.WithoutCancel(ctx))
-		runtime.schedulerCancel = cancel
-		runtime.schedulerDone = make(chan schedulerRunResult, 1)
-		go runtime.runScheduler(schedulerContext)
-	}
+	this.activation = activation
+	close(this.activated)
 	return nil
+}
+
+func (this *queueLifecycle) verifySupervision() error {
+	if len(this.supervised) == 0 {
+		return nil
+	}
+	held := make(map[string]struct{})
+	if this.supervisor != nil {
+		for _, state := range this.supervisor.States() {
+			held[state.Name] = struct{}{}
+		}
+	}
+	var missing []string
+	for _, name := range this.supervised {
+		if _, ok := held[name]; !ok {
+			missing = append(missing, name)
+		}
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	return fmt.Errorf(
+		"jobsfx: %w: %s never reached a supervisor; the graph provides a *runtime.Supervisor that was not built from the runner group",
+		jobs.ErrInvalid, strings.Join(missing, " and "))
 }
 
 func prepareBackend(ctx context.Context, preparer backendPreparer) (err error) {
@@ -228,49 +344,19 @@ func prepareBackend(ctx context.Context, preparer backendPreparer) (err error) {
 	return preparer.Prepare(ctx)
 }
 
-func (runtime *lifecycleRuntime) runWorkers(ctx context.Context) {
-	if err := runtime.workers.Run(ctx); err != nil {
-		_ = runtime.shutdowner.Shutdown(fx.ExitCode(1))
+// stop asks the supervisor to stop before it closes the activation, because the
+// activation is what jobs.Go resolves to: closing it under a worker that is
+// still draining turns that worker's follow-up step into ErrNotActivated. fx
+// runs stop hooks in reverse order of registration, so the supervisor has
+// usually stopped already and this call is a no-op; asking makes the order hold
+// either way.
+func (this *queueLifecycle) stop(ctx context.Context) error {
+	var problems []error
+	if this.supervisor != nil {
+		problems = append(problems, this.supervisor.Stop(ctx))
 	}
-}
-
-func (runtime *lifecycleRuntime) runScheduler(ctx context.Context) {
-	err := runtime.scheduler.Run(ctx)
-	result := schedulerRunResult{err: err, cancelled: ctx.Err() != nil}
-	runtime.schedulerDone <- result
-	close(runtime.schedulerDone)
-	if err != nil && !result.cancelled {
-		_ = runtime.shutdowner.Shutdown(fx.ExitCode(1))
+	if this.activation != nil {
+		problems = append(problems, this.activation.Close())
 	}
-}
-
-func (runtime *lifecycleRuntime) stop(ctx context.Context) error {
-	if runtime.schedulerCancel != nil {
-		runtime.schedulerCancel()
-	}
-	var drainErr error
-	if runtime.workers != nil {
-		drainErr = runtime.workers.Drain(ctx)
-	}
-	schedulerErr := runtime.waitScheduler(ctx)
-	var activationErr error
-	if runtime.activation != nil {
-		activationErr = runtime.activation.Close()
-	}
-	return errors.Join(drainErr, schedulerErr, activationErr)
-}
-
-func (runtime *lifecycleRuntime) waitScheduler(ctx context.Context) error {
-	if runtime.schedulerDone == nil {
-		return nil
-	}
-	select {
-	case result := <-runtime.schedulerDone:
-		if result.cancelled && errors.Is(result.err, context.Canceled) {
-			return nil
-		}
-		return result.err
-	case <-ctx.Done():
-		return ctx.Err()
-	}
+	return errors.Join(problems...)
 }

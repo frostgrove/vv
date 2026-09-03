@@ -215,7 +215,10 @@ The current module graph contains four shapes that M0 must classify and migrate:
 `app/appfx`, `crudsqlfx` and the now-landed `jobsfx` adapt dependency-neutral
 root seams to one container and do not import another concrete optional
 adapter. `jobsfx` must not grow imports of `jobspg`, `jobsmemory` or a Redis
-adapter. The now-committed `jobsredis` module is the genuine backend-owner
+adapter. Its one added edge is `runtime/runtimefx`, which is the same container
+binding over another dependency-neutral root seam — the runner group — and not a
+second backend: what `jobsfx` contributes there is `runtime.Runner`, and the
+supervisor that starts it is the application's choice ([[D-108]], [[D-096]]). The now-committed `jobsredis` module is the genuine backend-owner
 shape—root jobs contract plus one Redis ecosystem—and must not import cache,
 tenancy, OTel, Fx or another jobs backend. `accessfiber` and `accessgin` are
 allowed owner edges from the access HTTP contract to one router ecosystem.

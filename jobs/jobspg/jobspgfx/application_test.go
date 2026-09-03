@@ -18,6 +18,7 @@ import (
 	"github.com/frostgrove/vv/jobs/jobsfx"
 	"github.com/frostgrove/vv/jobs/jobspg"
 	"github.com/frostgrove/vv/jobs/jobspg/jobspgfx"
+	"github.com/frostgrove/vv/runtime/runtimefx"
 )
 
 func TestApplicationBuildsThePostgresRuntimeFromNamesAndDefaults(t *testing.T) {
@@ -39,7 +40,9 @@ func TestApplicationBuildsThePostgresRuntimeFromNamesAndDefaults(t *testing.T) {
 		jobspgfx.Application(jobspgfx.ApplicationSettings{
 			Application: "lease",
 			Environment: "test",
+			Consuming:   jobsfx.Enabled,
 		}),
+		runtimefx.Auto(),
 		fx.Populate(&queue, &workers, &driver),
 	)
 	if err := app.Err(); err != nil {
@@ -102,11 +105,13 @@ func TestApplicationPreservesExplicitWorkerIdentityAndBuild(t *testing.T) {
 		jobspgfx.Application(jobspgfx.ApplicationSettings{
 			Application: "lease",
 			Environment: "test",
+			Consuming:   jobsfx.Enabled,
 			Workers: jobs.WorkersSpec{
 				Build:    build,
 				Identity: restorer,
 			},
 		}),
+		runtimefx.Auto(),
 		fx.Populate(&workers),
 	)
 	if err := app.Err(); err != nil {

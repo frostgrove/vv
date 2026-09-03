@@ -57,6 +57,13 @@ func Supervising(spec Spec) fx.Option {
 
 func Auto() fx.Option { return Supervising(Spec{}) }
 
+// ShuttingDownOnFailure is the failure half of Supervising on its own, for a
+// component that owns a runtime.Loop: a replica that kept its port open while
+// one of its loops is dead serves half of what it says it serves.
+func ShuttingDownOnFailure(shutdowner fx.Shutdowner, log *slog.Logger) runtime.Observer {
+	return &stopper{shutdowner: shutdowner, log: log}
+}
+
 func watching(spec Spec, registered Registered, shutdowner fx.Shutdowner) runtime.Observer {
 	var watchers observers
 	if registered.Observer != nil {

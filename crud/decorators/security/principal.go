@@ -2,14 +2,19 @@ package security
 
 import (
 	"context"
-	"slices"
 
 	"github.com/frostgrove/vv/auth"
 	"github.com/frostgrove/vv/crud"
 )
 
 func Requiring[M any, ID comparable](requires map[Action][]auth.Permission) Policy[M, ID] {
-	return Policy[M, ID]{Requires: copyRequirements(requires)}
+	declared := copyRequirements(requires)
+	return Policy[M, ID]{
+		Requires: declared,
+		Authorize: func(ctx context.Context, action Action) error {
+			return requireDeclared(ctx, declared, action)
+		},
+	}
 }
 
 func RequirePermission[M any, ID comparable](permissions ...auth.Permission) Policy[M, ID] {
@@ -77,16 +82,6 @@ func copyRequirements(requires map[Action][]auth.Permission) map[Action][]auth.P
 	out := make(map[Action][]auth.Permission, len(requires))
 	for action, permissions := range requires {
 		out[action] = append([]auth.Permission{}, permissions...)
-	}
-	return out
-}
-
-func unionPermissions(first, second []auth.Permission) []auth.Permission {
-	out := append([]auth.Permission{}, first...)
-	for _, permission := range second {
-		if !slices.Contains(out, permission) {
-			out = append(out, permission)
-		}
 	}
 	return out
 }

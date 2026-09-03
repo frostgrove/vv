@@ -22,7 +22,11 @@ without a name and a signature.
    `artifactName` refuses an `-out` or `-manifest` carrying a directory, and
    `containedOutputPath` refuses one that escapes `-dir`. Recursive mode walks
    `modelDirs` and runs once per package, skipping a directory with no models
-   rather than failing the walk. `-into` and `-import` are refused with
+   rather than failing the walk. A stale artefact and a body waiting for
+   confirmation do not stop it either: stale paths and `<directory>.<Model>
+   <body>` names are collected across every package and reported once — a walk
+   that stopped at the first would need one run per package to say what is
+   wrong. `-into` and `-import` are refused with
    `-recursive`, because a walk has one destination per package and `-into` is
    one destination. The generator is built with `wireOnly` set and `depth: 1` —
    no metamodel is rendered here.
@@ -163,11 +167,11 @@ without a name and a signature.
 | the manifest names a model twice | `readResourceManifest` | the path and the model |
 | a field listed twice in one body | `mergeManifestBody` | `<Name> is listed twice` |
 | a field the body cannot publish at all | `mergeManifestBody` | `<Name> cannot be published here: …` |
-| a body publishing past the narrowing, unconfirmed | `unconfirmedBodies` | `ConfirmationError` naming the manifest and each `<Model> <body>` |
+| a body publishing past the narrowing, unconfirmed | `unconfirmedBodies` | `ConfirmationError` naming the manifest and each `<Model> <body>`; under `-recursive` every package's, prefixed by directory |
 | the model gained a column, nothing regenerated | `wire.MustCover*` at package init | panic naming the column |
 | a public body carrying a field the model does not | `wire.MustCover*` at package init | panic naming the field |
 | an exclusion for a column the model no longer has | `compare`'s `stale` arm | panic naming the exclusion |
-| an artefact behind its model under `-check` | `checkArtifacts` | `DriftError` naming both paths, nothing written |
+| an artefact behind its model under `-check` | `checkArtifacts` | `DriftError` naming both paths, nothing written; under `-recursive` every stale package's paths in one error |
 | no models in the directory | `runWire` | `no models found in <dir>` (skipped, not fatal, under `-recursive`) |
 
 ## Files
@@ -219,6 +223,10 @@ without a name and a signature.
   `TestAPackageWithNoGeneratedFileAtAllFailsTheCheckWithoutCreatingOne`,
   `TestTheRecursiveCheckNamesEveryPackageBehindItsModelsAndNotOnlyTheFirst` —
   `internal/codegen/check_test.go` — `-check` on the model generator.
+- `TestTheRecursiveWireCheckNamesEveryStalePackageAndNotOnlyTheFirst` and
+  `TestTheRecursiveWireRunNamesEveryBodyWaitingForConfirmationAndSaysWhichPackageItIsIn`
+  — `internal/codegen/check_test.go` — the walk over two packages, with the
+  just-generated tree passing the check as the control.
 
 ## See also
 

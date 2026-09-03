@@ -165,16 +165,24 @@ fx.Options(
 | `Route` | what a bounded context contributes: `Mount(fiber.Router)` and `Access() []authhttp.Endpoint` |
 | `Policy` | what reaching one operation takes: `Requires(perms…)`, `Authenticated(why)`, `Public(why)` |
 | `RouteSetSpec` | `Prefix`, `Render` |
-| `NewRouteSet(spec)` | the registrar, refusing a bad prefix at the call |
+| `NewRouteSet(spec)` / `MustRouteSet(spec)` | the registrar, refusing a bad prefix at the call |
 | `Routes(prefix, opts…)` | the same registrar, carrying a bad prefix to the build |
+| `RootRouteSetSpec` | `App`, `Render` |
+| `NewRootRouteSet(spec)` / `MustRootRouteSet(spec)` / `RootRoutes(app, opts…)` | the registrar for what answers outside every prefix, declared `AtRoot` |
 | `RouteSet.GET/POST/PUT/PATCH/DELETE(path, policy, handler)` | one call: mount, declaration and outer check |
 | `RouteSet.Handle(method, path, policy, handler)` | the same for a method the verbs do not name |
 | `RouteSet.Route()` / `MustRoute()` | the `Route`, or every problem at once |
 | `ErrRouteSet` | what every registrar refusal wraps |
+| `Combine(routes…)` / `MustCombine(routes…)` | several shapes contributed as one route |
+| `ErrCombine` | what a combination's refusal wraps |
+| `UncheckedRule` | what to do about a declaration nothing in front of the handler checks |
+| `NamingUnchecked` / `RefusingUnchecked` / `ExcusingUnchecked(reason, contributors…)` | log it, refuse to start, or exempt the contributors named |
+| `Unchecked` / `ErrUnchecked` | the report, and what the refusal wraps |
 | `Middleware` | `app.Ordered[fiber.Handler]` |
 | `OrderAuth` | where a guard goes: before everything that assumes a caller |
 | `AsRoute` / `AsMiddleware` / `AsResolver` | the three annotations a module uses |
 | `Mounted` / `Resolvers` | the two groups, as `fx.In` parameter objects |
+| `Mounted.Contributions()` | every route the graph mounts — contributed ones and the ones a `RouteSet` projected — the same list `Mount` reads |
 | `Guarding(name, guard, opts…)` | an `auth.Guard`, as an ordered middleware at `OrderAuth` |
 | `Spec` | `Prefix`, `Addr`, `Listen` |
 | `Serving(spec)` | mount, verify, listen |
@@ -194,7 +202,34 @@ fx.Options(
 ```
 
 `Addr` empty does not listen, which is what a test that only wants the routes
-mounted asks for.
+mounted asks for. `Mounting` is the option that says so out loud, and it refuses
+an `Addr` it would never use; `Listening` refuses an empty one.
+
+### The start waits for the port
+
+`Listen` does not return until the listener holds the address or the attempt to
+take it failed. A bind opened in a goroutine makes "the application started" mean
+"a goroutine was scheduled": the address another replica already holds, the
+privileged port, the typo in the configuration all arrive after fx has told every
+other hook that start-up succeeded, and the process then answers its readiness
+probe while nothing is listening. TLS, the Unix socket and the listener network
+stay Fiber's own code path rather than a copy of it, and whatever the caller put
+in `ListenConfig.ListenerAddrFunc` still runs — the address it carries is what
+gets logged, because a listener asked for port 0 knows its port and the
+configuration does not.
+
+What the start waits for is Fiber's `OnListen` hook, and the distinction is not
+cosmetic. Fiber fires `ListenerAddrFunc` from `createListener` and only then runs
+`startupProcess`, which appends the automatic HEAD route of every GET — a write
+to the route table. A start that returned on the address would hand control back
+while that write was still in flight, and every reader of the mounted surface
+after it, `authfiber.Verify` included, would race the framework's own goroutine.
+`OnListen` runs after `startupProcess` and before `Serve`: the first moment both
+the port is held and nobody is writing.
+
+`Listen.EnablePrefork` is refused: prefork re-executes the process, so each child
+rebuilds the graph this one already built and the parent binds nothing at all.
+Run replicas instead.
 
 ### One call, not two lists
 
@@ -234,6 +269,69 @@ refusing at the call, for a wiring site that would rather fail there.
 `Mount` and `Access` by hand, and the gate below treats it identically — a route
 mounted past the registrar is still a start-up failure, because the gate reads
 Fiber's table rather than the set's records.
+
+`RootRoutes(app)` is the registrar for the paths a caller reaches before it knows
+there is an API — `/`, `/favicon.ico`, `/live`, `/ready`. It mounts on the
+`*fiber.App` instead of on the router it is handed, declares every operation with
+`authhttp.AtRoot` so the gate compares it by its absolute path, and accepts `/`,
+which a prefixed set refuses. Without the `*fiber.App` it is refused at
+`NewRootRouteSet`, because a root set that mounts nothing would still declare
+everything.
+
+### Mounting what the registrar cannot express
+
+A contributor rarely needs the hand-written form for *everything* it serves. A
+CRUD resource mounts through its own `Register` and declares itself from the
+gate's permissions ([[D-107]]); the operations around it are ordinary routes.
+`Combine` lets one contribution carry both, so the hand-written half stays the
+size of the problem:
+
+```go
+func NewHandler(contracts crud.Repository[…], useCase *Analyse) (appfiber.Route, error) {
+    handler := &Handler{…}
+    operations, err := appfiber.Routes("/contracts").
+        POST("/:id/analyses", appfiber.Requires(PermAnalyse), handler.analyse).
+        Route()
+    if err != nil {
+        return nil, err
+    }
+    return appfiber.Combine(resourceRoute(contracts), operations)
+}
+```
+
+Parts are mounted in the order given and their declarations concatenated. Two
+parts declaring the same method and path are refused at `Combine`: the second
+registration answers nothing, and the gate compares a set of endpoints against
+the table, so it would not notice. Combining nothing, or a nil part, is refused
+there too.
+
+### A declaration nothing checks
+
+`Requires(perm)` written by hand is a claim the framework cannot verify — the
+permission may be enforced inside the use case, or by the repository's gate, or
+by nothing at all. What `appfiber` can see is that *it* mounted no check, and it
+says so. `Mount` collects every such declaration and hands it to the contributed
+`UncheckedRule`:
+
+| Rule | What it does |
+|---|---|
+| `NamingUnchecked` | the default: logs each one, with the contributor, method and path |
+| `RefusingUnchecked` | fails the start instead |
+| `ExcusingUnchecked(reason, contributors…)` | refuses all but the contributors named — and refuses those too when the reason is blank |
+
+Provide one and it replaces the default:
+
+```go
+fx.Provide(func() appfiber.UncheckedRule {
+    return appfiber.ExcusingUnchecked(
+        "the repository's gate enforces these until the resource moves to the registrar",
+        "workspace/api.resource")
+})
+```
+
+Because a combination reports against its *parts*, an excuse names the part that
+needs it rather than the whole handler, and an operation added to the registrar
+half later cannot inherit an exemption written for something else.
 
 ### The health routes
 

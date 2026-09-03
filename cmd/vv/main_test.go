@@ -68,3 +68,66 @@ func TestTheModelGeneratorTakesTheSameReadOnlyCheckAsCache(t *testing.T) {
 		t.Fatalf("the file it had just written was called stale: %v", err)
 	}
 }
+
+func TestTheRoutesSubcommandRefusesAnInferredPairNobodyConfirmed(t *testing.T) {
+	dir := t.TempDir()
+	useCase := "package ops\n\nimport (\n\t\"context\"\n\n\t\"github.com/frostgrove/vv/auth\"\n\t\"github.com/frostgrove/vv/auth/access\"\n)\n\n" +
+		"const PermJobsRead auth.Permission = \"job.read\"\n\ntype DeadJobsUseCase struct{}\n\n" +
+		"func (this *DeadJobsUseCase) List(ctx context.Context) error {\n\t_, err := access.Require(ctx, PermJobsRead)\n\treturn err\n}\n"
+	if err := os.WriteFile(filepath.Join(dir, "dead-jobs.usecase.go"), []byte(useCase), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var output bytes.Buffer
+	err := run([]string{"generate", "routes", "-dir", dir, "-recursive=false"}, &output, &output)
+	var confirmation *codegen.RouteConfirmationError
+	if !errors.As(err, &confirmation) {
+		t.Fatalf("routes error = %v (%s)", err, output.String())
+	}
+	if len(confirmation.Operations) != 1 || confirmation.Operations[0] != "DeadJobsUseCase.List" {
+		t.Fatalf("the refusal names %v", confirmation.Operations)
+	}
+}
+
+func TestTheRoutesSubcommandHasItsOwnFlags(t *testing.T) {
+	var output bytes.Buffer
+	err := run([]string{"generate", "routes", "-help"}, &output, &output)
+	if !errors.Is(err, flag.ErrHelp) {
+		t.Fatalf("routes help error = %v", err)
+	}
+	help := output.String()
+	if !strings.Contains(help, "-guard") || !strings.Contains(help, "-manifest") || strings.Contains(help, "-adapter") {
+		t.Fatalf("routes help dispatched to the wrong command:\n%s", help)
+	}
+}
+
+func TestTheModuleSubcommandRefusesAContributionNobodyConfirmed(t *testing.T) {
+	dir := t.TempDir()
+	source := "package ops\n\ntype Repo struct{}\n\nfunc NewRepo() *Repo { return &Repo{} }\n"
+	if err := os.WriteFile(filepath.Join(dir, "repo.go"), []byte(source), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var output bytes.Buffer
+	err := run([]string{"generate", "module", "-dir", dir, "-import", "example.test/ops"}, &output, &output)
+	var confirmation *codegen.ModuleConfirmationError
+	if !errors.As(err, &confirmation) {
+		t.Fatalf("module error = %v (%s)", err, output.String())
+	}
+	if len(confirmation.Contributions) != 1 || confirmation.Contributions[0] != "NewRepo" {
+		t.Fatalf("the refusal names %v", confirmation.Contributions)
+	}
+}
+
+func TestTheModuleSubcommandHasItsOwnFlags(t *testing.T) {
+	var output bytes.Buffer
+	err := run([]string{"generate", "module", "-help"}, &output, &output)
+	if !errors.Is(err, flag.ErrHelp) {
+		t.Fatalf("module help error = %v", err)
+	}
+	help := output.String()
+	if !strings.Contains(help, "-order") || !strings.Contains(help, "-check-type") ||
+		strings.Contains(help, "-guard") || strings.Contains(help, "-adapter") {
+		t.Fatalf("module help dispatched to the wrong command:\n%s", help)
+	}
+}

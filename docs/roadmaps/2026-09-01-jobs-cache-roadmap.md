@@ -448,7 +448,11 @@ carries, and `Activate` refuses a cache resolved onto a resource that holds
 durable work or durable security; only those two may share one resource, behind
 `SharedDurableSecurity(reason)` ([[D-104]]). A root that sets
 `RequireDeclaredResources` refuses an undeclared resource instead of reading
-silence as separation. What remains open is reach: nothing yet compares the
+silence as separation. `cachefx` now carries that activation into a
+running graph and requires the declarations by default, and a Redis revocation
+store or Redis jobs module is counted as a tenant without importing `cache`,
+because the declaration it lives behind is a value the composition root or a
+neutral group contribution supplies ([[D-111]]). What remains open is reach: nothing yet compares the
 endpoint identity a Redis client was actually built with. The boot doctor now
 exists for the composition root — `module.Doctor` describes a deployment profile
 over the module catalog without activating it ([[D-106]]) — and collecting each
@@ -490,8 +494,14 @@ Exit evidence:
 3. Finish or explicitly narrow the current `jobspg` slice. Its record
    round-trip test, base driver conformance and live PostgreSQL suite all pass
    before the status changes from building.
-4. Audit `jobsfx` against the common adapter rule and explicit lifecycle; do not
-   add backend-specific Fx modules.
+4. **Done.** `jobsfx` states its deployment roles instead of reading them off
+   the graph, and what an enabled role wires is a `runtime.Runner` in the
+   supervisor's group rather than a goroutine the module starts ([[D-108]],
+   [[D-092]]). `jobspgfx`'s retention housekeeping went the same way: `Module`
+   contributes `vv.jobspg.retention` to the runner group unless the settings
+   switch housekeeping off, and a container that holds the runner while no
+   supervisor knows it is refused by name at start. No backend-specific Fx
+   module was added, and no Fx module in `jobs` starts a goroutine of its own.
 
 ### M2 — cache composition and execution locality
 
@@ -614,7 +624,8 @@ The matrix is test topology, not production package topology:
 | `jobs`, `jobs/jobsmemory` | Implemented base surface with continuing hardening; `WorkerObserver` vocabulary, config and runtime emission all exist, and several observers compose through `jobs.WorkerObservers` |
 | `jobs.Admin`, `DeliveryView`, redrive transition | Implemented dependency-neutral contract; only `jobspg.Driver` implements it and memory/Redis do not. `jobsfx.Backend` does not require or manufacture it; `AsBackend` republishes the constructor's declared result type through `fx.Self`, so a concrete driver remains selectable only when that is the declared result and every `jobs.Admin` binding stays explicit. Current List is count-bounded but not byte-bounded, and same-ID redrive replaces the stored attempt ledger |
 | `jobs/jobspg` | **Building**; Get/List/Redrive/PurgeTerminal controls are committed alongside sender/worker/staging, but List byte bounds, redrive provenance/history, clean base conformance, authorization-facing/payload-safety review and isolated live PostgreSQL/crash evidence remain incomplete; the tagged fixtures now resolve pgx from the module's own `go.mod` instead of the workspace |
-| `jobs/jobsfx` | Present; common-ADR classification and lifecycle audit remain |
+| `jobs/jobsfx` | Present; lifecycle audit done — `Spec.Consuming` and `Spec.Scheduling` name the deployment roles, an unstated role over a container that holds a consumer or a schedule is refused, and the worker pool and scheduler are supervised runners ([[D-108]]). Common-ADR classification remains |
+| `jobs/jobspg/jobspgfx` | Present; retention housekeeping is the supervised runner `vv.jobspg.retention` rather than a goroutine its own start hook launches, and `RetentionRunner` is the explicit constructor under `Module` ([[D-092]]) |
 | `jobs/jobsredis` | **Building** committed independent backend module; isolated unit tests are green, but published dependency/no-`replace`, base conformance, live Redis and crash/lease gates remain |
 | External workflow adapter | Planned |
 | `jobsotel`, `jobstenancy`, `cacheotel`, `jobscache` | Forbidden, not backlog items |

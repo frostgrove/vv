@@ -24,8 +24,29 @@ The path is the same string in both, because the set concatenates the prefix onc
 and keeps the result.
 
 `Routes(prefix)` is the shorthand and `NewRouteSet(spec)` is the constructor
-under it. They share one builder; the shorthand carries a bad prefix to `Route()`
-so a wiring chain reads as one expression, the constructor refuses it at the call.
+under it, with `MustRouteSet(spec)` as its panicking twin. They share one builder;
+the shorthand carries a bad prefix to `Route()` so a wiring chain reads as one
+expression, the constructor refuses it at the call.
+
+`RootRoutes(app)`, over `NewRootRouteSet(RootRouteSetSpec)` and
+`MustRootRouteSet` beside it, is the same registrar for what answers outside
+every prefix — `/`, `/favicon.ico`, `/live`, `/ready`. It differs in three things
+and nothing else: it mounts on the `*fiber.App` rather than on the router `Mount`
+hands it, it projects each declaration through `authhttp.AtRoot` so the boot gate
+compares it by its absolute path ([[D-073]]), and `/` is a path it accepts
+because that is the address itself rather than a prefix with an empty segment
+after it. A root set built without the `*fiber.App` it answers on is refused at
+the constructor, because the alternative is a set that mounts nothing and
+declares four endpoints.
+
+`Combine(routes…)`, and `MustCombine` over it, makes one `Route` out of several.
+The shape it is for is a contributor that has to mount something the registrar
+cannot express — a CRUD table's own `Register`, a sub-router built around a
+third-party handler — and would otherwise write `Mount` and `Access` by hand for
+*everything* it serves, including the operations the registrar covers. With
+`Combine` the hand-written half is the part that needs to be hand-written and
+nothing more, and what nothing checks is reported against that part rather than
+against the wrapper, so an exemption names it alone.
 
 ## Why
 
@@ -74,7 +95,13 @@ the line that caused it.
   narrowed by this decision.
 - Do not make `RouteSet` the only way to contribute. `Route` stays an interface:
   a module whose shape the set does not cover writes `Mount` and `Access` by
-  hand, and the gate treats it identically.
+  hand, and the gate treats it identically. An unexported constructor for `Route`
+  was proposed again and refused again: it would not remove the second list, it
+  would move it into whatever the library did not anticipate — a CRUD table, a
+  websocket upgrade, a third-party router — and a contributor with no legal way
+  to express its shape writes its own `fiber.Router` calls past the registrar,
+  where the gate is the only thing left watching. `Combine` is the answer instead:
+  the hand-written part shrinks to what genuinely has to be hand-written.
 - Do not read the outer check as a replacement for `security.Gate`. It answers
   "may this account call this operation at all", never "may it touch this row";
   a row it may not touch is still a 404 ([[D-008]]).
@@ -86,7 +113,9 @@ the line that caused it.
 
 | File | What it holds |
 |---|---|
-| `app/http/appfiber/routeset.go` | `Policy`, `Requires`, `Authenticated`, `Public`, `RouteSetSpec`, `NewRouteSet`, `Routes`, `RouteSet` and its verbs, `Route`, `MustRoute`, `ErrRouteSet`, the shared `refuse` |
+| `app/http/appfiber/routeset.go` | `Policy`, `Requires`, `Authenticated`, `Public`, `RouteSetSpec`, `NewRouteSet`, `MustRouteSet`, `Routes`, `RootRouteSetSpec`, `NewRootRouteSet`, `MustRootRouteSet`, `RootRoutes`, `RouteSet` and its verbs, `Route`, `MustRoute`, `ErrRouteSet`, the shared `refuse` |
+| `app/http/appfiber/combine.go` | `Combine`, `MustCombine`, `ErrCombine` — several shapes contributed as one route |
+| `app/http/appfiber/unchecked.go` | `Unchecked`, `UncheckedRule`, `NamingUnchecked`, `RefusingUnchecked`, `ExcusingUnchecked` — what a declaration nothing checks costs |
 | `app/http/appfiber/appfiber.go` | `Mount` — unchanged, and still the witness |
 | `auth/http/authfiber/surface.go` | `Routes`, `Verify` — Fiber's own table |
 
@@ -112,6 +141,24 @@ the line that caused it.
 | `TestRoutesCarriesAPrefixMistakeToTheBuild` | the shorthand refuses at `Route()` |
 | `TestARouteMountedPastTheRegistrarStillBreaksStartUp` | the router is still the independent witness |
 | `TestAnOperationWithoutAHandlerIsRefused` | a declaration that answers nothing is refused |
+| `TestARootOperationAnswersAtItsAbsolutePathAndNotUnderThePrefix` | a root set answers where it is probed and nowhere else |
+| `TestARootOperationIsDeclaredByTheAbsolutePathTheGateComparesItAgainst` | its declaration is `AtRoot`, so the gate looks where it answers |
+| `TestTheAddressItselfIsAPathOnlyARootSetCanRegister` | `/` is a root path, with the prefixed set refusing it as the control |
+| `TestARootPathMountedPastTheRootSetStillBreaksStartUp` | the router is the independent witness outside the prefix too |
+| `TestARootSetWithoutTheApplicationItAnswersOnIsRefused` | the explicit constructor refuses, and `MustRootRouteSet` panics on the same |
+| `TestARootSetRefusesAPathThatIsNotAnAddress` | an empty path is not the root |
+
+`app/http/appfiber/combine_test.go`:
+
+| Test | What it pins |
+|---|---|
+| `TestEveryPartOfACombinedContributionIsMountedAndDeclared` | one contribution, every part mounted and declared |
+| `TestAnOperationInsideACombinationStillRefusesThePrincipalItsPolicyExcludes` | the outer check survives being combined with another shape |
+| `TestACombinationNamesThePartThatLeftAnEndpointUnchecked` | the report blames the part, not the wrapper, with the registrar half as the control |
+| `TestTwoPartsOfOneContributionCannotDeclareTheSameOperation` | a collision the gate cannot see is refused where it is made |
+| `TestACombinationOfNothingIsRefusedRatherThanMountedAsAnEmptyRoute` | nothing, and a nil part, refuse at the constructor |
+| `TestMustCombineIsTheSameConstructorWithoutTheError` | the panicking form refuses exactly what the other one does |
+| `TestMustRouteSetIsTheSameConstructorWithoutTheError` | the same for the registrar's constructor |
 
 ## See also
 

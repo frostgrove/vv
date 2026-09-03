@@ -349,8 +349,8 @@ rather than a clause that quietly disappears ([[D-013]], [[UC-007]]).
 
 A relation group only carries a handle when the generator expanded it, which
 `-depth` controls. And because the handle is embedded, a target model with a
-column called `Path` shadows the method — the generated file says so in that
-group's doc comment, and `RelPath()` is the spelling nothing shadows.
+column called `Path` shadows the method. The generated file says nothing about
+it, and `RelPath()` is the spelling nothing shadows.
 
 ---
 

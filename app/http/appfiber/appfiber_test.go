@@ -225,6 +225,46 @@ func TestServingAnswersOnTheAddressItWasGiven(t *testing.T) {
 	}
 }
 
+func TestAPortSomebodyElseHoldsFailsTheStartRatherThanTheProcess(t *testing.T) {
+	held, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("no port to take: %v", err)
+	}
+	defer func() { _ = held.Close() }()
+	address := held.Addr().String()
+
+	served := fx.New(
+		provide(newFiber),
+		appfiber.Serving(appfiber.Spec{Prefix: prefix, Addr: address}),
+	)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	err = served.Start(ctx)
+
+	if err == nil {
+		_ = served.Stop(ctx)
+		t.Fatal("the application started on an address another listener holds, so a replica that binds nothing reports itself as up")
+	}
+	if !strings.Contains(err.Error(), address) {
+		t.Fatalf("the refusal does not name the address it could not take: %v", err)
+	}
+}
+
+func TestPreforkIsRefusedBecauseTheChildrenRebuildTheGraph(t *testing.T) {
+	err := fx.New(
+		provide(newFiber),
+		appfiber.Serving(appfiber.Spec{Prefix: prefix, Addr: "127.0.0.1:0", Listen: fiber.ListenConfig{EnablePrefork: true}}),
+	).Err()
+
+	if err == nil {
+		t.Fatal("prefork was accepted, so the parent binds nothing and start-up still reports success")
+	}
+	if !strings.Contains(err.Error(), "prefork") {
+		t.Fatalf("the refusal does not name prefork: %v", err)
+	}
+}
+
 func freeAddress(t *testing.T) string {
 	t.Helper()
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -252,5 +292,37 @@ func answered(t *testing.T, url string) int {
 			t.Fatalf("nothing ever answered on %s: %v", url, err)
 		}
 		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func TestAStartThatReturnedLeavesNobodyWritingToTheRouteTable(t *testing.T) {
+	address := freeAddress(t)
+
+	var served *fiber.App
+	application := fx.New(
+		provide(newFiber),
+		provide(appfiber.AsRoute(newRoute(route{
+			mount:   func(r fiber.Router) { r.Get("/things", func(c fiber.Ctx) error { return c.SendString("ok") }) },
+			declare: []authhttp.Endpoint{authhttp.Public(http.MethodGet, "/things", "a route with an automatic HEAD")},
+		}))),
+		appfiber.Serving(appfiber.Spec{Prefix: prefix, Addr: address}),
+		fx.Populate(&served),
+	)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := application.Start(ctx); err != nil {
+		t.Fatalf("the application did not start: %v", err)
+	}
+	defer func() { _ = application.Stop(ctx) }()
+
+	routes := served.GetRoutes()
+
+	head := slices.ContainsFunc(routes, func(candidate fiber.Route) bool {
+		return candidate.Method == http.MethodHead && candidate.Path == prefix+"/things"
+	})
+	if !head {
+		t.Fatalf("the automatic HEAD of %s/things is missing, so this read happened before the write it is meant to be ordered after: %d routes",
+			prefix, len(routes))
 	}
 }

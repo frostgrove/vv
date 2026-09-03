@@ -22,6 +22,7 @@ claims в токене.
 |---|---|
 | [accessjwt](accessjwt.md) | подписанные access-токены поверх ротируемого refresh |
 | [revokeredis](revokeredis.md) | список отзыва для него, в Redis |
+| [revokeredisfx](revokeredis.md#fx-форма) | тот же список в fx-графе, с проверкой на старте |
 | [accessnet](accessnet.md) / [accessgin](accessgin.md) / [accessfiber](accessfiber.md) | роуты, по модулю на фреймворк |
 
 ---

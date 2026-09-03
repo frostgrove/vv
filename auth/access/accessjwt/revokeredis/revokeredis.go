@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
@@ -13,8 +14,10 @@ import (
 )
 
 type List struct {
-	client redis.UniversalClient
-	prefix string
+	client  redis.UniversalClient
+	prefix  string
+	unknown UnknownPolicy
+	logger  *slog.Logger
 }
 
 const DefaultPrefix = "access:revoked:"
@@ -26,6 +29,9 @@ func New(client redis.UniversalClient, options ...Option) (*List, error) {
 	list := &List{client: client, prefix: DefaultPrefix}
 	for _, option := range options {
 		option(list)
+	}
+	if err := list.unknown.validate(); err != nil {
+		return nil, err
 	}
 	return list, nil
 }
@@ -61,9 +67,11 @@ const MinimumTTL = time.Second
 
 func (this *List) key(session uuid.UUID) string { return this.prefix + session.String() }
 
+var ErrUnreachable = errors.New("the revocation list is not reachable")
+
 func (this *List) Ping(ctx context.Context) error {
 	if err := this.client.Ping(ctx).Err(); err != nil && !errors.Is(err, redis.Nil) {
-		return fmt.Errorf("revokeredis: the revocation list is not reachable: %w", err)
+		return fmt.Errorf("revokeredis: %w: %w", ErrUnreachable, err)
 	}
 	return nil
 }

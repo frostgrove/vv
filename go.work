@@ -8,12 +8,14 @@ use (
 	./auth/access/accessfx
 	./auth/access/accessjwt
 	./auth/access/accessjwt/revokeredis
+	./auth/access/accessjwt/revokeredis/revokeredisfx
 	./auth/access/http/accessfiber
 	./auth/access/http/accessgin
 	./auth/authjwt
 	./auth/http/authfiber
 	./auth/http/authgin
 	./auth/rpc/authgrpc
+	./cache/cachefx
 	./crud/adapter/crudpgx
 	./crud/adapter/crudsql/crudsqlfx
 	./crud/http/crudfiber

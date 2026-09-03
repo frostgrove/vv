@@ -25,6 +25,12 @@ func run(args []string, stdout, stderr io.Writer) error {
 	if len(args) >= 2 && args[0] == "generate" && args[1] == "resource" {
 		return runResource(args[2:], stdout, stderr)
 	}
+	if len(args) >= 2 && args[0] == "generate" && args[1] == "routes" {
+		return runRoutes(args[2:], stdout, stderr)
+	}
+	if len(args) >= 2 && args[0] == "generate" && args[1] == "module" {
+		return runModule(args[2:], stdout, stderr)
+	}
 	return runModels(args, stdout, stderr)
 }
 
@@ -70,6 +76,56 @@ func runResource(args []string, stdout, stderr io.Writer) error {
 	}
 	options.Log = stdout
 	return codegen.RunResource(&options)
+}
+
+func runRoutes(args []string, stdout, stderr io.Writer) error {
+	var options codegen.RouteOptions
+	flags := flag.NewFlagSet("vv generate routes", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	flags.StringVar(&options.Dir, "dir", ".", "package directory")
+	flags.StringVar(&options.Out, "out", codegen.DefaultRoutesOut, "generated Go file name")
+	flags.StringVar(&options.Manifest, "manifest", codegen.DefaultRoutesFile, "route manifest file name")
+	flags.StringVar(&options.GuardPkg, "guard", codegen.DefaultGuardPkg, "import path of the package whose guard a use case calls")
+	flags.StringVar(&options.GuardFunc, "guard-func", codegen.DefaultGuardFunc, "name of the guard function inside -guard")
+	flags.StringVar(&options.DeclarePkg, "declare", codegen.DefaultDeclarePkg, "import path of the package that declares endpoints")
+	flags.StringVar(&options.AuthPkg, "auth", codegen.DefaultAuthPkg, "import path of the package that owns Permission")
+	flags.BoolVar(&options.Recursive, "recursive", true, "walk guarded packages below -dir and generate beside each one")
+	flags.BoolVar(&options.Check, "check", false, "check the generated artefacts without writing")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if flags.NArg() != 0 {
+		return fmt.Errorf("generate routes accepts no positional arguments")
+	}
+	options.Log = stdout
+	return codegen.RunRoutes(&options)
+}
+
+func runModule(args []string, stdout, stderr io.Writer) error {
+	var options codegen.ModuleOptions
+	flags := flag.NewFlagSet("vv generate module", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	flags.StringVar(&options.Dir, "dir", ".", "module directory; its whole package tree is scanned")
+	flags.StringVar(&options.Out, "out", codegen.DefaultModuleOut, "generated Go file name")
+	flags.StringVar(&options.Manifest, "manifest", codegen.DefaultModuleFile, "module manifest file name")
+	flags.StringVar(&options.Name, "name", "", "module name; default is the directory name")
+	flags.IntVar(&options.Order, "order", 0, "order this module takes in a catalog")
+	flags.StringVar(&options.Import, "import", "", "import path of -dir; default is read from the nearest go.mod")
+	flags.StringVar(&options.ModulePkg, "module", codegen.DefaultModulePkg, "import path of the package that owns Definition")
+	flags.StringVar(&options.CheckType, "check-type", codegen.DefaultCheckType, "result type that makes a constructor a health check; - to infer none")
+	flags.StringVar(&options.RouteType, "route-type", codegen.DefaultRouteType, "result type that makes a constructor a route; - to infer none")
+	flags.StringVar(&options.WorkerType, "worker-type", codegen.DefaultWorkerType, "result type that makes a constructor a worker; - to infer none")
+	flags.StringVar(&options.SeederType, "seeder-type", codegen.DefaultSeederType, "result type that makes a constructor a seeder; - to infer none")
+	flags.BoolVar(&options.Recursive, "recursive", false, "treat every package directly under -dir as its own module")
+	flags.BoolVar(&options.Check, "check", false, "check the generated artefacts without writing")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if flags.NArg() != 0 {
+		return fmt.Errorf("generate module accepts no positional arguments")
+	}
+	options.Log = stdout
+	return codegen.RunModule(&options)
 }
 
 func runModels(args []string, stdout, stderr io.Writer) error {

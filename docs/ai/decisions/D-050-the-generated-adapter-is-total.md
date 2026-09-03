@@ -152,8 +152,8 @@ adapter's. One owner per hop.
   `renderCoverage`.
 - `internal/codegen/codegen.go` — `field.Excluded`, `field.tagDropped`,
   `generator.exclude`, `model.excluded`, `wellKnownEmbeds`.
-- `port/porthttp/render.go:EnvelopeRenderer.violations` — declared hops first,
-  the fallback only over an untranslated path.
+- `port/porthttp/render.go:EnvelopeRenderer.Render` → `port/violations.go:Violations`
+  — declared hops first, the fallback only over an untranslated path.
 - `cmd/vv/main.go` — `-adapter`, `-binding`.
 - `test/versionstore/` — the model that made the version case reachable.
 

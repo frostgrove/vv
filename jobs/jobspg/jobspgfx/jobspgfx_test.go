@@ -14,6 +14,8 @@ import (
 	"github.com/frostgrove/vv/jobs/jobsfx"
 	"github.com/frostgrove/vv/jobs/jobspg"
 	"github.com/frostgrove/vv/jobs/jobspg/jobspgfx"
+	"github.com/frostgrove/vv/runtime"
+	"github.com/frostgrove/vv/runtime/runtimefx"
 )
 
 func TestModulePublishesOneDriverThroughAllContracts(t *testing.T) {
@@ -111,4 +113,52 @@ func testNamespace(t *testing.T, environment string) jobs.Namespace {
 		t.Fatal(err)
 	}
 	return namespace
+}
+
+func TestModuleContributesHousekeepingAsASupervisedRunner(t *testing.T) {
+	supervisor := housekeepingSupervisor(t, jobspgfx.HousekeepingSettings{})
+	var found runtime.RunnerState
+	for _, state := range supervisor.States() {
+		if state.Name == jobspgfx.RetentionRunnerName {
+			found = state
+		}
+	}
+	if found.Name != jobspgfx.RetentionRunnerName {
+		t.Fatalf("the supervisor does not know %q, so housekeeping is started by something the supervisor cannot stop or report", jobspgfx.RetentionRunnerName)
+	}
+	if found.Declaration != runtime.PerReplicaTimer {
+		t.Fatalf("declaration = %+v", found.Declaration)
+	}
+}
+
+func TestDisabledHousekeepingContributesNoRunner(t *testing.T) {
+	supervisor := housekeepingSupervisor(t, jobspgfx.HousekeepingSettings{Disabled: true})
+	for _, state := range supervisor.States() {
+		if state.Name == jobspgfx.RetentionRunnerName {
+			t.Fatal("housekeeping was switched off and still reached the supervisor")
+		}
+	}
+}
+
+func housekeepingSupervisor(t *testing.T, housekeeping jobspgfx.HousekeepingSettings) *runtime.Supervisor {
+	t.Helper()
+	database := &sql.DB{}
+	source := crudsql.Postgres(database)
+	catalog := jobs.MustCatalog(testDefinition(t, "jobspgfx.housekeeping"))
+	var supervisor *runtime.Supervisor
+	app := fx.New(
+		fx.NopLogger,
+		fx.Supply(database, catalog),
+		fx.Provide(func() crud.Source { return source }),
+		jobspgfx.Module(jobspgfx.Settings{
+			Namespace:    testNamespace(t, "housekeeping"),
+			Housekeeping: housekeeping,
+		}),
+		runtimefx.Supervising(runtimefx.Spec{}),
+		fx.Populate(&supervisor),
+	)
+	if err := app.Err(); err != nil {
+		t.Fatal(err)
+	}
+	return supervisor
 }

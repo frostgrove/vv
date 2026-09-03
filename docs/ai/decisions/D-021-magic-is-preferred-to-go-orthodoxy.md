@@ -126,11 +126,14 @@ against the ORM's own.
   a release that panic would stop an already-deployed application from booting,
   which is why it has to land before the tag rather than after.
 - `TestAClaimOfADifferentWidthThanTheColumnStillWorks` and
-  `TestAnUncomparableClaimTypePanicsRatherThanDenyingEverything` in
+  `TestAnUncomparableClaimTypeFailsClosed` in
   `crud/decorators/security/policies_test.go` — `ScopeField`'s two halves consumed
   the extractor's `any` differently and only one coerced, so an `int64` claim
   against a `uint` column read perfectly and denied every create at request time.
-  The shipped gorm guide's own line is a working reproduction.
+  The shipped gorm guide's own line is a working reproduction. A claim the column
+  cannot take is now a refusal that reaches no statement rather than a panic:
+  still a request-time verdict, which is the one place in that package this
+  decision does not get its way, and no longer a 500.
 
 ## See also
 

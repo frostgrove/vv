@@ -1,7 +1,7 @@
 # D-008 — An out-of-scope row is 404, never 403
 
 **Status:** accepted
-**Invariant:** When a policy `Scope` hides a row, every id-addressed read must answer `crud.ErrNotFound`; `ErrForbidden` is reserved for decisions that do not depend on whether the row exists.
+**Invariant:** When a policy `Scope` hides a row, every id-addressed call — read or write — must answer `crud.ErrNotFound`; `ErrForbidden` is reserved for decisions that do not depend on whether the row exists.
 
 ## The decision
 
@@ -14,9 +14,11 @@ for another tenant's id gets the same 404 as for an id that was never issued.
 Those refusals are about the *action*, and they are reached before or
 independently of the row's existence.
 
-There is one deliberate exception, and it is the other way round: `Save` with an
-id that names a hidden row is `Denied(Update, "row is outside the scope")` —
-a 403.
+`Save` was once the exception, in the other direction, and is not one any more.
+An assigned key that names a hidden row is `crud.ErrNotFound` from
+`gate.saveTarget`, and a row that leaves the scope between the probe and the
+write is `crud.ErrNotFound` from `gate.saveScoped`. `PUT /articles/{id}` now
+answers what `GET` on the same id answers.
 
 ## Why
 
@@ -30,22 +32,32 @@ that leaks nothing. The cost is a slightly worse debugging experience for a
 legitimate caller who typed the wrong tenant, and that is the right trade for a
 multi-tenant API.
 
-**Why `Save` is 403 instead.** `Save` is an upsert ([[D-011]]). Left alone, a
-policy that scoped rows and nothing else gave `Save` no protection at all: the
-insert turned into an update and re-tenanted somebody else's row, with
-`err == nil`. Refusing is the only move available, and refusing is observable, so
-it is spelled honestly. `gate.saveTarget` distinguishes the two cases: a row
-visible under the scope is an overwrite of the caller's own row, a row invisible
-but present is the denial, and a row genuinely absent is an insert.
+**Why `Save` probes without the scope, and still answers 404.** `Save` is an
+upsert ([[D-011]]). Left alone, a policy that scoped rows and nothing else gave
+it no protection at all: the insert turned into an update and re-tenanted
+somebody else's row, with `err == nil`. So `gate.saveTarget` looks twice — once
+through the scope, and, on a miss, once without it. A row visible under the scope
+is an overwrite of the caller's own row; a row genuinely absent is an insert; a
+row present but hidden is refused.
 
-The statement *can* now be made to miss — [[D-011]]'s fourth row writes an
-`UPDATE … WHERE pk = ? AND <scope>` — and that does not change this decision. The
-scope that reaches the statement is the blueprint's, fixed at declaration and the
-same for everyone. The gate's scope is per-principal and arrives with the request,
-so it is not in the statement and there is nowhere to put it without giving `Save`
-options ([[D-011]] forbids that). What the fourth row changed is that a
-*declaration*-level scope no longer needs the gate to be safe; a policy scope
-still does, and it still answers 403 rather than a silent miss.
+The refusal is `crud.ErrNotFound`, not a denial, and that costs nothing: the
+probe's one bit — this id is taken — is read by the gate and not handed back. A
+core that cannot answer an unscoped existence question at all is treated the same
+way, because the alternative is falling through to an insert that becomes an
+overwrite.
+
+`Save` refusing was once the only move, which is where the 403 came from. It is
+not any more: the gate hands its per-principal scope to `crud.SaveScopedOf`, and
+`repository.saveScopedUpdate` puts it — with a whole-row snapshot of what the
+probe saw — into the `UPDATE`'s own `WHERE`. So the second half is a miss rather
+than a check, the window between probe and write is closed, and the miss is
+reported as `crud.ErrNotFound` like every other id that is not the caller's. A
+policy that declares no scope at all still answers that miss with
+`Denied(Update, "row is outside the scope")` — a 403, which does not leak
+anything here because there is no scope and so no hidden row, but the sentence is
+inherited and wrong: with no scope the miss is a lost update race, not a row
+outside anything. Fixing the wording is safe; turning the scoped branch back into
+a 403 is not.
 
 **Why `loadScoped` does not run `Authorize`.** The caller decides which action is
 being authorised — `GetByID` authorises `Read`, `Update` authorises `Update` —
@@ -63,8 +75,11 @@ so the load has to stay neutral.
   the two statements was updated anyway, and the fresh copy of somebody else's
   record was handed back with `err == nil`
   (`crud/decorators/security/security.go:gate.Update`).
-- Do not fold `Save`'s denial into a 404 for consistency. A policy scope is not in
-  the statement; silence there means a successful overwrite.
+- Do not fold `Save`'s refusal into silence. A 404 is the answer; `err == nil`
+  with the row rewritten is the bug this exists to stop.
+- Do not drop `saveTarget`'s unscoped probe, or let an unanswerable probe fall
+  through to the insert. Without it an assigned key that names somebody else's
+  row is an upsert that re-tenants it.
 
 ## Where it lives
 
@@ -72,7 +87,13 @@ so the load has to stay neutral.
   the `ErrNotFound`.
 - `crud/decorators/security/security.go:gate.GetByID` and
   `crud/decorators/security/security.go:gate.Update` — both route through it.
-- `crud/decorators/security/security.go:gate.saveTarget` — the deliberate 403.
+- `crud/decorators/security/security.go:gate.saveTarget` — the unscoped probe,
+  and the `ErrNotFound` it answers with.
+- `crud/decorators/security/security.go:gate.saveScoped` and
+  `crud/decorators/security/security.go:gate.saveScopedOnly` — the same answer for
+  a row that left the scope between the probe and the write.
+- `crud/sqlrepo/repository.go:saveScopedUpdate` — where the gate's scope reaches
+  the statement, via `crud/executor.go:ScopedSaver`.
 - `crud/decorators/security/security.go:Denied` — wraps `security.ErrForbidden`,
   which wraps `crud.ErrForbidden`.
 - `crud/sqlrepo/repository.go:repository.Delete` — the blueprint scope is in the
@@ -96,10 +117,22 @@ so the load has to stay neutral.
   `crud/decorators/security/gate_edge_test.go` — the check-then-act window.
 - `TestTheGateScopeIsInTheUpdatesOwnWhereClause` in
   `crud/decorators/security/gate_edge_test.go`.
-- `TestAScopeWithoutInspectStillRefusesAnOverwriteOfAHiddenRow` in
-  `crud/decorators/security/gate_edge_test.go` — the `Save` exception.
-- `TestAScopedSaveOfAnUnusedIDIsStillAnInsert` in
-  `crud/decorators/security/gate_edge_test.go` — the control for the line above.
+- `TestSaveOfAnotherTenantsAssignedKeyLooksMissing` in
+  `crud/decorators/security/gate_edge_test.go` — `Save` over a row the scope
+  hides, which asserts both halves: not-found comes back, and forbidden does
+  not, because forbidden would confirm the row exists.
+- `TestScopedSaveKeepsAConcurrentCreateCreateOnly` in
+  `crud/decorators/security/security_test.go` — the control for the line above:
+  an id no visible row holds still takes the create branch, so the not-found is
+  a refusal to overwrite rather than a refusal to write.
+- `TestSaveRefusesToOverwriteATombstoneHiddenByRepositoryScope` in
+  `crud/decorators/security/gate_edge_test.go` and
+  `TestASaveCarryingAHiddenRowsKeyIsRefusedInsteadOfPassingAsACreate` in
+  `crud/decorators/security/tombstone_test.go` — the same answer when what hides
+  the row is a soft delete rather than a tenant.
+- `TestScopedSavePinsAnUpdateToItsInspectedSnapshot` in
+  `crud/decorators/security/security_test.go` — the scoped upsert's own miss,
+  which is the window between the probe and the write.
 - `TestARowHiddenFromReadsIsStillDeletableByID` in
   `crud/http/crudfiber/write_edge_test.go` — pins the documented `WithScope`
   asymmetry so nobody mistakes it for protection.

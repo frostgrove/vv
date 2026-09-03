@@ -3,6 +3,7 @@ package jobspgfx
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -10,6 +11,8 @@ import (
 	"go.uber.org/fx"
 
 	"github.com/frostgrove/vv/jobs"
+	"github.com/frostgrove/vv/runtime"
+	"github.com/frostgrove/vv/runtime/runtimefx"
 )
 
 type retentionSweeperFunc func(context.Context, int) (int, error)
@@ -248,12 +251,19 @@ func TestDisabledRetentionLifecycleDoesNotCallTheBackend(t *testing.T) {
 
 func retentionTestApp(t *testing.T, sweeper jobs.RetentionSweeper, config housekeepingConfig) *fx.App {
 	t.Helper()
-	app := fx.New(
+	options := []fx.Option{
 		fx.NopLogger,
 		fx.Supply(config),
 		fx.Provide(func() jobs.RetentionSweeper { return sweeper }),
-		fx.Invoke(bindRetentionLifecycle),
-	)
+		runtimefx.Supervising(runtimefx.Spec{DrainGrace: time.Second, OnFailure: runtimefx.ShutDownOnFailure}),
+	}
+	if !config.disabled {
+		options = append(options,
+			fx.Provide(runtimefx.AsRunner(newRetentionRunner)),
+			fx.Invoke(bindRetentionSupervision),
+		)
+	}
+	app := fx.New(options...)
 	if err := app.Err(); err != nil {
 		t.Fatal(err)
 	}
@@ -266,5 +276,55 @@ func startApp(t *testing.T, app *fx.App) {
 	defer cancel()
 	if err := app.Start(ctx); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestHousekeepingRefusesToStartWhenNoSupervisorKnowsTheRunner(t *testing.T) {
+	unrelated, err := runtime.Auto()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		name  string
+		graph fx.Option
+	}{
+		{name: "no supervisor at all", graph: fx.Options()},
+		{name: "a supervisor built past the runner group", graph: fx.Supply(unrelated)},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			app := fx.New(fx.NopLogger, test.graph, fx.Invoke(bindRetentionSupervision))
+			if err := app.Err(); err != nil {
+				t.Fatal(err)
+			}
+			startContext, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+			err := app.Start(startContext)
+			if err == nil || !strings.Contains(err.Error(), RetentionRunnerName) {
+				t.Fatalf("housekeeping started with nothing to run it: %v", err)
+			}
+			if !errors.Is(err, jobs.ErrInvalid) {
+				t.Fatalf("refusal is not a configuration error: %v", err)
+			}
+		})
+	}
+}
+
+func TestARetentionRunnerCanBeBuiltWithoutTheModule(t *testing.T) {
+	sweeper := retentionSweeperFunc(func(context.Context, int) (int, error) { return 0, nil })
+	runner, err := RetentionRunner(sweeper, HousekeepingSettings{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runner.Name() != RetentionRunnerName {
+		t.Fatalf("name = %q", runner.Name())
+	}
+	if _, err := RetentionRunner(sweeper, HousekeepingSettings{Disabled: true}); !errors.Is(err, jobs.ErrInvalid) {
+		t.Fatalf("disabled housekeeping produced a runner: %v", err)
+	}
+	if _, err := RetentionRunner(nil, HousekeepingSettings{}); !errors.Is(err, jobs.ErrInvalid) {
+		t.Fatalf("a runner without a sweeper was accepted: %v", err)
+	}
+	if _, err := RetentionRunner(sweeper, HousekeepingSettings{Interval: -1}); !errors.Is(err, jobs.ErrInvalid) {
+		t.Fatalf("invalid settings were accepted: %v", err)
 	}
 }

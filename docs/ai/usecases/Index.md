@@ -97,7 +97,7 @@ For newcomer-oriented navigation, see the [module index](modules/Index.md) and
 | [UC-020](modules/security/UC-020-authorize-without-a-policy-per-endpoint.md) | Authorize by role and permission without a policy per endpoint | the application author protecting every resource | `security` | auth | covered |
 | [UC-021](modules/vvdb/UC-021-configure-a-database-once-in-one-file.md) | Configure a database once, in one file, for any engine | the application author | `vvdb` | utils | covered |
 | [UC-022](modules/vvgoose/UC-022-run-and-generate-database-migrations.md) | Generate and run database migrations from the application config | the application author | `vvgoose` | vvdb · vvcfg | covered |
-| [UC-023](modules/auth/UC-023-sign-people-in-without-writing-an-auth-system.md) | Sign people in without writing an auth system | the application author | `access` | accessjwt · revokeredis · accessnet/gin/fiber | covered |
+| [UC-023](modules/auth/UC-023-sign-people-in-without-writing-an-auth-system.md) | Sign people in without writing an auth system | the application author | `access` | accessjwt · revokeredis · revokeredisfx · accessnet/gin/fiber | covered |
 | [UC-024](modules/cache/UC-024-cache-recreatable-values-without-unbounded-work.md) | Cache recreatable values without unbounded work | the application author | `cache` | cachememory | covered |
 | [UC-025](modules/health/UC-025-say-whether-this-replica-should-take-traffic.md) | Say whether this replica should take traffic | the application author, for an orchestrator, a load balancer and an operator | `health` | appfiber | covered |
 | [UC-026](modules/runtime/UC-026-run-background-work-without-losing-a-worker-silently.md) | Run background work without losing a worker silently | the application author | `runtime` | appfx · jobs | covered |
@@ -119,7 +119,7 @@ For newcomer-oriented navigation, see the [module index](modules/Index.md) and
 | [UC-011](modules/crudtest/UC-011-test-repository-behaviour-without-a-database.md) | `crudtest` | — | [[FL-001]] [[FL-002]] [[FL-004]] |
 | [UC-012](modules/sqlrepo/UC-012-talk-to-more-than-one-database.md) | `sqlrepo` | adapters | [[FL-009]] [[FL-016]] |
 | [UC-013](modules/port/UC-013-business-rules-between-handler-and-repository.md) | `port` | crudhttp | [[FL-001]] [[FL-002]] [[FL-003]] [[FL-011]] [[FL-013]] [[FL-015]] |
-| [UC-014](modules/codegen/UC-014-keep-generated-artefacts-in-sync.md) | `codegen` | specs | [[FL-010]] [[FL-004]] [[FL-015]] [[FL-029]] [[FL-002]] |
+| [UC-014](modules/codegen/UC-014-keep-generated-artefacts-in-sync.md) | `codegen` | specs | [[FL-010]] [[FL-004]] [[FL-015]] [[FL-029]] [[FL-031]] [[FL-032]] [[FL-002]] |
 | [UC-015](general/UC-015-map-a-failure-to-the-transport.md) | `general` | — | [[FL-011]] [[FL-013]] [[FL-014]] [[FL-015]] |
 | [UC-016](modules/sqlrepo/UC-016-hide-rows-permanently-at-the-repository-level.md) | `sqlrepo` | security | [[FL-004]] [[FL-007]] [[FL-005]] [[FL-006]] |
 | [UC-017](modules/faults/UC-017-get-every-error-for-one-payload-at-once.md) | `faults` | errs | [[FL-011]] [[FL-014]] [[FL-017]] |
@@ -128,7 +128,7 @@ For newcomer-oriented navigation, see the [module index](modules/Index.md) and
 | [UC-020](modules/security/UC-020-authorize-without-a-policy-per-endpoint.md) | `security` | auth | [[FL-020]] [[FL-007]] [[FL-008]] [[FL-011]] |
 | [UC-021](modules/vvdb/UC-021-configure-a-database-once-in-one-file.md) | `vvdb` | utils | [[FL-021]] |
 | [UC-022](modules/vvgoose/UC-022-run-and-generate-database-migrations.md) | `vvgoose` | vvdb · vvcfg | [[FL-022]] |
-| [UC-023](modules/auth/UC-023-sign-people-in-without-writing-an-auth-system.md) | `access` | accessjwt · revokeredis · accessnet/gin/fiber | [[FL-023]] |
+| [UC-023](modules/auth/UC-023-sign-people-in-without-writing-an-auth-system.md) | `access` | accessjwt · revokeredis · revokeredisfx · accessnet/gin/fiber | [[FL-023]] |
 | [UC-024](modules/cache/UC-024-cache-recreatable-values-without-unbounded-work.md) | `cache` | cachememory | [[FL-025]] |
 | [UC-025](modules/health/UC-025-say-whether-this-replica-should-take-traffic.md) | `health` | appfiber | [[FL-027]] [[FL-024]] |
 | [UC-026](modules/runtime/UC-026-run-background-work-without-losing-a-worker-silently.md) | `runtime` | appfx · jobs | [[FL-028]] |
@@ -137,7 +137,7 @@ For newcomer-oriented navigation, see the [module index](modules/Index.md) and
 ## Gaps
 
 The roadmap, worst first. The first group is behaviour that does not match a
-stated guarantee — three of it live, with entries 1 and 5 kept as closed ones
+stated guarantee — one of it live, with entries 1, 2, 4 and 5 kept as closed ones
 because the numbers are cited elsewhere; the rest are missing proof or documented
 sharp edges that need a decision.
 
@@ -154,29 +154,29 @@ sharp edges that need a decision.
    to pass, and the control test pins that it does. The entry keeps its number
    because the numbers are cited elsewhere.
 
-2. **[UC-004] A create is not narrowed, and a hand-written policy does not guard
-   it either.** An upsert has no `WHERE` for the tenant predicate to live in, so
-   only a row-level check can refuse it. The provided helper installs one; a
-   policy that declares only the narrowing — which is what "row-level security in
-   one line" looks like — leaves a create into another tenant unconstrained. No
-   test covers that shape.
+2. ~~**[UC-004] A create is not narrowed, and a hand-written policy does not
+   guard it either.**~~ **Closed by refusing the shape.** An upsert has no
+   `WHERE` for the tenant predicate to live in, so only a row-level check can
+   refuse it, and a `Policy` with `Scope` set and `Inspect` nil has none. The
+   gate no longer runs that policy: `Save` and `Update` refuse it before the
+   first statement, naming the missing `Inspect`
+   (`TestAScopeWithoutInspectRefusesSaveBeforeItCanWrite` and
+   `TestAScopeWithoutInspectRefusesEveryWriteWithABody` in
+   `crud/decorators/security/gate_edge_test.go`). The provided helpers were
+   always safe and still are — `security.ScopeAttr` and `ScopeSubject` are built
+   on `ScopeField`, so they inherit the row check and the frozen column, pinned
+   by `TestScopeAttrNarrowsInSQLAndFreezesTheColumn` in
+   `crud/decorators/security/principal_test.go` with a control that a create into
+   the caller's own tenant still succeeds. The entry keeps its number because the
+   numbers are cited elsewhere ([[UC-020]]).
 
-   **Narrower since the `auth` subsystem landed.** `security.ScopeAttr` and
-   `ScopeSubject` are the principal-driven form, and they are built on
-   `ScopeField` rather than beside it, so they inherit the row check and the
-   frozen column — `TestScopeAttrNarrowsInSQLAndFreezesTheColumn` in
-   `crud/decorators/security/principal_test.go` pins the refused create and
-   carries the control that a create into the caller's own tenant still
-   succeeds. What remains open is the shape this entry names: a `Policy` written
-   by hand with `Scope` set and `Inspect` nil. Nothing refuses that, and nothing
-   tests it ([[UC-020]]).
-
-3. **[UC-004] A save is an existence oracle, and so is a unique-constraint
-   collision.** To refuse overwriting an invisible row, the gate probes for it
-   *without* the narrowing: 403 for another tenant's id, success for an unused
-   one. Deliberate and tested. The unguarded twin is not: a create colliding on a
-   unique index over another column returns a 409 carrying the driver's
-   constraint name, for a row the caller cannot see.
+3. **[UC-004] A unique-constraint collision is an existence oracle.** The save
+   half of this entry is closed: the gate still probes for an invisible row
+   *without* the narrowing, but the answer it gives back is `crud.ErrNotFound`,
+   the same one an unused id gets, so the probe tells the caller nothing
+   ([[D-008]], `TestSaveOfAnotherTenantsAssignedKeyLooksMissing`). The unguarded
+   twin remains: a create colliding on a unique index over another column returns
+   a 409 for a row the caller cannot see.
 
    Both halves now have a decision, and they are different decisions. The
    constraint name leaving the process was [[D-044]]'s, and phase 4 closed it:
@@ -193,10 +193,14 @@ sharp edges that need a decision.
    `Skip` is the control there. The gate's own unnarrowed existence probe — the
    first half — does not move.
 
-4. **[UC-008] A caller-supplied limit desynchronises a policy's row-level check
-   from the statement.** The inspected rows honour the limit; the `UPDATE` and
-   `DELETE` do not carry one. So a filtered write with a limit inspects one row
-   and writes every matching row.
+4. ~~**[UC-008] A caller-supplied limit desynchronises a policy's row-level
+   check from the statement.**~~ **Closed by refusing the option.** A filtered
+   write carrying paging is a `*crud.SchemaError` from the repository rather than
+   a whole-table write over a one-row inspection ([[D-087]],
+   `TestAGatedFilteredWriteRefusesPagingRatherThanWritingEveryRowItShowedTheRule`
+   in `crud/decorators/security/updateall_test.go`, which carries the control that
+   the same write without the limit goes through and `Inspect` saw both rows). The
+   entry keeps its number because the numbers are cited elsewhere.
 
 5. ~~**[UC-014] The generator does not know about the version column.**~~
    **Closed, and it was half stale when it was written.** The generator did learn
@@ -244,9 +248,12 @@ sharp edges that need a decision.
 11. **[UC-004] A per-principal nested *sort* narrowing has no test.** The
     table-level equivalent does, and they share the code path.
 
-12. **[UC-004] The page total can be computed without the per-request relation
-    narrowing.** A list filtered through a relation can return correctly narrowed
-    items alongside a total counted over a wider set.
+12. ~~**[UC-004] The page total can be computed without the per-request relation
+    narrowing.**~~ **Closed and pinned.** The `COUNT` behind a page total carries
+    the narrowing, and the test fails if the page and its total are not two
+    statements, so it cannot pass by counting nothing
+    (`TestEveryStatementAGatedCallIssuesCarriesTheNarrowing` in
+    `crud/decorators/security/relscope_test.go`).
 
 13. **[UC-010] The ORM-callback claim is proven on one side only.** That an ORM
     hook does not fire is executed for gorm and reasoned for ent, because no ent
@@ -272,11 +279,14 @@ sharp edges that need a decision.
     rather than one hand-written case. It is UC-015's guarantee 11 and it holds.
     The entry keeps its number because the numbers are cited elsewhere.
 
-17. **[UC-016] A create can resurrect a hidden row.** The rule cannot reach an
-    upsert, so a save carrying a tombstone's key overwrites it — and under a gate
-    the "does this row exist" probe goes *through* the rule, so the tombstone
-    reads as absent and the write is treated as a fresh create. Silently, through
-    the ordinary create endpoint.
+17. **[UC-016] A write over a hidden row is authorised as a create.** The
+    resurrection half is closed: the declaration takes the tombstone column out
+    of every generic write, so a save carrying a tombstone's key rewrites the
+    row's other columns and leaves it hidden, and only the restore verb clears
+    the flag. What remains is who authorised it — under a gate with no row-level
+    scope the "does this row exist" probe goes *through* the rule, the tombstone
+    reads as absent, and the write is checked against the create permission. No
+    test covers that.
 
 18. ~~**[UC-012] Two ways of writing a scoped binding do nothing, silently.**~~
     **Closed by [[D-082]].** `BindExecutor` associates the canonical source and

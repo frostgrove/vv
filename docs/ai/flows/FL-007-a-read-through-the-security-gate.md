@@ -10,30 +10,30 @@ what came back.
 
 ## The path
 
-1. **`Blueprint.Bind`** — `crud/sqlrepo/blueprint.go:182`
+1. **`Blueprint.Bind`** — `crud/sqlrepo/blueprint.go:Bind`
    `crud.Chain(core, security.Gate(policy))` — the first middleware ends up
    outermost, so the gate sees the call before the repository does and there is
    no way around it from above.
 
-2. **`gate.GetByID`** — `crud/decorators/security/security.go:219`
-   `authorize(ctx, Read)` first (`security.go:145`) — the coarse check, once per
+2. **`gate.GetByID`** — `crud/decorators/security/security.go:GetByID`
+   `authorize(ctx, Read)` first (`crud/decorators/security/security.go:authorize`) — the coarse check, once per
    operation, before any SQL. A nil `Authorize` hook is skipped.
 
-3. **Scope resolution** — `gate.scope` (`security.go:159`), `gate.narrow`
-   (`security.go:169`)
+3. **Scope resolution** — `gate.scope` (`crud/decorators/security/security.go:scope`), `gate.narrow`
+   (`crud/decorators/security/security.go:narrow`)
    `Policy.Scope` returns a `crud.Predicate` for *this* table.
    `Policy.RelationScopes` returns a `*crud.RelationScopes` that follows every
-   hop, wrapped as `crud.NarrowRelations` (`crud/options.go:80`). Both are
+   hop, wrapped as `crud.NarrowRelations` (`crud/options.go:NarrowRelations`). Both are
    per-request closures, which is why they cannot live on the blueprint.
    An error from either aborts before any statement is built — the gate fails
    closed, on every door.
 
-4. **The projection cancel** — `gate.whole` (`security.go:209`)
+4. **The projection cancel** — `gate.whole` (`crud/decorators/security/security.go:whole`)
    ```go
    if !willInspect || g.p.Inspect == nil { return opts }
    return append(append([]crud.Option{}, opts...), crud.SelectAll())
    ```
-   `crud.SelectAll` (`crud/options.go:117`) drops any projection applied before
+   `crud.SelectAll` (`crud/options.go:SelectAll`) drops any projection applied before
    it, and it is appended **last** so it wins over the client's `?select=`.
    `Inspect` is an opaque closure: the gate cannot know which columns it reads,
    and given a projected row it compares against zero values and believes them.
@@ -44,7 +44,7 @@ what came back.
    client's projection, and `Get`/`GetAll` only cancel when `InspectReads` is on.
    `Count` and `Exists` never cancel — there are no rows.
 
-5. **`gate.loadScoped`** — `security.go:238`
+5. **`gate.loadScoped`** — `crud/decorators/security/security.go:loadScoped`
    With no scope it delegates to `Core.GetByID`. With one it cannot, because
    `GetByID` reports `ErrNotFound` for "no row" and the gate needs the same
    answer for "no row you may see". So it issues
@@ -55,22 +55,22 @@ what came back.
    `loadScoped` deliberately does not call `Authorize` — the caller decides which
    action is being authorised, which is what lets `gate.Update` reuse it.
 
-6. **`gate.Get` / `gate.GetAll`** — `security.go:263`, `security.go:282`
-   `gate.scoped` (`security.go:187`) **prepends** `crud.Where(scope)` and the
+6. **`gate.Get` / `gate.GetAll`** — `crud/decorators/security/security.go:Get`, `crud/decorators/security/security.go:GetAll`
+   `gate.scoped` (`crud/decorators/security/security.go:scoped`) **prepends** `crud.Where(scope)` and the
    narrowing to the caller's options. In front, because `crud.Where` accumulates
-   and ANDs (`crud/options.go:65`) — a caller cannot subtract either of them by
+   and ANDs (`crud/options.go:Where`) — a caller cannot subtract either of them by
    appending anything, and the predicate AST is closed
-   (`crud/predicate.go:12`), so there is no `Raw` route out either.
+   (`crud/predicate.go:Predicate`), so there is no `Raw` route out either.
 
 7. **Into the repository** — [[FL-001]]
-   `repository.relScopes` (`crud/sqlrepo/repository.go:97`) merges the blueprint's
+   `repository.relScopes` (`crud/sqlrepo/repository.go:relScopes`) merges the blueprint's
    permanent narrowings with the ones this query carries;
-   `MergeRelationScopes` (`crud/scope.go:92`) ANDs where both declare the same
-   path or model. `repository.scoped` (`repository.go:186`) ANDs the blueprint's
+   `MergeRelationScopes` (`crud/scope.go:MergeRelationScopes`) ANDs where both declare
+   the same path or model. `repository.scoped` (`crud/sqlrepo/repository.go:scoped`) ANDs the blueprint's
    own `Scope` in front of the caller's predicate. Both the repository's rule and
    the policy's rule end up in the statement.
 
-8. **`Inspect` / `InspectReads`** — `security.go:152`, `security.go:300`
+8. **`Inspect` / `InspectReads`** — `crud/decorators/security/security.go:Policy`
    `GetByID` always inspects the single row it returns. `Get` and `GetAll` only
    inspect when `Policy.InspectReads` is set — off by default, because `Scope` is
    the cheap way to filter a list. When it is on and a row is refused, **the
@@ -90,10 +90,10 @@ what came back.
 - **`Scope` stops at the statement's own `FROM`.** Rows of a second table reached
   by a preload ([[FL-006]]) or a nested filter ([[FL-005]]) are not covered by
   it. `RelationScopes` is the companion, and it has to be declared —
-  `security.ScopeRelationField` (`crud/decorators/security/policies.go:80`)
+  `security.ScopeRelationField` (`crud/decorators/security/policies.go:ScopeRelationField`)
   writes one path's worth, `Combine` merges several.
 - **Combine of nothing is the zero policy.** `Combine`
-  (`policies.go:145`) seeds `AllowUnscopedDeleteAll`/`UpdateAll` from
+  (`crud/decorators/security/policies.go:Combine`) seeds `AllowUnscopedDeleteAll`/`UpdateAll` from
   `len(ps) > 0`, because "every policy allows it" is vacuously true of no
   policies — and a role with no policies must not be a licence to truncate the
   table.
@@ -104,11 +104,11 @@ what came back.
 |---|---|---|
 | no principal in the context | `Policy.Scope` returns an error | 403 (whatever the policy returned; `security.Denied` wraps `crud.ErrForbidden`) |
 | `Authorize` denies the action | `gate.authorize` | 403 |
-| id exists but is outside the scope | `loadScoped` (`security.go:257`) | **404**, never 403 |
-| `Inspect` refuses a single row | `gate.GetByID` (`security.go:228`) | 403 |
-| `Inspect` refuses one row of a page, with `InspectReads` | `gate.inspectAll` (`security.go:305`) | 403 for the whole request |
-| `RelationScopes` hook errors | `gate.narrow` (`security.go:173`) | the error, before any SQL |
-| a relation path in the policy that does not exist | `security.relationFieldName` (`policies.go:102`) | panic at declaration time |
+| id exists but is outside the scope | `gate.loadScopedWith` | **404**, never 403 |
+| `Inspect` refuses a single row | `gate.GetByID` | 403 |
+| `Inspect` refuses one row of a page, with `InspectReads` | `gate.inspectAll` | 403 for the whole request |
+| `RelationScopes` hook errors | `gate.narrow` | the error, before any SQL |
+| a relation path in the policy that does not exist | `relationField` (`crud/decorators/security/policies.go:relationField`) | panic at declaration time |
 
 ## Files
 
