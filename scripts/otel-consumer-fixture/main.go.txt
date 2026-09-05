@@ -1,0 +1,19 @@
+package main
+
+import (
+	"github.com/frostgrove/vv/cache"
+	"github.com/frostgrove/vv/cache/cachememory"
+	vvotel "github.com/frostgrove/vv/otel"
+	"github.com/frostgrove/vv/port"
+	"github.com/frostgrove/vv/storage"
+)
+
+var (
+	_ = cache.LookupOperation
+	_ = cachememory.GetOperation
+	_ = vvotel.New
+	_ port.Service[struct{}, string, struct{}]
+	_ storage.Store
+)
+
+func main() {}

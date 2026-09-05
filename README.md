@@ -121,6 +121,9 @@ engines. Each is a `main.go` you can read top to bottom, plus the generated
 off because `_examples` is deliberately outside it, so its stacks never reach the
 module graph of anyone building the library.
 
+For the optional OpenTelemetry module, [`_examples/otel-sdk-bootstrap`](_examples/otel-sdk-bootstrap/)
+shows application-owned stdout exporters, readers/processors, flush and shutdown.
+
 ---
 
 ## Install

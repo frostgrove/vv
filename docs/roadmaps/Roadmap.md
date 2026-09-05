@@ -20,7 +20,6 @@ exists.
 | 7 | Whether the framework retries a retryable class | a decision, not code | no |
 | 8 | The tag-name helper, and generated wiring for Fiber and Gin | a decision each | no |
 | 9 | Remaining documentation citations to two deleted documents | classification and a mechanical sweep | no |
-| 10 | Versioned telemetry schema and optional OpenTelemetry extension | extension/module ADR and accepted base composition points | no |
 | 11 | Common optional-extension seams and legacy combination-module migration | architecture ADR and compatibility decisions | no |
 | 12 | Jobs/cache conformance and current driver/worker completion | the in-flight implementation and green evidence | no |
 | 13 | Optional multitenancy extension | a concrete consumer and architecture gate | no |
@@ -169,31 +168,6 @@ directly, then delete that map.
 rg -n 'ROADMAP-errors\.md|ROADMAP-framework\.md' --glob '*.go' .
 rg -n 'ROADMAP-errors\.md|ROADMAP-framework\.md' --glob '*.md' docs
 ```
-
-## 10. Versioned telemetry schema and optional OpenTelemetry extension
-
-No OpenTelemetry module exists. Cache already has subsystem-local typed
-terminal events and storage now has a concrete Store, while the old OTel plan
-assumes a smaller service/repository surface and future storage.
-
-The current delivery plan is
-[2026-08-31-opentelemetry-roadmap.md](2026-08-31-opentelemetry-roadmap.md):
-one optional cross-cutting `vvotel` module with a shared factory, direct
-command/storage decorators and subsystem-local cache adapters. Base packages
-own dependency-neutral typed chain/observer entry points so OTel, tenancy,
-audit and future extensions compose linearly instead of creating pairwise
-packages. The root and every published module other than `otel/` remain
-OTel-free, and `vvotel` imports no optional framework satellite. [[D-048]]
-continues to refuse a shared telemetry contract. Repository spans, logs and
-jobs/event propagation remain explicit deferrals until their current contracts
-and instrumentation seams have conformance evidence. The common package rule is
-owned by the
-[2026-09-01 architecture revision](2026-09-01-extension-architecture-roadmap.md).
-
-This item closes only after the schema/extension ADR, base composition,
-capability and privacy tests, isolated consumer graphs proving OTel optionality,
-minimum/current OTel GA compatibility, and a runnable explicit-lifecycle SDK
-example all pass.
 
 ## 11. Common optional-extension seams and legacy module migration
 

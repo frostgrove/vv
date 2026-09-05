@@ -1,6 +1,12 @@
 package cachememory
 
-import "context"
+import (
+	"context"
+	"fmt"
+	"reflect"
+
+	"github.com/frostgrove/vv/cache"
+)
 
 type Operation string
 
@@ -52,4 +58,56 @@ type Event struct {
 
 type Observer interface {
 	Observe(context.Context, Event)
+}
+
+const MaxObservers = 8
+
+type observerFanOut struct {
+	children []Observer
+}
+
+func Observers(children ...Observer) (Observer, error) {
+	if len(children) > MaxObservers {
+		return nil, fail("build observers", fmt.Errorf("%w: at most %d observers may be composed", cache.ErrTooLarge, MaxObservers))
+	}
+	present := make([]Observer, 0, len(children))
+	for _, child := range children {
+		if nilInterface(child) {
+			continue
+		}
+		present = append(present, child)
+	}
+	return &observerFanOut{children: present}, nil
+}
+
+func MustObservers(children ...Observer) Observer {
+	observer, err := Observers(children...)
+	if err != nil {
+		panic(err)
+	}
+	return observer
+}
+
+func (this *observerFanOut) Observe(ctx context.Context, event Event) {
+	for _, child := range this.children {
+		observeIsolated(child, ctx, event)
+	}
+}
+
+func observeIsolated(child Observer, ctx context.Context, event Event) {
+	defer func() { _ = recover() }()
+	child.Observe(ctx, event)
+}
+
+func nilInterface(value any) bool {
+	if value == nil {
+		return true
+	}
+	v := reflect.ValueOf(value)
+	switch v.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+		return v.IsNil()
+	default:
+		return false
+	}
 }

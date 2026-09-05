@@ -1,0 +1,53 @@
+{
+  "contract_version": "vv-otel/v1",
+  "scope": {
+    "name": "github.com/frostgrove/vv/otel",
+    "version": "v0.1.0"
+  },
+  "components": ["command", "storage", "cache", "cache_backend"],
+  "operations": {
+    "command": ["list", "count", "get", "create", "update", "replace", "delete", "delete_many", "restore", "restore_many"],
+    "storage": ["put", "open", "head", "delete", "stage", "promote", "abort", "cleanup_expired", "temporary_url"],
+    "cache": ["lookup", "lookup_many", "load", "load_many", "put", "forget"],
+    "cache_backend": ["get", "get_many", "put", "delete", "evict", "reset", "close"]
+  },
+  "outcomes": ["ok", "error", "canceled", "timeout"],
+  "cache_outcomes": {
+    "cache": ["hit", "miss", "negative", "stale", "loaded", "stored", "deleted", "superseded", "complete", "error"],
+    "cache_backend": ["hit", "miss", "stored", "replaced", "deleted", "evicted", "rejected", "complete"]
+  },
+  "error_types": ["invalid", "not_found", "forbidden", "conflict", "stale_version", "internal", "canceled", "timeout", "panic"],
+  "error_codes": ["unique", "not_unique", "foreign_key", "restrict", "required", "check", "exclusion", "too_long", "out_of_range", "invalid_format", "invalid_enum", "stale_version", "malformed_body", "invalid_id", "unknown_field", "bad_query", "too_large", "conflict", "not_found", "forbidden", "method_not_allowed", "unauthenticated", "deadlock", "serialization_failure", "lock_timeout", "transaction_aborted", "unavailable", "schema_not_ready", "internal"],
+  "spans": {
+    "command_prefix": "vv.command",
+    "storage_prefix": "vv.storage"
+  },
+  "attributes": {
+    "component": {"name": "vv.component", "source": "closed component declaration", "privacy_class": "safe", "cardinality_bound": 4, "metric_eligible": true},
+    "operation_name": {"name": "vv.operation.name", "source": "closed operation declaration", "privacy_class": "safe", "cardinality_bound": 34, "metric_eligible": true},
+    "resource_name": {"name": "vv.resource.name", "source": "construction-time logical resource declaration", "privacy_class": "bounded", "cardinality_bound": 32, "metric_eligible": false},
+    "operation_outcome": {"name": "vv.operation.outcome", "source": "closed outcome declaration", "privacy_class": "safe", "cardinality_bound": 13, "metric_eligible": true},
+    "error_type": {"name": "error.type", "source": "closed failure classifier", "privacy_class": "safe", "cardinality_bound": 9, "metric_eligible": true},
+    "error_code": {"name": "vv.error.code", "source": "registry error code allow-list", "privacy_class": "bounded", "cardinality_bound": 29, "metric_eligible": false},
+    "cache_layer": {"name": "vv.cache.layer", "source": "closed cache layer declaration", "privacy_class": "safe", "cardinality_bound": 2, "metric_eligible": true}
+  },
+  "metrics": {
+    "command_duration": {"name": "vv.command.duration", "type": "histogram", "unit": "s", "description": "Duration of service command operations in seconds", "source": "vvotel service decorator", "privacy_class": "safe", "cardinality_bound": 100, "semconv": "none", "maturity": "development", "boundaries": [0.005, 0.01, 0.025, 0.05, 0.075, 0.1, 0.25, 0.5, 0.75, 1.0, 2.5, 5.0, 7.5, 10.0]},
+    "cache_operations": {"name": "vv.cache.operations", "type": "counter", "unit": "{operation}", "description": "Count of cache terminal phase events", "source": "vvotel cache observers", "privacy_class": "safe", "cardinality_bound": 116, "semconv": "none", "maturity": "development"}
+  },
+  "migration": {
+    "status": "development",
+    "since": "v0.1.0",
+    "policy": "ContractVersion is stable schema identity; ScopeVersion follows the published otel module version. Registry changes require regenerated output and a migration note."
+  },
+  "mappings": {
+    "cache": {
+      "operations": {"lookup": "lookup", "lookup_many": "lookup_many", "load": "load", "load_many": "load_many", "put": "put", "forget": "forget"},
+      "outcomes": {"hit": "hit", "miss": "miss", "negative": "negative", "stale": "stale", "loaded": "loaded", "stored": "stored", "deleted": "deleted", "superseded": "superseded", "complete": "complete", "error": "error"}
+    },
+    "cache_backend": {
+      "operations": {"get": "get", "get_many": "get_many", "put": "put", "delete": "delete", "evict": "evict", "reset": "reset", "close": "close"},
+      "outcomes": {"hit": "hit", "miss": "miss", "stored": "stored", "replaced": "replaced", "deleted": "deleted", "evicted": "evicted", "rejected": "rejected", "complete": "complete"}
+    }
+  }
+}

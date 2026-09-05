@@ -234,13 +234,21 @@ check_replaces() {
 # The answer is the exit status — 1 for untidy, 2 and up for a module that does
 # not resolve — because `go mod tidy` also prints warnings a tidy module earns.
 tidy_diff() {
-	local module=$1 root saved status=0
+	local module=$1 root saved saved_sum had_sum=0 status=0
 	root=$(realpath --relative-to="$module" .)
 	saved=$(mktemp)
+	saved_sum=$(mktemp)
 	if ! cp "$module/go.mod" "$saved"; then
 		echo "cannot copy $module/go.mod aside, so it was left alone"
 		rm -f "$saved"
+		rm -f "$saved_sum"
 		return 2
+	fi
+	if [[ -f $module/go.sum ]]; then
+		had_sum=1
+		cp "$module/go.sum" "$saved_sum"
+		awk -v module="$VV_MODULE" '$1 != module && index($1, module "/") != 1' "$module/go.sum" >"$module/go.sum.filtered"
+		mv "$module/go.sum.filtered" "$module/go.sum"
 	fi
 	(
 		cd "$module" || exit 1
@@ -248,7 +256,13 @@ tidy_diff() {
 		GOWORK=off "$GO" mod tidy -diff 2>&1
 	) || status=$?
 	cp "$saved" "$module/go.mod"
+	if (( had_sum )); then
+		cp "$saved_sum" "$module/go.sum"
+	else
+		rm -f "$module/go.sum"
+	fi
 	rm -f "$saved"
+	rm -f "$saved_sum"
 	return "$status"
 }
 
@@ -278,6 +292,33 @@ check_tidy() {
 	echo 'check-tidy: ok'
 }
 
+check_otel_schema() {
+	(cd "$REPO_ROOT" && "$GO" run ./cmd/vv-otel-gen -check -registry internal/otelreg/registry.json -out otel/schema_gen.go)
+	echo 'check-otel-schema: ok'
+}
+
+check_otel_module() {
+	(cd "$REPO_ROOT/otel" && GOWORK=off "$GO" test ./...)
+	echo 'check-otel-module: ok'
+}
+
+check_workspace() {
+	local expected actual
+	expected=$(workspace_modules | LC_ALL=C sort)
+	actual=$(awk '
+		/use[[:space:]]*\(/ { inside = 1; next }
+		inside && /^\)/ { inside = 0; next }
+		inside && $1 ~ /^\./ { print $1 }
+		!inside && $1 == "use" && $2 ~ /^\./ { print $2 }
+	' go.work | LC_ALL=C sort)
+	if [[ "$expected" != "$actual" ]]; then
+		echo 'go.work membership differs from discovered workspace modules:'
+		diff -u <(printf '%s\n' "$expected") <(printf '%s\n' "$actual") || true
+		return 1
+	fi
+	echo 'check-workspace: ok'
+}
+
 case ${1:-} in
 	all)
 		check_deps
@@ -287,6 +328,8 @@ case ${1:-} in
 		check_todo
 		check_replaces
 		check_tidy
+		check_otel_schema
+		check_workspace
 		;;
 	deps) check_deps ;;
 	tiers) check_tiers ;;
@@ -295,5 +338,8 @@ case ${1:-} in
 	todo) check_todo ;;
 	replaces) check_replaces ;;
 	tidy) check_tidy ;;
+	otel-schema) check_otel_schema ;;
+	otel-module) check_otel_module ;;
+	workspace) check_workspace ;;
 	*) echo "unknown check: ${1:-}" >&2; exit 2 ;;
 esac

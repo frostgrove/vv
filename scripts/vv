@@ -22,7 +22,7 @@ Usage: make <command>
   check-deps, check-tiers      Run an individual dependency check
   check-utils, check-triplets
   check-todo, check-replaces
-  check-tidy
+  check-tidy, check-otel-schema, check-otel-module, check-workspace, check-otel-consumer
   api, vuln                    Regenerate API baseline or scan vulnerabilities
   main-deps, version, release  Maintain module versions and publish a release
   clean                        Stop databases and clear Go's test cache
@@ -46,6 +46,10 @@ case ${1:-help} in
 	check-todo) exec "$SCRIPT_DIR/checks.sh" todo ;;
 	check-replaces) exec "$SCRIPT_DIR/checks.sh" replaces ;;
 	check-tidy) exec "$SCRIPT_DIR/checks.sh" tidy ;;
+	check-otel-schema) exec "$SCRIPT_DIR/checks.sh" otel-schema ;;
+	check-otel-module) exec "$SCRIPT_DIR/checks.sh" otel-module ;;
+	check-workspace) exec "$SCRIPT_DIR/checks.sh" workspace ;;
+	check-otel-consumer) exec "$SCRIPT_DIR/otel-consumer.sh" ;;
 	up|down|logs|psql|mysql|mariadb) exec "$SCRIPT_DIR/database.sh" "$1" ;;
 	fmt) exec gofmt -l -w . ;;
 	integration)

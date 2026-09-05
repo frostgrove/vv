@@ -182,6 +182,7 @@ version() {
 		(cd "$module" && "$GO" mod edit -require="$VV_MODULE@$V")
 		echo "$module -> $V"
 	done < <(satellites)
+	(cd "$REPO_ROOT" && "$GO" run ./cmd/vv-otel-gen -write-scope-version "$V" -registry internal/otelreg/registry.json -out otel/schema_gen.go)
 	"${BASH_SOURCE[0]}" tidy
 }
 

@@ -22,6 +22,25 @@ type Store interface {
 	Capabilities() Capabilities
 }
 
+type Middleware func(Store) Store
+
+func Chain(base Store, middleware ...Middleware) Store {
+	if nilInterface(base) {
+		return nil
+	}
+	current := base
+	for i := len(middleware) - 1; i >= 0; i-- {
+		if middleware[i] == nil {
+			continue
+		}
+		current = middleware[i](current)
+		if nilInterface(current) {
+			return nil
+		}
+	}
+	return current
+}
+
 type Backend interface {
 	Put(context.Context, Namespace, Key, io.Reader, PutOptions) (Info, error)
 	Open(context.Context, Namespace, Key) (io.ReadCloser, Info, error)

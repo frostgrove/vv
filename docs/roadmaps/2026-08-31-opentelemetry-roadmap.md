@@ -1,7 +1,8 @@
 # OpenTelemetry roadmap — 2026-08-31
 
-**Status:** active design; no OpenTelemetry extension module exists, and accepted
-[[D-048]] continues to refuse a shared framework telemetry contract.
+**Status:** implementation landed in the working tree; publication remains gated
+by the lockstep root/`otel` consumer check. Accepted [[D-048]] continues to
+refuse a shared framework telemetry contract.
 
 **Architecture:** governed by the
 [2026-09-01 optional-extension architecture](2026-09-01-extension-architecture-roadmap.md),
@@ -120,17 +121,17 @@ remote-client spans produced during the operation cannot become its children.
 | Surface | State on this snapshot | Observation seam |
 |---|---|---|
 | Root module | No OpenTelemetry dependency | Must remain unchanged |
-| `port.Service` | Implemented, including bulk delete and optional restore | No OTel decorator yet |
+| `port.Service` | Implemented, including bulk delete and optional restore | `vvotel.Service` decorates the seam without OTel types in root |
 | `crud.Core` | Implemented with `Meta` plus fifteen operation methods | Middleware exists; no observation contract |
 | `remote`/`remotehttp` | Implemented; caller can inject an HTTP client | Upstream `otelhttp` can own client spans |
-| `storage`, `storagefs`, `storageminio` | Implemented | No OTel wrapper yet |
+| `storage`, `storagefs`, `storageminio` | Implemented | `vvotel.Store` decorates the seam; backend/client spans remain external |
 | `cache` | Implemented/in progress with typed terminal events; built-in emitters use bounded known values | `cache.Observer.Observe` |
 | `cachememory` | Implemented/in progress with its own typed terminal events; built-in emitters use bounded known values | `cachememory.Observer.Observe` |
 | `authjwt` | Has a narrow degraded-JWKS observer | Point event only |
 | `jobs` | Core contracts, durable context, scheduling, Admin/redrive contracts, PostgreSQL operator controls, memory/PostgreSQL drivers and worker execution have landed; Admin List is count-bounded but lacks an aggregate byte budget; Redis is a committed building backend module; `WorkerObserver` vocabulary/config exists but runtime emission is not wired | No first-release `vvotel` adapter; Admin is not a handler-lifecycle seam, so reassess only after clean conformance/live-backend gates and a justified typed lifecycle seam |
 | Event sourcing, outbox, broker eventing | Not implemented in the framework | Defer |
 | Shared `observe` package | Refused by current [[D-048]] | Not planned |
-| Optional `vvotel` module | Not implemented | Build after the extension/module/schema decisions |
+| Optional `vvotel` module | Implemented in working tree; not yet published | Pass strict `GOWORK=off` consumer gate, then publish lockstep tags |
 
 The cache facade and memory backend are different observation layers. A single
 public call may emit multiple facade phases and touch the backend. Their event

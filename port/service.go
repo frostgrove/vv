@@ -2,6 +2,7 @@ package port
 
 import (
 	"context"
+	"reflect"
 
 	"github.com/frostgrove/vv/crud"
 	"github.com/frostgrove/vv/crud/query"
@@ -46,6 +47,38 @@ func RestorableOf[ID comparable](service any) (RestorableService[ID], bool) {
 		return nil, false
 	}
 	return provider.Restorable()
+}
+
+type ServiceMiddleware[M any, ID comparable, U any] func(Service[M, ID, U]) Service[M, ID, U]
+
+func ChainService[M any, ID comparable, U any](base Service[M, ID, U], middleware ...ServiceMiddleware[M, ID, U]) Service[M, ID, U] {
+	if nilService(base) {
+		return nil
+	}
+	current := base
+	for i := len(middleware) - 1; i >= 0; i-- {
+		if middleware[i] == nil {
+			continue
+		}
+		current = middleware[i](current)
+		if nilService(current) {
+			return nil
+		}
+	}
+	return current
+}
+
+func nilService(value any) bool {
+	if value == nil {
+		return true
+	}
+	v := reflect.ValueOf(value)
+	switch v.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+		return v.IsNil()
+	default:
+		return false
+	}
 }
 
 type ServiceOption func(*serviceConfig)

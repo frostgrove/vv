@@ -102,6 +102,7 @@ For newcomer-oriented navigation, see the [module index](modules/Index.md) and
 | [UC-025](modules/health/UC-025-say-whether-this-replica-should-take-traffic.md) | Say whether this replica should take traffic | the application author, for an orchestrator, a load balancer and an operator | `health` | appfiber | covered |
 | [UC-026](modules/runtime/UC-026-run-background-work-without-losing-a-worker-silently.md) | Run background work without losing a worker silently | the application author | `runtime` | appfx · jobs | covered |
 | [UC-027](modules/app/UC-027-run-one-codebase-as-an-api-a-worker-and-a-seed-command.md) | Run one codebase as an API, a worker and a seed command | the application author | `app` | appfx · appfiber · runtime | covered |
+| [UC-030](general/UC-030-observing-services-and-storage.md) | Observe services, storage and cache without changing core contracts | application operator | `general` | port · storage · cache · otel | covered |
 
 ## Coverage map
 | Use case | Flows |

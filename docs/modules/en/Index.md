@@ -104,6 +104,12 @@ the exception ([[D-048]], [[D-055]]).
 | [cachememory](cachememory.md) | `vv/cache/cachememory` | Bounded process-local LRU backend with exact public charge accounting and batch reads |
 | [cachefx](cache.md) | `vv/cache/cachefx` | **Module** — the set, provider and resource groups, the required resource declarations and the activation, in an uber/fx graph |
 
+## Observability — tracing and metrics
+
+| Module | Import | What it is |
+|---|---|---|
+| [otel](otel.md) | `vv/otel` | **Module** — OpenTelemetry service command and storage decorators, terminal cache event observers, bounded schema and duration histogram |
+
 ## The request — one document, four transports
 
 | Module | Import | What it is |

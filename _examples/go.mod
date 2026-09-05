@@ -16,11 +16,19 @@ replace github.com/frostgrove/vv/crud/http/crudgin => ../crud/http/crudgin
 
 replace github.com/frostgrove/vv/crud/adapter/crudpgx => ../crud/adapter/crudpgx
 
+replace github.com/frostgrove/vv/otel => ../otel
+
 require (
-	github.com/frostgrove/vv v0.0.0-20260829132449-bc1e4c0b1038
+	github.com/frostgrove/vv v0.1.0
 	github.com/frostgrove/vv/auth/authjwt v0.0.0-00010101000000-000000000000
 	github.com/frostgrove/vv/auth/http/authgin v0.0.0-00010101000000-000000000000
+	github.com/frostgrove/vv/otel v0.0.0-00010101000000-000000000000
 	github.com/golang-jwt/jwt/v5 v5.3.1
+	go.opentelemetry.io/otel v1.44.0
+	go.opentelemetry.io/otel/exporters/stdout/stdoutmetric v1.44.0
+	go.opentelemetry.io/otel/exporters/stdout/stdouttrace v1.44.0
+	go.opentelemetry.io/otel/sdk v1.44.0
+	go.opentelemetry.io/otel/sdk/metric v1.44.0
 	google.golang.org/grpc v1.83.1
 )
 
@@ -30,9 +38,12 @@ require (
 	github.com/bytedance/gopkg v0.1.3 // indirect
 	github.com/bytedance/sonic v1.15.0 // indirect
 	github.com/bytedance/sonic/loader v0.5.0 // indirect
+	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/cloudwego/base64x v0.1.6 // indirect
 	github.com/gabriel-vasile/mimetype v1.4.12 // indirect
 	github.com/gin-contrib/sse v1.1.0 // indirect
+	github.com/go-logr/logr v1.4.3 // indirect
+	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/go-playground/locales v0.14.1 // indirect
 	github.com/go-playground/universal-translator v0.18.1 // indirect
 	github.com/go-playground/validator/v10 v10.30.1 // indirect
@@ -63,6 +74,9 @@ require (
 	github.com/valyala/bytebufferpool v1.0.0 // indirect
 	github.com/valyala/fasthttp v1.72.0 // indirect
 	go.mongodb.org/mongo-driver/v2 v2.5.0 // indirect
+	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
+	go.opentelemetry.io/otel/metric v1.44.0 // indirect
+	go.opentelemetry.io/otel/trace v1.44.0 // indirect
 	golang.org/x/arch v0.22.0 // indirect
 	golang.org/x/crypto v0.53.0 // indirect
 	golang.org/x/net v0.56.0 // indirect

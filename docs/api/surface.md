@@ -344,6 +344,7 @@ type ValueSchema uint32
 ## github.com/frostgrove/vv/cache/cachememory
 ```go
 const ChargeModelVersion = 1 ...
+const MaxObservers = 8
 func EntryCharge(valueBytes int) (int64, error)
 type Backend struct{ ... }
     func New(limits Limits, options ...Option) (*Backend, error)
@@ -351,6 +352,8 @@ type Clock interface{ ... }
 type Event struct{ ... }
 type Limits struct{ ... }
 type Observer interface{ ... }
+    func MustObservers(children ...Observer) Observer
+    func Observers(children ...Observer) (Observer, error)
 type Operation string
     const GetOperation Operation = "get" ...
 type Option interface{ ... }
@@ -1580,6 +1583,8 @@ type RestorableService[ID comparable] interface{ ... }
 type RestoreCommand[ID comparable] struct{ ... }
 type Rules struct{ ... }
 type Service[M any, ID comparable, U any] interface{ ... }
+    func ChainService[M any, ID comparable, U any](base Service[M, ID, U], middleware ...ServiceMiddleware[M, ID, U]) Service[M, ID, U]
+type ServiceMiddleware[M any, ID comparable, U any] func(Service[M, ID, U]) Service[M, ID, U]
 type ServiceOption func(*serviceConfig)
     func AllowClientID() ServiceOption
     func WithPaths(r errs.Resolver) ServiceOption
@@ -1723,6 +1728,7 @@ type Kind string
 type Link struct{ ... }
     func NewLink(rawURL string, expiresAt time.Time) (Link, error)
 type Metadata map[string]string
+type Middleware func(Store) Store
 type Namespace struct{ ... }
     func ParseNamespace(raw string) (Namespace, error)
 type PromoteOptions struct{ ... }
@@ -1733,6 +1739,7 @@ type StageID struct{ ... }
 type StageOptions struct{ ... }
 type Staged struct{ ... }
 type Store interface{ ... }
+    func Chain(base Store, middleware ...Middleware) Store
     func New(config *Config) (Store, error)
 type TemporaryURLOptions struct{ ... }
 type WriteMode uint8
@@ -2494,6 +2501,46 @@ type Driver struct{ ... }
     func New(spec Spec) (*Driver, error)
     func Open(ctx context.Context, client redis.UniversalClient, namespace jobs.Namespace) (*Driver, error)
 type Spec struct{ ... }
+```
+
+## github.com/frostgrove/vv/otel
+```go
+const ScopeName = "github.com/frostgrove/vv/otel" ...
+const MigrationStatus = "development" ...
+const AttrCacheLayer = attribute.Key("vv.cache.layer") ...
+const ComponentCommand = "command" ...
+const OpCacheLookup = "lookup" ...
+const OutcomeOk = "ok" ...
+const ErrorTypeInvalid = "invalid" ...
+const ErrorCodeUnique = "unique" ...
+const MetricCacheOperations = "vv.cache.operations" ...
+var ErrNilConfig = errors.New("vvotel: config is nil") ...
+var AttributeMetadataByKey = map[string]AttributeMetadata{ ... }
+var MetricMetadataByKey = map[string]MetricMetadata{ ... }
+func AllowedErrorCode(value string) (string, bool)
+func Cache(t *Telemetry, opts ...CacheOption) cache.Observer
+func CacheBackendOperationName(value string) (string, bool)
+func CacheBackendOutcomeName(value string) (string, bool)
+func CacheMemory(t *Telemetry, opts ...CacheMemoryOption) cachememory.Observer
+func CacheOperationName(value string) (string, bool)
+func CacheOutcomeName(value string) (string, bool)
+func CommandSpanName(op string) string
+func Service[M any, ID comparable, U any](t *Telemetry, opts ...ServiceOption) port.ServiceMiddleware[M, ID, U]
+func StorageSpanName(op string) string
+func Store(t *Telemetry, opts ...StorageOption) storage.Middleware
+type AttributeMetadata struct{ ... }
+type CacheMemoryOption func(*cacheMemorySettings)
+    func WithCacheMemorySpanEvents(enabled bool) CacheMemoryOption
+type CacheOption func(*cacheSettings)
+    func WithCacheSpanEvents(enabled bool) CacheOption
+type Config struct{ ... }
+type MetricMetadata struct{ ... }
+type ServiceOption func(*serviceSettings)
+    func WithServiceResource(name string) ServiceOption
+type StorageOption func(*storageSettings)
+    func WithStorageResource(name string) StorageOption
+type Telemetry struct{ ... }
+    func New(config Config) (*Telemetry, error)
 ```
 
 ## github.com/frostgrove/vv/runtime/runtimefx

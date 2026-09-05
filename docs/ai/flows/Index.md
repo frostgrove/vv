@@ -53,6 +53,7 @@ through it.
 | a background worker, a ticker, a supervisor, a drain, or how a runner is activated | [[FL-028]] |
 | a module definition, a deployment profile, a contribution role, the catalog, or what a doctor prints | [[FL-030]] |
 | `module.manifest.yml`, an inferred contribution kind, or where a module's constructor list comes from | [[FL-032]] |
+| command or storage telemetry spans, duration metrics or cache observers | [[FL-034]] |
 
 **A code change that alters a path must update its flow document in the same
 change.** Not afterwards, not in a follow-up. A flow that describes a path the
