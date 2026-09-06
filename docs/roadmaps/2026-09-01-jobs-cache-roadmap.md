@@ -210,14 +210,14 @@ queue, err := jobs.NewQueue(jobs.QueueSpec{
     Namespace: jobsNamespace,
     Catalog:   jobCatalog,
     Sender:    postgresJobs,
-    Context:   tenancy.JobContext(tenantResolver),
+    Context:   tenancyjobs.ContextProvider(authority, provenance, epoch),
 })
 
 workers, err := jobs.NewWorkers(jobs.WorkersSpec{
     Namespace: jobsNamespace,
     Catalog:   jobCatalog,
     Driver:    postgresJobs,
-    Identity:  tenancy.JobIdentity(tenantResolver),
+    Identity:  tenancyjobs.IdentityRestorer(authority),
     Observer:  jobs.MustWorkerObservers(applicationJobObserver, exporter),
 }, consumers...)
 ```

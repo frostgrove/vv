@@ -167,12 +167,18 @@ and the next decision written before its code does should say so here.
 | [D-112](D-112-a-revocation-list-refuses-a-server-that-evicts-it.md) | The Redis revocation list asks its own server for `maxmemory-policy` at start-up and refuses every evicting one; a server that will not answer is a third verdict that is warned about by default and refused on request, an absent server is refused outright, and the check is a lifecycle method with `revokeredisfx` as its fx form | accepted | auth, security, caching, operations |
 | [D-113](D-113-a-resource-states-its-mounted-operations-as-one-set.md) | Which of a CRUD resource's ten routes are mounted is one bitmask on `port.Rules`, read by every transport and by the declaration `crudhttp.Table` derives; `ReadOnly` becomes its commonest value, and naming both is a start-up panic | accepted | transports, API design, security |
 | [D-114](D-114-one-cross-cutting-opentelemetry-module.md) | Exactly one published module `otel/` (`github.com/frostgrove/vv/otel`, package `vvotel`) adapts base seams (`port`, `storage`, `cache`); non-OTel modules and the root remain OTel-free, and combination packages are forbidden | accepted | process & tooling, composition, operations |
+| [D-115](D-115-unscoped-existence-is-an-exact-outer-effect.md) | `ExistsUnscopedOf` answers from the exact outer `Core` and never walks; `security.gate` answers it inside its own scope, `faults.enricher` forwards it, `crud.Base` does not, and a core that never decided answers `ErrNoUnscopedExists` — the last executable effect that still tunnelled (completes D-061) | accepted | core seam, security |
+| [D-116](D-116-one-tenancy-extension-and-its-core-costs-no-seam.md) | One tenancy extension in the root module: a core that imports no seam, and one package per seam it adapts (`tenancyrow`, `tenancydb`, `tenancyjobs`, `tenancystorage`, `tenancycache`), each costing its own seam and no other; a module boundary here is a third-party dependency boundary, so a stdlib-only extension does not get one until a provider adapter needs it | accepted | composition, security, process & tooling |
+| [D-117](D-117-a-verified-scope-is-minted-never-manufactured.md) | A `tenancy.Scope` exists only where the injected authority minted it — the resolver returns plain data, the scope carries a per-authority HMAC binding, lifecycle admission is a whitelist per operation class, the epoch is checked at each boundary and pinned in between, and a refusal names a kind and never the resolver's text | accepted | security, core seam, operations |
+| [D-118](D-118-a-transactional-enqueue-is-the-outbox.md) | A durable invocation placed while the caller's transaction is bound to the driver's `crud.Source` is written inside it and disappears with a rollback — that is the outbox, there is no second one and no broker package; an ambient non-transaction is refused rather than placed on autocommit, and delivery is at-least-once and unordered | accepted | jobs, transactions & datasources |
 
 ## By area
 
 **Core seam** — D-001 (two-parameter `Core`, three-parameter `Repo`),
 D-002 (`Opt[T]`), D-021 (why any of it is reflective), D-022 (the handler's
-interface), D-030 (a verb on the seam is every decorator's obligation, and the
+interface), D-115 (the last executable effect that still walked, and
+why a gate answers it inside its own scope),
+D-030 (a verb on the seam is every decorator's obligation, and the
 test that enforces it), D-061 (what embedding erases, which discovery walks are
 safe, and why storage effects require exact forwarding), D-083 (the optional
 typed batch effect and its fail-closed decorator boundary).
@@ -258,7 +264,9 @@ D-012 (PUT does not create), D-002 (three-state DTO fields).
 strict legacy inference and the explicit unsafe escape hatch), D-019 (dialect
 differences), D-077 (bounded detached rollback), D-079 (atomic write chunks),
 D-083 (native effects resolve the same source-bound executor), D-041 (what else
-keys on datasource identity), D-042 (why the ownership flag exists at all).
+keys on datasource identity), D-042 (why the ownership flag exists at all),
+D-118 (what a job placement does with a transaction it finds in the context,
+and the two things it refuses instead of guessing).
 D-009 and D-027 retain the superseded argument.
 
 **HTTP** — D-063 (the body cap, and why all three bindings share one number),
@@ -337,7 +345,9 @@ resource carries documents), D-049 (the kind decides the status), D-013
 **Operations** — D-090 (why liveness asks nothing and why degraded keeps its
 traffic), D-091 (importance as a composition decision, the opt-in public code,
 and why there is no package per checked subsystem), D-101 (why nothing migrates
-a jobs schema by default, and what a production profile refuses), D-096 (the neutral probe
+a jobs schema by default, and what a production profile refuses), D-118 (why a
+transactional enqueue is the outbox, why the broker relay is the application's
+and what delivery does not promise), D-096 (the neutral probe
 and observer fan-out that give D-091 something to wrap), D-092 (contributing a runner
 is what starts it, a component's own loop is a supervisor of one, an early
 return is a failure, drain before cancel, and a ticker that says it is

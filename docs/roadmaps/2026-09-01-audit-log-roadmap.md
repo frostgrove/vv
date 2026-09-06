@@ -22,7 +22,7 @@ roadmap are not implemented APIs.
 |---|---|---|
 | Audit | No audit policy, writer, reader or persistence module exists | Every API name below is provisional until A0 |
 | Root dependency graph | The root module has no third-party requirement | Audit and PostgreSQL dependencies remain optional in one extension module |
-| Repository composition | `crud.Middleware`, `crud.Chain`, `crud.Base.Next`, `Core.Tx` and typed optional effects exist; `ExistsUnscopedOf` currently walks to an inner executable effect | First slice uses the base chain only after unscoped existence becomes exact-outer/explicitly forwarded or fail closed |
+| Repository composition | `crud.Middleware`, `crud.Chain`, `crud.Base.Next`, `Core.Tx` and typed optional effects exist; `ExistsUnscopedOf` is exact-outer ([[D-115]]) | The base chain is available to the first slice; an audit decorator states what it does with each optional effect or fails closed |
 | Service composition | `port.Service` and restore discovery exist; service middleware/chain is planned but not implemented | No public audit service factory precedes acceptance of that base chain and an honest atomicity profile |
 | Storage composition | `storage.Store`, `Backend` and `Capabilities` exist; Store middleware/chain is planned but not implemented | A future audit Store factory waits for that chain and imports no storage backend satellite |
 | Tenancy | Existing policy/query scopes exist; no tenancy extension/runtime exists | Audit uses its own bounded scope reference or a root-neutral type, never `tenancy.Ref` |
@@ -428,8 +428,8 @@ audit × broker package is created.
    accept a generic service wrapper as atomicity evidence.
 4. Inventory `crud`, `port` and `storage` methods/capabilities and identify only
    the base adapters justified by current consumers.
-5. Resolve the executable `crud.ExistsUnscopedOf` walk before publishing the
-   audit repository middleware; opaque neighbours cannot expose inner effects.
+5. **Done** — the executable `crud.ExistsUnscopedOf` walk is gone and opaque
+   neighbours expose no inner effect ([[D-115]]).
 6. Freeze first-listed-outermost order, nil handling, policy-before-capture,
    error identity, panic behavior and exact-effect rules.
 7. Freeze revision/item/value schema, canonical codecs, privacy classes and

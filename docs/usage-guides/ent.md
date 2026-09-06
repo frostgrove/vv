@@ -1123,6 +1123,15 @@ var policy = security.ScopeField[ent.User, int64]("TenantID",
 users := store.Users.Bind(src, security.Gate(policy))
 ```
 
+> **When the tenant value itself has to be trusted**, this is the hand-wired
+> version. The optional [`tenancy`](../modules/en/tenancy.md) extension turns it
+> into a *verified* scope: the value comes from an injected control-plane
+> contract rather than from a context key the application set itself, it carries
+> a lifecycle state and a generation, and the same scope reaches the object
+> store, the cache and the job queue. It returns a `security.Policy`, so it
+> composes with everything on this page through `security.Combine`.
+
+
 From that one line:
 
 - every read gets `AND tenant_id = $n`, in SQL, not in Go;

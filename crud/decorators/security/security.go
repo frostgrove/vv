@@ -184,7 +184,12 @@ func (this *gate[M, ID]) scoped(ctx context.Context, options []crud.Option) ([]c
 	if p == nil && rel == nil {
 		return options, nil, nil
 	}
-	return append([]crud.Option{crud.Where(p), rel}, options...), p, nil
+	// The gate's narrowing goes on last. A crud.Option is a func over a struct
+	// whose fields are exported, so an option that assigns o.Filter rather than
+	// appending to it erases whatever came before — and applied first, this gate's
+	// predicate is what came before. Composed last it is the one thing a caller's
+	// option cannot drop, and Where appends, so the caller's own filter survives.
+	return append(append(make([]crud.Option, 0, len(options)+2), options...), crud.Where(p), rel), p, nil
 }
 
 func (this *gate[M, ID]) writeScopes(ctx context.Context) (crud.Predicate, *crud.RelationScopes, error) {
@@ -372,6 +377,27 @@ func (this *gate[M, ID]) Exists(ctx context.Context, options ...crud.Option) (bo
 		return false, err
 	}
 	return this.Core.Exists(ctx, scoped...)
+}
+
+// Unscoped names the caller's narrowing, not this gate's. A gate below this one
+// is the honest universe for the question "is this id taken somewhere I cannot
+// see", and answering from the raw table instead would hand the layer above an
+// existence bit for rows the layer below exists to hide.
+func (this *gate[M, ID]) ExistsUnscoped(ctx context.Context, options ...crud.Option) (bool, error) {
+	if err := this.authorize(ctx, Read); err != nil {
+		return false, err
+	}
+	scope, rel, err := this.writeScopes(ctx)
+	if err != nil {
+		return false, err
+	}
+	found, err, supported := crud.ExistsUnscopedOf(this.Core, ctx,
+		append(append(make([]crud.Option, 0, len(options)+2), options...),
+			crud.Where(scope), relationNarrowing(rel))...)
+	if !supported {
+		return false, crud.ErrNoUnscopedExists
+	}
+	return found, err
 }
 
 func (this *gate[M, ID]) InsertBatch(ctx context.Context, models []*M, options ...crud.BatchOption) error {
@@ -654,11 +680,11 @@ func (this *gate[M, ID]) saveTarget(ctx context.Context, meta *crud.Meta, id any
 	}
 
 	hidden, err, supported := crud.ExistsUnscopedOf(this.Core, ctx, byID, crud.PrimaryOnly())
+	if !supported || errors.Is(err, crud.ErrNoUnscopedExists) {
+		return nil, crud.ErrNotFound
+	}
 	if err != nil {
 		return nil, err
-	}
-	if !supported {
-		return nil, crud.ErrNotFound
 	}
 	if hidden {
 		return nil, crud.ErrNotFound

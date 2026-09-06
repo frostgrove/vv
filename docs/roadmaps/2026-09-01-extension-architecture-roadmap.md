@@ -114,9 +114,9 @@ The current tree already has some of the required shapes and is missing others:
 
 | Base owner | Current seam | Required architecture action |
 |---|---|---|
-| `crud` | `Middleware`, `Chain`, `Base.Next` and typed optional effects; `ExistsUnscopedOf` currently walks through `Next` to an executable inner effect | Reuse the chain, but make unscoped existence exact-outer/explicitly forwarded or fail closed before adding new decorators |
-| `port` | `Service` plus optional restore discovery | Add a typed service middleware/chain and preserve restore honestly |
-| `storage` | `Store`, `Backend`, `Capabilities` | Add a typed Store middleware/chain; forward `Capabilities` exactly |
+| `crud` | `Middleware`, `Chain`, `Base.Next` and typed optional effects; `ExistsUnscopedOf` is exact-outer ([[D-115]]) | Done — reuse the chain; a new decorator that narrows rows answers the unscoped probe inside its own scope rather than forwarding it raw |
+| `port` | `Service`, `ServiceMiddleware`, `ChainService` and optional restore discovery through `RestorableOf` | Landed with first-listed-outermost order and nil skipped; the ADR that accepts the shape is still M0's |
+| `storage` | `Store`, `Backend`, `Capabilities`, `Middleware` and `Chain` | Landed with the same order and nil rules; every decorator forwards `Capabilities` exactly, and the ADR is still M0's |
 | `cache` | typed `Observer`, backend description/capabilities | Add deterministic bounded observer fan-out that preserves [[D-084]] shared-flight backpressure; do not add a generic backend chain until executable batch discovery is exact-outer |
 | `cache/cachememory` | a distinct typed `Observer` | Add its own fan-out; do not merge facade and backend events |
 | `jobs` | typed `Consumer`, handler binding, exact optional `Admin` executable capability and `WorkerObserver` vocabulary/config; runtime observer emission is not wired | Keep Admin selection exact/explicit and never tunnel through a driver wrapper; first wire/narrow the point-event contract, then add fan-out or a handler-lifecycle middleware only for justified independent uses |
@@ -128,11 +128,13 @@ Base APIs are added only when at least two independent consumers or one current
 consumer plus a concrete conformance obligation justify them. They contain no
 extension type or dependency.
 
-Two current executable-discovery shapes are blockers, not precedents:
-`crud.ExistsUnscopedOf` walks through `Next`, and `cache.BatchReaderOf` walks
-through backend wrappers. Each must become exact-outer, explicitly forwarded by
-known built-ins or fail closed before a new cross-cutting decorator can rely on
-it.
+One executable-discovery shape remains a blocker rather than a precedent:
+`cache.BatchReaderOf` walks through backend wrappers, and must become
+exact-outer, explicitly forwarded by known built-ins or fail closed before a new
+cross-cutting decorator can rely on it. The repository half is closed —
+`crud.ExistsUnscopedOf` reads the exact outer `Core`, each built-in decorator
+states what it does with the verb, and an unknown wrapper fails closed
+([[D-115]]).
 
 ## Linear application composition
 
@@ -285,6 +287,28 @@ with one public package and organizes adapters by files. A public subpackage or
 nested module is added only for a separately selected third-party dependency,
 not to mirror each base seam.
 
+**Narrowed by [[D-116]], on two criteria and no others.**
+
+1. **The graphs differ.** A subpackage is added when the seams an extension
+   adapts do not cost the same graph, because folding them into one package
+   charges every consumer for the heaviest of them. That is a measurement, not a
+   preference. In `vvotel` every seam costs the same OpenTelemetry SDK, so files
+   are right and [[D-114]] stands unchanged. In tenancy the row policy reaches
+   `crud/decorators/security`, and through it `auth` and `errs`, while the cache
+   partition reaches `cache` — one package would make a deployment that wanted a
+   tenant-partitioned cache compile the authorization subsystem to get it.
+2. **The choice differs.** A subpackage is also added when it names an
+   alternative a deployment picks *instead of* another, or an object that owns a
+   lifecycle the core does not. `tenancy/tenancydb` costs nothing beyond the core
+   and is still a package: database-per-tenant is the topology a deployment
+   chooses instead of shared-row, and its `Directory` holds a mutex, a cache of
+   open sources and a `Close`, where the core holds nothing that outlives a
+   call. Criterion 1 alone would put it back in the core, which is why this one
+   is written down rather than left as taste.
+
+Neither criterion licenses mirroring a seam *for symmetry*, and
+`scripts/tenancy_test.go` is what tells the cases apart.
+
 ### M3 — consumer and release evidence
 
 1. Build isolated `GOWORK=off` fixtures for base-only, each extension alone and
@@ -307,7 +331,7 @@ not to mirror each base seam.
 | Capability safety | Unknown wrappers never expose an inner executable effect; built-ins preserve or fail closed before I/O |
 | Hook safety | Fan-out preserves subsystem lifecycle/backpressure, isolates panic and creates no unbounded queue or goroutine |
 | Activation | Import/factory construction has no global registration or hidden lifecycle |
-| Package growth | No pairwise, nested or combined extension package/module appears in discovered modules |
+| Package growth | No pairwise or combined extension package/module appears in discovered modules. A package nested under an extension is a seam adapter or a topology admitted by one of the two criteria above, never the intersection of two extensions |
 | Workspace/release | Module discovery and `go.work` membership are set-equal; published modules have no `replace`; tags remain lockstep |
 | Documentation | Every example labels implemented APIs separately from illustrative shapes |
 

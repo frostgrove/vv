@@ -51,8 +51,8 @@ effective limits afterwards.
 
 ## Address and admission
 
-1. The scope and key codec in `cache/address.go`, `cache/scope.go` and
-   `cache/key.go` produce bounded owned bytes. Namespace, partition and key are
+1. The scope and key codec in `cache/address.go` and `cache/key.go` produce
+   bounded owned bytes. Namespace, partition and key are
    hashed into a fixed `Address`; key and value schema versions are part of the
    envelope contract rather than string conventions.
 2. `cache/transient.go` computes a typed plan for lookup, batch, load, put and

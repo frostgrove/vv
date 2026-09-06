@@ -1,8 +1,10 @@
 # Storage roadmap — current implementation and extension composition — 2026-09-01
 
 **Status:** active revision. The dependency-neutral storage contract, filesystem
-backend and MinIO backend are implemented. The typed extension chain, optional
-storage decorators and the `storageminiofx` migration described here are not.
+backend, MinIO backend and the typed `Middleware`/`Chain` composition point are
+implemented, and `vvotel.Store` is the first decorator through that seam. The
+remaining optional storage decorators and the `storageminiofx` migration
+described here are not.
 Public names for missing APIs remain illustrative until M0 accepts the common
 extension ADR.
 
@@ -38,8 +40,9 @@ error classes or backend choice merely to make extension wiring symmetrical.
 | `github.com/frostgrove/vv/storage/storageminio/storageminiofx` | Current MinIO-specific Fx constructors and lifecycle hook | Legacy pairwise module; migration required |
 
 There is no `storages3`, `storageaws`, `storager2`, `storageotel`, `storageaudit`
-or `tenantstorage` package. There is no storage middleware/chain yet and no
-OpenTelemetry extension module yet.
+or `tenantstorage` package. `storage.Middleware` and `storage.Chain` now exist,
+and so does the OpenTelemetry extension module, which decorates the Store through
+that seam rather than through a package of its own.
 
 The implemented `storage.Store` surface is:
 
@@ -127,7 +130,8 @@ because that would couple logical semantics to one provider.
 
 ### Store middleware seam
 
-M0 decides the exact API. The working shape follows the existing `crud` pattern:
+The seam has landed in the shape this section proposed, following the existing
+`crud` pattern:
 
 ```go
 type Middleware func(Store) Store
@@ -135,7 +139,8 @@ type Middleware func(Store) Store
 func Chain(base Store, middleware ...Middleware) Store
 ```
 
-The accepted form must have these properties:
+M0 still accepts it as an ADR. The form must have these properties, and the
+implemented one is measured against them rather than assumed to hold them:
 
 - the first middleware listed is outermost;
 - nil middleware is skipped;
@@ -216,7 +221,11 @@ Do not create:
 
 An extension may offer a `Store` middleware from its one public package. Files
 inside that package may organize storage-specific implementation, but a public
-subpackage/module is not created merely because the adapted seam is storage.
+subpackage/module is not created merely because the adapted seam is storage. It
+is created when the seams that extension adapts cost different graphs and one
+package would charge every consumer for the heaviest — the measurement [[D-116]]
+records, and the reason `tenancy/tenancystorage` exists while `storagetenancy`
+above is still forbidden.
 
 ## `storageminiofx` migration
 

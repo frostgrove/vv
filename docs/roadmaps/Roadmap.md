@@ -22,9 +22,9 @@ exists.
 | 9 | Remaining documentation citations to two deleted documents | classification and a mechanical sweep | no |
 | 11 | Common optional-extension seams and legacy combination-module migration | architecture ADR and compatibility decisions | no |
 | 12 | Jobs/cache conformance and current driver/worker completion | the in-flight implementation and green evidence | no |
-| 13 | Optional multitenancy extension | a concrete consumer and architecture gate | no |
+| 13 | Multitenancy: the database-per-tenant profile, RLS, operator rehearsals and the multi-extension fixture | real infrastructure and two extensions that do not exist yet | no |
 | 14 | Optional durable audit extension | a named audited resource and atomicity gate | no |
-| 15 | Optional PostgreSQL event-sourcing extension | a named aggregate and append/UoW gate | no |
+| 15 | Optional PostgreSQL event-sourcing extension | a named aggregate; the rest of E0 has an answer | no |
 | 16 | Optional full-i18n extension | a use case beyond the current error catalogues | no |
 
 ---
@@ -187,9 +187,12 @@ graph gates. Bounded typed observer fan-out has landed for both root subsystems
 admitted flight slot, with no early release, extra queue or unowned goroutine.
 The neutral probe seam landed with it: `Cache.Check` and `Workers.Check` publish
 an answer, and the composition root still chooses importance ([[D-091]]). The
-current executable walks in `crud.ExistsUnscopedOf` and `cache.BatchReaderOf`
-must become exact-outer, explicitly forwarded by known wrappers or fail closed
-before new decorators.
+`crud.ExistsUnscopedOf` is settled: it reads the exact outer `Core`,
+`security.gate` answers it inside its own scope, `faults.enricher` forwards it,
+`crud.Base` does not, and a core that never decided answers
+`crud.ErrNoUnscopedExists` ([[D-115]]). `cache.BatchReaderOf` still walks through
+backend wrappers and must become exact-outer, explicitly forwarded by known
+wrappers or fail closed before new decorators.
 
 The current tree is not falsely described as already clean. `appfiber`,
 `storageminiofx`, the `accessjwt` → `authjwt` concrete-adapter edge and the
@@ -282,18 +285,26 @@ PostgreSQL/crash evidence—not a moving local snapshot—decides readiness.
 
 ## 13. Optional multitenancy extension
 
-The root already has policy/repository scoping tools and tenant-shaped examples;
-it does not have a framework tenancy runtime. The
-[current multitenancy revision](2026-09-01-multitenancy-roadmap.md) proposes at
-most one `tenancy` extension/public package with row and database topology
-factories organized by files. Verified inbound scope comes from existing auth
-and transport boundaries; the tenancy module imports neither JWT, OTel, audit,
-events, cache backends nor routers.
+Built, and open only where the evidence is. `tenancy/` is a package of the root
+module ([[D-116]]) holding a verified scope that cannot be manufactured
+([[D-117]]), the shared-row strategy, the database-per-tenant directory, the
+jobs/storage/cache adapters and bounded cross-tenant grants. It imports no JWT,
+OTel, audit, event, cache backend or router, and no base package imports it.
 
-Activation requires a named consumer, one proven row-isolation slice and exact
-source/query/job/cache isolation tests. Database-per-tenant is a later factory
-profile in the same extension unless a genuinely independent external SDK
-forces an adapter boundary.
+The [current multitenancy revision](2026-09-01-multitenancy-roadmap.md) carries
+the published profile and the per-milestone state. What remains open:
+
+- **the database-per-tenant profile.** The strategy is implemented and
+  unit-proved against recording sources; two real databases, outage behaviour and
+  the suspend/migration/restore rehearsal are not run, so the profile advertises
+  shared row only.
+- **PostgreSQL RLS**, gated on its own role and pooled-session evidence.
+- **operator procedures** — suspend, migrate, restore, delete, legal hold. The
+  extension owns the fence; the rehearsals are M5.
+- **the multi-extension consumer fixture** (M4), which cannot be written in full
+  until audit and event sourcing exist.
+- **a purpose-built pair of fake extensions** composing with tenancy in both
+  orders, and a method inventory for the storage, cache and jobs adapters.
 
 ## 14. Optional durable audit extension
 
@@ -314,9 +325,24 @@ isolated module graphs are release gates; there is no `auditotel` or
 No event-sourcing or outbox package exists today. The
 [current PostgreSQL event-sourcing revision](2026-09-01-postgres-event-sourcing-roadmap.md)
 defines one independently selected `eventpg` module for a PostgreSQL aggregate
-store, optimistic append and replay/upcasting. A transaction-local outbox joins
-that same module only if the later E4 gate activates it. The first slice starts
-with a direct API: an event-specific root chain is added only after a second
+store, optimistic append and replay/upcasting, and its 2026-09-06 revision
+rebases the gates on the current tree: the service and storage chains it was
+waiting for have landed, the `otel` module and the `tenancy` package it must not
+import both exist, and the transaction plumbing it needs belongs to `crudsql`
+and `jobspg` rather than to itself.
+
+One decision blocks E0 and it is not a technical one: the aggregate, which comes
+from a consumer rather than from this repository. Everything else E0 records now
+has a recommended answer and the precedent it rests on.
+
+A transaction-local outbox joins that same module only if the later E4 gate
+activates it, and it is weighed against `jobs.Stager`, which already stages
+durable intent inside the caller's transaction. [[D-118]] settles what that
+comparison is against rather than leaving it to be rediscovered: the
+transactional enqueue **is** this framework's outbox, it is the only one, and
+what it promises — at-least-once, unordered, producer-side deduplication only —
+is written down. The first slice starts with a
+direct API: an event-specific root chain is added only after a second
 implementation justifies that base contract.
 
 Tenancy, audit and OTel are application/base-seam composition, not

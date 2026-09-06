@@ -241,6 +241,14 @@ func (this *enricher[M, ID]) SaveAll(ctx context.Context, ms []*M) error {
 		func(ctx context.Context) error { return this.Core.SaveAll(ctx, ms) })
 }
 
+func (this *enricher[M, ID]) ExistsUnscoped(ctx context.Context, options ...crud.Option) (bool, error) {
+	found, err, supported := crud.ExistsUnscopedOf(this.Core, ctx, options...)
+	if !supported {
+		return false, crud.ErrNoUnscopedExists
+	}
+	return found, this.enrich("ExistsUnscoped", err)
+}
+
 func (this *enricher[M, ID]) InsertBatch(ctx context.Context, ms []*M, options ...crud.BatchOption) error {
 	run := func(ctx context.Context) error {
 		err, ok := crud.InsertBatchOf(this.Core, ctx, ms, options...)

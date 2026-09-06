@@ -71,6 +71,8 @@ Both lead with what you get and only then how to set it up.
   Goose migration command and generate SQL from a model
 - [usage-guides/model-generation.md](usage-guides/model-generation.md) — use
   ordinary Go models and generate DTOs, metamodels and repository blueprints
+- [usage-guides/tenancy.md](usage-guides/tenancy.md) — serve many tenants from
+  one deployment: the control plane, the bind, the ownership column, the indexes
 
 ## Roadmap
 

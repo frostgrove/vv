@@ -375,6 +375,13 @@ stored, err := users.Replace(ctx, &u)  // upsert, привязанный к u.Ve
 `ErrNoCreateSupport` / `ErrNoReplaceSupport`, а не позволяет явному глаголу
 пройти мимо `security.Gate`.
 
+`UnscopedExister[M, ID]` — третья из них и единственная, на которую сужающий
+декоратор отвечает сам, а не пробрасывает дальше. `ExistsUnscopedOf` читает
+точный внешний `Core`: `security.Gate` сначала применяет собственный scope и
+только потом передаёт вопрос вниз, поэтому слой над ним не может узнать, что
+ключ занят в области, которую gate скрывает, а декоратор, ничего про этот глагол
+не решивший, отвечает `ErrNoUnscopedExists` ([[D-115]]).
+
 ## Шов исполнителя
 
 Два метода. Это вся граница абстракции, и именно поэтому любую чужую
@@ -536,7 +543,7 @@ crud.ErrNotFound       crud.ErrConflict       crud.ErrForbidden
 crud.ErrStaleVersion   crud.ErrReadOnly       crud.ErrMissingID
 crud.ErrNoTxSupport    crud.ErrExecutorScope   crud.ErrNoBatchInsertSupport
 crud.ErrNoBulkInsertSupport               crud.ErrNoCreateSupport
-crud.ErrNoReplaceSupport
+crud.ErrNoReplaceSupport                  crud.ErrNoUnscopedExists
 ```
 
 Каждая из них переживает обёртывание в `errs.Fault`, поэтому вызывающий код,

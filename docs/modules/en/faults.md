@@ -105,6 +105,12 @@ out.
   column name in `field` would be a live [[D-044]] breach — the path is the one
   thing that is rendered.
 
+- **It never gains a capability by standing in front of one.** The decorator is
+  transparent, so it implements every optional verb it forwards —
+  `InsertBatch`, the scoped writes, the tombstone loader and the unscoped
+  existence probe — and answers the matching `ErrNo…` sentinel when the core
+  below it cannot ([[D-061]] [[D-115]]).
+
 ## Failing at declaration
 
 With a probe wired in, `Bind` refuses at start-up rather than at request time

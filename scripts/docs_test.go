@@ -26,6 +26,17 @@ var spansThatLookLikeACitationAndAreNot = map[string]string{
 	"TestProfile":                     "D-101 — jobspgfx's deployment profile constant",
 }
 
+// A path with a directory in it usually names this repository, and these five do
+// not: four are a consumer's own layout, and one is a file whose *absence* is the
+// point of the sentence citing it.
+var pathsThatNameAnotherTree = map[string]string{
+	"cmd/api/main.go":                  "General.md — a consumer's own entry point",
+	"cmd/migrate/main.go":              "Vvgoose.md — the command a consumer writes",
+	"path/to/file.go":                  "D-020 — a placeholder in a sentence about test naming",
+	"src/app/product/product.model.go": "model-generation.md — a consumer's own layout",
+	"port/porthttp/decode_test.go":     "Port.md — a file whose absence is the finding",
+}
+
 var (
 	fenceLine        = regexp.MustCompile("^[ \t]*(```|~~~)")
 	inlineCode       = regexp.MustCompile("`([^`\n]+)`")
@@ -550,9 +561,23 @@ func staleSymbolCitations(t *testing.T, root string) (stale []string, checked in
 	for _, citation := range cited {
 		files := filesNamed(citation.path, declared)
 		if len(files) == 0 {
+			// A bare file name may belong to the reader's own project. A path with
+			// a directory in it is a claim about this tree, and a claim about a
+			// file this tree does not have is the drift a restructure produces:
+			// the symbol check below can only see a symbol that moved *within* a
+			// file that still exists.
+			if !strings.Contains(citation.path, "/") || pathsThatNameAnotherTree[citation.path] != "" {
+				continue
+			}
+			checked++
+			stale = append(stale, fmt.Sprintf("%s cites %s and this tree has no %s",
+				citation.place, citation.text, citation.path))
 			continue
 		}
 		checked++
+		if citation.symbol == "" {
+			continue
+		}
 		if !declaresSymbol(files, declared, citation.symbol) {
 			stale = append(stale, fmt.Sprintf("%s cites %s and %s declares no %s",
 				citation.place, citation.text, strings.Join(files, " / "), citation.symbol))
@@ -617,7 +642,7 @@ func citedSymbols(t *testing.T, root string) []symbolCitation {
 			}
 			for _, span := range inlineCode.FindAllStringSubmatch(line, -1) {
 				match := citedGoSymbol.FindStringSubmatch(strings.TrimSpace(span[1]))
-				if match == nil || match[2] == "" {
+				if match == nil {
 					continue
 				}
 				cited = append(cited, symbolCitation{

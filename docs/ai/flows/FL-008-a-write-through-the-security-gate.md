@@ -1,7 +1,7 @@
 # FL-008 — A write through the security gate
 
 **Entry point:** the write methods on `crud/decorators/security/security.go:gate`, including `InsertBatch`
-**Implements:** [[UC-004]] [[UC-008]] · **Governed by:** [[D-008]] [[D-004]] [[D-011]] [[D-026]] [[D-030]] [[D-079]] [[D-083]] [[D-087]]
+**Implements:** [[UC-004]] [[UC-008]] · **Governed by:** [[D-008]] [[D-004]] [[D-011]] [[D-026]] [[D-030]] [[D-079]] [[D-083]] [[D-087]] [[D-115]]
 
 Reads have one shape. Writes have several, and each has a different reason it
 cannot simply AND a predicate into a statement.
@@ -29,7 +29,8 @@ cannot simply AND a predicate into a statement.
    if scope == nil    { return nil, nil }         // a plain insert
 
    hidden, err, supported := crud.ExistsUnscopedOf(Core, ctx, byID, PrimaryOnly())
-   if !supported || hidden { return nil, crud.ErrNotFound }
+   if !supported || errors.Is(err, crud.ErrNoUnscopedExists) { return nil, crud.ErrNotFound }
+   if hidden { return nil, crud.ErrNotFound }
    return nil, nil                                // genuinely absent: an insert
    ```
    **Why unscoped.** Left alone, a policy that scoped rows and nothing else gave
@@ -41,6 +42,12 @@ cannot simply AND a predicate into a statement.
    read by the gate and not handed back. A core that cannot answer the unscoped
    question fails the same way rather than falling through to an insert that would
    become an overwrite.
+   **Whose "unscoped" it is.** The caller's, never the layer being asked.
+   `ExistsUnscopedOf` takes the answer from the exact core below and from nothing
+   underneath it ([[D-115]]), and a gate below answers inside *its* scope — so the
+   probe cannot report that a row exists in a region the layer below exists to
+   hide. A core that never decided about the verb answers nothing, and the branch
+   above turns that into the same 404.
 
 3. **`checkImmutableSave`** — `crud/decorators/security/security.go:checkImmutableSave`
    Compares the frozen fields **by value** between the stored row and the
@@ -207,6 +214,7 @@ scope are simply not matched, so the reported count is honest.
 | one `InsertBatch` row fails `Inspect` | `gate.InsertBatch` preflight | 403, no row written |
 | a scope-only policy cannot validate an inserted row | `gate.InsertBatch` | 403 naming the missing Inspect |
 | an inner decorator did not preserve the optional verb | exact capability check | `ErrNoBatchInsertSupport`, no I/O |
+| an inner decorator did not preserve the unscoped probe | exact capability check ([[D-115]]) | `ErrNoUnscopedExists` inside the gate, **404** to the caller, no I/O |
 
 ## Files
 
@@ -217,7 +225,8 @@ scope are simply not matched, so the reported count is honest.
 | `crud/update.go` | `DefinedFields` — the frozen check without a typed DTO |
 | `crud/access.go` | `HasID`, `ID`, `Values`, `ElemValue` |
 | `crud/sqlrepo/repository.go` | `Update` (options in both halves), `saveScopedUpdate`, `saveScopedCreate`, `Delete`, `DeleteAll`, `UpdateAll` |
-| `crud/executor.go` | `ScopedSave`, `SaveScopedOf`, `ExistsUnscopedOf` — the optional verbs the gate needs and refuses without |
+| `crud/executor.go` | `ScopedSave`, `SaveScopedOf`, `UnscopedExister`, `ExistsUnscopedOf` — the optional verbs the gate needs and refuses without, each taken from the exact outer core |
+| `crud/errors.go` | `ErrNoUnscopedExists` — what a core that never decided about the probe answers |
 | `crud/options.go` | `Where` accumulating, which is what makes a prepended scope unremovable |
 | `crud/optiongroup.go` | `MutationOptions` — what a filtered write reads, and what it refuses |
 | `crud/batch.go` | exact optional-verb dispatch and fail-closed error |
@@ -232,6 +241,10 @@ scope are simply not matched, so the reported count is honest.
 - `TestScopedSavePinsAnUpdateToItsInspectedSnapshot` — `crud/decorators/security/security_test.go` — the snapshot in the scoped upsert's `WHERE`, which is what closes the probe-to-write window.
 - `TestScopedSaveCarriesRelationScopesIntoItsFinalUpdate` — `crud/decorators/security/relscope_test.go` — the relation scopes travel with it.
 - `TestScopedSaveCannotBypassAnInnerSecurityGate` — `crud/decorators/security/security_test.go` — the optional verb is not a way around a gate underneath.
+- `TestTheGateAnswersTheUnscopedProbeWithinItsOwnScope` — `crud/decorators/security/unscoped_test.go` — the probe's `WHERE` carries the gate's own scope, so a gate below is the universe the answer comes from.
+- `TestAnAssignedKeySaveRefusesWhenTheCoreBelowCannotAnswerTheProbe` — same file — the fail-closed branch, with the control that an answerable core does reach a write.
+- `TestUnscopedExistenceIsAnsweredOnlyByTheExactOuterCore` — `crud/unscoped_test.go` — the helper itself, including a decorator built on `crud.Base`.
+- `TestTheEnricherForwardsUnscopedExistence` — `crud/decorators/faults/unscoped_test.go` — the transparent decorator's half.
 - `TestSaveWithoutAPrincipalWritesNothing` — `crud/decorators/security/edge_test.go`.
 - `TestSaveJudgesAFrozenFieldByItsValue` — `crud/decorators/security/edge_test.go`.
 - `TestAFrozenFieldIsRefusedOnUpdateEvenWhenTheValueIsUnchanged` — `crud/decorators/security/edge_test.go` — the asymmetry.

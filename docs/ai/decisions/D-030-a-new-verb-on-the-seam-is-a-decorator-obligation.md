@@ -96,6 +96,9 @@ or dropping it; sqlrepo resolves the storage choice exactly once. Thus both
 built-in decorator orders work, while consumer middleware must make the same
 written decision before opting in.
 
+`crud.UnscopedExister` is the same shape and was the last verb not to follow it;
+[[D-115]] closes that and records what each built-in wrapper does with it.
+
 ## What it forbids
 
 - Do not add a method to `crud.Core` without deciding, in writing, what
@@ -136,4 +139,4 @@ written decision before opting in.
 
 ## See also
 
-[[D-001]] [[D-008]] [[D-029]] [[D-061]]
+[[D-001]] [[D-008]] [[D-029]] [[D-061]] [[D-115]]

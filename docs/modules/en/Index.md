@@ -62,6 +62,12 @@ long form of it.
 | [security](security.md) | `vv/crud/decorators/security` | Row-level scope, authorization, per-entity inspection |
 | [faults](faults.md) | `vv/crud/decorators/faults` | Turns one refused write into every violation the payload caused |
 
+## Multitenancy — one tenant, verified, all the way down
+
+| Module | Import | What it is |
+|---|---|---|
+| [tenancy](tenancy.md) | `vv/tenancy` (+ `tenancyrow`, `tenancydb`, `tenancyjobs`, `tenancystorage`, `tenancycache`) | Optional. A verified scope in a core that costs no seam, and one package per seam built on it: rows, databases, durable work, objects, cache |
+
 ## Auth — who the caller is, and what they may do
 
 | Module | Import | What it is |
@@ -205,5 +211,7 @@ a prefix match would let all of it in ([[D-058]]).
 
 - [usage-guides/ent.md](../../usage-guides/ent.md) — adopt an ent model as-is
 - [usage-guides/gorm.md](../../usage-guides/gorm.md) — adopt a gorm model as-is
+- [usage-guides/tenancy.md](../../usage-guides/tenancy.md) — adopt multitenancy:
+  setup, request wiring, schema and indexes
 - [`_examples/`](../../../_examples/) — one runnable program per stack
 - [roadmaps/Roadmap.md](../../roadmaps/Roadmap.md) — what is left

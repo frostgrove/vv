@@ -68,6 +68,13 @@ it is forbidden.
     silently return the rest.
 19. A projection cannot be used to dodge a row-level check. When a row will be
     inspected, the read returns whole rows regardless of what was selected.
+20. Where one rule sits underneath another — a tenant rule below an owner rule —
+    the lower rule's rows are the universe the hidden-key question is answered
+    in. Creating a row whose key is already taken in a region the *lower* rule
+    hides must look the same as creating one whose key is free, so a caller
+    cannot enumerate a neighbour's keys one refusal at a time. A layer that never
+    said what it does with that question is not read through: the answer fails
+    closed to not-found rather than being taken from the table underneath it.
 
 ## Out of scope
 
@@ -111,6 +118,12 @@ The controls cover the update's own `WHERE`, the filtered-write snapshot,
 relation narrowing in filters, sorts, preloads and page totals, frozen names at
 declaration time, and a caller limit/cursor/projection/preload being unable to
 make `Inspect` approve only part of a bulk statement.
+
+Guarantee 20 arrived with the hidden-key question becoming an exact question of
+the layer directly below rather than a search for anything underneath that could
+answer it. Before that, a rule stacked under another answered from the raw table,
+so the upper rule's caller could learn that a key was taken in a region the lower
+rule hides — one bit per guess, which is the same bit the 404 exists to withhold.
 
 The unique-constraint result remains an inherent oracle of any public create
 endpoint, but no driver or constraint detail reaches the transport (UC-015); an

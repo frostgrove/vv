@@ -303,6 +303,45 @@ narrowed the statement. They are two flags rather than one because rewriting
 every row in a table is not something a policy should inherit from having
 allowed the table to be emptied.
 
+## The caller cannot drop the narrowing
+
+The gate composes its own predicate **after** the caller's options, not before.
+A `crud.Option` is a function over an options struct whose fields are exported,
+so an option that assigns `o.Filter` rather than appending to it erases whatever
+came before — and composed first, the gate's own scope is what came before. Last,
+it is the one thing such an option cannot remove, and because `Where` appends,
+the caller's own filter still applies.
+
+This is a property of every verb that takes options, `ExistsUnscoped` included.
+It does not make an arbitrary `crud.Option` safe — one can still widen a preload
+or drop a sort — but it does mean the scope reaches the statement whatever the
+caller passed.
+
+`security.ReconcileValue` is exported for the same reason a policy needs it: a
+value a policy derived from the caller has to be storable in the column it
+narrows on, and Go makes the two dangerous conversions legal — an int becomes a
+string by way of its rune, a wide integer becomes a narrow one by truncation. A
+policy that reached for `ConvertibleTo` would narrow on one tenant and write
+another.
+
+## A gate underneath another gate
+
+The gate is the honest universe for the question "is this key already taken
+somewhere I cannot see". `Save` with an assigned key has to ask it — otherwise
+an insert quietly becomes an overwrite of somebody else's row — and the answer
+is read by the gate and never handed back ([[D-008]]).
+
+When a second gate sits below, the question is answered inside *its* scope: the
+lower gate applies its own narrowing and passes the rest of the question down.
+So a caller above cannot enumerate a neighbour's keys one refusal at a time. A
+decorator that never said what it does with the question is not read through —
+the probe fails closed and the save answers `crud.ErrNotFound` ([[D-115]]).
+
+Two gates in one chain still cannot perform an assigned-key `Save`: the scoped
+upsert is an exact capability of the core directly below, and a gate does not
+forward it. Compose two rules with `security.Combine` into one gate rather than
+stacking them.
+
 ## Errors
 
 `security.ErrForbidden` wraps `crud.ErrForbidden`, so the transport maps it to

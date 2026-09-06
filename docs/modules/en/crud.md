@@ -362,6 +362,13 @@ way `BatchInserter[M]` is, so an opaque decorator fails closed with
 `ErrNoCreateSupport` / `ErrNoReplaceSupport` rather than letting an explicit verb
 step past `security.Gate`.
 
+`UnscopedExister[M, ID]` is the third of them, and the one a narrowing decorator
+answers rather than forwards. `ExistsUnscopedOf` reads the exact outer `Core`:
+`security.Gate` applies its own scope before passing the question down, so the
+layer above it can never learn that a key is taken in a region the gate hides,
+and a decorator that never decided about the verb answers `ErrNoUnscopedExists`
+([[D-115]]).
+
 ## The executor seam
 
 Two methods. That is the entire abstraction boundary, and it is why any foreign
@@ -524,7 +531,7 @@ crud.ErrNotFound       crud.ErrConflict       crud.ErrForbidden
 crud.ErrStaleVersion   crud.ErrReadOnly       crud.ErrMissingID
 crud.ErrNoTxSupport    crud.ErrExecutorScope   crud.ErrNoBatchInsertSupport
 crud.ErrNoBulkInsertSupport               crud.ErrNoCreateSupport
-crud.ErrNoReplaceSupport
+crud.ErrNoReplaceSupport                  crud.ErrNoUnscopedExists
 ```
 
 Every one of them survives being wrapped in an `errs.Fault`, so a caller who

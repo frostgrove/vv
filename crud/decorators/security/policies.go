@@ -71,6 +71,17 @@ func ScopeRelationField[M any, ID comparable](path, field string, value func(con
 	}
 }
 
+// A value a policy derived from the caller has to be storable in the column it
+// narrows on, and the column's type is the only thing that can answer that. It is
+// exported because a policy built outside this package needs the same answer, and
+// a second implementation of it would disagree about which conversions are safe:
+// Go makes int -> string legal (it yields a rune) and integer narrowing legal (it
+// truncates), so a strategy that reached for ConvertibleTo would narrow on one
+// tenant and write another.
+func ReconcileValue(f *crud.Field) func(any) (any, error) {
+	return reconcileFieldValue(f)
+}
+
 func reconcileFieldValue(f *crud.Field) func(any) (any, error) {
 	want := crud.ElemType(f.Type)
 	return func(v any) (any, error) {

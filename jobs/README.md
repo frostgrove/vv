@@ -57,3 +57,102 @@ timer.
 fatal driver failure, then the run state. It carries no importance, name or
 status code — the composition root wraps it in the health contribution it chose.
 See `[[D-096]]`.
+
+## Enqueueing inside a transaction — this is the outbox
+
+Give the driver the application's `crud.Source` and an enqueue made while a
+transaction is open on that source is written **inside** that transaction:
+
+```go
+driver, err := jobspg.New(jobspg.Spec{DB: db, Source: source, /* ... */})
+
+err = crud.InNewTx(ctx, source, func(ctx context.Context) error {
+	if _, err := contracts.Save(ctx, &agreement); err != nil {
+		return err
+	}
+	_, err := jobs.Enqueue(ctx, queue, NotifyJob, NotifyPayload{ID: agreement.ID})
+	return err
+})
+```
+
+Commit and the job will run. Roll back and it never existed — no poller, no
+`pending_effects` table, no second call at the commit point. That is the whole
+of the outbox pattern, and it is why there is no separate outbox package here:
+the invocation row *is* the durable delivery intent, and it is written by the
+caller's own transaction.
+
+`Enqueue` returns the `InvocationID` **before** the commit, so a row written in
+the same transaction can name the effect it will cause.
+
+Where the code already holds a `*sql.Tx` rather than a context binding, stage
+explicitly:
+
+```go
+stager, err := driver.Stager(tx)
+staged, err := jobs.EnqueueIn(ctx, queue, stager, NotifyJob, payload)
+```
+
+Two refusals keep the claim honest, and neither is a fallback:
+
+- `jobspg.New` rejects a `Spec` whose `Source` is not the same data source as
+  its `DB`. Atomicity across two handles is not a thing to promise.
+- `Place` returns `jobs.ErrUnsupported` when the context carries an executor for
+  that source which is not a transaction, or one no `*sql.Tx` can be taken from
+  (a `crudpgx` executor, for instance). It never silently enqueues outside the
+  caller's transaction instead.
+
+A driver built **without** a `Source` has nothing to detect: every enqueue
+commits on its own. That is a valid setup, but it is not the outbox, and the
+call site looks identical either way — worth one assertion in the application's
+own boot test.
+
+## Publishing to a broker
+
+There is no broker adapter in this repository and none is planned. A relay is
+an ordinary job in your application:
+
+```go
+var PublishJob = jobsfx.AutoAdapterFor[*PublishHandler, PublishPayload](jobs.Interactive).
+	JSON("integration.publish", 1)
+
+func (h *PublishHandler) Handle(
+	ctx context.Context,
+	p PublishPayload,
+	meta jobs.DeliveryMeta,
+	_ jobs.AttemptController,
+) error {
+	return h.publisher.Publish(ctx, p.Topic, p.Body, meta.InvocationID().String())
+}
+```
+
+The payload carries the routing key and the encoded message — not a Go value
+only this build can decode — and the handler calls **your** port. Name that port
+something of your own: `jobs.Sender` is the queue's backend seam, not a
+publisher, and a second meaning for the word inside one subsystem is read
+wrongly.
+
+`AutoAdapterFor` rather than `AutoFor` is what gets the handler its
+`DeliveryMeta`, and the last argument is the point: pass a deduplication key to
+the broker. `meta.InvocationID()` and `meta.AttemptOrdinal()` are separate, and
+the invocation is the one that is stable across attempts — its `String()` is a
+canonical UUID, so it travels as a broker message id unchanged.
+
+## What delivery promises, and what it does not
+
+- **At-least-once.** A handler that finished its effect and lost its lease
+  before recording that it had will run again — `ReasonLeaseLost` and
+  `ReasonShutdown` are retry reasons, and neither is charged against the attempt
+  budget. A crashed worker cannot be told from a slow one, so the framework
+  redelivers rather than dropping. Make an effect that must not repeat
+  idempotent, keyed on the invocation id.
+- **No ordering.** Two jobs enqueued in one transaction may run in either order,
+  concurrently, or minutes apart. A partition is a tenant (`PartitionGlobal`,
+  `PartitionTenantRequired`), not a sequence; priority and retry backoff reorder
+  on purpose. Nothing here is FIFO. Keep a sequence in your own rows if you need
+  one.
+- **Deduplicating a placement is not deduplicating a delivery.**
+  `jobs.Unique(key)`, `jobs.Collapse(key)` and `EnqueueOnce` collapse two
+  *enqueues* into one invocation. They say nothing about how many times that
+  invocation reaches a handler, and nothing offers exactly-once.
+
+Why: [[D-118]]. Where: [[FL-035]]. What a consumer may rely on: [[UC-031]].

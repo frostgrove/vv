@@ -77,7 +77,7 @@ func TestScopeIsAppendedToEveryRead(t *testing.T) {
 				_, err := r.GetAll(ctx, crud.Where(crud.Eq("Title", "x")))
 				return err
 			},
-			`("tenant_id" = $1 AND "title" = $2)`},
+			`("title" = $1 AND "tenant_id" = $2)`},
 		{"Count", []crudtest.Result{crudtest.Rows([]any{int64(0)})},
 			func(r *crud.Repo[Doc, int64, DocUpdate]) error { _, err := r.Count(ctx); return err },
 			`"tenant_id" = $1`},
@@ -93,8 +93,8 @@ func TestScopeIsAppendedToEveryRead(t *testing.T) {
 			if got := lastWhere(rec); got != tc.want {
 				t.Fatalf("where = %s, want %s", got, tc.want)
 			}
-			if rec.Last().Args[0] != int64(7) {
-				t.Fatalf("args = %v", rec.Last().Args)
+			if !slices.Contains(rec.Last().Args, any(int64(7))) {
+				t.Fatalf("the statement never bound the caller's tenant: args = %v", rec.Last().Args)
 			}
 		})
 	}

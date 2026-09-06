@@ -111,8 +111,8 @@ not a registry, owns ordering and lifecycle.
 2. Inventory service, storage, cache, jobs, auth and CRUD extension seams.
 3. Add only the approved dependency-neutral service/storage chain and observer
    fan-out helpers.
-4. Resolve the current executable walks in `crud.ExistsUnscopedOf` and
-   `cache.BatchReaderOf`; unknown wrappers must not tunnel to inner effects.
+4. `crud.ExistsUnscopedOf` is resolved ([[D-115]]); `cache.BatchReaderOf` still
+   walks, and unknown wrappers must not tunnel to inner effects.
 5. Stabilize the landed jobs worker/memory/PostgreSQL/Fx/Redis slices; keep their
    release evidence separate from this documentation change.
 6. Add source/import checks for reverse extension edges and combination modules.

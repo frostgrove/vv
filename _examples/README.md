@@ -50,6 +50,11 @@ both live in the library.
 | [`sql-nethttp`](sql-nethttp/) | none | `crudsql` | PostgreSQL | `net/http` | The standard library and nothing else — and no second `go get`, because the net/http binding needs no dependency and ships in the library. |
 | [`pgx-grpc`](pgx-grpc/) | none | `crudpgx` | PostgreSQL | gRPC | `pgx-fiber` with one line changed — the mount. The transport is not HTTP and everything below it is the same value: eight methods under `vv.crud.v1.Product`, `google.protobuf.Struct` documents, and no `.proto` to write. |
 | [`auth-jwt-gin`](auth-jwt-gin/) | none | `crudpgx` | PostgreSQL | Gin | The whole authentication and authorization chain: a JWT at the door, a principal in the context, a tenant claim in the `WHERE`. The middleware knows nothing about tenants and the policy knows nothing about JWTs. It prints three tokens on start-up, so the 401, the tenant filter, the 404-not-403 and the 403 are four `curl`s away. |
+| [`tenancy-sharedrow`](tenancy-sharedrow/) | none | none | none | none | The composition root for the optional [`tenancy`](../docs/modules/en/tenancy.md) extension, and the only example with no database: what it demonstrates is the wiring. A control-plane contract returning plain data, one middleware that narrows every verb, a declared tenant-owned relation, an object namespace that is a digest rather than a name, and a cohort grant bounded to reads. Run it and read the four lines it prints. |
+
+`tenancy-sharedrow` is the second example that needs no database, for a different
+reason: a tenant is verified before any statement, so the interesting half of it
+happens before a connection would be opened.
 
 [`example/`](example/) is not a server. It is the library's whole user-facing
 surface in one file — model, DTO, declaration, metamodel, security policy —

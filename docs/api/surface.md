@@ -700,6 +700,7 @@ const Read = crud.ActionRead ...
 var ErrForbidden = fmt.Errorf("security: %w", crud.ErrForbidden)
 func Denied(action Action, reason string) error
 func Gate[M any, ID comparable](p Policy[M, ID]) crud.Middleware[M, ID]
+func ReconcileValue(f *crud.Field) func(any) (any, error)
 type Action = crud.Action
 type Policy[M any, ID comparable] struct{ ... }
     func Combine[M any, ID comparable](ps ...Policy[M, ID]) Policy[M, ID]
@@ -1754,6 +1755,92 @@ type Backend struct{ ... }
 type Config struct{ ... }
 ```
 
+## github.com/frostgrove/vv/tenancy
+```go
+const MaxPurposeBytes = 64 ...
+const MaxReferenceBytes = 128
+const MinDurableKeyBytes = 32
+var ErrMalformed = fmt.Errorf("tenancy: value is not a well-formed tenant reference: %w", crud.ErrBadRequest) ...
+func Classify(err error) error
+func Unbound(ctx context.Context) context.Context
+type Admission struct{ ... }
+    func Admit(class Class, states ...Lifecycle) Admission
+    func AdmitAll(states ...Lifecycle) Admission
+type Authority struct{ ... }
+    func Must(spec Spec) *Authority
+    func New(spec Spec) (*Authority, error)
+type Class uint8
+    const ClassRead Class = iota ...
+    func Classes() []Class
+type Epoch uint64
+    func NewEpoch(value uint64) (Epoch, error)
+type Fixed Resolution
+type Grant struct{ ... }
+type Lifecycle uint8
+    const LifecycleUnknown Lifecycle = iota ...
+type Member struct{ ... }
+type Outcome string
+    const OutcomeOk Outcome = "ok" ...
+    func OutcomeFor(err error) Outcome
+    func Outcomes() []Outcome
+type Purpose struct{ ... }
+    func ParsePurpose(raw string) (Purpose, error)
+type Reference struct{ ... }
+    func ParseReference(raw string) (Reference, error)
+type Resolution struct{ ... }
+type Resolver interface{ ... }
+type Scope struct{ ... }
+    func From(ctx context.Context) (Scope, bool)
+type Sealer struct{ ... }
+type Spec struct{ ... }
+```
+
+## github.com/frostgrove/vv/tenancy/tenancycache
+```go
+const MinPartitionBytes = 16 ...
+func Partition[K any]() cache.Partitioner[Key[K]]
+func Partitioned[K any](namespace cache.Namespace) cache.Scope[Key[K]]
+type Key[K any] struct{ ... }
+    func Keyed[K any](ctx context.Context, authority *tenancy.Authority, class tenancy.Class, key K) (Key[K], error)
+```
+
+## github.com/frostgrove/vv/tenancy/tenancydb
+```go
+const DefaultOpenTimeout = 30 * time.Second
+type Directory struct{ ... }
+    func NewDirectory(spec DirectorySpec) (*Directory, error)
+type DirectorySpec struct{ ... }
+type Lease struct{ ... }
+type Sources interface{ ... }
+type SourcesFunc func(context.Context, tenancy.Scope) (crud.Source, error)
+```
+
+## github.com/frostgrove/vv/tenancy/tenancyjobs
+```go
+func ContextProvider(authority *tenancy.Authority, provenance jobs.IdentityProvenance, ...) (jobs.TrustedContextProvider, error)
+func IdentityRestorer(authority *tenancy.Authority) (jobs.TrustedIdentityRestorer, error)
+```
+
+## github.com/frostgrove/vv/tenancy/tenancyrow
+```go
+func Policy[M any, ID comparable](authority *tenancy.Authority, ownership Ownership[M]) security.Policy[M, ID]
+func Repository[M any, ID comparable](authority *tenancy.Authority, ownership Ownership[M]) crud.Middleware[M, ID]
+type Mode uint8
+    const Derive Mode = iota ...
+type Ownership[M any] interface{ ... }
+    func Column[M any](field string, mode Mode, value Value, relations ...Relation) Ownership[M]
+    func Through[M any](path, field string, value Value) Ownership[M]
+type Relation struct{ ... }
+type Value func(tenancy.Reference) (any, error)
+```
+
+## github.com/frostgrove/vv/tenancy/tenancystorage
+```go
+const MaxPrefixBytes = 30 ...
+func Namespace(ctx context.Context, authority *tenancy.Authority, prefix string, ...) (storage.Namespace, error)
+func Store(ctx context.Context, authority *tenancy.Authority, prefix string, ...) (storage.Store, error)
+```
+
 ## github.com/frostgrove/vv/utils
 ```go
 func Inspect(v any) (value any, defined, null, ok bool)
@@ -2514,6 +2601,7 @@ const OutcomeOk = "ok" ...
 const ErrorTypeInvalid = "invalid" ...
 const ErrorCodeUnique = "unique" ...
 const MetricCacheOperations = "vv.cache.operations" ...
+const MaxResourceNameValues = 32
 var ErrNilConfig = errors.New("vvotel: config is nil") ...
 var AttributeMetadataByKey = map[string]AttributeMetadata{ ... }
 var MetricMetadataByKey = map[string]MetricMetadata{ ... }

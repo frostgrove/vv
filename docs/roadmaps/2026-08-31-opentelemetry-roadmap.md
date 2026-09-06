@@ -701,10 +701,10 @@ It must also:
 - explicitly preserve `RestoreSupport.SupportsRestore` whenever it exposes
   restore;
 - expose `Next`/source identity exactly as required by [[D-061]] and [[D-062]];
-- resolve the current `ExistsUnscopedOf` walk before instrumentation: because
-  `UnscopedExister` executes a repository effect, the default M0 direction is
-  exact-outer discovery, explicit preservation by each built-in decorator and
-  fail-closed behaviour at an unknown wrapper; keeping a walk would require an
+- the `ExistsUnscopedOf` walk is resolved in exactly that direction ([[D-115]]):
+  because `UnscopedExister` executes a repository effect, discovery is
+  exact-outer, each built-in decorator states what it preserves and an unknown
+  wrapper fails closed; keeping a walk would have required an
   explicit amendment to [[D-061]] and a proof that it bypasses no policy or
   observability layer;
 - never infer or tunnel an executable capability through an unknown wrapper;

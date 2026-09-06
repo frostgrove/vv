@@ -25,6 +25,7 @@ them. Effect capabilities use a deliberately different rule:
 | `crud.SourceUnwrapper` — `UnwrapSource() Source` | any consumer wrapper | `crud.BeginnerOf`, `crud.ReadSourceOf`, `crud.KeyOf` |
 | `crud.BatchInserter` — `InsertBatch(...)` | `sqlrepo`, and each transparent repository decorator | exact outer `Core` only through `crud.InsertBatchOf` |
 | `crud.UnsafeBulkInserter` — `UnsafeBulkInsert(...)` | `crudpgx`, and an explicitly transparent source wrapper | exact Source authority only through `crud.UnsafeBulkInserterOf` |
+| `crud.UnscopedExister` — `ExistsUnscoped(...)` | `sqlrepo`, `security.gate` (inside its own scope) and `faults.enricher` | exact outer `Core` only through `crud.ExistsUnscopedOf` — see [[D-115]] |
 
 Both walks are bounded at 64 steps: a chain is built once at start-up and is a
 handful of layers deep, so a walk that long is following a cycle somebody built
@@ -113,6 +114,8 @@ the only behaviour it owns.
   `readWrite.UnwrapSource`, `readWrite.DataSource`, `UnsafeBulkInserterOf`,
   `readWrite.UnsafeBulkInsert`, `maxChainDepth`.
 - `crud/batch.go` — the exact `BatchInserter`/`InsertBatchOf` repository effect.
+- `crud/executor.go` — the exact `UnscopedExister`/`ExistsUnscopedOf` repository
+  effect, which was the last one still walking; [[D-115]] is where that is decided.
 - `crud/repo.go:Base` — the pass-through that supplies `Next()`.
 - `crud/decorators/security/security.go:Next`
 - `crud/decorators/faults/faults.go:Next`
@@ -198,4 +201,4 @@ about what a wrapped source is — which is exactly how they came to disagree.
 
 ## See also
 
-[[D-009]] [[D-021]] [[D-030]] [[D-041]] [[D-042]] [[D-062]] [[FL-009]] [[FL-017]]
+[[D-009]] [[D-021]] [[D-030]] [[D-041]] [[D-042]] [[D-062]] [[FL-009]] [[FL-017]] [[D-115]]

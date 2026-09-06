@@ -139,18 +139,12 @@ type UnscopedExister[M any, ID comparable] interface {
 }
 
 func ExistsUnscopedOf[M any, ID comparable](c Core[M, ID], ctx context.Context, options ...Option) (bool, error, bool) {
-	for i := 0; c != nil && i < maxChainDepth; i++ {
-		if x, ok := c.(UnscopedExister[M, ID]); ok {
-			found, err := x.ExistsUnscoped(ctx, options...)
-			return found, err, true
-		}
-		n, ok := c.(Nexter[M, ID])
-		if !ok {
-			return false, nil, false
-		}
-		c = n.Next()
+	x, ok := c.(UnscopedExister[M, ID])
+	if !ok {
+		return false, nil, false
 	}
-	return false, nil, false
+	found, err := x.ExistsUnscoped(ctx, options...)
+	return found, err, true
 }
 
 type ScopedSave[M any] struct {

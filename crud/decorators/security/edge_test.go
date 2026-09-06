@@ -403,7 +403,7 @@ func TestTheGateScopeAndTheRepositoryScopeBothApply(t *testing.T) {
 			t.Fatal(err)
 		}
 		want := `SELECT "id", "tenant_id", "title", "deleted_at" FROM "notes" ` +
-			`WHERE ("deleted_at" IS NULL AND "tenant_id" = $1 AND "title" = $2)`
+			`WHERE ("deleted_at" IS NULL AND "title" = $1 AND "tenant_id" = $2)`
 		if got := crudtest.Normalize(rec.Last().SQL); got != want {
 			t.Fatalf("sql  = %s\nwant = %s", got, want)
 		}

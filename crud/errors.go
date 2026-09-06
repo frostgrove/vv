@@ -11,6 +11,7 @@ var (
 	ErrNoTxSupport          = errors.New("crud: executor cannot begin transactions")
 	ErrNoBulkInsertSupport  = errors.New("crud: executor cannot bulk insert rows")
 	ErrNoBatchInsertSupport = errors.New("crud: repository has no batch insert capability")
+	ErrNoUnscopedExists     = errors.New("crud: repository has no unscoped existence capability")
 	ErrNoCreateSupport      = errors.New("crud: repository has no insert-only create capability")
 	ErrNoReplaceSupport     = errors.New("crud: repository has no version-aware replace capability")
 
