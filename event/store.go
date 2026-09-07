@@ -126,6 +126,10 @@ type Log interface {
 // walked past. None of the eight opens, commits or rolls back anything: the
 // transaction is the caller's throughout.
 //
+// All eight are safe for concurrent use. One store value is bound once and the
+// Repo over it is one handle every request goroutine shares, so a store that
+// needs a lock takes its own.
+//
 // A refusal from Append, ReadStream or ReadAll must be assumed to have made the
 // caller's ambient transaction unusable, and the caller's obligation is to roll
 // back before issuing anything else on it. The two exceptions are the two
@@ -147,10 +151,12 @@ type Store interface {
 	//	                                    it is not a transaction
 	//
 	// It issues no statement, opens nothing, mints nothing and memoises nothing.
-	// A closed store answers the second rather than reporting closure, because
-	// this method writes and reads nothing; the refusal comes from the operation
-	// that follows. Two calls that resolve to one live transaction answer
-	// authorities that compare Same, and two live transactions must not.
+	// A closed store answers exactly what an open one would and never reports
+	// closure here, because this method writes and reads nothing and what the
+	// context carries did not change when the store was closed; the refusal
+	// comes from the operation that follows. Two calls that resolve to one live
+	// transaction answer authorities that compare Same, and two live
+	// transactions must not.
 	Transaction(ctx context.Context) (Authority, error)
 
 	// Envelopes of the stream that was asked for, at most Limits().StreamPage of

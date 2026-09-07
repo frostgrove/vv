@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -66,13 +67,19 @@ func TestTheCrossingsThatMustNotCompile(t *testing.T) {
 	for _, crossing := range []struct {
 		fixture string
 		what    string
+		names   string
 	}{
-		{"change", "a change decided for an aggregate over one state type, folded through an aggregate over another"},
-		{"identity", "a fact minted with another aggregate's identity type"},
+		{"change", "a change decided for an aggregate over one state type, folded through an aggregate over another",
+			"as event.Change[Beta] value in argument to betas.Fold"},
+		{"identity", "a fact minted with another aggregate's identity type",
+			"as AlphaID value in argument to alphaTicked.New"},
 	} {
 		response, err := buildCrossing(t, staged, crossing.fixture)
 		if err == nil {
 			t.Fatalf("%s compiles, so the crossing has to be caught at a call rather than at the build:\n%s", crossing.what, response)
+		}
+		if !strings.Contains(response, crossing.names) {
+			t.Fatalf("%s does not build, and not for the reason this test claims: nothing in the compiler's answer says %q, so a fixture that has rotted into a typo or a rename reports the same pass as one the type system refuses.\n%s", crossing.what, crossing.names, response)
 		}
 	}
 }

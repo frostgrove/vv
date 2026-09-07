@@ -57,11 +57,17 @@ it in terms). Cost: **zero** — an obligation, not a copy.
 §INV-021's outbound table gains **hand-off 8**: a codec → the kernel or a
 caller, the value `Decode` returns; sender-owed; the sender is the codec.
 
-*Runnable proxy* (this is what makes it not a sentence): `Fact.RoundTrip`
-decodes the caller's payload for a revision, re-encodes the result and keeps the
-bytes, decodes a **second, different** payload of the same revision, re-encodes
-the first result again, and refuses if the two encodings differ. `event.JSON`
-passes; a scratch-reusing codec fails. **S1** (the clause) + **S2** (the proxy).
+*Runnable proxy* (this is what makes it not a sentence): `Fact.RoundTrip` decodes
+the caller's payload for a revision **twice, from two separate input buffers**,
+and refuses when the two answers hold one slice or map in common — a value that
+aliases the payload it was handed aliases its own copy of it, and one that
+aliases memory the codec keeps is the same address in both. Behind that it also
+re-encodes the first answer either side of a decode of a **second, different**
+payload of the same revision, and refuses if the two encodings differ.
+`event.JSON` passes; a scratch-reusing codec fails, and so does the
+length-prefixed one that reuses a buffer without clearing it, which the
+disturbance arm alone reported clean (S2 round 2, GAP-180). **S1** (the clause) +
+**S2** (the proxy).
 
 **Where the second payload comes from, and what happens when there cannot be
 one.** The second payload must be decoded by *that revision's own codec* — that
@@ -89,7 +95,11 @@ not literally zero and encodes as if it were.
 `event.JSON` in the same test as its control, and **two samples per case**: a
 populated one, where the scratch-reusing codec must fail and `event.JSON` must
 pass; and a zero-valued one, where **both** codecs must answer `ErrSample` — the
-refusal is what stops the zero sample from reading as a pass.
+refusal is what stops the zero sample from reading as a pass. Round 2 added the
+two cases that keep the proxy honest about the codecs it is *for*: a
+length-prefixed codec that reuses one buffer and never clears it, with an
+allocating codec of the same wire format beside it, and a codec that records
+three bytes of a six-byte payload, with the shipped one beside it.
 
 ### C2 — GAP-101 `[high]` A policing decorator has no way to spell its own refusal
 
@@ -316,9 +326,29 @@ over with a **full-slice expression** or as a fresh allocation — the same
 that sub-slices one page buffer per row satisfies every other clause and hands a
 consumer slices whose `append` overwrites the next event; the existing
 `payload ownership` write-every-byte case cannot see it. **S3** (`eventmemory`
-obeys it) + **S5** (the case). *Test:* `payload ownership` appends **one byte**
-to page one's **first** payload and asserts the **second** envelope's payload is
-unchanged; and the same for the `[]Envelope`.
+obeys it) + **S5** (the case). *Test:* `payload ownership`'s `spilled` reads a
+page, clones it, appends **one byte** to the **first** payload and asserts every
+**other envelope of that same page** is byte-identical to its clone; then reads a
+second page, appends **one envelope** to the returned `[]Envelope`, and asserts
+both that the page it kept is unchanged and that the store's next read answers
+the bytes it answered before. **S5 correction (round 1, GAP-1):** as first
+written the case overwrote every byte of every payload *and then* appended, so
+the byte the `append` spilled into the next row was immediately overwritten by
+that row's own fill, and the only comparison afterwards was against a fresh read
+rather than against a sibling of the same page — a store that packs a page into
+one buffer and sub-slices it was certified green. The thirteenth defect
+(`packedPages`) is the fixture that proves it is not any more.
+**S5 correction (round 2, GAP-21):** the `[]Envelope` half as round 1 left it
+compared `batch[:len(beside)]` with a clone taken one line earlier, which
+`append` cannot make differ on any input, and it read the **whole** four-event
+history rather than a page, so an `append` to it landed past every row the store
+would ever serve. The stream is now `max(StreamPage, MaxRead) + 1` events long,
+the case reads a **proper prefix** — the page the store publishes — clones the
+page after it, appends one envelope to the first and asserts the page the store
+still serves is unchanged. The fourteenth defect (`retainedPages`, a store that
+cuts every page out of one array it keeps) is what that assertion reports, and
+with the assertion gone the same corruption is caught three assertions later by
+the kernel's own page check rather than at the hand-off.
 
 ### C8 — GAP-107 `[medium]` One defect count, one fixture inventory
 
@@ -326,7 +356,7 @@ unchanged; and the same for the `[]Envelope`.
 `event/eventtest/defects.go` holds one slice of `{name, section, build}` and the
 suite iterates it; a test asserts **every defect fails the section named for it**
 and that every section a defect names exists in the suite. The count is
-**twelve**: [SPEC]'s six, plus the pooling decorator §INV-021's falsification
+**fifteen**: [SPEC]'s six, plus the pooling decorator §INV-021's falsification
 already describes (GAP-107), plus five this plan's own rounds add — the
 over-long-page decorator (C4), the mis-ordered-page decorator and the
 foreign-stream-page decorator (C4's order verification), the store whose
@@ -340,9 +370,21 @@ partition on the **target** of the traversal rather than trusting the party that
 built the cause, so that decorator has no observable consequence, and a defect
 that cannot fail a section is not a defect. What it stood for is not lost — it is
 C2's third and fourth `refusal classes` cases, which is where a claim about the
-kernel belongs rather than in a store's fixture. A
-count in prose is what drifted; a count a test computes cannot, and the twelve
-above is the enumeration rather than a total to keep in step.
+kernel belongs rather than in a store's fixture. **Round 1 of S5's review added
+the thirteenth of what are now fifteen** (GAP-1): `packedPages`, a decorator that packs a page into one
+freshly allocated buffer and hands out `buffer[at:]` per row with no third index,
+which is the ordinary shape for a driver that scans a page into one row buffer.
+It pools nothing across reads, so every clause the twelfth pins holds for it, and
+before C7's case was rewritten it passed nineteen of twenty sections.
+
+**Round 2 added the fourteenth and the fifteenth**: `retainedPages`, a store that
+answers every page of a stream out of one array it keeps and cuts it without a
+third index (GAP-21), and the store that claims persistence and builds a second
+value over its backing holding none of what the first wrote (GAP-20) — the third
+of the three that are stores rather than decorators, because what a factory
+builds is not a call a decorator can forward. A
+count in prose is what drifted; a count a test computes cannot, and the
+enumeration above is the record rather than a total to keep in step.
 **S5.** *Test:* `TestTheSuiteStillDetectsEveryDefectItWasBuiltToDetect`.
 
 ### C9 — GAP-108 `[medium]` Codec, mapper, fold, upcaster and clock concurrency
@@ -367,11 +409,11 @@ way injectivity is recorded, which is [SPEC]'s own standard. **S1**, **S2**,
 
 | # | Decided |
 |---|---|
-| 1 | **The sealing readers are exhaustive and enumerated in code**: one unexported `seal()` on the declaration, called from `Bind`, `Aggregate.Fold`, `Fact.New`, `Fact.RoundTrip`, `eventtest.Keys` and `eventtest.Families`. A test enumerates the six call sites and fails when a seventh reader appears without a row (§UC-005, §INV-013). **S2 correction:** the last two live in another package and cannot call an unexported method, so they seal through the two exported methods they call — `Aggregate.Family` (also `Bind`'s) and `Aggregate.Key`. The six `seal()` call sites inside `event` are therefore `Aggregate.Family`, `Aggregate.Key`, `Aggregate.Fold`, `Fact.New`, `Fact.RoundTrip` and `Bind`; S2 delivers five and S4 adds `Bind` to both the code and `TestTheSealRefusesALateFact`'s table. `Fact.Name` and `Fact.Revisions` read the fact's own immutable chain and not the aggregate's table, so they do not seal |
+| 1 | **The sealing readers are exhaustive and enumerated in code**: one unexported `seal()` on the declaration, called from `Bind`, `Aggregate.Fold`, `Fact.New`, `Fact.RoundTrip`, `eventtest.Keys` and `eventtest.Families`. A test enumerates the six call sites and fails when a seventh reader appears without a row (§UC-005, §INV-013). **S2 correction:** the last two live in another package and cannot call an unexported method, so they seal through the two exported methods they call — `Aggregate.Family` and `Aggregate.Key`. The six `seal()` call sites inside `event` are therefore `Aggregate.Family`, `Aggregate.Key`, `Aggregate.Fold`, `Fact.New`, `Fact.RoundTrip` and `Bind`; S2 delivers five and S4 adds `Bind` to both the code and `TestTheSealRefusesALateFact`'s table. **S4 correction:** `Bind` calls `seal()` itself rather than reaching it through `Family()`, because it reads the family field and the fold table directly, and the AST arm of that test names a function with no receiver by its own name. `Fact.Name` and `Fact.Revisions` read the fact's own immutable chain and not the aggregate's table, so they do not seal |
 | 2 | **§UC-068's `Ledger` fold is the guarded one** — `if this == nil { this = Ledger{} }` — and the case states the non-nil precondition its "folding twice applies every event twice" claim needs. Written that way in the module page's example and in the test |
 | 3 | **`MaxKey` is step (1) of `Append`'s order, with the kernel's text rules.** `Limits()` is **read once at `Bind` and retained**, so step (1) makes no call on the store at all and the whole key check is one step before anything else; step (4) is the payload byte cap, the batch count and the batch's actual bytes. `Load`'s order is unchanged: (1) mapper + text rules + `MaxKey`, (2) `Transaction(ctx)`, (3) the paged `ReadStream` |
 | 4 | **On a closed store `Within` answers the `Transaction(ctx)` question and nothing else**: with nothing bound it is `ErrNoTransaction`; with a transaction of this store's backing bound it **succeeds**, and the next `Load` or `Append` is `ErrClosed`. `lifecycle` asserts both |
-| 5 | **`Repo.Authority(ctx)`** returns the store's answer for this context: the valid authority when a transaction of this store's backing is bound; the **invalid** authority and a nil error when nothing is; `ErrAmbientNotTransaction` when something of this store's that is not a transaction is. On a closed store: the invalid authority, nil error |
+| 5 | **`Repo.Authority(ctx)`** returns the store's answer for this context: the valid authority when a transaction of this store's backing is bound; the **invalid** authority and a nil error when nothing is; `ErrAmbientNotTransaction` when something of this store's that is not a transaction is. **A closed store answers exactly what an open one would** and never reports closure here, which is row 4's answer for `Within` read once — the two rows disagreed until S3's GAP-3 settled it. The refusal comes from the `Load` or `Append` that follows |
 | 6 | **§INV-036's grep covers the hyphenated form.** A new arm in `scripts/docs_test.go`, `TestNoDocPromisesExactlyOnceDelivery`, matches `exactly.?once` case-insensitively over `docs/`. There is no such arm today — verified — so it is written, not adjusted |
 
 **S1** (3, 5), **S2** (1), **S4** (4, 5), **S5** (2, 4), **S6** (6).
@@ -593,6 +635,9 @@ const (
 	MaxPageCount     = 4096       // the ceiling on StreamPage and MaxRead
 	MaxResidentBytes = 64 << 20   // the ceiling on MaxPayload x each of the three counts
 )
+
+// The one place MaxResidentBytes becomes a count of envelopes.
+func ResidentPage(maxPayload int) int
 ```
 
 Six ceilings, because §INV-022 requires the kernel to refuse a limit **above** its
@@ -633,6 +678,16 @@ check runs first and refuses `MaxPayload: 0`, which is what makes the divisor
 safe. Both answer `ErrWrongStore`, the sentinel every other store-honesty failure
 already carries (§INV-022). Cost: two integer divisions per door, so §D.4's
 constant-time claim is unchanged.
+
+**That division is `event.ResidentPage`, exported, and it is the only copy of
+it.** `Bind` and `Read` call it, and so does a store where it chooses its own
+numbers — `eventmemory.New` derives its page default and its refusal from it
+(§S3, GAP-6). A store cannot otherwise apply this rule without re-deriving it,
+which is a policy the kernel owns being reimplemented in every extension, and two
+copies that round one domain quantity differently is what makes a store boot and
+then be refused at `Bind`. It guards its own divisor — a `maxPayload` of zero or
+less admits no page at all — because `Limits` is a store's data and the kernel
+divides by it.
 
 *The write path: the measurement, at step 4 of `Append`.* Here the kernel is
 already holding every `Record.Payload` and can add up `len()`, so a worst-case
@@ -1322,6 +1377,108 @@ build-tag pair. `jobs/json.go` (1407 lines) and `cache/codec.go` (1564 lines)
 already share **20** identically-named unexported functions; a third copy would be
 the third ([REC] §3.3).
 
+**What the walk asks, corrected in S2 (GAP-170, GAP-171, and again in round 2 by
+GAP-178 and GAP-179).** `discover`'s question is *"does this type graph contain a
+kind `encoding/json` refuses"*, and that is the wrong question for a fact log:
+`encoding/json` answers `nil` for a type it writes as `{}`, the change then
+carries no refusal, and the empty payload is recorded **durably and irreversibly**
+and replayed as the zero value with the right version and no error at any door.
+The walk asks instead *"does a value of this type survive `Encode` then `Decode`
+through this codec"*, and refuses eight shapes `discover` accepts:
+
+1. a type that **writes itself and declares no matching unmarshaller that
+   `encoding/json` can reach** — `MarshalJSON` without `UnmarshalJSON`,
+   `MarshalText` without `UnmarshalText`. The reader must be on the **pointer
+   receiver**, because that is how `encoding/json` calls it; one declared on the
+   value receiver is refusal 7. The bytes are written and are then unreadable
+   forever, which in an append-only log is worse than a rejected write;
+2. a type whose marshaller sits on a **pointer receiver at a position
+   `encoding/json` cannot address** — a map key or a map value. There it is
+   written field by field and read back through `UnmarshalJSON`, so the two
+   halves disagree;
+3. a **map key whose two text methods do not come as a pair**, whatever the
+   key's kind. `encoding/json` routes a key through `MarshalText` when the key
+   type has one and reads it back through `UnmarshalText` when `*K` has one, and
+   it asks both **before** the string and integer kinds it renders on their own —
+   so `type Currency string` with a `MarshalText` written for display and no
+   reader writes `cur:usd` into the log and reads it back as the currency code
+   `cur:usd`, for ever, with no refusal anywhere. A key that declares only
+   `UnmarshalText` is refused for the mirror reason, and a key is never
+   addressable, so a `MarshalText` on the pointer receiver is not one it has.
+   The reader is read the same way refusal 1 reads it — on the **pointer
+   receiver**, since a key whose `UnmarshalText` sits on the value receiver
+   writes a rendered name and reads back the zero key, which collapses a whole
+   map to one entry;
+4. a **struct with fields and no field `encoding/json` writes** — every field
+   unexported, or every field `json:"-"`. `struct{}` stays legal: a marker fact
+   carries no data by design;
+5. **one JSON name claimed by two fields**, whether both are declared on the
+   struct, both are promoted from embedded structs at one depth, or one shadows
+   the other from a shallower one. `encoding/json` writes at most one of them and
+   `go vet`'s `structtag` sees neither the second nor the third: it reads tags
+   against tags, never a tag against the field name beside it
+   (`Amount int \`json:"Reason"\`` next to `Reason string`), and it says nothing
+   at all about an **untagged** promoted pair, which is how embedding is
+   ordinarily written. So the walk computes the names a struct renders the way
+   `encoding/json` does — following embedded fields, one type per path — and
+   refuses a name claimed twice by any route, with one remedy for all of them:
+   tag one, or spell it `json:"-"`;
+6. a **struct written by a marshaller it promoted from an embedded field, with a
+   field of its own beside it** (S2, round 3, GAP-185). Go promotes an embedded
+   type's methods, so `struct{ Money; SKU string }` and `struct{ time.Time; Note
+   string }` — the textbook Go embedding — write themselves as the embedded
+   value and nothing else: `SKU` and `Note` are written by nobody and read back
+   by nobody, with `nil` at `CanEncode`, at `Encode`, at `Fact.New` and at
+   `Fold`. Tagging the embedded field does **not** undo the promotion, and
+   `reflect` will not say whether a method is declared or promoted, so the
+   question is asked of the embedded fields: one carrying the route the struct
+   writes by, and any field beside it, is the shape. A struct that declares its
+   own pair *and* embeds a marshalling type is refused too — a conservative
+   false positive that fails closed with one remedy, name the embedded field;
+7. a type whose **unmarshaller sits on the value receiver** (S2, round 3,
+   GAP-186). `encoding/json` calls it through the addressable pointer, so the
+   method runs against a copy, everything it writes is discarded and
+   `json.Unmarshal` answers `nil`: the fact is durable and every replay of it,
+   for ever, produces the zero value with the right version and the right count.
+   The compiler is silent and `go vet` has no check for it. It is refusal 1's
+   own failure reached through a reader that is present and inert, so it carries
+   a message of its own rather than *"declares no `UnmarshalJSON`"*, and the
+   same question is asked of a map key;
+8. a field reached through an **embedded pointer to an unexported struct type**
+   (S2, round 3, GAP-187). `encoding/json`'s promotion rule is asymmetric: it
+   **writes** the promoted fields and cannot read one back, because `reflect`
+   may not allocate a pointer it may not set. The fact is minted with `nil` at
+   every door, lands durably, and every `Load` of that stream fails for ever with
+   no repair possible from inside the application. The embedded **value**
+   spelling round-trips and stays legal, so the refusal is raised where a name is
+   recorded rather than where the pointer is seen: a promoted name that is never
+   rendered — which is what a type embedding a pointer to itself has — costs
+   nothing and stays legal too.
+
+`Encode` marshals `&value` rather than `value`, which is the other half of (2):
+without the pointer the top-level reader type is not addressable either, and the
+ordinary `func (v *Doc) MarshalJSON()` is never called for the payload itself.
+The walk therefore carries **addressability** beside the type — set at the reader
+type, behind a pointer, at a slice element and at an element of an addressable
+array; cleared at a map key and a map value — and its visited set is keyed by
+that pair, because one type is legal at the reader type and illegal as a map
+value.
+
+All eight refusals share `ErrCodecType` and differ only in what they say, and
+each is subsumed by the arm beside it as a *verdict* — so
+`declaration_test.go`'s "a refusal names which asymmetry it found" pins the
+diagnosis by name, seventeen rows of it. Without it, deleting the
+write-without-a-reader arm leaves every case still refused, through a message
+that sends the reader to the wrong repair.
+
+**The walk lives in `event/encodable.go`, not in `event/codec.go`** (S2, round 2).
+The two answer different questions — one is the extension point and the shipped
+implementation of it, the other is *what a payload may be*, which is the walk plus
+`encoding/json`'s routing rules restated as refusals — and the second was 290 of
+the file's 393 lines after GAP-178 and GAP-179, seven lines under the 400-line
+threshold with GAP-176's repair still owed. `event/codec.go` keeps `Codec[V]`,
+`JSON`, `jsonCodec` and the three recovering call helpers.
+
 *The argument for the smaller codec, and what it does not claim.* A job payload
 and a cache value are values a **caller** hands the framework, so their analyser
 hardens against a caller. An event payload arrives from a store, behind
@@ -1368,9 +1525,14 @@ validations become unnecessary rather than implemented ([REC] §1.2).
 
 Internally a chain holds one erased reader per retained revision:
 `decode func([]byte) (V, error)` — that revision's own codec, then the declared
-upcasters to `V` — plus that revision's own `selfEncode`/`selfDecode` over its own
-type and its type name, all built by generic closures so **no `reflect` is
-needed**. Decoding is **once into the revision's reader type and a typed value
+upcasters to `V` — plus that revision's own `selfEncode func(any) ([]byte, error)`,
+`selfDecode func([]byte) (any, error)` and `selfZero` over its own type, and its
+type name, all built by generic closures so **no `reflect` is needed**. The two
+self readers pass values as `any` (S2, GAP-172): the aliasing half of a round trip
+compares two encodings of **one value in the revision's own type**, and an
+upcaster standing between the aliased buffer and `V` converts and therefore
+copies, so a comparison made after one is vacuous for every revision but the
+last. Decoding is **once into the revision's reader type and a typed value
 carried forward**, never `jobs`'s byte-at-every-hop replay, which would be *n*
 encode/decode round trips per stored event on the path §UC-011 pages to keep
 bounded ([REC] §1.2).
@@ -1421,8 +1583,30 @@ illegal key → `ErrKey`; (2) a change decided for another stream → `ErrWrongS
 cause 4 fires mid-list and returns the state as of the last change applied, which
 for a reference kind **is** the argument (§UC-041, GAP-96).
 
+**Cause 2 defers to cause 3 for a change that never reached a stream** (S2,
+GAP-173). A change whose mapper rendered an illegal key carries `ErrKey` and a
+**zero** `Stream`, and a zero stream equals no legal one — so comparing streams
+first answers a request-class refusal with a wiring-class crossing, and tells a
+caller that mints a change from a request-supplied identity that the server broke
+over data only the caller can correct. `Change.decidedFor` is the one comparison:
+equal stream, then a carried refusal, then the crossing. `ErrWrongStream` is
+raised through `fmt.Errorf` naming the wire type — never the key, §INV-025 — as
+every other refusal in the section is; it was the one bare sentinel.
+
 `Declaration` has exactly two readers in phase 1 — `eventtest.Families` and the
 `Binding`'s bound-family set — and no third is invented for it.
+
+**The seal is monotone, so the second observation and every one after it answer
+without the lock** (S2 round 2, GAP-181). `sealed` is an `atomic.Bool`, `seal()`
+returns on a `Load` that is already `true`, and only the first observation takes
+the mutex; `declare` still reads it **under** the mutex, so a fact arriving
+concurrently with a first observation is either accepted into the table or
+refused with `ErrSealed` and never both. A real deployment holds one `*Aggregate`
+per aggregate type and shares it with every request, so the unconditional
+`Lock`/`Store`/`Unlock` under every `Fact.New` and every `Aggregate.Fold` made one
+declaration serialise the process: measured here, 20 goroutines minting on one
+aggregate 165.6 ns/op against 67.1 ns/op on 64 distinct ones, and 42.4 against
+43.7 after the fast path. S4 adds four more sealing readers to the same mutex.
 
 #### `event/fact.go`
 
@@ -1445,7 +1629,8 @@ func (this *Fact[S, ID, E]) Revisions() int
 func (this *Fact[S, ID, E]) RoundTrip(byRevision ...any) ([]E, error)
 ```
 
-**Three S2 clauses the contract needed and did not have.** (1) The second decode
+**Six S2 clauses the contract needed and did not have**, four from the section
+itself and two from round 2 of its review. (1) The second decode
 is that revision's **own `selfDecode`**, not its whole reader chain: the buffer
 under test is the codec's, and running the declared upcasters over a zero value
 would let an upcaster that validates its input turn a working codec's round trip
@@ -1460,12 +1645,68 @@ the recipient. Without any one of the three, a codec that reuses its *encode*
 buffer (which hand-off 1 permits) defeats the proxy silently: the kept bytes are
 rewritten under it and the two encodings compare equal.
 
+(4, GAP-173's sibling GAP-172) **The whole aliasing comparison stays in the
+revision's own type.** Both encodings are `selfEncode` of the value `selfDecode`
+returned; the reader chain runs once afterwards, for **fidelity** and to produce
+what `RoundTrip` returns. Taken through `read.decode` — this revision's codec and
+then every declared upcaster — the comparison is made on a value an upcaster
+already **copied**, so whatever the old codec aliased is gone before the second
+decode can disturb it. Since only the last link is `linkOf(codec)` with nothing
+carried over it, that spelling tested exactly one revision of an *n*-revision
+chain and reported a clean pass for the other *n−1* — precisely the codecs
+nobody re-reads. The consequence when it is missed: a `Load` page of *n* events
+of an old revision decodes into one reused buffer, and a fold that retains the
+payload ends with *n* copies of the last event, with no error (§INV-021 hand-off
+8).
+
+(5, GAP-180) **The aliasing verdict is taken by comparing the two answers, not by
+disturbing the codec.** Re-encoding the first answer either side of a second
+decode detects reuse only where that second decode *overwrites the bytes the
+first answer points at*, and the disturbing payload is the reader type's **zero
+value**, whose encoding is shorter than any sample's. A codec that slices one
+buffer to the payload's width and copies into it — a length-prefixed binary
+codec, the shape `Codec[V]` exists to admit — never touches that region, so the
+proxy passed it and caught only a fixture that writes `[32]byte{}` over its whole
+buffer on every decode, which is a property of that fixture and not of the
+contract. The exact question is asked instead: **decode the same bytes twice,
+from two separate input buffers, and refuse when the two answers share a slice or
+a map**. A value that aliases the payload it was handed aliases its own copy of
+it and is permitted (§INV-021); one that aliases memory the codec keeps is the
+same address in both answers. The walk compares only the **exported** half of a
+struct — an unexported field is the application's own business, and a decoded
+value holding a pointer to something a package keeps for ever, a time zone or an
+interned constant, is ordinary and is not the reuse this asks about. The
+zero-value disturbance stays as a second arm, because it reaches reuse through a
+`string` leaf that the value walk cannot see the address of without `unsafe`.
+
+(6, GAP-178) **Fidelity is a comparison, not a decode that returned no error.**
+The value read back is compared with the sample **in the revision's own type**,
+before the upcasters run, so a codec that records less than it was handed — the
+route every promoted-field defect took to the log — is caught by the proxy rather
+than handed back with a `nil` error. The refusal is `ErrPayload` and names the
+reader type, never the value (§INV-025).
+
+`reflect.DeepEqual` is **not** that comparison, and using it would have been a
+false accusation on the two most ordinary payload fields there are: measured, a
+`time.Time` from `time.Now()` carries a monotonic reading and a `Local` location
+that no encoding preserves and whose own `Equal` says are not the difference, and
+a populated **unexported** field is never written by `encoding/json` and was
+never going to be read back. So the comparison walks the **exported** half of a
+struct, asks a type's own `Equal(T) bool` wherever it declares one — which is how
+`time.Time`, whose every field is unexported, answers at all — treats two NaNs as
+one value, and **runs out of budget in the caller's favour**: this refuses a
+declaration, so what it cannot answer it does not accuse. A codec that writes the
+note and forgets the time is what makes the `Equal` arm load-bearing; without it a
+field walk sees nothing to compare.
+
 `RoundTrip` lives on `*Fact` rather than in `eventtest` because the algorithm is
 the kernel's and needs the erased per-revision readers; `eventtest.RoundTrip` is
 the `*testing.T` wrapper that reports it, and its row on the module page says
 which of the two properties it proved — **fidelity** for every sample, and
-**non-aliasing** only where the sample carried data — so a store author reading
-a green run knows what it did not test. `Revisions()` is §INV-010's falsification
+**non-aliasing** only where the sample carried data, only through a slice or a
+map the two answers share or a re-encoding the zero value disturbed, and only
+over the exported half of what the codec returned — so a store author reading a
+green run knows what it did not test. `Revisions()` is §INV-010's falsification
 reader. `Name()` is what a refusal names (§INV-025).
 
 `New` returns **one** value so a slice literal of changes stays writable; a
@@ -1540,22 +1781,37 @@ func Bind[S, ID any](b *Binding, a *Aggregate[S, ID]) (*Repo[S, ID], error)
    which is `NewBacking`'s own predicate applied one level out → **`ErrWrongStore`**.
    `Open` still cannot fail; a composition root whose constructor returned an
    error the caller ignored reaches `Bind`, and it must get the sentinel §INV-022
-   assigns to every other dishonest store rather than a nil-interface panic
+   assigns to every other dishonest store rather than a nil-interface panic.
+   **S4 widened this check to the two other values one missing error check
+   produces**, for the same argument and at the same cost: a nil `*Binding` takes
+   `ErrWrongStore` (it names no store) and a nil `*Aggregate` — what `TryDefine`
+   returns beside its error — takes `ErrDeclaration`, which is the sentinel
+   `TryDeclare` already returns for exactly that value. Both were a nil
+   dereference at start-up before
 2. the family is not already bound through this `Binding` to a *different*
    declaration → `ErrFamily`
 3. `Backing()` is valid → `ErrWrongStore`
 4. `Limits()` has no zero field, none above its kernel ceiling, and neither
    **read** product — `StreamPage` and `MaxRead`, each against
-   `MaxResidentBytes / MaxPayload` — above the ceiling → `ErrWrongStore`. The
-   answer is **retained**; the append path's resident bound is the measurement at
-   step 4 and not a third product (`event/bounds.go`)
+   `event.ResidentPage(MaxPayload)`, which is the kernel's one copy of that
+   division and the one a store derives its own numbers from — above the ceiling
+   → `ErrWrongStore`. The answer is **retained**; the append path's resident bound
+   is the measurement at step 4 and not a third product (`event/bounds.go`)
 5. `Capabilities()` has no `Unstated` field → `ErrWrongStore`. Retained too
 
-No codec walk, no reflection, no lock — which is what makes a store per request
-over a borrowed tenant lease ordinary (§UC-055).
+No codec walk, no reflection, no state shared between requests — which is what
+makes a store per request over a borrowed tenant lease ordinary (§UC-055).
+**S4 corrects "no lock" to one uncontended lock over the family set**: §INV-038
+says a `*Binding` is safe for many goroutines and a map written under none is
+not. It is taken once per `Bind` at the composition root, never per request, so
+the property the sentence was defending is unchanged.
 
 Checks 1, 3, 4 and 5 are **store-honesty checks and they run at both doors**,
 `Bind` and `Read` (§INV-022). The family check is `Bind`'s alone.
+
+`Bind` is also the sixth `seal()` call site (C10.1), and it calls it directly
+rather than through `Aggregate.Family`, so `seal.go`'s enumeration and
+`TestTheSealRefusesALateFact`'s table both name `Bind`.
 
 #### `event/repo.go`, `event/marker.go`
 
@@ -1577,8 +1833,11 @@ func (this *Repo[S, ID]) Authority(ctx context.Context) (Authority, error)
    run**
 2. every change's `Stream()` against the token's → `ErrWrongStream` (§INV-044)
 3. each change's own carried refusal → `ErrEncode` / `ErrTooLarge` / `ErrKey`
-4. the retained `MaxPayload` per record, the retained `MaxBatch` count, and the
-   **sum of `len(Record.Payload)`** against `MaxResidentBytes` → `ErrTooLarge`
+4. the retained `MaxBatch` count, the retained `MaxPayload` per record, and the
+   **sum of `len(Record.Payload)`** against `MaxResidentBytes` → `ErrTooLarge`.
+   **S4 put the count first** — it was written second: it is the one O(1) check
+   of the three, and a caller that passes a million changes would otherwise buy a
+   record per change before being told the batch bound is 64
 5. the backing, read from the store now and compared with `Equal`, never `==` →
    `ErrWrongStore`
 6. the transaction question → `ErrNoTransaction*`, `ErrAmbientNotTransaction`,
@@ -1649,7 +1908,11 @@ a value the caller has never seen and can therefore keep to itself.
 successful load of the same stream — otherwise a `Load` that always returned the
 zero state would pass it.
 
-**`Within` returns a context**, not a bound repository and not an inner store —
+**`Within` returns a context**, and on a refusal it returns **the context it was
+given** rather than a nil one (S4): a nil `context.Context` is a panic one line
+later for a caller who ignored the error, where the unmarked context it already
+held is [[D-118]]'s own answer — an ambient transaction is still joined. It is not
+a bound repository and not an inner store —
 which keeps a policing decorator in the path for the whole transaction (§UC-048),
 deletes the declared-chain question (§UC-033), and makes
 `bound.Append(otherTxCtx, …)` inexpressible. Its marker chains on any marker
@@ -1685,7 +1948,9 @@ review closes rather than reopens it.
 
 `Read` refuses a nil `Log` — a nil interface or a nil pointer inside one — with
 `ErrWrongStore`, and then applies the same four store-honesty checks `Bind` does
-(§INV-022). **No
+(§INV-022). `ReadOnly` of a nil store answers a **nil `Log`** rather than a
+wrapper around nothing (S4), so that refusal is the one a read-only consumer
+gets too instead of a nil dereference on the first page. **No
 page-size parameter anywhere**: the kernel is the only party that fills a read
 (§D.7, GAP-51). The page `Events()` returns is the consumer's, survives the next
 `Next`, and may be fanned out to workers (§INV-038).
@@ -1700,17 +1965,17 @@ package eventmemory
 
 type LogSpec struct {
 	MaxPayload int   // zero means the store's default
-	MaxKey     int
+	MaxKey     int   // zero means the store's default
 }
 type Log struct{ /* opaque */ }
 func NewLog(spec LogSpec) (*Log, error)
 
 type Spec struct {
 	Log        *Log              // required; two stores over one Log are one store
-	Clock      func() time.Time  // retained and called on every append, from every goroutine (C9); its panic is not recovered
-	MaxBatch   int
-	StreamPage int
-	MaxRead    int
+	Clock      func() time.Time  // zero means time.Now; retained and called on every append, from every goroutine (C9); its panic is not recovered
+	MaxBatch   int               // zero means the store's default
+	StreamPage int               // zero means the store's default, which the log's MaxPayload caps
+	MaxRead    int               // zero means the store's default, which the log's MaxPayload caps
 }
 type Store struct{ /* opaque */ }
 func New(spec Spec) (*Store, error)
@@ -1726,8 +1991,11 @@ func (this *Store) Append(ctx context.Context, req event.AppendRequest) error
 func (this *Store) Close() error
 
 // UC-008: health.Probe's shape, satisfied structurally — nothing imports health
+// ctx.Err() first, then event.ErrClosed on a closed store, then nil
 func (this *Store) Check(ctx context.Context) error
 
+// A *Tx is safe from more than one goroutine, and the binding is keyed by the
+// log it was begun on, so one context carries one transaction per backing
 type Tx struct{ /* opaque */ }
 func (this *Store) Begin(ctx context.Context) (*Tx, error)
 func WithTransaction(ctx context.Context, tx *Tx) context.Context
@@ -1834,10 +2102,61 @@ bound fails the control rather than passing the case.
 
 **Degradation.** A transaction holds its streams for its own lifetime, so a
 caller that keeps one open across a network call starves every other writer of
-those streams with immediate conflicts. `eventmemory` is not a production store
-and `Persistence: Unsupported` says so; a store that waits instead is equally
-conformant. `Close` is idempotent, returns nil every time, refuses nothing, and
-neither commits nor rolls back staged work (§INV-032).
+those streams with immediate conflicts. **A transaction that is never committed
+and never rolled back holds them for the life of the process**: `release` is the
+only writer that drops a claim, there is no timeout and no reclamation, so an
+abandoned `*Tx` — a panicked goroutine, a forgotten `defer`, an early `return` —
+leaves one aggregate refusing every write with a conflict class that reads
+retryable and will never clear (GAP-7). `doc.go` states it where a consumer
+reads it. `eventmemory` is not a production store and `Persistence: Unsupported`
+says so; a store that waits instead is equally conformant. `Close` is idempotent, returns nil every time, refuses nothing, and
+neither commits nor rolls back staged work (§INV-032). It also touches no log
+state at all: the log is the composition root's and is shared with every other
+store over it, so a close is one store value's and a sibling keeps serving
+(§UC-054, §UC-055).
+
+#### What S3 had to decide because the contract above did not say it
+
+Nine answers the shape needed and only the implementation could supply — six
+written before the code and three the S3 review forced. None contradicts a row
+above; each fills a hole that would otherwise have been decided by whoever hit it
+first.
+
+| Question | Decided |
+|---|---|
+| What is `Transaction`'s **third** answer here — *something of this store's is bound and it is not a transaction* — when the only thing this store binds is a `*Tx`? | A `*Tx` that is **finished**, and a nil one. Both answer the invalid authority and an error, so the kernel refuses with `ErrAmbientNotTransaction` **before any statement** rather than falling back to autocommit, which is §INV-041's third row and the escape it exists to close |
+| Where does a `*Tx` of **another** log leave this store? (GAP-1) | Exactly where it found it. The binding is **keyed by the `*Log` it was begun on**, so a context carries one transaction per backing and `WithTransaction` for a second log cannot shadow the first — §UC-028's own control chains two `Within` contexts for two backings and requires both stores to proceed. A single unkeyed key made the second binding replace the first for every reader, and this store then took row one — *nothing of mine is bound* — and **autocommitted a write the caller had opened a transaction for**. A store may not answer row one while its own transaction is in the context. A nil `*Tx` is the one binding that names no log: every store that has no binding of its own finds it and takes row three, because a binding that could have been meant for anyone must fail closed for everyone |
+| What does the store itself answer when a caller drives it past that check, without the kernel? | `Failure(Refused, …)` at **all three** doors — `Append`, `ReadStream` **and** `ReadAll` — whose cause is `eventmemory`'s own and is reachable through `CauseOf`. Not `NotWritten`: nothing failed and nothing was written, and `ErrBackend` would tell a transport the server broke over a wiring mistake. C2's seventh outcome is what makes this spellable at all. `ReadAll` returns no staged envelope either way, because a staged envelope has no position; consulting the transaction is about the **answer**, so that one context does not produce a refusal at one read door and a page at the other (GAP-4) |
+| Does `Commit` or `Rollback` read the context's deadline? | **No.** A transaction that refused to finish because its request was cancelled would hold its claims for the life of the process and starve every other writer of those streams, and there is no window here for a cancellation to be uncertain about. The five operating methods do read it, and a bare cancellation travels as itself (§UC-057's first window) |
+| Is `Rollback` of a finished `*Tx` an error, as `Commit`'s is? | **Yes**, and it is the same one — `database/sql`'s shape, which `defer tx.Rollback()` beside an explicit commit already ignores. Both errors stay **unexported**: each method has exactly one, so *non-nil* carries the whole of it and the package keeps its eight exported symbols |
+| Where is the re-validation at commit, given that a conflict may not be reported from one? | The claim is the mechanism and the commit is where it is **checked**: every staged record must still land at the version it was admitted at, densely, on a stream nobody else advanced. It cannot fire while the claim holds, and it is what makes a future edit to the claim logic loud instead of a silently renumbered history |
+| What position does a staged envelope read back at, inside its own transaction? | **Zero**, because a position is assigned at commit and one assigned earlier would have to be reassigned or reissued. `ReadAll` is position-ordered and therefore never returns a staged envelope, to its own transaction or anyone else's |
+| May a `*Tx` be used from more than one goroutine? (GAP-2) | **Yes**, and the store is what makes it safe: the two doors that act on the bound transaction resolve it **inside the section that acts**, under the log's own mutex, so a transaction another goroutine commits or rolls back in between is refused with the same `Failure(Refused, errFinished)` an already-finished one gets. Resolving it before the lock was a check-then-act: `Commit` released the staged maps in the window and the next `stage` panicked on a nil map, which `event/store.go` does not recover and which takes the process. An `errgroup` appending to two aggregates in one transaction, and a watchdog rolling one back on a deadline, are both ordinary. `Transaction(ctx)` reads the same flag without the lock, because it acts on nothing and a transaction may finish the instant after any answer |
+| What does `Transaction` answer on a **closed** store? (GAP-3) | The same as an open one. It writes and reads nothing, and what the context carries did not change when the store was closed, so reporting closure — or reporting *nothing bound* while the caller's own transaction is right there — would be a fourth answer to a question the contract says has three. The refusal comes from the `Load` or `Append` that follows. `event/store.go`'s sentence said *the second* and is corrected; C10 row 4 and row 5 disagreed with each other and now do not |
+
+`New` also refuses a spec whose `StreamPage` or `MaxRead` at this log's
+`MaxPayload` exceeds what one read may hold — the kernel's own rule, through the
+kernel's own `event.ResidentPage`, one door earlier and named at the line that
+chose the numbers. **No store the kernel would have admitted is refused**, and
+that is a property of the defaults and not only of the arithmetic (GAP-5): the
+page default is `min(256, event.ResidentPage(log.MaxPayload))`, so a log at the
+kernel's own `MaxPayloadBytes` still builds a store with nothing operational set —
+before, it was refused over a number the caller never touched. The refusal, when
+a caller does set one, names the number it set and the number it may not pass.
+`Check` answers `ctx.Err()`, then `event.ErrClosed` on a closed store, then nil;
+it is not one of the eight, so nothing maps it, and `Begin` answers the same
+sentinel for the same reason.
+
+**The five defaults, and where each number comes from.** `universality.md`'s rule
+is that a literal states its derivation where it is chosen; these are on the two
+`const` blocks that hold them.
+
+| Default | Derived from |
+|---|---|
+| `LogSpec.MaxPayload` `64 << 10` | A sixteenth of `event.MaxPayloadBytes`, and §D.13's recommended payload: a fact carrying an embedded document fits, and the room left over is what a deployment raises rather than the ceiling |
+| `LogSpec.MaxKey` `512` | A quarter of `event.MaxKeyBytes`, and §D.13's recommended key: a family beside a composite rendered identity |
+| `Spec.MaxBatch` `64` | One decision's facts, not a migration's. At the default payload it is 4 MiB the kernel holds at once, a sixteenth of `MaxResidentBytes`; the batch's real bytes are measured at `Append` and never estimated as a product |
+| `Spec.StreamPage`, `Spec.MaxRead` | `min(256, event.ResidentPage(MaxPayload))`. 256 is §D.13's recommended page — 16 MiB at the default payload — and the `min` is the resident rule applied to the default rather than restated: at `MaxPayloadBytes` it yields the 64 envelopes one read may hold, so **every** log the kernel admits builds a store |
 
 ### `event/eventtest/` — the conformance suite
 
@@ -1854,6 +2173,10 @@ type Factory struct {
 	Begin   func(t *testing.T, ctx context.Context, s event.Store) (context.Context, Tx)
 	Sibling func(t *testing.T, s event.Store) event.Store
 	Fail    func(t *testing.T, s event.Store, outcome event.Outcome) bool
+	Tail    func(t *testing.T, s event.Store) event.Cursor   // round 2, GAP-18
+
+	Unparsable func(t *testing.T, s event.Store) event.Cursor // round 3, GAP-25
+	Window     time.Duration                                  // round 2, GAP-18
 }
 
 func Run(t *testing.T, factory Factory)
@@ -1873,6 +2196,99 @@ outcome it cannot produce, so *cannot* and *did not* are told apart. Hook
 requiredness is derivable from the capability report for every hook, and a claimed
 capability whose hook is missing **fails** — it is never skipped.
 
+**`New`'s own contract, corrected in round 1 of S5's review (GAP-2).** It is
+called **one or more times per section** and the suite holds several of its
+stores live at once: `store failure classification` calls it sixteen times,
+`transactions` three, and `resumption` and `durability` each call it a second
+time *after* the data the section is asserting about has been written. So a store
+`New` builds must **not** destroy or reset what an earlier one wrote in the same
+section — a factory that reads "once per section" as licence to truncate its
+backing makes `resumption`, `durability` and `foreignCursor` report a correct
+store as broken, and none of those failures names the factory. Whether two of its
+stores share one backing is the factory's own choice and is **asked rather than
+assumed**: `Backing().Equal` is what the sections branch on, and a section that
+needs the kind this factory does not build is reported *not certified*. Every
+section that calls `New` mid-run says in its own comment why it may.
+
+**`New`'s second clause, added in round 2 (GAP-17).** Every store it builds
+publishes the **same `Limits` and the same `Capabilities`**, because the suite
+reads both once at the door and derives every count it writes from them —
+`probe.store` compares each later store's `Limits()` **and its `Capabilities()`**
+with the admitted one's and refuses the section when either differs, so the whole
+of the obligation is checked rather than half of it (round 3, GAP-28). Both
+halves have a control: `TestAFactoryWhoseLaterStoresPublishSomethingElseIsRefused`
+drives a factory whose second store publishes a wider page, and one whose second
+store claims fewer capabilities, and both are reported *failed* for `binding`
+while the factory that builds one kind throughout is *passed*.
+
+**The obligation on one store value, which is a different one and was asserted by
+nothing** (round 3, GAP-26). `Capabilities`, `Limits` and `Backing` are constant
+for a store's life (`event/store.go`), and the parties that read them read them at
+different moments: the suite keeps all three from the door, the kernel keeps the
+first two from `Bind` and re-reads the backing per operation. `binding` now reads
+all three twice on **one** store value with a store operation between the two
+readings and refuses when any differs — the backing through `Equal`, never `==`.
+The plausible stores are the ones the clause names: one deriving `Transactions`
+from whatever executor is bound, one whose `StreamPage` shrinks after a
+reconfiguration, one that re-pointed at another database. All three passed every
+section before the clause was asserted.
+
+**`Unparsable`, an optional hook added in round 3 (GAP-25).** It answers a cursor
+this store cannot parse. Every cursor the suite can mint is one of three — `""`,
+one this store minted, or one **another store** minted — and none of them reaches
+the store's own parser, because a foreign cursor parses cleanly and names
+somebody else. Only the store knows what it cannot read, so a literal the suite
+invented would be nonsense to one store and a legal position to the next. Without
+it `resumption` is reported **not certified**, which is the third word rather than
+silence: the factory `eventpg` will supply builds every store over one database,
+so `foreignCursor` already reports *not certified* there and without this hook
+the whole of that store's cursor validation would be uncertified while the run
+read *passed*. A store that reads from the beginning of its log for a checkpoint a
+projector truncated re-applies every event it has ever written, which is the one
+thing §UC-053 exists to prevent.
+
+**`Tail`, an optional hook, and `Window`, a duration — both added in round 2
+(GAP-18).** `Tail` answers a cursor at the current end of this store's log.
+It gates nothing: without it every section still runs and the suite finds the end
+by reading to it, which is the whole log once per walking section and which never
+arrives at all on a log another process is appending to. Six sections take a
+tail; the refusal when the read does not finish names `Factory.Tail` and the
+remedy rather than the store. `Window` is the per-section deadline, zero meaning
+the twenty seconds derived below, so a store whose operations are a network away
+sets its own rather than being reported *failed* for a wait the contract permits
+it.
+
+**`Begin`'s disposal obligation, added in the same round (GAP-5).** The suite
+rolls back every transaction it began through `probe.begin`, registered on the
+section's own `t.Cleanup` at the moment it is begun — so the transaction
+`lifecycle` deliberately abandons across a `Close`, and every transaction a
+refusing case leaves through `panic(abort{})`, is released when that section ends
+rather than when the binary does. `eventmemory` garbage-collects an abandoned
+transaction and shows nothing; a `eventpg` one holds a pooled connection and
+every row lock it took, and the next section's `New` draws from that pool.
+
+**`Fail`'s own contract, written down in S5 because the section that drives it
+has to know what it armed.** It makes the store's **next** `Append`, `ReadStream`
+or `ReadAll` answer a failure classified as the named outcome *instead of
+performing the operation* — so `NotWritten` is a write that certainly did not
+land, and the section asserts zero events on it. `eventmemory` answers `false`
+for `Unconfirmed` and true for the other six, which is §UC-044's worked case: it
+has no commit window, so a decorator of its own that reported one would be
+lying about the store rather than injecting into it.
+
+**`Tx`'s own contract, moved out of this plan and into the shipped package in
+round 2 (GAP-19).** Four rules the sections assert and only this document
+carried: `Commit` answers an error when the transaction has already been
+committed or rolled back — `staged` commits twice on purpose — `Rollback`
+answers nil wherever the suite calls it, and the suite rolls back every
+transaction it began when the section that began it ends, committed ones
+included, ignoring that answer. They are now the doc comment on `eventtest.Tx`,
+because a store author implements against what the package says. The fifth rule,
+which is `Store`'s rather than `Tx`'s, went to `event/store.go`: **all eight
+methods are safe for concurrent use**, since one `Repo` is the handle every
+request goroutine shares — the clause `concurrency` runs eight goroutines
+against.
+
 **`Tx.Commit`'s error contract, because the suite has to know what to do with
 one.** A commit-time error is the **store's own**, of the store's own class, and
 the suite never asserts an `event` sentinel on it — a conflict arrives from
@@ -1881,10 +2297,18 @@ the suite never asserts an `event` sentinel on it — a conflict arrives from
 case**, reported with the store's error text, and it has exactly one case that
 expects a non-nil one: committing a `*Tx` that was already finished.
 
-**Three words, never two** — *passed*, *not certified*, *failed*. `cachetest`'s
+**Three words, never two** — *passed*, *not certified*, *failed*, and after
+round 1 a fourth that is not a word the suite ever reports on a run that
+finished: `unreported`, the **zero value**, which `Run` turns into a `t.Error`
+and `certified` does not count (GAP-7). `cachetest`'s
 `t.Skip` at **seven** sites (`cache/cachetest/suite.go:214, 250, 1508, 1674,
 1697, 1715, 1721`, counted) is the shape §UC-044 refuses and is deliberately not
-copied.
+copied: `grep -c "t.Skip" event/eventtest/*.go` over the **suite's own files** is
+0. The one occurrence in the package is
+`suite_test.go`'s `t.SkipNow()` inside a **factory hook**, which is how
+`TestASectionThatNeverReturnedIsNotReportedPassed` drives a section out through
+`runtime.Goexit` — the same door `t.Fatal` leaves by, and the only one of the two
+a watching test can observe without the failure propagating to itself.
 
 #### The section inventory, in code, and the test that it was honoured
 
@@ -1928,14 +2352,17 @@ itself, and C8 moved it into `defects.go` plus
 defect fixtures inside a store author's run would report another store's failures
 against theirs.
 
-*Test:* `TestEverySectionInTheInventoryWasReported` (S5, `package eventtest`, so
-it can reach the unexported runner) runs the suite against the trivial store and
-asserts every inventory name was reported **exactly once** with one of the three
-words. Its control is a run over the inventory with one section removed, which
-must **fail** the same assertion — otherwise the test proves that a list was
-iterated and not that the sections exist. The fixture stores stay in
-`package eventtest_test`, where §INV-019's compile-time proof needs them; both
-files compile into one test binary, so both are visible to `go test -list`.
+*Test:* `TestEverySectionInTheInventoryWasReported` runs the suite against a
+fixture store and asserts every inventory name was reported **exactly once** with
+one of the three words. Its control is a run over the inventory with one section
+removed, which must **fail** the same assertion — otherwise the test proves that
+a list was iterated and not that the sections exist. **S5 correction:** it lives
+in `package eventtest_test` with every other test, and reaches the unexported
+runner through `event/eventtest/export_test.go`, the standard-library idiom. The
+plan had put it in `package eventtest` for that access, which does not work: the
+fixture stores are in `package eventtest_test`, where §INV-019's compile-time
+proof needs them, and the two packages cannot see each other's identifiers even
+though both compile into one test binary.
 
 ### Type inference — where it works and the two places it stops
 
@@ -2381,18 +2808,22 @@ campaign had recorded as surviving, and each turns the suite red.
 
 ### S2 — the declaration seam: codec, chain, aggregate, fact, change, fold  `[x]`
 
-**Both blocks are executed and green.** The phase-5 suite is nine tests in six
-files — `event/declaration_test.go`, `seal_test.go`, `fold_test.go`,
-`roundtrip_test.go`, `upcast_test.go`, `crossings_test.go`.
+**Both blocks are executed and green.** The phase-5 suite is **twelve** tests and
+**two** fuzz targets in seven files — `event/declaration_test.go`,
+`seal_test.go`, `fold_test.go`, `roundtrip_test.go`, `upcast_test.go`,
+`crossings_test.go`, and the two fuzz targets in S1's `fuzz_test.go`, which is
+where this package's fuzzing lives.
 
 **Delivers** everything an application declares and everything it can do with **no
 store at all** — declare, mint a change, fold, round-trip. The kernel runs with
 zero extensions registered, which is `microkernel.md`'s own requirement and
 §UC-041's use case.
 
-**Files** `event/codec.go`, `chain.go`, `aggregate.go`, `fact.go`, `change.go`,
-`seal.go`; `event/testdata/crossings/` (build-failure fixtures, three packages:
-`control`, `change`, `identity`).
+**Files** `event/codec.go`, `encodable.go`, `chain.go`, `aggregate.go`, `fact.go`,
+`change.go`, `seal.go`; `event/testdata/crossings/` (build-failure fixtures, three
+packages: `control`, `change`, `identity`). `encodable.go` is round 2's split of
+`codec.go` and holds the walk — *what a payload may be* — with no exported symbol
+of its own.
 
 **Realises** `Codec[V]`, `JSON`, `Chain`/`From`/`Then`, `Aggregate`/`Define`/
 `TryDefine`/`Family`/**`Key`**/`Fold`, `Declaration`, `Fact`/`Declare`/
@@ -2401,8 +2832,10 @@ zero extensions registered, which is `microkernel.md`'s own requirement and
 **Carried gaps** C1 (the `Codec` clause, the `RoundTrip` proxy, the zero-value
 second payload and `ErrSample`), C9 (the codec and mapper clauses where an
 implementer reads them, and the panic policy for all three codec methods),
-C10.1 (`seal()` and its six enumerated readers), C10.2 (the guarded `Ledger` fold
-in the example).
+C10.1 (`seal()` and its **five** enumerated readers — `Bind` takes the sixth row
+in S4, and the seal test now parses the enumeration out of `event/seal.go` and
+compares it to the AST call sites, so a row with no reader fails as loudly as a
+reader with no row), C10.2 (the guarded `Ledger` fold in the example).
 
 **Decides** GAP-41: the kernel does not refuse a non-struct payload; the codec
 answers. §UC-004's trigger list loses that row.
@@ -2428,11 +2861,50 @@ preference.** Each is written into the contract section it belongs to:
   `d.seal()` in `package eventtest` does not compile. So the two helpers seal
   through the two exported methods they were always going to call, and `Keys` had
   no exported way to obtain a key at all. See `#### event/aggregate.go` and C10.1.
-- **`Fact.RoundTrip`'s three clauses** — the second decode is the revision's own
-  `selfDecode`, the aliasing verdict is `ErrPayload`, and every codec output the
-  algorithm keeps is cloned. See `#### event/fact.go`. The third is the one the
-  mutation campaign found: a codec that reuses its **encode** buffer — which
-  §INV-021 hand-off 1 permits in terms — defeats the whole proxy without it.
+- **`Fact.RoundTrip`'s four clauses** — the second decode is the revision's own
+  `selfDecode`, the aliasing verdict is `ErrPayload`, every codec output the
+  algorithm keeps is cloned, and the whole comparison stays in the revision's own
+  type. See `#### event/fact.go`. The third is the one the mutation campaign
+  found: a codec that reuses its **encode** buffer — which §INV-021 hand-off 1
+  permits in terms — defeats the whole proxy without it. The fourth came out of
+  the S2 implementation review (GAP-172) and changed `link.selfDecode` to return
+  the decoded value.
+
+**What round 1 of the S2 implementation review changed, closed here.** Each is
+written into the contract section it belongs to and each was verified by
+mutation — the arm was removed, the named test went red, the arm was restored:
+
+- **GAP-170 `[critical]` — `event.JSON` admitted payload types that encode to
+  `{}`.** `Encode` now marshals `&value`, and the walk carries addressability,
+  refuses a struct with fields and no field `encoding/json` writes, and refuses
+  two fields of one struct rendering one JSON name. See the corrected walk under
+  `#### event/codec.go`. `TestADeclaration` gains three subtests: the refused and
+  accepted tables grow by six and five rows each with a control beside every
+  refusal; *what the shipped codec writes is frozen* is a seven-row golden table
+  proving `&value` changed no wire format for an integer, a nil slice, a map,
+  `json.RawMessage`, a value-receiver marshaller and a slice element, and changed
+  exactly the broken one; *what the shipped codec accepts, it records with its
+  contents* drives a pointer-receiver payload through `Declare` → `New` → `Fold`
+  and fails with `[""]` on the old `Encode`.
+- **GAP-171 `[high]` — the walk asked only whether a type writes itself.** It now
+  asks for the matching unmarshaller, on the type and on a map key.
+- **GAP-172 `[high]` — the non-aliasing proxy was vacuous for every revision but
+  the current one.** `TestACodecThatDecodesIntoAReusedBufferIsCaught` gains *a
+  retained revision behind a copying upcaster is under test too*, which drives
+  the suite's own `scratchCodec` as revision 1 of a two-revision chain and
+  answers `<nil>` on the old spelling; the same chain over `JSON` is its control.
+- **GAP-173 `[medium]` — a change whose mapper failed carried a zero stream**, so
+  `Fold` reported a request-class `ErrKey` as a wiring-class `ErrWrongStream`.
+  `TestFoldRefusesAnotherInstance` gains *a change minted for an identity that
+  renders no key answers as a key refusal*, with the existing blank-identity case
+  as its control, and the crossing subtest now asserts the refusal names the wire
+  type rather than being the section's one bare sentinel.
+- **GAP-174 `[low]` — the seal enumeration named `Bind`, which does not exist.**
+  The row leaves until S4 adds it, and `TestTheSealRefusesALateFact` now parses
+  the enumeration out of `event/seal.go`'s own comment, so the artefact a reader
+  of the library sees is under the same test as the code.
+- **GAP-175, GAP-176 and GAP-177 were graded `[deferred]`** and are carried in
+  `## Debt` with the argument for each.
 - **The phase-5 name list moves by one in each direction.**
   `TestComposeRendersALegalKeyAndNeverCollides` is **dropped**: S1 shipped
   `TestComposeRendersTheFrozenKey` (a twelve-row golden table, including the
@@ -2441,7 +2913,9 @@ preference.** Each is written into the contract section it belongs to:
   reversibility over an unbounded domain), so a third Compose test would assert a
   strict subset. `TestAnUpcasterMayRefuseAndAFoldMayNot` is **added**, because
   S2's own **Degradation** paragraph states the upcaster/fold panic asymmetry
-  (§INV-017, §UC-067) and nothing in the given list reached it. Count stays nine.
+  (§INV-017, §UC-067) and nothing in the given list reached it. Count stays nine
+  through phase 4; phase 5 takes it to twelve, and the three it adds are listed
+  with the mutation each one kills below.
 - **§UC-050's control reads "the helper length-prefixes"**, which the plan's own
   `Compose` (escaping, `#### event/identity.go`) superseded. Under escaping the
   two legal spellings of a **single-part** identity are byte-identical unless the
@@ -2449,11 +2923,146 @@ preference.** Each is written into the contract section it belongs to:
   pair on an identity containing a separator. §INV-005's freeze is unaffected and
   the trap is the same one. S6's [SPEC] edit list carries the wording.
 
-**Checkpoint S2 — phase 4 (implementation), executed 2026-09-07**
+**What round 2 of the S2 implementation review changed, closed here.** The four
+`[immediate]` findings are repaired in the code and written into the contract
+section each belongs to; each was verified by mutation — the arm was removed, the
+named case went red, the arm was restored. Round 2's own summary is that round 1
+repaired *the close criterion's wording and the fixture beside it* rather than the
+rule, so each repair here is written against the rule and the fixture that proves
+it is the ordinary shape rather than the exotic one:
+
+- **GAP-178 `[critical]` — the walk could not see promoted fields**, so a struct
+  embedding two structs that each carry an `ID` encoded as `{}`, and one whose
+  embedded name is shadowed from a shallower depth lost that field, both with a
+  `nil` at every door. The walk now computes the names a struct renders the way
+  `encoding/json` does and refuses a name claimed twice by any route
+  (`#### event/codec.go`, refusal 5), and `Fact.RoundTrip` compares what came
+  back with the sample in the revision's own type (`#### event/fact.go`, clause
+  6). `TestADeclaration` gains three refused rows with three accepting controls
+  and two diagnosis rows; `TestACodecThatDecodesIntoAReusedBufferIsCaught` gains
+  *a codec that records less than it was handed is caught*.
+- **GAP-179 `[critical]` — a map key of string or integer kind never reached the
+  route check** GAP-171 installed one arm below, because `objectKey` answered
+  `nil` for those kinds first. `encoding/json` asks `MarshalText` and
+  `UnmarshalText` **before** the kinds, so `type Currency string` with a display
+  marshaller wrote `cur:usd` into the log and read it back as a legal currency
+  code, and `type Kind int` with one wrote a key no `Load` can ever parse. The
+  question is now asked first and in both directions
+  (`#### event/codec.go`, refusal 3). Three refused rows, three accepting
+  controls, two diagnosis rows.
+- **GAP-180 `[high]` — the non-aliasing proxy passed the ordinary reusable-buffer
+  codec.** The verdict is now taken by decoding the same bytes twice from two
+  separate buffers and comparing the answers for a slice or map they share
+  (`#### event/fact.go`, clause 5). `roundtrip_test.go` gains a length-prefixed
+  `prefixCodec` that reuses one buffer and never clears it, with an
+  `allocatingCodec` of the same wire format as its control; the case answers
+  `<nil>` on the old spelling. Two controls sit beside the two new refusals — an
+  allocating codec of the same wire format, and *what an encoding drops by design
+  is not what it lost*, which drives a `time.Now()` payload and a populated
+  unexported field through the fidelity comparison and would be red under
+  `reflect.DeepEqual`.
+- **GAP-181 `[medium]` — every decision took the aggregate's mutex to write a
+  boolean that was already true.** `sealed` is an `atomic.Bool` with a lock-free
+  fast path (`#### event/aggregate.go`). `TestTheSealRefusesALateFact` gains *a
+  fact declared as the first reader runs is accepted or sealed and never both*,
+  which runs two observers against one declaration 200 times and turns red under
+  `-race` if `sealed` is a plain `bool`; three benchmarks sit beside it and the
+  distinct-aggregate control is one of them, so the claim that the mutex is not a
+  bottleneck cannot be made again without it.
+- **GAP-182, GAP-183 and GAP-184 were graded `[deferred]`** and are carried in
+  `## Debt` with the argument for each. GAP-184's first half — two comments naming
+  an `eventtest` package no tree provides — is closed here anyway, in the spelling
+  GAP-174 used for `Bind`: the two now name the conformance suite and say it has
+  not arrived.
+- **`event/codec.go` split.** The walk moved to `event/encodable.go`; nothing else
+  changed and no exported symbol moved.
+
+**What round 3 of the implementation review and round 1 of the test review
+changed, closed here.** Round 3's own closing paragraph named the pattern: each
+earlier repair was written against *the route the finding named* rather than the
+rule the route was an instance of. The three `[critical]` findings it left open
+are the same rule reached three more ways, and they are closed together, with the
+walk's contract above rewritten from five refusals to eight. Every arm below was
+verified by mutation — the arm was removed, the named row went red, the arm was
+restored:
+
+- **GAP-185 `[critical]` — a marshalling pair promoted from an embedded type was
+  trusted as the struct's own**, so `struct{ Money; SKU string }` and
+  `struct{ time.Time; Note string }` wrote themselves as the embedded value and
+  dropped every field beside it, with `nil` at every door.
+  `ownMethods` now settles a **struct** position only after `promotedMarshaller`
+  has asked whether an anonymous field carries the route the struct writes by
+  (`#### event/codec.go`, refusal 6). Measured before the repair and after:
+  `CanEncode=<nil>, Encode=500, Decode={Money:{Cents:500} SKU:}` became a refusal
+  naming the embedded type and the field it hides. The tagged spelling is refused
+  too, and correctly — a `json:"money"` tag does not undo method promotion, which
+  is why GAP-185's own suggested control was wrong and the accepting control is a
+  **named** field.
+- **GAP-186 `[critical]` — a read route through a method on the value receiver
+  counted as a read route.** `readsAs` now answers true only for a method
+  reachable through the pointer and **not** through the value, `objectKey`'s read
+  probe asks the same question, and the case has a message of its own rather than
+  *"declares no `UnmarshalJSON`"* (`#### event/codec.go`, refusal 7).
+- **GAP-187 `[critical]` — an embedded pointer to an unexported struct type
+  encoded cleanly and could never be decoded.** `members.collect` carries the
+  blocking field down the promotion and refuses where a **name is rendered**
+  through it (`#### event/codec.go`, refusal 8), which keeps the embedded value
+  spelling and a type embedding a pointer to itself legal — both round-trip. The
+  suite's `pointed` fixture moves from the accepted table to the refused one and
+  is replaced there by `struct{ *Stream }`, an embedded pointer to an **exported**
+  struct.
+- **GAP-T20 `[critical]` (test review) — `event.JSON`'s decode-failure path was
+  asserted by nothing**, so `jsonCodec.Decode` could swallow every
+  `json.Unmarshal` error with the package, the seed corpus and a 3.9 M-execution
+  fuzz campaign green. `TestFoldRefusesAnotherInstance` gains *recorded bytes the
+  shipped codec cannot read are refused by the fold*, four rows through `Fold`
+  plus the direct `Decode` assertion and its well-formed control; and
+  `FuzzAStoredPayloadIsFoldedOrRefused` gains a positive arm in its setup — four
+  payloads the declaration **must** refuse — so *folded or refused* is no longer
+  satisfiable by *always folded*.
+- **GAP-T21 `[critical]` — the declaration tables had no ordinary Go embedding.**
+  They go from 26 refused and 23 accepted rows to **35 and 31**, and the
+  diagnosis table from 11 rows to **17**: the three shapes above, the tagged
+  spelling, the value-receiver reader as a reader type and as a field, the
+  value-receiver map key, and an accepting control beside every one of them.
+- **GAP-T22 `[high]` — the second arm of C1's non-aliasing proxy was deletable**,
+  with both of the clones that live only inside it, because every case was
+  decided by the pointer comparison. `roundtrip_test.go` gains `sealedCodec`,
+  whose decoded value reaches its reused scratch buffer through an **unexported**
+  field — the class `sharesMemory` skips by design, and what a zero-copy reader
+  built on a private slice or a `string` is — with `sealingCodec`, the same wire
+  format and the same reused encode buffer decoding into memory of its own, as
+  its control. It also gains *a codec that consumes the buffer it was handed is
+  handed one of its own*, over a reader that unescapes in place, which is the
+  property the two payload clones exist for and which nothing stated before.
+- **GAP-T23 `[high]` — `Family()` was pinned by one literal against the one
+  example family**, so an implementation ignoring its receiver survived. The
+  subtest is now a two-row table over two declarations, each asserting `Family()`
+  and `Declaration.Family()` against the string that declaration was constructed
+  from.
+- **GAP-T24 `[high]` — the crossings test accepted any build failure as proof.**
+  Each negative fixture now carries the substring its compiler error must contain,
+  so a fixture that stops crossing while the build still fails is red. (Adding an
+  unrelated undefined symbol *beside* an intact crossing stays green, and
+  correctly: the compiler reports both errors and the fixture still proves what
+  it claims.)
+- **GAP-T25, GAP-T26, GAP-T27 and GAP-T29 `[medium]`/`[low]`, all `[immediate]`,
+  are closed too.** `RoundTrip`'s five distinct refusals get a diagnosis table of
+  their own, which is what stops a retained revision reporting the current
+  reader type; a two-revision chain whose **current** revision carries
+  `decimalCodec` pins the codec `Fact.New` writes with; `Fold`'s cause-1 subtests
+  keep the state they were given and assert it came back untouched, one of them
+  over a reference-kind state; a list holding both a crossing and a carried
+  refusal is folded in both orders; and `Aggregate.Key` is asserted to answer the
+  **empty** key beside its refusal.
+- **GAP-T28, GAP-T30, GAP-T31, GAP-T32 and GAP-T33 were graded `[deferred]`** and
+  are carried in `## Debt` with the argument for each.
+
+**Checkpoint S2 — phase 4 (implementation), re-executed 2026-09-07 after round 2**
 
 ```
 $ go build ./... && go vet ./event/ && test -z "$(gofmt -l event)" && go test -race -count=1 ./event/
-ok  	github.com/frostgrove/vv/event	1.178s
+ok  	github.com/frostgrove/vv/event	1.204s
 EXIT=0
 
 $ go list -deps -f '{{if not .Standard}}{{.ImportPath}}{{end}}' ./event/ | sort | paste -sd, -
@@ -2461,28 +3070,228 @@ github.com/frostgrove/vv/crud,github.com/frostgrove/vv/errs,github.com/frostgrov
 ```
 
 The import graph is unchanged from S1 — no new first-party or third-party
-dependency, and `encoding/json`, `encoding`, `reflect` and `sync` are the only
-standard-library imports S2 adds. The section is **647 lines** across six files,
-the longest `event/codec.go` at 205; comment density is 118/647 = 18 %, below
-S1's 24 %, and every comment is contract text an implementer needs: the codec's
-three obligations and the panic policy for every extension point, the chain's
-revision-is-position rule, the mapper's injectivity and concurrency clause,
-`Fold`'s consumption contract and its four causes, the `Change`'s retention rule,
-`RoundTrip`'s two properties, and the seal's enumeration.
+dependency, and `encoding/json`, `encoding`, `reflect`, `strings`, `sync` and
+`sync/atomic` are the only standard-library imports S2 adds. The section is
+**1021 lines** across seven files, the longest `event/encodable.go` at 290 —
+`codec.go` reached 393 with GAP-178's and GAP-179's arms and was split, so the
+largest file is back where a section's worth of further work fits under the
+threshold. Comment density is 207/1021 = 20 %, and every comment is contract text
+an implementer needs: the codec's three obligations and the panic policy for
+every extension point, the question the walk asks and why encodability is not it,
+why a map key's two text methods are asked about before its kind, what a name
+claimed twice costs, the chain's revision-is-position rule and why the self
+readers pass `any`, the mapper's injectivity and concurrency clause, `Fold`'s
+consumption contract and its four causes, why a carried refusal outranks the
+stream comparison, the `Change`'s retention rule, `RoundTrip`'s two properties
+and what the second one cannot see, and the seal's enumeration and why it is
+monotone. **No exported symbol was added, removed or changed by either round: the
+surface is the same 22.**
+
+The five longest functions are `Fact.roundTrip` at 37 lines, `sharesMemory` and
+`sameValue` at 35 each, and `members.collect` and `jsonWalk.visit` at 33 each,
+then `Aggregate.Fold` at 24. Maximum nesting depth is **4**, on `sharesMemory`'s
+`switch → case Map → for → if`, and 3 or less everywhere else.
+`sync/atomic` appears once, on the seal, and the replay path still reaches no
+clock, no randomness, no I/O and no telemetry:
+
+```
+$ grep -nE '"(time|math/rand|crypto/rand|os|net|log|context)"' event/{codec,encodable,chain,aggregate,fact,change,seal}.go
+EXIT=1, no hits
+$ grep -rniE 'eventmemory|eventpg|if name ==|registry|init\(\)' event/{codec,encodable,chain,aggregate,fact,change,seal}.go
+EXIT=1, no hits
+```
+
+**What phase 5 added, and the mutation each new case kills.** The suite is
+**twelve** tests and **two** fuzz targets. The three new names are each a
+property the given nine reached no assertion for, and none of them renames or
+replaces a case that was there:
+
+- **`TestACodecPanicBecomesThatMethodsOwnRefusal`.** The section's **Degradation**
+  paragraph states the panic policy for all three codec methods; only
+  `CanEncode`'s was asserted. `encodeWith`'s and `decodeWith`'s `recover` could
+  each be deleted with the suite green, and a panicking codec then took the
+  process down at a decision and at a fold. Two subtests plus the answering codec
+  as their control.
+- **`TestAFoldIsPureOverTheStateItIsGiven`.** §INV-004's second checkable proxy —
+  one (state, changes) pair folded from **two independently constructed** states
+  producing two equal results — with the falsifier §INV-004 names beside it: a
+  fold that counts how often it has run must fail the same proxy, and §UC-068's
+  in-place advance must still pass it, so the two questions stay apart.
+- **`TestOneDeclarationIsDecidedAndFoldedFromManyGoroutines`.** C9's clause is
+  that the codec, the mapper and the fold are called from every request goroutine
+  at once. Eight goroutines mint, fold, render a key and round-trip on one
+  declaration for fifty rounds each, and each asserts its own answer.
+- **`FuzzAStoredPayloadIsFoldedOrRefused`** drives the reader chain at arbitrary
+  revisions over arbitrary bytes — which is what a store's rows are after an
+  older deploy — and pins three properties: the refusal is `ErrRevision` or
+  `ErrPayload` and never a declaration- or request-class one, a refusal leaves the
+  state it was given, and the same bytes fold to the same state twice.
+  **`FuzzADecidedFactIsFrozenAgainstItsCallersBuffer`** mints a change through the
+  aliasing codec over arbitrary bytes, overwrites the caller's own buffer and
+  asserts the recorded fact is unchanged and that the frozen array carries no
+  spare capacity. Both seed corpora run on every `make unit`; both were also run
+  for 60 s each (12.0 M and 12.3 M execs, no failures, nothing written to
+  `testdata/fuzz`).
+
+The rest of phase 5 is subtests of the nine, and every one of them was written
+because a mutation survived:
+
+```
+encodeWith / decodeWith recover nothing  → "an encoder that panics …" / "a decoder that
+                                            panics …": the binary panics
+Then never asks the codec                → "a refusing codec at revision 2 answered <nil>"
+the refusal names revision 1 whichever   → "was refused with … which names no revision"
+it was
+a pointer does not make what it holds    → "refused a pair reached through a struct a map
+addressable                                 holds behind a pointer"
+a slice element is as addressable as     → "refused a pair held in a slice a map holds"
+the slice
+an array element is addressable          → "accepted a pair held in an array a map holds"
+wherever the array stands
+the visited set is keyed by the type     → "accepted a type legal where it stands and
+rather than the position                    illegal one field over"
+the walk forgets the complex kinds       → "accepted a complex field"
+the write route asks for text before     → "refused a type that writes itself as JSON and
+JSON                                        as text"
+a tag's name is the whole tag            → "accepted a tag that names the field beside it
+                                            and carries an option"
+a tag naming no name renders no name     → the control declaration panics
+the walk descends into a field JSON is   → "accepted a struct whose only field
+told to skip                                encoding/json is told to skip"
+the claim walk counts a field JSON is    → "refused two fields encoding/json is told to
+told to skip                                skip"
+the claim walk does not remember where   → the binary is killed: the walk does not
+it has been                                 terminate on a type embedding a pointer to
+                                            itself
+an embedded struct with a name of its    → "refused an embedded struct with a JSON name of
+own is promoted anyway                      its own"
+an embedded pointer promotes nothing     → "refused a struct promoted through an embedded
+                                            pointer"
+the walk's bounds are raised, or          → "the walk is bounded at 1048576 deep …" /
+deleted outright                            "a type graph of 1100 distinct types was walked
+                                            to the end"
+the claim walk counts no names           → "a struct rendering 1100 JSON names was
+                                            collected to the end"
+a chain carries only the revision        → "a chain of three reports 2 retained revisions"
+before it
+the current revision is the chain's      → "revision 1 … reads event.creditedV3 and the
+first position                              sample is a event.creditedV1"
+a rendered key is capped at the payload  → "an identity rendering a key one byte over the
+ceiling                                     kernel cap minted a change carrying <nil>"
+the frozen array keeps its spare         → "the frozen payload has 3 bytes of capacity
+capacity                                    behind its 13"
+two answers holding one map are not      → "a codec that hands out the map it decodes into
+sharing memory                              answered <nil>"
+an empty slice is compared by address    → "a payload whose slice is empty was reported as
+like any other                              a codec reusing its memory"
+a float is compared without asking       → "a payload carrying a NaN was accused of losing
+about NaN                                   data"
+an Equal method is called without        → the comparison panics on a payload whose Equal
+reading its signature                       answers a different question
+a change no fact decided is reported     → "which reads as a crossing between two streams"
+as a crossing
+a fold's answer depends on how often     → "one list folded from two equal states produced
+Fold has run                                {Balance:290 …} and {Balance:250 …}"
+a decision is frozen into one buffer     → WARNING: DATA RACE in the concurrency test
+the package holds
+```
+
+**Thirty-one mutations applied in phase 5, thirty-one killed.** Two needed the
+fixture rewritten before they died, and both are worth stating because the first
+fixture proved less than it looked like it did: the map-reuse codec that
+**clears** its scratch map is caught by `RoundTrip`'s disturbance arm even with
+the pointer comparison deleted, so the fixture became the ordinary shape — filled
+and never cleared, which the zero value cannot disturb; and the pointer-position
+case needs a pair reached **through** a struct behind a pointer, because a
+`*posted` held directly in a map is settled by `ownMethods` before the walk's
+pointer arm is reached at all.
+
+**Two test-side repairs the campaign forced.** The bounds subtest first derived
+its shapes from `codecGraphNodes`, so raising the constant moved the test with the
+code — S1's GAP-T15 in miniature; it now asserts the three constants against the
+numbers its shapes were built from and uses literals for the shapes. And the
+diagnosis table called `.Error()` on its refusal without checking for `nil`, so a
+mutation that accepted a shape crashed instead of naming it.
 
 **Checkpoint S2 — phase 5 (tests)**
 
 ```
-test "$(go test -list '^(TestADeclaration|TestEveryMalformedDeclarationPanicsAndTryDefineReturnsIt|TestTheSealRefusesALateFact|TestFoldRefusesAnotherInstance|TestAReferenceKindStateFoldsWithoutAliasing|TestAChangeRetainsNoApplicationValue|TestACodecThatDecodesIntoAReusedBufferIsCaught|TestAnUpcasterMayRefuseAndAFoldMayNot|TestTheCrossingsThatMustNotCompile)$' ./event/ | grep -c '^Test')" = 9 && go test -race -count=1 -v -run '^(TestADeclaration|TestEveryMalformedDeclarationPanicsAndTryDefineReturnsIt|TestTheSealRefusesALateFact|TestFoldRefusesAnotherInstance|TestAReferenceKindStateFoldsWithoutAliasing|TestAChangeRetainsNoApplicationValue|TestACodecThatDecodesIntoAReusedBufferIsCaught|TestAnUpcasterMayRefuseAndAFoldMayNot|TestTheCrossingsThatMustNotCompile)$' ./event/ && go test -race -count=1 ./event/
+test "$(go test -list '^(TestADeclaration|TestEveryMalformedDeclarationPanicsAndTryDefineReturnsIt|TestACodecPanicBecomesThatMethodsOwnRefusal|TestTheSealRefusesALateFact|TestOneDeclarationIsDecidedAndFoldedFromManyGoroutines|TestFoldRefusesAnotherInstance|TestAFoldIsPureOverTheStateItIsGiven|TestAReferenceKindStateFoldsWithoutAliasing|TestAChangeRetainsNoApplicationValue|TestACodecThatDecodesIntoAReusedBufferIsCaught|TestAnUpcasterMayRefuseAndAFoldMayNot|TestTheCrossingsThatMustNotCompile)$' ./event/ | grep -c '^Test')" = 12 && test "$(go test -list '^(FuzzAStoredPayloadIsFoldedOrRefused|FuzzADecidedFactIsFrozenAgainstItsCallersBuffer)$' ./event/ | grep -c '^Fuzz')" = 2 && go test -race -count=1 -v -run '^(TestADeclaration|TestEveryMalformedDeclarationPanicsAndTryDefineReturnsIt|TestACodecPanicBecomesThatMethodsOwnRefusal|TestTheSealRefusesALateFact|TestOneDeclarationIsDecidedAndFoldedFromManyGoroutines|TestFoldRefusesAnotherInstance|TestAFoldIsPureOverTheStateItIsGiven|TestAReferenceKindStateFoldsWithoutAliasing|TestAChangeRetainsNoApplicationValue|TestACodecThatDecodesIntoAReusedBufferIsCaught|TestAnUpcasterMayRefuseAndAFoldMayNot|TestTheCrossingsThatMustNotCompile)$' ./event/ && go test -race -count=1 ./event/
 ```
 
 **Checkpoint S2 — phase 5, executed 2026-09-07**
 
 ```
+$ go test -list '^(…the twelve names…)$' ./event/ | grep -c '^Test'      12
+$ go test -list '^(…the two fuzz names…)$' ./event/ | grep -c '^Fuzz'     2
+$ go test -race -count=1 -v -run '^(…the twelve names…)$' ./event/
+--- PASS: TestTheCrossingsThatMustNotCompile (0.13s)
+--- PASS: TestADeclaration (0.04s)
+--- PASS: TestEveryMalformedDeclarationPanicsAndTryDefineReturnsIt (0.00s)
+--- PASS: TestACodecPanicBecomesThatMethodsOwnRefusal (0.00s)
+--- PASS: TestFoldRefusesAnotherInstance (0.00s)
+--- PASS: TestAReferenceKindStateFoldsWithoutAliasing (0.00s)
+--- PASS: TestAChangeRetainsNoApplicationValue (0.00s)
+--- PASS: TestAFoldIsPureOverTheStateItIsGiven (0.00s)
+--- PASS: TestACodecThatDecodesIntoAReusedBufferIsCaught (0.00s)
+--- PASS: TestTheSealRefusesALateFact (0.03s)
+--- PASS: TestOneDeclarationIsDecidedAndFoldedFromManyGoroutines (0.01s)
+--- PASS: TestAnUpcasterMayRefuseAndAFoldMayNot (0.00s)
+ok  	github.com/frostgrove/vv/event	1.211s          56 subtests
+$ go test -race -count=1 ./event/       ok …/event 1.243s, then 1.232s
+$ go vet ./event/...                    EXIT=0
+$ gofmt -l .                            silent
+$ go build ./...                        EXIT=0
+$ make check                            nine arms, all ok
+$ make unit                             EXIT=0, zero FAIL lines
+$ go test -run XXX -fuzz FuzzAStoredPayloadIsFoldedOrRefused -fuzztime 60s ./event/
+  12000207 execs, 529 new interesting, PASS
+$ go test -run XXX -fuzz FuzzADecidedFactIsFrozenAgainstItsCallersBuffer -fuzztime 60s ./event/
+  12348255 execs, PASS
+```
+
+**Checkpoint S2 — phase 5, re-executed 2026-09-07 after the test review's round 1**
+
+```
+$ go test -list '^(…the twelve names…)$' ./event/ | grep -c '^Test'      12
+$ go test -list '^(…the two fuzz names…)$' ./event/ | grep -c '^Fuzz'     2
+$ go test -race -count=1 -v -run '^(…the twelve names…)$' ./event/
+--- PASS: TestTheCrossingsThatMustNotCompile (0.12s)
+--- PASS: TestADeclaration (0.04s)
+--- PASS: TestEveryMalformedDeclarationPanicsAndTryDefineReturnsIt (0.00s)
+--- PASS: TestACodecPanicBecomesThatMethodsOwnRefusal (0.00s)
+--- PASS: TestFoldRefusesAnotherInstance (0.00s)
+--- PASS: TestAReferenceKindStateFoldsWithoutAliasing (0.00s)
+--- PASS: TestAChangeRetainsNoApplicationValue (0.00s)
+--- PASS: TestAFoldIsPureOverTheStateItIsGiven (0.00s)
+--- PASS: TestACodecThatDecodesIntoAReusedBufferIsCaught (0.00s)
+--- PASS: TestTheSealRefusesALateFact (0.03s)
+--- PASS: TestOneDeclarationIsDecidedAndFoldedFromManyGoroutines (0.01s)
+--- PASS: TestAnUpcasterMayRefuseAndAFoldMayNot (0.00s)
+ok  	github.com/frostgrove/vv/event	1.215s          62 subtests
+$ go test -race -count=2 ./event/...    ok …/event 1.447s
+$ go vet ./event/...                    EXIT=0
+$ gofmt -l .                            silent
+$ make check                            nine arms, all ok
+$ make unit                             EXIT=0, zero FAIL lines
+$ go test -run XXX -fuzz FuzzAStoredPayloadIsFoldedOrRefused -fuzztime 30s ./event/
+  5 789 245 execs, 26 new interesting, PASS
+$ go test -run XXX -fuzz FuzzADecidedFactIsFrozenAgainstItsCallersBuffer -fuzztime 20s ./event/
+  3 984 166 execs, PASS
+```
+
+Nothing was written to `event/testdata/fuzz`. The section is **twelve** tests, **two** fuzz
+targets and **62** subtests; the seven source files are **1 110** lines, the longest
+`event/encodable.go` at **379** (was 290) with refusals 6, 7 and 8, still under the 400-line
+threshold but no longer with a section's worth of room — the next arm the walk gains is the one
+that splits it. The exported surface is the same 22.
+
+**Checkpoint S2 — phase 5's name list as it stood after phase 4's round 2, superseded by the twelve above**
+
+```
 $ go test -list '^(…the nine names…)$' ./event/ | grep -c '^Test'
 9
-$ go test -race -count=1 -run '^(…the nine names…)$' ./event/   ok  …/event  1.148s
-$ go test -race -count=1 ./event/                               ok  …/event  1.181s (twice)
+$ go test -race -count=1 ./event/                               ok  …/event  1.204s (twice)
 $ go vet ./event/...                                            EXIT=0
 $ gofmt -l .                                                    silent
 $ go build ./...                                                EXIT=0
@@ -2490,19 +3299,83 @@ $ make check                                                    nine arms, all o
 $ make unit                                                     EXIT=0, zero FAIL lines
 ```
 
-**The section checkpoint, run verbatim as handed over:**
+**The section checkpoint, run verbatim as handed over, after phase 5:**
 
 ```
 $ go build ./... && go test -race -count=1 ./event/ && go test -race -count=1 -v -run 'TestADeclaration|TestTheSealRefusesALateFact|TestFoldRefusesAnotherInstance|TestACodecThatDecodesIntoAReusedBufferIsCaught|TestTheCrossingsThatMustNotCompile' ./event/ && test -z "$(gofmt -l event)"
-ok  	github.com/frostgrove/vv/event	1.178s
+ok  	github.com/frostgrove/vv/event	1.241s
 --- PASS: TestTheCrossingsThatMustNotCompile (0.12s)
---- PASS: TestADeclaration (0.00s)                          8 subtests
---- PASS: TestFoldRefusesAnotherInstance (0.00s)             7 subtests
---- PASS: TestACodecThatDecodesIntoAReusedBufferIsCaught (0.00s)  3 subtests
---- PASS: TestTheSealRefusesALateFact (0.01s)                2 subtests
-ok  	github.com/frostgrove/vv/event	1.150s
+--- PASS: TestADeclaration (0.04s)                          13 subtests
+--- PASS: TestFoldRefusesAnotherInstance (0.00s)            10 subtests
+--- PASS: TestACodecThatDecodesIntoAReusedBufferIsCaught (0.00s)  9 subtests
+--- PASS: TestTheSealRefusesALateFact (0.03s)                3 subtests
+ok  	github.com/frostgrove/vv/event	1.207s
 EXIT=0
 ```
+
+**Round 2's own mutation pass — nine mutations, nine killed.** Each was applied to
+the library, the named test run, and the file restored:
+
+```
+the claim walk stops at the fields      → "accepted two embedded structs rendering one
+declared on the struct                     JSON name", and the diagnosis row with it
+objectKey asks the kinds first          → "accepted a string-kind map key that writes
+                                           itself and declares no reader"
+the read-without-a-writer key arm       → "accepted a map key that reads itself and is
+removed                                    written as its kind"
+the shared-backing arm removed          → "a codec that hands out a slice of the buffer
+                                           it decodes into answered <nil>"
+the fidelity comparison removed         → "a codec that wrote three bytes of a six-byte
+                                           payload answered <nil>"
+the fidelity comparison is DeepEqual    → "a payload carrying a monotonic reading and a
+                                           local zone … was accused of losing data"
+the Equal method is not asked           → "a codec that wrote the note and forgot the
+                                           time answered <nil>"
+unexported fields are compared          → "a payload carrying a populated unexported
+                                           field was accused of losing data"
+sealed is a plain bool again            → WARNING: DATA RACE in "a fact declared as the
+                                           first reader runs …", and the test FAILs
+```
+
+The benchmarks beside that last one, 200 000 iterations each on a 20-thread
+machine, are what the seal's fast path is for and what its control is:
+
+```
+                                             before      after
+BenchmarkAChangeIsMintedSerially-20          328.5 ns/op  320.1 ns/op
+BenchmarkChangesAreMintedOnOneAggregate-20   165.6 ns/op   42.4 ns/op   ← one declaration
+BenchmarkChangesAreMintedOnDistinctAggregates 67.1 ns/op   43.7 ns/op   ← 64 declarations
+```
+
+**Round 1's own mutation pass — ten mutations, ten killed.** Each was applied to
+the library, the named test run, and the file restored:
+
+```
+Encode marshals value, not &value       → "the recorded fact folded to [\"\"]: a marshaller
+                                           on the pointer receiver that encoding/json was
+                                           never able to reach writes an empty object"
+the writes-without-a-reader arm removed → cents is refused through the arm beside it,
+                                           with a message naming the wrong repair
+the unreachable-marshaller arm removed  → "accepted a marshalling pair on the pointer
+                                           receiver, held where JSON cannot address it"
+the empty-object refusal removed        → "accepted a struct with fields and none
+                                           encoding/json writes"
+the colliding-name refusal removed      → "accepted two fields rendering one JSON name"
+objectKey stops asking for UnmarshalText→ "accepted a map key that writes itself and
+                                           declares no reader"
+the walk ignores addressability         → the map-value pair is accepted
+the aliasing verdict taken after the    → "a revision-1 codec that reuses its decode
+upcasters                                  buffer answered <nil> behind an upcaster"
+Fold compares streams first, bare       → both the crossing's message assertion and the
+sentinel                                   blank-identity case go red
+a sixth enumerated reader that does not → "event/seal.go tells a reader of the library
+exist                                      that [… Bind …] seal the declaration and […] do"
+```
+
+The three arms of `ownMethods` share `ErrCodecType` and each is subsumed by the
+next as a *verdict*, so two of the ten are killed only by the diagnosis subtest.
+That is the finding stated rather than hidden: a table asserting the sentinel
+alone would have passed with the wrong repair printed.
 
 **Thirty-seven mutations, thirty-six killed on the first pass.** Each was applied
 to the library, the named test run, and the code restored. The ones worth keeping
@@ -2550,17 +3423,98 @@ they are `jobs`'s own numbers.
 
 ---
 
-### S3 — `event/eventmemory`: a complete, transaction-capable store  `[ ]`
+### S3 — `event/eventmemory`: a complete, transaction-capable store  `[x]`
+
+**Both blocks are executed and green.** The suite the implementation carried is
+**fourteen** tests in three files — `event/eventmemory/store_test.go`,
+`transaction_test.go`, `read_test.go` — carrying the eight names this section
+planned, plus
+`TestAStreamIsReadInPagesTheStorePublished`: the two published page bounds, a
+page's own shape (first version `after + 1`, dense, this stream), the tiling of
+`ReadAll` from cursor to cursor, and the four hand-built cursors. The kernel
+verifies that shape in S4 and the suite certifies it in S5; the store that
+produces it has to be held to it here, or S4 would be verifying a store nothing
+had checked. They are `package eventmemory_test`, so every value the tests reach
+is a value a store's own consumer can reach.
+
+**Five more came from the S3 review**, one per finding it closed, each with the
+control that stops it passing vacuously:
+
+| Test | Pins | Its control |
+|---|---|---|
+| `TestTwoLogsCarryTheirOwnTransactionsInOneContext` | GAP-1: two `WithTransaction` calls for two logs both stay findable; each store names its own transaction and each append lands in it | The same log alone, and the two authorities asserted **not** `Same` |
+| `TestOneTransactionUsedFromManyGoroutinesRefusesRatherThanCrashes` | GAP-2: 200 rounds of append ‖ read ‖ commit-or-rollback over one `*Tx` under `-race`; every non-nil answer is byte-identical to the refusal an already-finished `*Tx` gets | The refusal from a transaction finished **before** the call, computed first and compared against |
+| `TestTransactionAnswersWhatTheContextCarriesAfterTheStoreIsClosed` | GAP-3: a closed store names the same transaction it named while open, and answers the invalid authority with nothing bound | The open store's answer, and the `Append` that follows refusing `Closed` |
+| `TestATransactionThisStoreCannotUseIsRefusedAtEveryDoor` | GAP-4: a finished `*Tx` and a nil one are `Refused` at `Append`, `ReadStream` **and** `ReadAll` | A live transaction served at all three |
+| `TestAStoreIsBuiltOverEveryLogTheKernelWouldAdmit` | GAP-5 and GAP-6: a log at any payload bound the kernel admits, up to `MaxPayloadBytes`, builds a store with nothing operational set | The page at exactly `event.ResidentPage` admitted, and that page plus one refused with `ErrWrongStore` |
+
+**Phase 5 added twelve more** — ten tests and two fuzz targets, in seven new
+files (`capability_test.go`, `admission_test.go`, `ownership_test.go`,
+`cancellation_test.go`, `resumption_test.go`, `concurrency_test.go`,
+`construction_test.go`), taking the package to **24 tests and 2 fuzz targets**.
+They close the half of this section's `Covers` line that the fourteen above had
+left to a blanket `go test ./event/...`: what the store *claims*, what it does
+with a caller's bytes and a caller's cancellation, what a cursor is worth after a
+restart, and what many goroutines leave behind.
+
+| Test | Pins | Its control |
+|---|---|---|
+| `TestTheStoreDeclaresWhatItCanDoAndSaysWhatItCannot` | §UC-044, §UC-037: none of the four capabilities is `Unstated`; each claim is asserted through the behaviour that earns it, and `Persistence: Unsupported` is the one it declines; `Capabilities`, `Limits` and `Backing` answer the same after a write and after `Close` | The values are asserted non-empty before they are compared, so a store answering zeros everywhere fails the control rather than passing the constancy case |
+| `TestAnAppendIsAdmittedOnlyAtTheVersionItWasDecidedAt` | §INV-002, §INV-003, §UC-022's admission half: four wrong versions including `MaxUint64` are refused and leave the stream untouched; a refused batch of three leaves none of its records; an admitted one takes dense versions, one recorded instant and contiguous positions; after a conflict the caller decides again and the refused list is nowhere in the history | The same batch at the observed version is admitted, so a store that refuses everything fails |
+| `TestAClaimCoversOnlyTheStreamsATransactionWroteTo` | The claim's scope and its release: an autocommit append to a claimed stream is refused, a second transaction on a stream the first never touched is admitted, and both a commit and a rollback free what they held | The append to another stream, admitted while the claim is live |
+| `TestVersionsAreDenseAndPositionsAscendWhateverTheClockSays` | §INV-009: dense versions per stream, strictly ascending positions across three streams and a rollback, one stream's order preserved inside the log, under a clock that runs **backwards** | The instants are asserted to descend and the first to be the injected clock's own, so a store ignoring the clock fails the control instead of passing the ordering case |
+| `TestNothingACallerHandsToAnAppendIsRetainedOrRewritten` | §INV-021 hand-offs 3 and 6, inbound: the store writes into none of the caller's arrays, overwriting them afterwards changes no history, the `[]Record` is the caller's to rewrite and reuse, and a staged append keeps the same distance | The first subtest reads the two payloads back, so the three that follow are over a store that recorded something |
+| `TestACancellationTravelsAsItselfFromEveryDoorTheStoreOperates` | §UC-057's first window: `Append`, `ReadStream`, `ReadAll`, `Check` and `Begin` answer `context.Canceled`/`DeadlineExceeded` **bare**, matched by `errors.Is` and compared against all seven of the kernel's renderings so that none of them is what travelled; nothing was written; `Commit` reads no deadline | The same five doors on a live context, and the append that lands there |
+| `TestACursorIsTheBackingsAndResumesThroughAnyStoreValueOverIt` | §UC-053, §INV-035: a cursor persisted as text resumes in a second store value over one log; two values mint the **same** cursor at one position; a checkpoint at the end neither rewinds nor skips what is written after it; burned positions skip nothing; the empty cursor is the start of a log and of an empty one | The foreign cursor refused beside them, and the one-page-behind resume that must return the following page |
+| `FuzzACursorEitherResumesInsideTheLogOrIsRefused` | The one value a consumer persists, decoded from bytes nobody minted: either `Failure(BadCursor, …)` with no page and no cursor, or a page that is a contiguous run of the log at most `MaxRead` long whose own cursor reads the run after it. Fed both the raw input and a real cursor with the input appended | The seed corpus holds a cursor that parses, so the resuming arm is exercised on every run |
+| `FuzzAPayloadIsHandedBackByteForByteAndBelongsToWhoeverReadsIt` | §INV-021 hand-offs 4 and 7 over arbitrary bytes: the caller overwrites its array after the append and the reader writes into the page it was handed; the history reads what was appended both times | The first read asserts the bytes came back before either party writes |
+| `TestManyWritersLeaveOneDenseHistoryAndAMonotoneLog` | §INV-009, §INV-003, §UC-022 and §UC-037 under `-race`: six writers, three streams, twenty rounds each, half of them transactional, reloading and deciding again on every conflict, beside a reader tiling `ReadAll` throughout. Versions dense, positions strictly ascending, the two reads conserving one set, each decision committed exactly once, and no reader ever handed a position below one it had already been handed | The tiling reader's count is asserted non-zero, so its monotone claim is never made over an empty log |
+| `TestEveryNumberAStoreAndItsLogTakeIsBoundedAtBothEnds` | §UC-006's constructor half: a spec naming no log, and every one of the five numbers below zero and above the kernel's ceiling, are `ErrWrongStore`; zero is the published default; what the caller set is what the store publishes | The same numbers at exactly the ceiling, admitted and published |
+| `TestAStoreIsBuiltPerRequestOverALogThatOutlivesIt` | §UC-055, §INV-013, §INV-014: two hundred stores constructed, written through and closed over one log leave a dense history the next one reads with no step that found it, and no goroutine any constructor started is still running | The goroutine count is taken before the loop and polled after it, so the assertion is against this test's own baseline |
+
+**The test review's round 1 closed eight more findings** — GAP-T1 to GAP-T8 of
+`EVENTSOURCE_P1_S3_TEST_GAPS.md`, every `[immediate]` one it graded. What they
+had in common is that the suite could not see a *field* or an *identity* the
+store handles rather than a behaviour it performs: three of the nine mutations
+they name would have shipped a store whose histories are undecodable, interleaved
+across aggregates or crossed between streams, at 98.2 % statement coverage. The
+package is now **28 tests and 2 fuzz targets** across eleven test files, and the
+kernel gains its first test of `event/bounds.go`.
+
+| Test | Pins | Its control |
+|---|---|---|
+| `TestAnEnvelopeCarriesTheTypeAndRevisionOfTheRecordItWasWrittenFrom` | GAP-T1: five distinct type/revision pairs, asserted per offset over a committed read, a staged read inside a transaction and a `ReadAll` page — the two fields S2's chain uses to find the fact and the decoder | The five kinds are asserted distinct before anything is read, so nothing below is satisfied by a store answering one constant |
+| `TestTwoFamiliesSharingOneKeyAreTwoStreams` | GAP-T2, §INV-033, and the corruption §INV-039 is written against: two families at one key are two histories — versions from 1 each, their own `ReadStream` pages, a claim on one that does not refuse an append to the other, and a `ReadAll` holding both under two stream identities | The account's own append at the shared key is admitted first, so the order's admission at version 0 is about the family and not about the key being free |
+| `TestATransactionThatStagesToTwoStreamsNeverCrossesThem` | GAP-T3, §UC-028's two-stream unit of work: each read inside the transaction answers only its own stream, in order, at dense versions continuing the committed ones, and the commit publishes both in each stream's own order | A third stream the transaction never touched, read inside it, must be empty — which is what fails when `stagedFor` stops filtering |
+| `TestAPageOfStagedRecordsIsTheCallersToo` | GAP-T5, §INV-021's fourth hand-off on the staged half: a page of one committed record beside two staged ones is written into byte by byte and appended to, and the transaction re-reads what it staged and commits it | The page is asserted to hold the committed record beside the staged ones before anything is written into it |
+| `TestTheResidentPageIsTheCeilingCountedInEnvelopes` (`event/bounds_test.go`) | GAP-T7, §INV-022: `ResidentPage` at seven bounds — the two non-positive arms, an exact divisor, a truncating divisor, the kernel's own payload ceiling and a bound above the whole ceiling — against counts divided out of 64 MiB by hand | `MaxResidentBytes` itself is asserted to be the 64 MiB those counts were derived from, so a changed ceiling is a red test rather than a silently re-based one |
+
+Three existing tests grew the assertion they were short of, a fourth stopped
+computing its expected page with the function under test (`TestAStoreIsBuiltOverEveryLogTheKernelWouldAdmit`, GAP-T7), and two shared
+helpers stopped being constants: `streamOf` takes a family (GAP-T2 — six
+families are now in use and no `const family` remains), `records` derives each
+record's type and revision from its place in the batch and its payload (GAP-T1),
+`TestASecondAppendInOneTransactionIsAdmitted` begins a **second** transaction on
+one store and asserts the two authorities are not `Same` while both are live
+(GAP-T6, §INV-028's second half), `TestAStreamIsReadInPagesTheStorePublished`
+runs over `StreamPage: 2, MaxRead: 3` and asserts each read is capped by its own
+published number (GAP-T4), and
+`TestVersionsAreDenseAndPositionsAscendWhateverTheClockSays` asserts a store
+built with **no** `Clock` records an instant between two the test sampled around
+the append (GAP-T8).
 
 **Delivers** the second implementation, so that S4's caller seam is exercised
 against a real store rather than a double. Its conformance proof lands in S5;
 this section's evidence is its own package tests.
 
 **Files** `event/eventmemory/doc.go`, `log.go`, `store.go`, `append.go`,
-`read.go`, `transaction.go`, `cursor.go`.
+`read.go`, `transaction.go`, `cursor.go`; and, from the review, `event/bounds.go`
+(`ResidentPage`) and `event/store.go` (the closed-store sentence on
+`Transaction`).
 
 **Realises** `LogSpec`/`Log`/`NewLog`, `Spec`/`Store`/`New`, the eight contract
-methods, `Check`, `Tx`/`Begin`/`WithTransaction`/`Commit`/`Rollback`.
+methods, `Check`, `Tx`/`Begin`/`WithTransaction`/`Commit`/`Rollback`, and
+`event.ResidentPage`.
 
 **Carried gaps** C7 (a full-slice hand-out per envelope and a fresh `[]Envelope`
 per call), C9 (`Spec.Clock` is retained and called concurrently — stated and
@@ -2573,17 +3527,30 @@ appends (it does), when a position is assigned (at commit, under one store-wide
 mutex, so commit order is position order), what "burned" means under that answer
 (`Rollback` advances the counter by what it staged), and therefore that
 `MonotoneVisibility: Supported` is honest. The design is written out under
-`### event/eventmemory/`.
+`### event/eventmemory/`, and the nine answers the contract had left unstated —
+what this store's *not a transaction* is, where a transaction of another log
+leaves it, what it answers when a caller drives it past the kernel's own check,
+whether finishing a transaction reads a deadline, whether a second `Rollback` is
+an error, where the commit-time re-validation lives, what position a staged
+envelope reads back at, whether a `*Tx` may be used from two goroutines, and what
+`Transaction` answers on a closed store — are decided in the table beneath it.
+The last three are the review's, and two of them changed the kernel: `event`
+gains `ResidentPage`, and `Store.Transaction`'s closed-store sentence is
+corrected.
 
 **Covers** UC-006 (the constructor half), UC-008, UC-022 (admission), UC-028
 (the store's `Tx`), UC-029 (rollback), UC-037, UC-040, UC-044, UC-047, UC-053
 (the cursor), UC-054, UC-055, UC-057 (the two windows); INV-002, INV-003,
 INV-009, INV-013 (nothing started, nothing global), INV-014, INV-021 (hand-offs 4
-and 7), INV-032, INV-035, INV-041 (the store's half).
+and 7, committed and staged alike), INV-022 (the resident ceiling counted in
+envelopes), INV-028 (two live transactions on one store are not `Same`), INV-032,
+INV-033 (the store keys its history by family and key both), INV-035, INV-041
+(the store's half).
 
 **Degradation** `Persistence: Unsupported` — everything is lost on process exit,
 which the capability states rather than implies. `Close` releases what the store
-opened and nothing else; it commits nothing and rolls nothing back.
+opened and nothing else; it commits nothing and rolls nothing back. An abandoned
+transaction's claims are never reclaimed, which `doc.go` states.
 
 **Budget** one allocation and one ~200 B copy per envelope returned (§D.13): a
 100 000-event load copies ~20 MB across 391 pages and holds one page at a time.
@@ -2599,11 +3566,387 @@ go build ./... && go vet ./event/... && test -z "$(gofmt -l event)" && go test -
 
 ```
 test "$(go test -list '^(TestTwoStoreValuesOverOneLog|TestCheckAnswersWhileTheStoreIsOpenAndAfterItIsClosed|TestARolledBackAppendBurnsItsPositions|TestASecondAppendInOneTransactionIsAdmitted|TestAReadInsideATransactionSeesItsOwnStagedAppends|TestTwoTransactionsOnOneStreamLeaveOneWinnerAndAConflictFromAppend|TestCloseIsIdempotentAndDecidesNothing|TestAPageIsTheCallersIncludingItsCapacity)$' ./event/eventmemory/ | grep -c '^Test')" = 8 && go test -race -count=1 -v -run '^(TestTwoStoreValuesOverOneLog|TestCheckAnswersWhileTheStoreIsOpenAndAfterItIsClosed|TestARolledBackAppendBurnsItsPositions|TestASecondAppendInOneTransactionIsAdmitted|TestAReadInsideATransactionSeesItsOwnStagedAppends|TestTwoTransactionsOnOneStreamLeaveOneWinnerAndAConflictFromAppend|TestCloseIsIdempotentAndDecidesNothing|TestAPageIsTheCallersIncludingItsCapacity)$' ./event/eventmemory/ && go test -race -count=1 ./event/...
+
+test "$(go test -list '^(TestTheStoreDeclaresWhatItCanDoAndSaysWhatItCannot|TestAnAppendIsAdmittedOnlyAtTheVersionItWasDecidedAt|TestAClaimCoversOnlyTheStreamsATransactionWroteTo|TestVersionsAreDenseAndPositionsAscendWhateverTheClockSays|TestNothingACallerHandsToAnAppendIsRetainedOrRewritten|TestACancellationTravelsAsItselfFromEveryDoorTheStoreOperates|TestACursorIsTheBackingsAndResumesThroughAnyStoreValueOverIt|TestManyWritersLeaveOneDenseHistoryAndAMonotoneLog|TestEveryNumberAStoreAndItsLogTakeIsBoundedAtBothEnds|TestAStoreIsBuiltPerRequestOverALogThatOutlivesIt|FuzzACursorEitherResumesInsideTheLogOrIsRefused|FuzzAPayloadIsHandedBackByteForByteAndBelongsToWhoeverReadsIt)$' ./event/eventmemory/ | grep -cE '^(Test|Fuzz)')" = 12 && go test -race -count=1 -v -run '^(TestTheStoreDeclaresWhatItCanDoAndSaysWhatItCannot|TestAnAppendIsAdmittedOnlyAtTheVersionItWasDecidedAt|TestAClaimCoversOnlyTheStreamsATransactionWroteTo|TestVersionsAreDenseAndPositionsAscendWhateverTheClockSays|TestNothingACallerHandsToAnAppendIsRetainedOrRewritten|TestACancellationTravelsAsItselfFromEveryDoorTheStoreOperates|TestACursorIsTheBackingsAndResumesThroughAnyStoreValueOverIt|TestManyWritersLeaveOneDenseHistoryAndAMonotoneLog|TestEveryNumberAStoreAndItsLogTakeIsBoundedAtBothEnds|TestAStoreIsBuiltPerRequestOverALogThatOutlivesIt|FuzzACursorEitherResumesInsideTheLogOrIsRefused|FuzzAPayloadIsHandedBackByteForByteAndBelongsToWhoeverReadsIt)$' ./event/eventmemory/ && go test -race -count=3 ./event/... && go test -race -count=1 -shuffle=on ./event/...
+
+test "$(go test -list '^(TestAnEnvelopeCarriesTheTypeAndRevisionOfTheRecordItWasWrittenFrom|TestTwoFamiliesSharingOneKeyAreTwoStreams|TestATransactionThatStagesToTwoStreamsNeverCrossesThem|TestAPageOfStagedRecordsIsTheCallersToo)$' ./event/eventmemory/ | grep -c '^Test')" = 4 && go test -race -count=1 -v -run '^(TestAnEnvelopeCarriesTheTypeAndRevisionOfTheRecordItWasWrittenFrom|TestTwoFamiliesSharingOneKeyAreTwoStreams|TestATransactionThatStagesToTwoStreamsNeverCrossesThem|TestAPageOfStagedRecordsIsTheCallersToo)$' ./event/eventmemory/ && test "$(go test -list '^TestTheResidentPageIsTheCeilingCountedInEnvelopes$' ./event/ | grep -c '^Test')" = 1 && go test -race -count=2 ./event/... && go test -race -count=1 -shuffle=on ./event/...
 ```
+
+**The first two blocks, run — re-run after the review's six closures** (the
+third block is the test review's, and its run is recorded under it):
+
+```
+$ go build ./... && go vet ./event/... && test -z "$(gofmt -l event)" && go test -race -count=1 ./event/...
+ok  	github.com/frostgrove/vv/event	1.248s
+ok  	github.com/frostgrove/vv/event/eventmemory	1.013s
+
+$ gofmt -l .            # silent, whole tree
+$ go vet ./event/...    # clean
+
+$ test "$(go test -list '^(...eight names...)$' ./event/eventmemory/ | grep -c '^Test')" = 8 && echo COUNT OK
+COUNT OK
+
+$ go test -list '.*' ./event/eventmemory/ | grep -c '^Test'
+14
+
+$ go test -race -count=1 -v -run '^(...the same eight...)$' ./event/eventmemory/
+--- PASS: TestAPageIsTheCallersIncludingItsCapacity (0.00s)
+--- PASS: TestTwoStoreValuesOverOneLog (0.00s)
+--- PASS: TestCheckAnswersWhileTheStoreIsOpenAndAfterItIsClosed (0.00s)
+--- PASS: TestCloseIsIdempotentAndDecidesNothing (0.00s)
+--- PASS: TestASecondAppendInOneTransactionIsAdmitted (0.00s)
+--- PASS: TestAReadInsideATransactionSeesItsOwnStagedAppends (0.00s)
+--- PASS: TestTwoTransactionsOnOneStreamLeaveOneWinnerAndAConflictFromAppend (0.00s)
+--- PASS: TestARolledBackAppendBurnsItsPositions (0.00s)
+PASS
+ok  	github.com/frostgrove/vv/event/eventmemory	1.007s
+
+$ go build ./... && go test -race -count=1 ./event/... &&
+  go test -race -count=1 -v -run 'TestTwoStoreValuesOverOneLog|TestARolledBackAppendBurnsItsPositions|TestClose|TestAPageIsTheCallersIncludingItsCapacity' ./event/eventmemory/ &&
+  test -z "$(gofmt -l event)"
+ok  	github.com/frostgrove/vv/event	1.248s
+ok  	github.com/frostgrove/vv/event/eventmemory	1.013s
+--- PASS: TestAPageIsTheCallersIncludingItsCapacity (0.00s)
+--- PASS: TestTwoStoreValuesOverOneLog (0.00s)
+--- PASS: TestCloseIsIdempotentAndDecidesNothing (0.00s)
+--- PASS: TestARolledBackAppendBurnsItsPositions (0.00s)
+PASS
+ok  	github.com/frostgrove/vv/event/eventmemory	1.009s
+EXIT=0
+
+$ go test -race -count=3 ./event/... && go test -race -count=1 -shuffle=on ./event/...
+ok  	github.com/frostgrove/vv/event	1.665s      # three runs, and again shuffled:
+ok  	github.com/frostgrove/vv/event/eventmemory	1.031s   the 200-round transaction race
+ok  	github.com/frostgrove/vv/event	1.243s               is stable, not lucky once
+ok  	github.com/frostgrove/vv/event/eventmemory	1.015s
+
+$ make unit          # every module, no FAIL
+$ make check
+check-deps: ok   check-tiers: ok   check-utils: ok   check-triplets: ok
+check-todo: ok   check-replaces: ok   check-tidy: ok   check-otel-schema: ok
+check-workspace: ok
+```
+
+**Six more mutations from the review's closures, six killed** — each applied to
+the fix, the new test run, and the code restored:
+
+```
+the binding is one unkeyed context key   → "the first store answered that nothing of its
+again, and ambient walks past a foreign    own was bound while its own transaction was",
+*Tx                                        and "the first log kept [ours] after the
+                                           transaction it was appended in was rolled back"
+Append resolves the ambient transaction  → panic: assignment to entry in nil map,
+before it takes the lock                   eventmemory.(*Tx).stage → (*Store).Append
+Transaction answers the invalid          → "a closed store named a different transaction
+authority on a closed store                than it named while open"
+ReadAll does not consult the ambient     → "reading the log through a context carrying a
+transaction                                transaction that is nil was admitted"
+the page default is a flat 256           → "a store over {…StreamPage:0 MaxRead:0} was
+                                           refused: StreamPage 256 at MaxPayload 524288 is
+                                           more than the 128 envelopes one read may hold"
+the store doubles the kernel's own       → "a store over {…StreamPage:65} answered <nil>,
+ResidentPage                               where a page holding more than one read may is
+                                           not a store the kernel would admit"
+```
+
+**Ten mutations, ten killed.** Each was applied to the store, the named test
+run, and the code restored — the store's own semantics are all absence-shaped, so
+a test that never watched one fail is a test that watched a map behave:
+
+```
+handOut does not clone the payload      → "after a reader wrote into the page it was
+                                           handed, the stream reads [zzzzzzzzzzz …]"
+Rollback does not advance the counter   → "the append after the rollback took position 2
+                                           against the earlier 1, so the two positions
+                                           the rollback staged were reissued"
+Append drops the claim check            → "a second transaction appending to a stream
+                                           another one holds was admitted"
+Append admits against the committed      → "appending [credited 20] … at version 1 was
+version alone rather than committed        refused: [outcome conflict]"
+plus staged
+ReadStream ignores the bound tx's staged → "a read inside the transaction returned
+records                                    [committed], so an operation that appends and
+                                           reloads cannot see its own writes"
+Check never reports closure             → "a closed store answers <nil> to a readiness
+                                           question"
+Backing() is derived from the store      → "two stores over one log answer different
+value rather than the log                  backings"
+Append and the two reads drop the        → "appending to a closed store was admitted",
+closed check                               and the committed-work control fails beside it
+readCursor does not compare the          → "resuming another log's read from this log's
+fingerprint                                cursor was admitted"
+ReadStream ignores StreamPage           → "the page after version 0 holds 5 envelopes
+                                           against a published page of 2"
+```
+
+**Twenty-seven more mutations from the phase-5 suite, twenty-seven killed.**
+Each was applied to the store, the one test that owns the property run, and the
+file restored byte-identically afterwards (`cmp` against a copy taken before the
+campaign, for every file under `event/` and `event/eventmemory/`):
+
+| Mutation | The test that caught it, and what it said |
+|---|---|
+| `Capabilities` claims `Persistence: Supported` | `TestTheStoreDeclaresWhatItCanDoAndSaysWhatItCannot` — *"the store answers [support supported] for persistence, and a history held in a map outlives nothing"* |
+| `Capabilities` answers `Unstated` for transactions | the same — *"the store leaves transactions unstated, and what a store does not state is refused at both doors rather than tried"* |
+| `Limits` answers the zero value once the store is closed | the same — *"a closed store publishes {…all zeros} where it published {MaxPayload:65536 …} while open"* |
+| `Append` admits anything at or below the observed version | `TestAnAppendIsAdmittedOnlyAtTheVersionItWasDecidedAt` — *"an append at version 0 against a stream at version 1 was admitted"* |
+| the clock is read once per record rather than once per append | the same — *"the three records of one batch were recorded at 12:00:02, 12:00:03 and 12:00:04, so the batch was assembled over three instants rather than admitted at one"* |
+| `release` stops deleting the claims it took | `TestAClaimCoversOnlyTheStreamsATransactionWroteTo` — *"appending [after the commit] … was refused: [outcome conflict]"* |
+| a claim covers every stream rather than the ones it wrote to | the same — *"appending [from outside] … was refused: [outcome conflict]"*, on the stream the transaction never touched |
+| versions are counted from zero | `TestVersionsAreDenseAndPositionsAscendWhateverTheClockSays` — *"holds versions [0 1], and a fold that counts from one reads a different history than the store holds"* |
+| the store records the wall clock rather than its own | the same — *"the first event was recorded at 2026-09-07 13:21:31.535… rather than at the instant the store's own clock answered"* |
+| `Append` keeps the caller's own payload array | `TestNothingACallerHandsToAnAppendIsRetainedOrRewritten` — *"after the caller wrote into the arrays it had appended, the stream reads [zzzzzzzzzzz zzzzzzzzzzz]"*, and the staged case beside it |
+| a cancelled append is reported as an uncertain one | `TestACancellationTravelsAsItselfFromEveryDoorTheStoreOperates` — *"answered event: the store reported [outcome unconfirmed], which a caller matching a cancellation cannot recognise as one"* |
+| `ReadAll` reads no deadline | the same — *"reading the log under a context the caller cancelled answered <nil>"* |
+| `Commit` refuses to finish under a cancelled context | the same — *"committing under the cancelled context answered context canceled, and a transaction that refuses to finish holds its claims and starves every other writer of its streams"* |
+| the cursor a read returns names the first event of its page | `TestACursorIsTheBackingsAndResumesThroughAnyStoreValueOverIt` — *"resuming from the persisted cursor in a second store value read [two three four]"* |
+| a read that returns nothing answers the start of the log | the same — *"reading from a cursor at the end of the log answered [one two] and moved the cursor to …:2"* |
+| the cursor a read returns is one position past its last event | `FuzzACursorEitherResumesInsideTheLogOrIsRefused` — *"resuming from the cursor …:3 answered [four five] where the log continues with \"three\", so the resume point skipped an event"* |
+| a cursor this store did not mint is refused as a policy refusal | the same — *"the cursor \"7\" was refused with [outcome refused], which is not the one answer a cursor this store did not mint has"* |
+| a refused cursor comes back with a cursor beside the refusal | the same — *"the refused cursor \"7\" came back with 0 envelopes and the cursor \"7\", so a caller that ignores one refusal checkpoints past events it never read"* |
+| a read hands out the log's own payload array | `FuzzAPayloadIsHandedBackByteForByteAndBelongsToWhoeverReadsIt` — *"after the reader wrote into the page it was handed, the same event reads …"* on four seeds |
+| the admitted version is read outside the section that publishes | `TestManyWritersLeaveOneDenseHistoryAndAMonotoneLog` — *"committing an append the store had admitted was refused: a claimed stream moved while it was claimed"*, which is `errStaleClaim` becoming reachable, exactly as GAP-16 says it would if the claim stopped holding |
+| the same window, opened only for an autocommit append | the same — *"holds versions [1 … 11 9 13 14 15 14 …] after concurrent writers, so a version was skipped or reused"* |
+| a position is taken when a record is staged rather than when it is published | the same — *"a reader that had already been handed position 12 was then handed 11, so an event became visible below one it had checkpointed past"*, which is the `MonotoneVisibility` claim failing rather than a version |
+| `publish` adds to the stream index and not to the log's own | the same — *"the reader tiling the log while the writers ran saw nothing, so what it asserted about positions was asserted over an empty log"*, the vacuity control firing first |
+| a number below zero is taken as a number | `TestEveryNumberAStoreAndItsLogTakeIsBoundedAtBothEnds` — *"a log over a payload bound below zero answered <nil>"* |
+| the page a store defaults to is halved | the same — *"a log and a store with nothing set publish {… StreamPage:128 MaxRead:128} where the defaults are {… StreamPage:256 MaxRead:256}"* |
+| the constructor starts a goroutine | `TestAStoreIsBuiltPerRequestOverALogThatOutlivesIt` — *"202 goroutines are running where 2 were before 200 stores were constructed"* |
+| `Close` discards the history the log holds | the same — *"appending [request 1] … at version 1 was refused: [outcome conflict]"* |
+
+The two fuzz targets also ran real campaigns rather than their seed corpus alone:
+`-fuzztime 45s` each, **15.9 M** executions for the cursor and **12.9 M** for the
+payload, no failure and no new corpus entry the seeds had not already reached for
+the cursor.
+
+**Nine mutations from the test review's closures, nine killed.** These are the
+nine the review applied and watched survive; each was re-applied here, the suite
+run, and the file restored — `diff` reports every implementation file
+byte-identical afterwards, and no `testdata/` was written.
+
+| Mutation | The test that caught it, and what it said |
+|---|---|
+| `Type: ""` and `Revision: 0` in the envelope an append writes | `TestAnEnvelopeCarriesTheTypeAndRevisionOfTheRecordItWasWrittenFrom` — *"the stream reads as [@0 @0 @0] where [accounts.credited@1 accounts.debited@2 accounts.frozen@7] was written, so every fold of it looks up the wrong fact and the wrong decoder for a history that is intact"* |
+| every record recorded under the first one's type at its revision plus seven | the same — *"the stream reads as [accounts.credited-mutated@8 …] where [accounts.credited@1 accounts.debited@2 accounts.frozen@7] was written"*, and the staged read and the log beside it |
+| the family dropped from the log's three `event.Stream`-keyed maps, nine call sites | `TestTwoFamiliesSharingOneKeyAreTwoStreams` — *"creating an order at the key an account already uses was refused with [outcome conflict], so a key names one stream whatever family it was written under and two aggregates share one history and one version counter"* |
+| `stagedFor` returns every staged envelope unfiltered | `TestATransactionThatStagesToTwoStreamsNeverCrossesThem` — *"the account read inside the transaction returned [credited 10 credited 20 credited 30 credited twice], so an aggregate reloaded inside the unit of work that wrote it folds another stream's events"* |
+| `ReadStream` pages by `MaxRead` rather than `StreamPage` | `TestAStreamIsReadInPagesTheStorePublished` — *"a stream page holds 3 envelopes where the store publishes a stream page of 2 and a log page of 3, so a read of one stream is cut by the other number"* |
+| a staged envelope handed out without the payload clone | `TestAPageOfStagedRecordsIsTheCallersToo` — *"after a reader wrote into the page it was handed inside a transaction, that transaction reads [committed zzzzzz zzzzzzzzzz] — so the record it is about to commit is the reader's to rewrite"* |
+| `Transaction` identifies the authority by the store value rather than the transaction | `TestASecondAppendInOneTransactionIsAdmitted` — *"two transactions live on one store at once answered authorities that compare the same, so two subsystems that each opened their own prove they wrote together and the operation commits in two units"* |
+| `ResidentPage` answers twice the count | `TestTheResidentPageIsTheCeilingCountedInEnvelopes` — *"the kernel's own payload ceiling admits a page of 128 envelopes where 64 of them is what 64 MiB holds"*, with both arms of `TestAStoreIsBuiltOverEveryLogTheKernelWouldAdmit` red beside it |
+| the default clock is the zero instant | `TestVersionsAreDenseAndPositionsAscendWhateverTheClockSays` — *"a store constructed with no clock recorded an event at 0001-01-01 00:00:00 +0000 UTC where the append ran between … and …"* |
+
+**Both checkpoint blocks re-run after the eight closures**, plus the counts the
+new tests add:
+
+```
+$ gofmt -l .                                    # silent, whole tree
+$ go vet ./event/...                            # clean
+$ test "$(go test -list '^(…the section's eight…)$'  | grep -c '^Test')" = 8      BLOCK1 COUNT OK
+$ test "$(go test -list '^(…the phase-5 twelve…)$'   | grep -cE '^(Test|Fuzz)')" = 12  BLOCK2 COUNT OK
+$ test "$(go test -list '^(…the review's four…)$'    | grep -c '^Test')" = 4      BLOCK3 COUNT OK
+$ test "$(go test -list '^TestTheResidentPageIsTheCeilingCountedInEnvelopes$' ./event/ | grep -c '^Test')" = 1   KERNEL COUNT OK
+
+$ go test -list '.*' ./event/eventmemory/ | grep -cE '^(Test|Fuzz)'
+30                                              # 28 tests and 2 fuzz targets
+$ go test -v ./event/eventmemory/ | grep -c '^    --- PASS'
+104
+
+$ go test -race -count=2 ./event/...
+ok  	github.com/frostgrove/vv/event	1.449s
+ok  	github.com/frostgrove/vv/event/eventmemory	1.045s
+
+$ go test -race -count=1 -shuffle=on ./event/...     ok, twice
+$ go test -coverprofile -covermode=atomic ./event/eventmemory/
+98.2% of statements                             # the same four uncovered, all deferred
+
+$ go test -fuzz FuzzACursorEitherResumesInsideTheLogOrIsRefused -fuzztime 30s
+10 579 583 execs, no new interesting, PASS
+$ go test -fuzz FuzzAPayloadIsHandedBackByteForByteAndBelongsToWhoeverReadsIt -fuzztime 30s
+164 897 execs, no new interesting, PASS
+
+$ make unit          # every module, no FAIL
+$ make check
+check-deps: ok   check-tiers: ok   check-utils: ok   check-triplets: ok
+check-todo: ok   check-replaces: ok   check-tidy: ok   check-otel-schema: ok
+check-workspace: ok
+```
+
+**What is implemented and not exercised here, named rather than left to be
+found.** The mapped sentinel a caller reads — `ErrConflict`, `ErrClosed`,
+`ErrCursor`, `ErrRefused` — is the kernel's, and there is no exported reading of
+a store's classification before S4, so these tests assert the outcome the store
+**selected** by comparing against the kernel's own rendering of it
+(`event.Failure(outcome, nil).Error()`). S4's `Repo` and S5's suite are what
+assert the sentinel. `errStaleClaim` is unreachable while the claim mechanism
+holds, which is the point of it. And the two windows of §UC-057 are half here: a
+bare cancellation from the five operating methods travels as itself, and the
+uncertain half has no producer in a store with no commit window — which is
+exactly what §UC-044 says this store cannot certify.
 
 ---
 
-### S4 — the caller seam: binding, repository, token, receipt, reader  `[ ]`
+### S4 — the caller seam: binding, repository, token, receipt, reader  `[x]`
+
+**Phase 4 is executed and green.** The implementation is five files —
+`event/token.go`, `binding.go`, `marker.go`, `repo.go`, `reader.go` — plus one
+edit each to `event/errors.go` (`tooMany`, beside `tooLarge`, because
+`tooLarge`'s message counts bytes and a batch counts changes) and to
+`event/seal.go` (C10.1's sixth row).
+
+**Fourteen tests ship with it**, in `event/repo_test.go`, `binding_test.go`,
+`transaction_test.go`, `reader_test.go`, `outcomes_test.go`, `status_test.go`
+and the fixture in `recordingstore_test.go`. Six are this section's checkpoint;
+the other eight are carried from the phase-5 block or written because the branch
+they cover had no other reader, and each keeps the planned name where the plan
+has one:
+
+| Test | Pins | Its control |
+|---|---|---|
+| `TestAFreshStreamLoadsAsZero` | §UC-009: no events is the zero state at version 0 and no refusal | the same load after two facts, folded at version 2 |
+| `TestAppendRefusesInItsStatedOrder` | §D.5's six steps: each row breaks the step it names **and every step after it**, and asserts the earlier sentinel, zero `Append` calls, and that the token that came back is the one that went in | the same append with everything right, reaching the store once |
+| `TestAForgedTokenIsRefusedBeforeAnyStatement` | §INV-015's first two defences: `At[account]{}` is `ErrKey` with and without changes and makes **zero** calls of any of the eight; a hand-built token with a legal key is `ErrWrongStore` | a token `Load` minted appends |
+| `TestAnEmptyAppendChecksTheKeyAndNothingElse` | §INV-031 and GAP-53: zero store calls, the token back unchanged, and all six accessors answered — stream, `First` 0, `Last` the token's version, `Count` 0, the invalid authority | the one-change append beside it, whose receipt is not empty |
+| `TestAnOverLongPageIsRefused` | C4's length half: a page one envelope over the store's own `StreamPage` is `ErrBackend`, with the zero state and the zero token | the same stream loading in pages of 2 |
+| `TestAMisPagedStreamIsRefusedBeforeItIsFolded` | C4's shape half, three defects: reversed versions, a page that does not begin at `after + 1`, an envelope of another stream | the same stream loading clean |
+| `TestALoadThatFailsMidStreamReturnsNothing` | §INV-006: a type the declaration does not know on the **second** of three events answers the zero state, not the accumulator | the clean load of the same stream at balance 7 |
+| `TestBothDoorsCheckTheStore` | §INV-022 and §INV-043: seventeen dishonest stores, plus a nil store and a nil pointer inside one, refused at `Bind` **and** at `Read`; `ReadOnly` does not assert back to a `Store` | the honest store admitted at both doors, and an at-the-ceiling control per bound — a store publishing exactly `MaxPayloadBytes`, `MaxBatchCount`, `MaxKeyBytes` or `MaxPageCount` is bound and read, so a per-row drift of one in `admitLimits` is caught where a blanket `>` → `>=` already was |
+| `TestABindWithNothingToBindIsRefused` | the widened check 1: a nil `*Aggregate` is `ErrDeclaration` and a nil `*Binding` is `ErrWrongStore`, neither a nil dereference | — |
+| `TestOneFamilyNamesOneAggregate` | §UC-059: a second declaration of one family through one `Binding` is `ErrFamily` | the same declaration bound twice succeeds, and so does the second one through a second `Binding` |
+| `TestWithinComposesForTwoBackings` | §UC-028 and GAP-73: two `Within` contexts chained for two backings, both stores proceeding, each authority its own | the mismatch **is** detected — a second transaction bound into the marked context is `ErrTransactionMismatch` at both `Load` and `Append`, without which "both proceed" passes against a kernel that never compares |
+| `TestAConsumerReadsThroughPagesTheStorePublished` | §UC-036 and §INV-038: a walk tiles the log in the store's own pages, the first page survives the reads after it, the cursor is non-empty | the two page defects — over the bound, and positions that do not ascend — refused with `ErrBackend` |
+| `TestAnOutcomeOutsideTheVocabularyTakesTheFailSafeDefault` | §INV-045 and §UC-060: seven store answers mapped at the append door, an unclassified one at **both** read doors — `Load` and `Reader.Next` — as `ErrBackend` rather than `ErrUncertain`, a retryable unclassified cause through `Next` reaching the caller as `crud.ErrUnavailable`, and a policy refusal whose cause is reachable and whose class does not travel | the append with nothing injected, and the page `Next` reads with nothing injected |
+| `TestARequestClassRefusalRendersAClientStatusAndAHistoryClassOneDoesNot` | C5: `ErrKey`, `ErrEncode` and `ErrSample` render 400, `ErrTooLarge` 413, and `ErrPayload` (history) and `ErrCursor` (wiring) 500 | the two 500s are the controls, and every request-class member is driven rather than one |
+
+**Verified by mutation.** Seventeen mutations were applied one at a time, the
+suite run, and each file restored and `diff`ed byte-identical afterwards:
+the page-length check removed (only `TestAnOverLongPageIsRefused` red — the
+over-long page is otherwise dense, so the order check does not cover for it); the
+version-order check neutered and the foreign-stream check removed (both arms of
+`TestAMisPagedStreamIsRefusedBeforeItIsFolded`); the empty-append short circuit
+moved above the key check; the bounds moved before the carried refusal; the
+marker resolved innermost-first whatever its backing; `admit` skipping the
+capabilities; `Read` skipping the door; `replay` answering the accumulator it
+had; an empty receipt forgetting the version; a store's transaction refusal
+falling back to autocommit; the key checked against the kernel ceiling rather
+than the store's bound; `ReadOnly` handing the store back; a refusal answering
+`At[S]{}`; and the reader's two page checks. Every one turned exactly the test
+that names it red.
+
+**Phase 5 wrote the ten the phase-4 block left**, plus one fuzz target, in
+`event/replay_test.go` (new), `repo_test.go`, `transaction_test.go` and
+`binding_test.go`. They cover the four functions phase 4 left below 100 % —
+`Within` 62.5 %, `Authority` 75 %, `records` 83.3 %, `apply` 87.5 % — and the
+branches nothing else reads:
+
+| Test | Pins | Its control |
+|---|---|---|
+| `TestAStreamWithHistoryFoldsToItsCurrentState` | §UC-010, §UC-012, §UC-062 and §INV-008: four facts fold to the state at version 4 in the store's own pages; a revision-1 envelope is read by revision 1's codec and carried by the declared upcaster; a reload is the authority after the caller writes into the state it was handed; two decisions in one operation are only correct with the `Fold` line | the same stream at a page of 1 folds identically and takes 5 reads rather than 3; the equivalent revision-2-only stream folds to the same value; and the same operation **without** the `Fold` line writes twice and returns no error anywhere, which is the only thing that makes the line load-bearing |
+| `TestOneLoadAndOneAppendMakeExactlyTheStoreCallsTheContractNames` | §INV-007, §INV-027 and C10.3: a per-method count over all eight, so a load is `Backing` 1 / `Transaction` 1 / `ReadStream` 2 and an append is `Backing` 1 / `Transaction` 1 / `Append` 1 — `Limits` and `Capabilities` stay at zero after `Bind`, and a conflict costs exactly one `Append` and **zero** `ReadStream` | two appends and a load counted together, so "exactly one" is a measurement and not a counter stuck at one |
+| `TestOneAppendCarriesTwoIdenticalChanges` | §UC-058, §UC-035 and §UC-021: two identical changes are two events at consecutive versions in one `Append` call, fold to twice the amount, and the same fact in a second append makes a third | a one-change append answers a receipt of 1, and the token the first of two decisions returned conflicts once the stream has moved past it |
+| `TestAnAppendWhoseActualBytesExceedTheResidentCeilingIsRefused` | `records`' two byte bounds: one payload over the store's `MaxPayload` and a batch of `MaxBatchCount` payloads holding 1 KiB more than `MaxResidentBytes`, both `ErrTooLarge` with zero store calls and the token unchanged | a payload of exactly the bound is written, and the same batch one payload shorter reaches the store — the arithmetic is asserted before the rows run, so a batch that is not actually over the ceiling fails the test rather than passing it |
+| `TestAStoreWhoseProductExceedsTheResidentCeilingIsRefused` | §INV-022's product half at both doors: `StreamPage` and `MaxRead` one envelope over `ResidentPage(MaxPayload)` are `ErrWrongStore` at `Bind` **and** at `Read` | the at-the-product store is admitted at both doors, and the counts are chosen well inside `MaxPageCount` (1025 against 4096) so the refusal is the product's rather than the page ceiling's |
+| `TestWithinAnswersTheStoresTransactionQuestion` | §UC-032, §UC-033, §UC-046 and C10.4: `ErrNoTransaction` having asked the store once; `ErrNoTransactionBinding` **without** asking it at all; `ErrAmbientNotTransaction` carrying the store's own answer as its cause; every refusal returning the context it was given; a transaction joined with no `Within` at all, and a non-transaction executor refused at both doors before any statement; and on a **closed** store `Within` succeeding while the `Load` and `Append` after it are `ErrClosed` | the marked context, through which a load and an append both proceed |
+| `TestRepoAuthorityIsTheComparisonTwoSubsystemsUse` | §UC-030, §INV-028 and C10.5: the three answers a store gives about one context; two appends in one transaction and `Repo.Authority` answering one value; a closed store answering exactly what an open one would; and GAP-2's divergence — on §UC-049's crossed context `Authority` reports the transaction the store finds while `Load` refuses | two live transactions answer authorities that are **not** `Same`, so a store answering a constant fails; and the `Load` after the closed-store row is `ErrClosed`, so that row cannot pass against a store that never closed |
+| `TestEveryHistoryClassRefusalIsRaisedByTheThingItNames` | §UC-013..§UC-017 and `apply`'s identifier rule: eight stored records, each refused by the party its sentinel names, each with the zero state and the zero token; a type name that is over-long, control-carrying or not UTF-8 is `ErrUnknownType` and **does not travel**, raw or escaped; a stored payload over the cap is `ErrPayload` and not `ErrTooLarge` (C5); a refusing upcaster hands back the application's own error | the stored fact this declaration reads folds at version 1, and a record whose payload is **exactly** `MaxPayload` folds — the read side of the bound the append side already controls, so `>` → `>=` at `apply` cannot make a legally written stream permanently unreadable |
+| `TestAFoldPanicUnwindsOutOfLoad` | §UC-067 and §INV-017: a fold that writes into a nil map panics out of `Load` and is recovered into no sentinel of the vocabulary | the guarded fold over the same stream loads, and the **upcaster's** panic through the same door is recovered into `ErrUpcast` wrapping nothing — so the two callbacks are asserted to be treated differently rather than assumed to be |
+| `TestAPanickingCodecBecomesTheRefusalItsErrorWouldHaveBeen` | the panic rule at all three codec methods: a panicking `Decode` out of `Load` is `ErrPayload` with no cause travelling, a panicking `Encode` is `ErrEncode` carried on the change and surfaced by `Append` with zero store calls, a panicking `CanEncode` is `ErrCodecType` out of `Declare` | each row is driven twice — the panicking codec and the same codec **returning** that error — so a kernel that recovered nothing and one that recovered into the wrong sentinel both fail; the shipped codec is the third control |
+| `FuzzALoadFoldsAStoredStreamOrRefusesItWhole` | §UC-015 and §INV-006 universally quantified over a store's own bytes: for any wire type name, revision and payload behind one legal envelope, `Load` either folds — twice, to the same value — or refuses with one of `ErrUnknownType`, `ErrRevision`, `ErrPayload`, `ErrUpcast` and hands back the zero state and the zero token | 13 seeds run on every `make unit`; a 45 s campaign at 5.2 M executions found nothing |
+
+**Verified by mutation, fifteen runs and sixteen edits** — the last is a pair,
+because `Load` zeroes what the fold loop returns and both lines have to go for the
+property to be falsifiable. Each was applied on its own, with the file restored
+and its sha256 compared afterwards: the current codec used for an older
+revision; the page loop stopping after the first page; a retry around the store's
+`Append`; two equal changes collapsed into one record; each of `records`' two byte
+bounds removed; the page-times-payload product not checked at a door; `Within`
+not reading the capability, and admitting a context with no transaction;
+`Authority` answering the marker's question instead of the store's; a stored type
+name rendered before it is checked; the recorded payload cap removed; a fold's
+panic recovered into `ErrUpcast`; the recover in `decodeWith` removed; and a load
+that hands back what it had folded. Each turned exactly the test that names it
+red, and only that test.
+
+**Two comment repairs went with them**, both raised by the S4 implementation
+review and both about a public contract sentence that the phase-5 tests now
+assert the opposite of. GAP-1: `Repo.Append`'s GoDoc claimed *every* refusal
+means nothing reached the backing, which is false for every outcome the store
+answers once the batch has been issued and is the exact inference §UC-034 exists
+to forbid — it now scopes that reason to the six pre-store steps and names what
+an outcome says instead. GAP-2:
+`Repo.Authority` says in its own words that it reports what is bound and never
+whether an append may be written through it, which is the divergence
+`TestRepoAuthorityIsTheComparisonTwoSubsystemsUse` pins on §UC-049's context.
+No behaviour changed.
+
+```
+$ test "$(go test -list '^(…the twenty-six names…)$' ./event/ | grep -c '^Test')" = 26
+26
+$ go test -race -count=1 ./event/...                 # twice, no flake
+ok  	github.com/frostgrove/vv/event	1.270s
+ok  	github.com/frostgrove/vv/event/eventmemory	1.026s
+$ go test -run '^$' -fuzz FuzzALoadFoldsAStoredStreamOrRefusesItWhole -fuzztime 45s ./event/
+elapsed: 45s, execs: 5213898, new interesting: 459   PASS
+$ go vet ./event/...   # clean      $ gofmt -l .   # silent
+$ make unit            # every module, no FAIL
+$ make check
+check-deps: ok   check-tiers: ok   check-utils: ok   check-triplets: ok
+check-todo: ok   check-replaces: ok   check-tidy: ok   check-otel-schema: ok
+check-workspace: ok
+```
+
+```
+$ go build ./...                                    # clean
+$ go vet ./event/...                                # clean
+$ gofmt -l .                                        # silent, whole tree
+$ go test -race -count=1 ./event/...
+ok  	github.com/frostgrove/vv/event	1.250s
+ok  	github.com/frostgrove/vv/event/eventmemory	1.024s
+
+$ go test -race -count=1 -v -run 'TestAFreshStreamLoadsAsZero|TestAppendRefusesInItsStatedOrder|TestAForgedTokenIsRefusedBeforeAnyStatement|TestWithinComposesForTwoBackings|TestAnOverLongPageIsRefused|TestBothDoorsCheckTheStore' ./event/
+=== RUN   TestBothDoorsCheckTheStore
+--- PASS: TestBothDoorsCheckTheStore (0.00s)
+=== RUN   TestAFreshStreamLoadsAsZero
+--- PASS: TestAFreshStreamLoadsAsZero (0.00s)
+=== RUN   TestAppendRefusesInItsStatedOrder
+--- PASS: TestAppendRefusesInItsStatedOrder (0.00s)
+=== RUN   TestAForgedTokenIsRefusedBeforeAnyStatement
+--- PASS: TestAForgedTokenIsRefusedBeforeAnyStatement (0.00s)
+=== RUN   TestAnOverLongPageIsRefused
+--- PASS: TestAnOverLongPageIsRefused (0.00s)
+=== RUN   TestWithinComposesForTwoBackings
+--- PASS: TestWithinComposesForTwoBackings (0.00s)
+PASS
+ok  	github.com/frostgrove/vv/event	1.015s
+
+$ go test -coverprofile ./event/                    # the five new files
+binding.go 100 % but Bind's own two nil rows, marker.go 100 %, reader.go 100 %,
+token.go 100 %, repo.go 100 % but the branches the tests phase owns above
+
+$ make unit                                          # every module, no FAIL
+$ make check
+check-deps: ok   check-tiers: ok   check-utils: ok   check-triplets: ok
+check-todo: ok   check-replaces: ok   check-tidy: ok   check-otel-schema: ok
+check-workspace: ok
+```
+
+**Round 1 of the test review closed six of its eight findings** — the one
+`[high][immediate]`, the one `[high][deferred]`, both `[medium]` boundary rows
+and both `[low]` ones. Two tests are new and four existing ones grew a control;
+the mutation that proves each is beside it:
+
+| Finding | What closed it | The mutation that turns it red |
+|---|---|---|
+| GAP-1 `Reader.Next`'s fail-safe default is asserted by nothing | `recordingStore` gains `failWhole`, the `ReadAll` twin of `failRead`, and `TestAnOutcomeOutsideTheVocabularyTakesTheFailSafeDefault` drives the second read door: an unclassified store error through `Next` is `ErrBackend` and not `ErrUncertain`, a retryable one carries `crud.ErrUnavailable`, and the page `Next` reads with nothing injected is the control | `refuseRead` → `refuseAppend` at `reader.go:51`; and `backendRefusal` never promoting a retryable cause |
+| GAP-2 §UC-055's `Bind` cost has no test | `TestABindInterrogatesNoCodecAndMutatesNoDeclaration` | a fact-table walk inserted into `Bind`; and `Bind` writing one entry into the fold table |
+| GAP-3 the recorded-payload cap has no at-the-bound control | a control record of exactly `MaxPayload` bytes in `TestEveryHistoryClassRefusalIsRaisedByTheThingItNames`, with its own length asserted first | `>` → `>=` at `repo.go:265` |
+| GAP-4 four of the five kernel ceilings are tested from one side only | an at-the-ceiling control per bound in `TestBothDoorsCheckTheStore`, the page rows paired with a payload bound that still admits the page | each of the five `admitLimits` ceilings lowered by one, in turn — each turns exactly its own row red |
+| GAP-7 three tests sit outside the count clause | the phase-5 `-list` clause names twenty-six | — |
+| GAP-8 `streamOf`'s mapper-refusal branch is unreachable | `TestTheRenderedKeyIsCheckedBeforeTheStoresBound` | `streamOf` swallowing `locate`'s refusal; and `checkKey` reading `MaxKeyBytes` rather than the store's bound |
+
+GAP-5 (the seam is proven against the fixture and no real store) and GAP-6 (a
+`*Repo` shared by many goroutines) are S5's by the finding's own assignment and
+are carried in `## Debt`.
 
 **Delivers** load / decide / append / read, the transaction seam, every bound,
 every door check and every refusal a caller can reach.
@@ -2611,7 +3954,8 @@ every door check and every refusal a caller can reach.
 **Files** `event/binding.go`, `repo.go`, `marker.go`, `token.go`, `reader.go`;
 `event/status_test.go` — the one test file in this phase that imports
 `port/porthttp`, which is a **test** import of `event` and therefore invisible to
-`go list -deps` without `-test` (C5).
+`go list -deps` without `-test` (C5); and `event/replay_test.go`, phase 5's own
+file, which holds what a load does with a store's bytes.
 
 **Realises** `Open`/`Binding`/`Bind`, `Repo` and its four methods, `At`, `Commit`,
 `ReadOnly`/`Read`/`Reader`.
@@ -2661,27 +4005,80 @@ go build ./... && go vet ./event/... && test -z "$(gofmt -l event)" && go test -
 **Checkpoint S4 — phase 5 (tests)**
 
 ```
-test "$(go test -list '^(TestAFreshStreamLoadsAsZero|TestAStreamWithHistoryFoldsToItsCurrentState|TestAppendRefusesInItsStatedOrder|TestAForgedTokenIsRefusedBeforeAnyStatement|TestAnEmptyAppendChecksTheKeyAndNothingElse|TestOneLoadAndOneAppendMakeExactlyTheStoreCallsTheContractNames|TestWithinComposesForTwoBackings|TestWithinAnswersTheStoresTransactionQuestion|TestRepoAuthorityIsTheComparisonTwoSubsystemsUse|TestAMisPagedStreamIsRefusedBeforeItIsFolded|TestAnOverLongPageIsRefused|TestALoadThatFailsMidStreamReturnsNothing|TestEveryHistoryClassRefusalIsRaisedByTheThingItNames|TestBothDoorsCheckTheStore|TestAStoreWhoseProductExceedsTheResidentCeilingIsRefused|TestAnAppendWhoseActualBytesExceedTheResidentCeilingIsRefused|TestAnOutcomeOutsideTheVocabularyTakesTheFailSafeDefault|TestOneAppendCarriesTwoIdenticalChanges|TestAFoldPanicUnwindsOutOfLoad|TestAPanickingCodecBecomesTheRefusalItsErrorWouldHaveBeen|TestARequestClassRefusalRendersAClientStatusAndAHistoryClassOneDoesNot)$' ./event/ | grep -c '^Test')" = 21 && go test -race -count=1 -v -run '^(TestAFreshStreamLoadsAsZero|TestAStreamWithHistoryFoldsToItsCurrentState|TestAppendRefusesInItsStatedOrder|TestAForgedTokenIsRefusedBeforeAnyStatement|TestAnEmptyAppendChecksTheKeyAndNothingElse|TestOneLoadAndOneAppendMakeExactlyTheStoreCallsTheContractNames|TestWithinComposesForTwoBackings|TestWithinAnswersTheStoresTransactionQuestion|TestRepoAuthorityIsTheComparisonTwoSubsystemsUse|TestAMisPagedStreamIsRefusedBeforeItIsFolded|TestAnOverLongPageIsRefused|TestALoadThatFailsMidStreamReturnsNothing|TestEveryHistoryClassRefusalIsRaisedByTheThingItNames|TestBothDoorsCheckTheStore|TestAStoreWhoseProductExceedsTheResidentCeilingIsRefused|TestAnAppendWhoseActualBytesExceedTheResidentCeilingIsRefused|TestAnOutcomeOutsideTheVocabularyTakesTheFailSafeDefault|TestOneAppendCarriesTwoIdenticalChanges|TestAFoldPanicUnwindsOutOfLoad|TestAPanickingCodecBecomesTheRefusalItsErrorWouldHaveBeen|TestARequestClassRefusalRendersAClientStatusAndAHistoryClassOneDoesNot)$' ./event/ && go test -race -count=1 ./event/...
+test "$(go test -list '^(TestAFreshStreamLoadsAsZero|TestAStreamWithHistoryFoldsToItsCurrentState|TestAppendRefusesInItsStatedOrder|TestAForgedTokenIsRefusedBeforeAnyStatement|TestTheRenderedKeyIsCheckedBeforeTheStoresBound|TestAnEmptyAppendChecksTheKeyAndNothingElse|TestOneLoadAndOneAppendMakeExactlyTheStoreCallsTheContractNames|TestWithinComposesForTwoBackings|TestWithinAnswersTheStoresTransactionQuestion|TestRepoAuthorityIsTheComparisonTwoSubsystemsUse|TestAMisPagedStreamIsRefusedBeforeItIsFolded|TestAnOverLongPageIsRefused|TestALoadThatFailsMidStreamReturnsNothing|TestEveryHistoryClassRefusalIsRaisedByTheThingItNames|TestBothDoorsCheckTheStore|TestABindWithNothingToBindIsRefused|TestABindInterrogatesNoCodecAndMutatesNoDeclaration|TestOneFamilyNamesOneAggregate|TestAStoreWhoseProductExceedsTheResidentCeilingIsRefused|TestAnAppendWhoseActualBytesExceedTheResidentCeilingIsRefused|TestAnOutcomeOutsideTheVocabularyTakesTheFailSafeDefault|TestOneAppendCarriesTwoIdenticalChanges|TestAConsumerReadsThroughPagesTheStorePublished|TestAFoldPanicUnwindsOutOfLoad|TestAPanickingCodecBecomesTheRefusalItsErrorWouldHaveBeen|TestARequestClassRefusalRendersAClientStatusAndAHistoryClassOneDoesNot)$' ./event/ | grep -c '^Test')" = 26 && go test -race -count=1 -v -run '^(TestAFreshStreamLoadsAsZero|TestAStreamWithHistoryFoldsToItsCurrentState|TestAppendRefusesInItsStatedOrder|TestAForgedTokenIsRefusedBeforeAnyStatement|TestTheRenderedKeyIsCheckedBeforeTheStoresBound|TestAnEmptyAppendChecksTheKeyAndNothingElse|TestOneLoadAndOneAppendMakeExactlyTheStoreCallsTheContractNames|TestWithinComposesForTwoBackings|TestWithinAnswersTheStoresTransactionQuestion|TestRepoAuthorityIsTheComparisonTwoSubsystemsUse|TestAMisPagedStreamIsRefusedBeforeItIsFolded|TestAnOverLongPageIsRefused|TestALoadThatFailsMidStreamReturnsNothing|TestEveryHistoryClassRefusalIsRaisedByTheThingItNames|TestBothDoorsCheckTheStore|TestABindWithNothingToBindIsRefused|TestABindInterrogatesNoCodecAndMutatesNoDeclaration|TestOneFamilyNamesOneAggregate|TestAStoreWhoseProductExceedsTheResidentCeilingIsRefused|TestAnAppendWhoseActualBytesExceedTheResidentCeilingIsRefused|TestAnOutcomeOutsideTheVocabularyTakesTheFailSafeDefault|TestOneAppendCarriesTwoIdenticalChanges|TestAConsumerReadsThroughPagesTheStorePublished|TestAFoldPanicUnwindsOutOfLoad|TestAPanickingCodecBecomesTheRefusalItsErrorWouldHaveBeen|TestARequestClassRefusalRendersAClientStatusAndAHistoryClassOneDoesNot)$' ./event/ && go test -race -count=1 ./event/...
 ```
 
 ---
 
-### S5 — `event/eventtest`: the conformance suite and its self-falsification  `[ ]`
+### S5 — `event/eventtest`: the conformance suite and its self-falsification  `[x]`
 
 **Delivers** the exported suite, its twenty sections, its three fixture stores and
-its twelve self-falsification defects, plus the three runnable proxies. This is the
+its eighteen self-falsification defects, plus the three runnable proxies. This is the
 section that makes every earlier claim evidence rather than prose, and it is the
 artefact phase 2's `eventpg` runs **verbatim**.
 
-**Files** `event/eventtest/doc.go`, `suite.go`, `inventory.go` (the twenty
-section names and the runner that iterates them), `sections_write.go`,
-`sections_read.go`, `sections_lifecycle.go`, `sections_ownership.go`,
+**Files** `event/eventtest/doc.go`, `suite.go`, `probe.go` (round 2's split of
+`suite.go`: the value a section holds and everything it does to a store),
+`inventory.go` (the twenty
+section names and the runner that iterates them), `declaration.go` (the aggregate
+the suite declares for itself, its two codecs and its folds), `stores.go` (the
+decorators a section builds around the store under test), `sections_write.go`,
+`sections_read.go`, `sections_resumption.go` (round 3's split: `resumption` and
+the three helpers only it uses, because the round-3 clause took
+`sections_read.go` to 421 lines), `sections_lifecycle.go`, `sections_ownership.go`,
 `sections_transactions.go`, `defects.go`, `proxies.go`, `report.go`;
-`event/eventtest/inventory_test.go` (`package eventtest`, the inventory
-assertion and its shortened-inventory control);
-`event/eventtest/*_test.go` (the three fixture stores, in the suite's **own test
-package** — a third package, which is §INV-019's compile-time proof);
-`event/eventmemory/conformance_test.go`.
+`event/eventtest/export_test.go` (`package eventtest`, the seam the suite's own
+tests reach the inventories and the verdicts by);
+`event/eventtest/inventory_test.go` (the inventory assertion and its
+shortened-inventory control);
+`event/eventtest/fixtures_test.go`, `wrappers_test.go` (round 3: the five store
+shapes the constancy clauses are falsified with, each internally consistent and
+each breaking nothing a section reads), `suite_test.go`, `defects_test.go`,
+`proxies_test.go`, `fuzz_test.go` (round 3: the one property of the three proxies
+that is universally quantified over caller data) — the fixture stores and the
+self-checks, in the suite's **own test package**, a third package, which is
+§INV-019's compile-time proof; `event/eventmemory/conformance_test.go`.
+
+**Five file-level changes to the list above, made while writing it and recorded
+here rather than left as a difference.** (1) `declaration.go` and `stores.go` are
+new: the suite's own aggregate and the seven decorators its sections build are
+neither an inventory nor a section, and putting them in `suite.go` would have made
+one 700-line file out of three small ones. (2) `inventory_test.go` is
+`package eventtest_test` rather than `package eventtest`, and the internal seam is
+`export_test.go` instead. The plan had the inventory assertion reach the
+unexported runner by living in `package eventtest`, and the three fixture stores
+live in `package eventtest_test` — two packages that cannot see each other, so as
+written the test could not construct the store it runs the suite against. The
+standard-library `export_test.go` idiom resolves it in the direction that keeps
+§INV-019 intact: every fixture stays in the third package, and the unexported
+runner, the section inventory and the defect inventory are re-exported to it by a
+**test** file, which is on nothing's surface. (3) **`event/store.go` was edited
+during S5 and is not on the list** (GAP-13): the `Store.Transaction` contract
+sentence changed from *"A closed store answers the second"* to *"A closed store
+answers exactly what an open one would and never reports closure here, because
+this method writes and reads nothing and what the context carries did not change
+when the store was closed"*. It is a comment and nothing else, it is the clause
+`lifecycleSection.closedWithin` asserts, and it aligns the sentence with what
+C10 row 5 had already decided — but it is a **port contract sentence** phase 2
+implements against, so it is a recorded plan change rather than a silent one.
+**Round 2 (GAP-23) withdraws what that note claimed next about `event/repo.go`**:
+the whole of `event/` except `store.go` is **untracked**, so `git diff` reports
+nothing for `repo.go` whatever its content and the "no diff" it cited could not
+have failed. What holds `repo.go`'s content is S4's own suite, unchanged and
+green — `repo_test.go`, `replay_test.go` and `transaction_test.go` run against it
+on every `go test ./event/` — and no S5 change to it is recorded because none was
+made; the mtime is the S4-era write of a file S5 never opened. The claim cannot
+be made from `git` at all until there is a commit to diff against.
+(4) **`event/store.go` was edited a second time, in round 2** (GAP-19): `Store`'s
+doc gains *"All eight are safe for concurrent use. One store value is bound once
+and the `Repo` over it is one handle every request goroutine shares, so a store
+that needs a lock takes its own."* That is the obligation `concurrency` runs
+eight goroutines against and the one thing the suite asserted that the contract
+did not state. A comment and nothing else.
+(5) **`suite.go` was split in round 2**: at 473 lines it was over
+`architecture.md`'s 400, so the probe and everything it does to a store moved to
+`event/eventtest/probe.go` (259 lines), leaving the extension point, the runner
+and the admission in `suite.go` (224). No behaviour and no symbol changed.
 
 **Realises** `Factory`, `Tx`, `Run`, `RoundTrip`, `Keys`, `Families`.
 
@@ -2689,8 +4086,20 @@ package** — a third package, which is §INV-019's compile-time proof);
 case), C3 (`cancellation` asserts both halves in both windows), C4 (the `bounds`
 case, the illegal-product store, the over-long-page defect, and the two mis-paging
 defects with the at-the-bound control), C7 (the one-byte `append` case), C8 (one
-inventory in `defects.go`, twelve defects, a test computes the coverage),
+inventory in `defects.go`, eighteen defects after round 3, a test computes the coverage),
 C9 (the policed half), C10.2, C10.4.
+
+**Round 3 added three clauses the suite had none for, each with its own defect row
+and its own control.** (1) **The recorded instant** (GAP-24): §D.6 puts it in the
+store's column and nothing in the suite read `Envelope.RecordedAt` at all, so a
+store whose select list drops the column reported the same twenty verdicts as a
+correct one — the instant orders nothing (§INV-009), so no other section can see
+it. `dense versions` now asserts that every envelope this run appended carries a
+non-zero one and that the read after answers the same one, which is what separates
+a stored instant from one minted when the row is read. (2) **The constancy of
+`Capabilities`, `Limits` and `Backing` within one store value** (GAP-26), in
+`binding`. (3) **A cursor this store cannot parse** (GAP-25), in `resumption`,
+through the new `Factory.Unparsable` and reported *not certified* without it.
 
 **Also delivers the four `transactions` cases GAP-112 and GAP-126 forced**, each
 with its control: two appends in one transaction; a `Load` after an `Append` in
@@ -2711,9 +4120,12 @@ one store invented.
 UC-027, UC-028, UC-029, UC-034 (the unknown outcome, driven through `Fail`),
 UC-036 (`global paging`), UC-037, UC-038, UC-039, UC-040 (the suite is what a
 store's own package runs), UC-042 (`eventtest.RoundTrip`), UC-043, UC-044,
-UC-045, UC-047, UC-048, UC-051 (`stream identity`), UC-053, UC-057, UC-059
+UC-045, UC-047, UC-048, UC-051 (`stream identity`), UC-053 (both halves after
+round 3: a foreign cursor in `resumption`, and one this store cannot parse
+through `Factory.Unparsable`), UC-057, UC-059
 (`binding`), UC-060, UC-061 (`payload ownership`), UC-066; INV-001 (the
-append-only walk), INV-002, INV-003, INV-009, INV-019 (the compile-time half),
+append-only walk), INV-002, INV-003, INV-009 (including its third clause, the
+store-assigned instant, in `dense versions` — round 3), INV-019 (the compile-time half),
 INV-021 (the store-side hand-offs 3, 4, 6, 7), INV-026 (`refusal classes`),
 INV-029, INV-030, INV-032, INV-033, INV-034, INV-035, INV-036, INV-038, INV-039,
 INV-040, INV-041, INV-042 (`payload ownership`'s inbound half), INV-043, INV-044,
@@ -2730,6 +4142,157 @@ one-section-shorter run as its control.
 
 **Degradation** a store that cannot produce an outcome answers `false` from
 `Fail` and the section is reported **not certified** — never passed.
+
+**Phase 4 and phase 5 are executed and green.** Fourteen files of suite and six of
+test, plus `event/eventmemory/conformance_test.go`. The twenty sections are
+written, all fifteen defects are detected, and the two stores that exist run the
+whole of it: `eventmemory` reports eighteen *passed* and the two *not certified*
+rows §UC-044 predicts of it by name — `durability`, because it declares
+`Persistence: Unsupported`, and `store failure classification`, because it has no
+commit window and its `Fail` hook therefore answers **false** for `Unconfirmed`.
+
+**Twenty tests and one fuzz target ship with it** — ten as written, four that
+round 1 of the implementation review added, four more from round 2 and four from
+round 3, each with a control that was run; three of them are the checkpoint's:
+
+| Test | Pins | Its control |
+|---|---|---|
+| `TestTheMemoryStoreSatisfiesTheContract` and `TestTheMemoryStoreSatisfiesTheContractAtNarrowerLimits` (`event/eventmemory`, the second round 2's) | the whole contract against the store that exists, and §UC-040's shape — a store's own package runs the suite through the exported API and nothing else; the second publishes `MaxKey` 40, `StreamPage` 4, `MaxBatch` 2 and `MaxRead` 3, all legal and a hundredth of the defaults | the `-v` section list: every section named, none skipped, two of them *not certified* with the reason — and the second test's twenty verdicts are the first's, verdict for verdict |
+| `TestTheSuiteStillDetectsEveryDefectItWasBuiltToDetect` | C8: every defect in `defects.go` fails the section named for it; no two defects share a name; every section a defect names exists | the same store **without** the defect is asserted to **pass** that same section, so a failure is the defect's and not the fixture's |
+| `TestEverySectionInTheInventoryWasReported` | every one of the twenty is reported exactly once with one of the three words — the rule `go test -list` cannot reach, because a section is a subtest | a run over an inventory one section shorter must **fail** the same assertion, so it proves the sections exist rather than that a list was iterated |
+| `TestATrivialStoreNeedsNoInternalAccess` | §INV-019's compile-time half: a complete store built in a third package out of the exported vocabulary alone, run through `Run` | the demonstration below |
+| `TestARunThatCertifiedNothingFails` | anti-vacuity rule 2: three gated sections against a store that claims none of them certify nothing, and that is what `Run` fails on | the whole inventory over the same store certifies fifteen, so the count is a measurement and not a zero |
+| `TestEverySectionFailsAgainstAStoreThatRefusesEverything` | anti-vacuity rule 4, **computed rather than remembered**: all twenty sections are reported *failed* against a store that is honest about its bounds and its capabilities and refuses every operation | a section that passes there is a section carrying no control, and the run names it |
+| `TestAnApplicationRunsTheThreeProxiesOverItsOwnDeclaration` and `TestTheProxiesCompareSomethingThatCanDiffer` | `RoundTrip`, `Keys` and `Families` over a declaration of an application's own | the collision `Keys` looks for is asserted to **be** there under a concatenating mapper, and `Compose` is asserted to render it differently — without which the proxy compares two things that can never differ |
+| `TestAClaimedCapabilityWithAMissingHookIsRefused` | anti-vacuity rules 1 and 3 at the door: a claimed capability with no hook, and an `Unstated` one, are both refused before a section runs | the store that claims both and supplies both hooks is admitted |
+| `TestATransactionCapableStoreSatisfiesTheContract` | the staging fixture — the base the eleven decorator defects wrap, and the `transactions` control — passes nineteen of twenty | `durability` is its one *not certified*, so it is not passing by claiming nothing |
+| `TestEachProxyReportsTheThingItExistsToFind` (GAP-8) | the branch each of the three proxies exists for, driven: a colliding key pair, an identity that renders no key, one identity, no aggregate, a fact whose sample does not survive its codec, no fact, two declarations naming one family, a nil declaration, no declarations | the three cases beside it that must report **nothing** — the same fact with a sample that does survive, three identities `Compose` separates, two declarations of two families |
+| `TestASectionThatNeverReturnedIsNotReportedPassed` (GAP-7) | the zero value of a verdict is not *passed*: a factory hook that leaves the subtest through `runtime.Goexit` leaves the row the runner initialised, and that row must not be the one word that means the store is correct | putting `passed` back at `iota` turns it red, and `Run` reports the row rather than silently counting it toward the certifications an empty run is refused for |
+| `TestEveryStoreCallASectionMakesCarriesADeadline` (GAP-6) | the four doors that take a context, watched through a decorator over the staging fixture: 548 store calls in a whole run and none of them without a deadline | one section put back on `context.Background()` reports 2 of 548, so the count is a measurement |
+| `TestASectionWalksItsOwnTailOfALogSomebodyElseFilled` (GAP-3) | a store whose log already holds 6 000 events this run did not write — more than the 1 024 pages at the fixture's `MaxRead` of five that the walk used to give up after — still reaches a real verdict in every section, and certifies the same number as the same store with an empty log | the pre-change walk (from `""`, bounded at 1 024 pages) reports `global order`, `conservation`, `global paging` and `resumption` **failed**, naming the suite's own budget as the store's defect |
+| `TestEverySectionIsCertifiedAtTheNarrowestLimitsAStoreMayPublish` (GAP-17) | every count a section writes is derived from what the store publishes: the whole suite over the staging fixture at `MaxBatch` 1, `StreamPage` 1, `MaxRead` 1 and `MaxKey` 40 reports **no section failed** | the same store at the fixture's ordinary numbers certifies the same count, so the run is comparing two measurements; and the pre-change literals put it back — `widest := widestNarrowing` reports `stream paging` failed, a fixed 16-byte identity reports `stream identity`, `resumption`, `lifecycle` and `transactions` failed, which is GAP-17's own table reproduced |
+| `TestASectionReachesAVerdictOverALogSomebodyElseIsStillWritingTo` (GAP-18) | a store whose log grows by one foreign event on **every** `ReadAll`: no section is *failed* and the run certifies what the quiet store certifies, because what a section walks is bounded by what it wrote and the factory answers where the log ended | with `walkLog` unbounded again, `global order`, `conservation`, `global paging` and `resumption` report *"reading the log answered context deadline exceeded"*; with `Factory.Tail` removed, the same four report the refusal that names the hook |
+| `TestAStoreThatMintsTheRecordedInstantWhenAnEventIsReadIsNotCertified` (GAP-24) | the subtler of the two stores that lose the instant: one with no column at all, filling the field as it scans the row, so one event answers a different instant to every reader. The store that answers the **zero** time is the defect inventory's sixteenth row | the same store recording its own instants is asserted **passed** for `dense versions`; and removing `probe.instants` reports both the defect and this test's store *passed*, which is the whole clause in one mutation |
+| `TestAStoreWhoseCapabilitiesOrBackingChangeUnderOneValueIsNotCertified` (GAP-26) | the two halves of the constancy clause with no defect row: a store claiming transactions on one call and not on the next, and one naming a fresh backing on every call. Both are internally consistent and pass every other section | the same store answering one value throughout is *passed*; neutralising `probe.unchanged`'s second reading reports all three — these two and the seventeenth defect — *passed* |
+| `TestAFactoryWhoseLaterStoresPublishSomethingElseIsRefused` (GAP-28) | the **factory's** obligation rather than a store's, and the half `probe.store` did not check: a second store publishing a wider page, and one claiming fewer capabilities. Neither store is internally wrong, so only a comparison between two of one factory's values can see it | the same factory building one kind throughout is *passed*; removing the `Capabilities()` comparison reports the second *passed* |
+| `TestACursorAStoreCannotParseIsRefusedRatherThanReadFromTheBeginning` (GAP-25) | the store's own cursor parser, which no cursor the suite can mint reaches: a store that starts its walk at the beginning of the log for a checkpoint it could not parse is *failed*, and a factory answering no such cursor is **not certified** — the third word rather than silence | the same store refusing what it cannot parse is *passed*; removing `probe.unparsableCursor` reports the defect *passed* and the missing-hook run *passed* rather than *not certified* |
+| `FuzzKeysReportsACollisionExactlyWhenTwoIdentitiesRenderOneKey` (round 3) | the one property of the three proxies that is universally quantified over caller data, as an **equivalence**: `Keys` answers an error exactly when the two identities do not render two distinct legal keys. A proxy silent on a collision certifies an application that has one history for two instances; one that reports a collision that is not there refuses a correct mapper | both arms were driven by mutation — deleting the duplicate-key branch turns the seeds red on the first, widening it to "any second identity" turns them red on the second. 45 s of `-fuzz`, 1.78 M execs, no failure |
+| `TestAStoreThatKeepsWhatItWroteIsCertifiedForDurability` (GAP-20) | the one section no in-tree store could demonstrate: a fixture claiming `Persistence: Supported` whose second value over one backing reads what the first wrote is asserted **passed**, and the fifteenth defect — the same store answering a second value with nothing in it — **failed** | widening the balance check to admit zero reports the defect *passed*, so the section's own assertion is what the pass rests on; coverage of `durabilitySection` moves 35.0 % → **85.0 %** |
+
+**Two clauses of the `Covers` list above are asserted in sections whose D.9 row
+does not name them**, because the section that owns the data is the one that can
+see them: §UC-038's *per-stream order is a subsequence of global order* is in
+`global order` beside the ascension check, over a walk that is asserted to have
+reached at least two streams; and §UC-053's *a foreign cursor is refused* is in
+`resumption`, where a cursor minted over one backing is presented to a second
+store and must answer `ErrCursor` — reported *not certified* on a factory whose
+second store shares the first's backing, since there is then no elsewhere to
+present it to.
+
+**The three fixtures are two types and four values**, and the difference from
+[SPEC]'s wording is deliberate: the trivial store and the admit-everything store
+are one type with one rule dropped, exactly as §UC-045 describes them, and the
+leaky-rollback store is a second, transaction-capable type — but its **correct**
+instantiation is a fourth value, because the ten decorator defects need a base
+that is not broken and the `transactions` section needs a control that is not the
+defect. A fifth fixture, the refuse-everything store, exists for anti-vacuity
+rule 4 and is not a defect: it fails every section on purpose.
+
+**Round 2 adds four more values of those same two types, and no third type.**
+The prefilled store (round 1) and three from this round: the **narrow** one, which
+is the staging store publishing `MaxBatch` 1, `StreamPage` 1, `MaxRead` 1 and
+`MaxKey` 40; the **persistent** one, whose every `New` is another value over one
+log and which is the only store in the tree claiming `Persistence: Supported` —
+with its defective instantiation answering a second value that holds nothing; and
+the **busy** one, whose log grows by an event of somebody else's on every
+`ReadAll` and whose factory answers where the log ended. Each exists because a
+property of a *store a consumer may write* was otherwise demonstrated by nothing
+here: legal numbers other than the fixture's, a backing that outlives a value,
+and a log this run does not own.
+
+**Two [SPEC] §D.9 clauses are not expressible and are replaced rather than
+dropped.** (1) `global paging`'s *the same walk at `MaxRead` 1* cannot be built by
+the suite: narrowing a page means returning fewer envelopes than the store did,
+and the cursor beside them is the **store's**, minted for the whole page — a suite
+that truncated the page and kept the cursor would be building §UC-045's third
+defect rather than a control. The section asserts the property it can: the walk
+tiles the run's own events in position order, and a walk **split across two
+readers at a persisted cursor** returns the identical sequence, which is the same
+claim about page shape without minting a cursor nobody minted. (2) `resumption`'s
+*a writer committing out of position order* needs a transaction to hold one open,
+so on a store with none it is reported through the third word — the section runs
+and the run says which half was not certified.
+
+**Verified by mutation, and each was restored and its sha256 compared
+afterwards.** `Envelope.RecordedAt` unexported: `event/eventtest_test` fails to
+compile at `fixtures_test.go:268` — §INV-019's compile-time proof demonstrated
+rather than claimed, and `eventmemory` fails beside it, which is the same proof
+one package out. The kernel's page-length check removed from
+`Repo.checkPage`: `TestTheSuiteStillDetectsEveryDefectItWasBuiltToDetect` turns
+red with *the suite no longer detects a store that publishes a stream page
+shorter than the page it returns: its bounds section was reported "passed"* —
+which is the whole chain in one line, from a kernel branch to the defect
+inventory to the section that names it. Beyond those two, the defect inventory
+**is** a fifteen-mutation suite that runs on every `make unit`, and
+`TestEverySectionFailsAgainstAStoreThatRefusesEverything` is a twentieth of one:
+between them every section is asserted to fail against something.
+
+**Round 1 of the implementation review closed nine findings, and each of the six
+that changed behaviour was verified by putting the defect back and watching the
+new assertion turn red** — every mutation restored afterwards and the tree
+rebuilt clean.
+
+| Finding | What changed | The mutation, and what it reported |
+|---|---|---|
+| GAP-1 `[high]` | `payload ownership`'s C7 case rewritten as `probe.spilled`; thirteenth defect `packedPages` | remove the `spilled` call: *"the suite no longer detects a store that hands out sub-slices of one fresh page buffer without cutting their capacity: its payload ownership section was reported `passed`"* |
+| GAP-2 `[high]` | `Factory.New`'s and `Factory.Begin`'s doc rewritten to what the code does; `foreignCursor` and `durability` say why they build a store mid-section | doc-only; the three sections it misled are named above |
+| GAP-3 `[high]` | the two bare `1024`s gone: `drain` ends on a short page and refuses an over-long one, `walkLog` ends on an empty page and refuses a page beside its own cursor, and every walking section mints its start cursor with `probe.tail` before it writes; the run identity widened 4 bytes → 16 | put the bounded from-`""` walk back: four sections *failed* on the 6 000-event fixture with *"a walk over this store did not reach the end of the log in 1024 pages"* |
+| GAP-4 `[medium]` | `injectedAtRead` reads through the value the append door writes through, so the `wrapping` iteration exercises `wrapping.ReadAll` | make `wrapping.ReadAll` drop the classification: *"[outcome bad cursor] injected at the read door through a decorator that wraps the store's own error answered event: the store failed where the kernel maps that classification to event: this cursor was not minted over this backing"* |
+| GAP-5 `[medium]` | `probe.begin` registers the rollback on the section's `t.Cleanup`; the staging fixture reports any transaction still unresolved when a section ends | remove that one line: *"1 transaction(s) this section began were still unresolved when it ended"*, from `lifecycle` |
+| GAP-6 `[medium]` | every section runs under `probe.context()`, a 20-second window; `contended` reordered so the loser issues nothing until the winner has committed, and its comment now states what the code does | one section back on `context.Background()`: *"2 of 548 store calls a run made carried no deadline"* |
+| GAP-7 `[medium]` | `word`'s zero value is `unreported`, which `Run` reports and `certified` does not count | `passed word = iota` restored: *"a section whose factory left the run through the goroutine that section was dispatched on was reported passed"* |
+| GAP-8 `[medium]` | the three proxies answer an error and the exported wrapper fatals on it; `roundTrips`, `keysRender` and `familiesDiffer` are 100 % covered | driven directly through all nine reporting branches, with three silent controls beside them |
+| GAP-9 `[medium]` | `door` and `through` are a function and a decorator-builder on `failureCase`; `refusal classes` asserts `err.Error() == policy.is.Error()` rather than a `"quota"` substring | the substring assertion failed **open** and the equality one does not |
+
+**Round 2 closed seven more, and the two the reviewer graded `[critical]` and
+`[high]` were both demonstrated before and after.**
+
+| Finding | What changed | The mutation, and what it reported |
+|---|---|---|
+| GAP-17 `[critical]` | every count the suite writes is derived from `Limits()`, which is read once at the door and carried on the probe: `stream paging` narrows to `1, 2, min(StreamPage, 4)` and writes one more event than the widest; `payload ownership` writes `max(StreamPage, MaxRead) + 1`; `spread` and `dense versions` split their decisions at `MaxBatch` through `probe.batched`; the run identity is as wide as `MaxKey` leaves room for after the suite's reserve, and a `MaxKey` too small for even the narrowest is **fatal at the door** with the suite's own requirement in the message; `probe.store` refuses a later store publishing other numbers | `widest := widestNarrowing` → `stream paging` *failed* on the narrow store; a fixed 16-byte identity → `stream identity`, `resumption`, `lifecycle`, `transactions` *failed* with *"the identity does not render a legal stream key"*, which is GAP-17's own measured table |
+| GAP-18 `[high]` | `Factory.Tail` answers the end of the log and `Factory.Window` sets the section's deadline; every log walk is bounded by what the run itself wrote (`walking{from, held, want}`), so a walk ends at its own last event rather than at an empty page that a second writer never leaves; the fallback that reads to the end names `Factory.Tail` in its refusal; `monotone visibility` takes a tail instead of draining the log through a reader | `walkLog` unbounded → four sections *"reading the log answered context deadline exceeded"* over the growing-log fixture; `Factory.Tail` removed from the same fixture → the same four with the refusal that names the hook |
+| GAP-19 `[medium]` | `eventtest.Tx` carries the four rules the sections assert; `event/store.go` states that all eight `Store` methods are safe for concurrent use | doc-only, and both sentences describe assertions that already run (`staged`'s double commit, `probe.begin`'s cleanup, `concurrency`'s eight goroutines) |
+| GAP-20 `[medium]` | `persistentFactory` is the first in-tree store to claim `Persistence: Supported`, and the fifteenth defect is the same store answering a second value with nothing in it | widening the balance check to admit zero reports that defect *passed*; `durabilitySection` coverage 35.0 % → **85.0 %** |
+| GAP-21 `[medium]` | the `[]Envelope` case reads a **proper prefix** — the page a store publishes, of a stream one longer — clones the page after it, appends an envelope to the first, and compares the page the store still serves; the fourteenth defect `retainedPages` is a store that cuts every page out of one array it keeps | with the assertion removed the corruption is caught three assertions later by the kernel's own page check (*"answered a page that does not begin at the version it was read from"*), so the defect stays detected and stops being detected **at the hand-off** — recorded rather than overstated |
+| GAP-22 `[low]` | the parameter breach is closed instead of recounted: `wroteWhatItSaid` takes a `fixture` value (7 → 2) and `from` a `walking` value (5 → 3) | `go/ast` over the package: **0** functions of more than four parameters, where the table had said one and the tree had two |
+| GAP-23 `[low]` | S5's note says what `git` can and cannot establish for an untracked file, and what does hold `repo.go` | none — a record, not a behaviour |
+
+**Round 3 closed five more, four of them adversarial findings against clauses the
+suite had no case for at all. Each was demonstrated by putting the defect back
+and watching the new assertion turn red, and each mutation was restored and its
+sha256 compared afterwards.**
+
+| Finding | What changed | The mutation, and what it reported |
+|---|---|---|
+| GAP-24 `[high]` | `probe.instants`, in `dense versions`: every envelope this run appended carries a non-zero `RecordedAt` and the read after answers the same one. The **sixteenth** defect is a decorator that blanks it; `TestAStoreThatMintsTheRecordedInstantWhenAnEventIsReadIsNotCertified` is the store that mints it at read time | `this.instants(...)` removed: *"the suite no longer detects a store that answers every envelope with no recorded instant at all: its dense versions section was reported passed"*, and beside it *"a store that mints the recorded instant at read time was reported passed for dense versions"* |
+| GAP-25 `[medium]` | `Factory.Unparsable`, the hook only the store can answer, and `probe.unparsableCursor` in `resumption` — *not certified* when it is absent. The **eighteenth** defect is a store whose parser ignores its own error and starts at the beginning of the log; it is store-shaped rather than a decorator, because a decorator that forwards cannot tell a cursor it cannot parse from a foreign one without knowing the store's cursor format | `this.unparsableCursor(...)` removed: the defect was reported *passed*, and the factory answering no such cursor was reported *passed* rather than *not certified* |
+| GAP-26 `[medium]` | `probe.unchanged`, in `binding`: all three published answers read twice on one store value with a store operation between, the backing through `Equal`. The **seventeenth** defect widens the page it publishes on every call; the capabilities and backing halves are `TestAStoreWhoseCapabilitiesOrBackingChangeUnderOneValueIsNotCertified` | `unchanged` made to compare the first reading with itself: the defect and both stores beside it *passed*, three assertions in one mutation |
+| GAP-28 `[low]` | `probe.store` compares `Capabilities()` as it compares `Limits()`, and the plan's § Contracts sentence says which halves are checked | the comparison removed: *"a factory whose second store claims fewer capabilities than the store it was admitted on was reported passed for binding"* — which is also the first control either half of that comparison has had |
+| GAP-29 `[low]` | the § Architecture metrics numbers recounted rather than remembered | none — a record |
+
+Round 3's `[deferred]` findings — GAP-27, GAP-30, GAP-31, GAP-32 — are in
+`## Debt` with their own arguments. **GAP-33's first half is closed** rather than
+carried, because the fixture it names is one this round extended:
+`stagingTx.done` is an `atomic.Bool` and its transition is a `CompareAndSwap`
+inside the lock that publishes, so the two unsynchronised reads are gone. Its
+second half (`persistentFactory`'s captured `shared`) stays in `## Debt`.
+
+**The residue named rather than closed.** `go tool cover -func` puts
+`proxies.go`'s three exported wrappers at 66.7 %: the uncovered statement in each
+is its `t.Fatal`, which no test that stays green can reach. The three functions
+those wrappers exist to call are at 100 %. `durabilitySection` is at 85.0 %: what
+is left is the *not certified* arm, which a store claiming persistence does not
+take.
 
 **Checkpoint S5 — phase 4 (implementation)**
 
@@ -2748,6 +4311,101 @@ every section named, each *passed* or *not certified*, none skipped silently.
 `TestATrivialStoreNeedsNoInternalAccess`'s report must state that the
 unexport-one-field demonstration was performed and reversed; a compile-only test
 that was never made to fail proves that a package compiles.
+
+```
+$ go build ./... && go vet ./event/... && test -z "$(gofmt -l .)" && go test -race -count=1 ./event/...
+ok  	github.com/frostgrove/vv/event	1.279s
+ok  	github.com/frostgrove/vv/event/eventmemory	1.052s
+ok  	github.com/frostgrove/vv/event/eventtest	1.448s
+```
+
+```
+$ test "$(go test -list '^(TestTheMemoryStoreSatisfiesTheContract)$' ./event/eventmemory/ | grep -c '^Test')" = 1
+$ test "$(go test -list '^(…the four names…)$' ./event/eventtest/ | grep -c '^Test')" = 4
+$ go test -race -count=1 -v -run 'TestTheMemoryStoreSatisfiesTheContract' ./event/eventmemory/
+    suite.go:84: eventtest: binding: passed
+    suite.go:84: eventtest: stream identity: passed
+    suite.go:84: eventtest: expected version: passed
+    suite.go:84: eventtest: dense versions: passed
+    suite.go:84: eventtest: global order: passed
+    suite.go:84: eventtest: conservation: passed
+    suite.go:84: eventtest: stream paging: passed
+    suite.go:84: eventtest: global paging: passed
+    suite.go:84: eventtest: resumption: passed
+    suite.go:84: eventtest: bounds: passed
+    suite.go:84: eventtest: payload ownership: passed
+    suite.go:84: eventtest: refusal classes: passed
+    suite.go:84: eventtest: cancellation: passed
+    suite.go:84: eventtest: lifecycle: passed
+    suite.go:84: eventtest: concurrency: passed
+    suite.go:84: eventtest: transactions: passed
+    suite.go:84: eventtest: durability: not certified — this store does not claim persistence, so nothing of it survives a restart
+    suite.go:84: eventtest: shared backing: passed
+    suite.go:84: eventtest: monotone visibility: passed
+    suite.go:84: eventtest: store failure classification: not certified — [outcome unconfirmed] cannot be produced by this store
+--- PASS: TestTheMemoryStoreSatisfiesTheContract (0.01s)
+    …the same twenty lines, verdict for verdict…
+--- PASS: TestTheMemoryStoreSatisfiesTheContractAtNarrowerLimits (0.01s)
+ok  	github.com/frostgrove/vv/event/eventmemory	1.032s
+```
+
+The second test is round 2's (GAP-17): the same store at `LogSpec{MaxKey: 40}`
+and `Spec{StreamPage: 4, MaxBatch: 2, MaxRead: 3}`, which is a hundredth of the
+defaults on three axes and legal on all of them. Twenty verdicts, identical to
+the first, including the two *not certified* rows §UC-044 predicts.
+
+```
+$ go test -race -count=1 -v -run 'TestTheSuiteStillDetectsEveryDefectItWasBuiltToDetect|TestATrivialStoreNeedsNoInternalAccess' ./event/eventtest/
+--- PASS: TestTheSuiteStillDetectsEveryDefectItWasBuiltToDetect (0.01s)
+--- PASS: TestATrivialStoreNeedsNoInternalAccess (0.01s)
+ok  	github.com/frostgrove/vv/event/eventtest	1.032s
+
+$ go test -race -count=1 -v ./event/eventtest/       # every top-level test, after round 3
+--- PASS: TestTheSuiteStillDetectsEveryDefectItWasBuiltToDetect (0.01s)
+--- PASS: TestEverySectionInTheInventoryWasReported (0.02s)
+--- PASS: TestAnApplicationRunsTheThreeProxiesOverItsOwnDeclaration (0.00s)
+--- PASS: TestTheProxiesCompareSomethingThatCanDiffer (0.00s)
+--- PASS: TestEachProxyReportsTheThingItExistsToFind (0.00s)
+--- PASS: TestATrivialStoreNeedsNoInternalAccess (0.01s)
+--- PASS: TestATransactionCapableStoreSatisfiesTheContract (0.01s)
+--- PASS: TestARunThatCertifiedNothingFails (0.01s)
+--- PASS: TestASectionThatNeverReturnedIsNotReportedPassed (0.00s)
+--- PASS: TestAClaimedCapabilityWithAMissingHookIsRefused (0.00s)
+--- PASS: TestEveryStoreCallASectionMakesCarriesADeadline (0.01s)
+--- PASS: TestASectionWalksItsOwnTailOfALogSomebodyElseFilled (0.33s)
+--- PASS: TestEverySectionIsCertifiedAtTheNarrowestLimitsAStoreMayPublish (0.02s)
+--- PASS: TestASectionReachesAVerdictOverALogSomebodyElseIsStillWritingTo (0.02s)
+--- PASS: TestAStoreThatKeepsWhatItWroteIsCertifiedForDurability (0.00s)
+--- PASS: TestAStoreThatMintsTheRecordedInstantWhenAnEventIsReadIsNotCertified (0.00s)
+--- PASS: TestAStoreWhoseCapabilitiesOrBackingChangeUnderOneValueIsNotCertified (0.00s)
+--- PASS: TestAFactoryWhoseLaterStoresPublishSomethingElseIsRefused (0.00s)
+--- PASS: TestACursorAStoreCannotParseIsRefusedRatherThanReadFromTheBeginning (0.00s)
+--- PASS: TestEverySectionFailsAgainstAStoreThatRefusesEverything (0.00s)
+--- PASS: FuzzKeysReportsACollisionExactlyWhenTwoIdentitiesRenderOneKey (0.00s)
+ok  	github.com/frostgrove/vv/event/eventtest	1.446s
+
+$ go test -race -count=1 -v -run 'TestATransactionCapableStoreSatisfiesTheContract' ./event/eventtest/
+19 passed, 1 not certified (durability) — unchanged after round 3's three new clauses
+
+$ go test -run '^$' -fuzz FuzzKeys -fuzztime 45s ./event/eventtest/
+elapsed: 45s, execs: 1 779 459 (84 210/sec), new interesting: 61 — PASS
+
+$ go test -race -count=1 ./event/...                 # twice, no flake
+ok  	github.com/frostgrove/vv/event	1.273s
+ok  	github.com/frostgrove/vv/event/eventmemory	1.052s
+ok  	github.com/frostgrove/vv/event/eventtest	1.436s
+ok  	github.com/frostgrove/vv/event	1.280s
+ok  	github.com/frostgrove/vv/event/eventmemory	1.053s
+ok  	github.com/frostgrove/vv/event/eventtest	1.437s
+
+$ gofmt -l .           # silent
+$ make unit            # every module, no FAIL
+$ make check
+check-deps: ok   check-tiers: ok   check-utils: ok   check-triplets: ok
+check-todo: ok   check-replaces: ok   check-tidy: ok   check-otel-schema: ok
+check-workspace: ok
+check-workspace: ok
+```
 
 ---
 
@@ -2943,29 +4601,29 @@ proves it.
 | UC-003 same shape across a revision bump | S2 | S2 | `TestADeclaration` |
 | UC-004 a malformed declaration | S2 | S2 | `TestEveryMalformedDeclarationPanicsAndTryDefineReturnsIt` |
 | UC-005 a fact declared after the table was read | S2 | S2 | `TestTheSealRefusesALateFact` |
-| UC-006 construct a store, bind two aggregates | S3 (constructor) + S4 (`Open`/`Bind`) + S5 (`binding`) | S5 | `TestTwoStoreValuesOverOneLog`, `binding` |
+| UC-006 construct a store, bind two aggregates | S3 (constructor) + S4 (`Open`/`Bind`) + S5 (`binding`) | S5 | `TestTwoStoreValuesOverOneLog`, `TestEveryNumberAStoreAndItsLogTakeIsBoundedAtBothEnds`, `binding` |
 | UC-007 two stores over two backings | S4 | S4 | `TestWithinComposesForTwoBackings`, `TestAppendRefusesInItsStatedOrder` |
 | UC-008 a readiness answer | S3 | S3 | `TestCheckAnswersWhileTheStoreIsOpenAndAfterItIsClosed` |
 | UC-009 a fresh stream loads as the zero state | S4 | S4 | `TestAFreshStreamLoadsAsZero` |
 | UC-010 a stream with history is folded | S4 | S4 | `TestAStreamWithHistoryFoldsToItsCurrentState` |
-| UC-011 a long stream is paged | S4 + S5 | S5 | `stream paging` |
+| UC-011 a long stream is paged | S4 + S5 | S5 | `TestAStreamWithHistoryFoldsToItsCurrentState` (its page-of-1 arm), `stream paging` |
 | UC-012 an older revision | S2 (chain) + S4 (load) | S4 | `TestAStreamWithHistoryFoldsToItsCurrentState` (its revision-1 stored event) |
 | UC-013 an unknown event type | S4 | S4 | `TestEveryHistoryClassRefusalIsRaisedByTheThingItNames` |
 | UC-014 an unreadable revision | S2 (the chain refuses it) + S4 (the surfacing) | S4 | `TestEveryHistoryClassRefusalIsRaisedByTheThingItNames` |
-| UC-015 a malformed payload | S2 (the codec refuses it) + S4 (the surfacing) | S4 | `TestEveryHistoryClassRefusalIsRaisedByTheThingItNames` |
+| UC-015 a malformed payload | S2 (the codec refuses it) + S4 (the surfacing) | S4 | `TestEveryHistoryClassRefusalIsRaisedByTheThingItNames`, `FuzzAStoredPayloadIsFoldedOrRefused`, `FuzzALoadFoldsAStoredStreamOrRefusesItWhole` |
 | UC-016 the upcaster refuses | S2 (recovery) + S4 (surfacing) | S4 | `TestAnUpcasterMayRefuseAndAFoldMayNot`, `TestEveryHistoryClassRefusalIsRaisedByTheThingItNames`, `TestAPanickingCodecBecomesTheRefusalItsErrorWouldHaveBeen` |
 | UC-017 a stored payload over the cap → `ErrPayload` (C5) | S4 | S4 | `TestEveryHistoryClassRefusalIsRaisedByTheThingItNames`, `TestARequestClassRefusalRendersAClientStatusAndAHistoryClassOneDoesNot` |
 | UC-018 a load under a cancelled context | S4 + S5 | S5 | `cancellation` |
 | UC-019 load, decide, append | S4 + S5 | S5 | `expected version` |
 | UC-020 a decision that changed nothing | S4 | S4 | `TestAnEmptyAppendChecksTheKeyAndNothingElse` |
 | UC-021 two decisions in one operation | S2 (`Fold`) + S4 (`Append`) | S4 | `TestOneAppendCarriesTwoIdenticalChanges` |
-| UC-022 two writers, one stream | S3 (admission) + S5 (`expected version`, `transactions`) | S5 | `TestTwoTransactionsOnOneStreamLeaveOneWinnerAndAConflictFromAppend`, `expected version`, `transactions` (the aftermath case) |
+| UC-022 two writers, one stream | S3 (admission) + S5 (`expected version`, `transactions`) | S5 | `TestTwoTransactionsOnOneStreamLeaveOneWinnerAndAConflictFromAppend`, `TestAnAppendIsAdmittedOnlyAtTheVersionItWasDecidedAt`, `expected version`, `transactions` (the aftermath case) |
 | UC-023 **WITHDRAWN** — resolves to UC-022 + UC-034 | S4 + S5 | S5 | — |
-| UC-024 an unencodable or oversized payload | S2 (`New`) + S4 (surfacing) | S4 | `TestFoldRefusesAnotherInstance`, `TestARequestClassRefusalRendersAClientStatusAndAHistoryClassOneDoesNot` |
+| UC-024 an unencodable or oversized payload | S2 (`New`) + S4 (surfacing) | S4 | `TestFoldRefusesAnotherInstance`, `TestACodecPanicBecomesThatMethodsOwnRefusal`, `TestARequestClassRefusalRendersAClientStatusAndAHistoryClassOneDoesNot` |
 | UC-025 a batch over the bound | S4 + S5 | S5 | `bounds`, `TestAnAppendWhoseActualBytesExceedTheResidentCeilingIsRefused` |
 | UC-026 another aggregate's change (compile error) | S2 + `testdata/crossings` | S2 | `TestTheCrossingsThatMustNotCompile` |
 | UC-027 a caller names an expected version | S4 + `testdata/crossings` + S5 | S5 | `TestTheCrossingsThatMustNotCompile`, `expected version` |
-| UC-028 a caller transaction spans load and append | S3 (`Tx`) + S4 (`Within`) + S5 | S5 | `TestASecondAppendInOneTransactionIsAdmitted`, `TestWithinComposesForTwoBackings`, `transactions` |
+| UC-028 a caller transaction spans load and append | S3 (`Tx`, and the two-stream unit of work) + S4 (`Within`) + S5 | S5 | `TestASecondAppendInOneTransactionIsAdmitted`, `TestATransactionThatStagesToTwoStreamsNeverCrossesThem`, `TestWithinComposesForTwoBackings`, `transactions` |
 | UC-029 the caller's transaction rolls back | S3 + S5 (`transactions`) | S5 | `TestARolledBackAppendBurnsItsPositions`, `transactions` |
 | UC-030 two subsystems, one transaction | S4 (`Authority`) | S4 | `TestRepoAuthorityIsTheComparisonTwoSubsystemsUse` |
 | UC-031 a token over another backing | S4 | S4 | `TestAppendRefusesInItsStatedOrder`, `TestAnEmptyAppendChecksTheKeyAndNothingElse` |
@@ -2974,14 +4632,14 @@ proves it.
 | UC-034 the commit outcome is unknown | S1 (map) + S4 + S5 | S5 | `TestAnOutcomeOutsideTheVocabularyTakesTheFailSafeDefault`, `store failure classification` |
 | UC-035 the same command twice, no idempotency key | S4 (the absence) | S4 | `TestOneAppendCarriesTwoIdenticalChanges` |
 | UC-036 a bounded read | S4 + S5 | S5 | `global paging` |
-| UC-037 no monotone-visibility promise | S3 (commit-order positions, the cursor's encoding, and `MonotoneVisibility: Supported` re-derived from them) + S5 (`resumption`, whose out-of-position-order writer is driven by the stage-time-allocating defect store because `eventmemory` cannot commit out of order) | S5 | `monotone visibility`, `resumption` |
+| UC-037 no monotone-visibility promise | S3 (commit-order positions, the cursor's encoding, and `MonotoneVisibility: Supported` re-derived from them) + S5 (`resumption`, whose out-of-position-order writer is driven by the stage-time-allocating defect store because `eventmemory` cannot commit out of order) | S5 | `TestTheStoreDeclaresWhatItCanDoAndSaysWhatItCannot`, `TestManyWritersLeaveOneDenseHistoryAndAMonotoneLog`, `monotone visibility`, `resumption` |
 | UC-038 per-stream order is a subsequence | S5 (`global order`) | S5 | `global order`, `conservation` |
 | UC-039 repeated reads tile a quiescent log | S5 (`global paging`) | S5 | `global paging` |
 | UC-040 an aggregate unit-tested with no database | S3 + S5 | S5 | `TestTheMemoryStoreSatisfiesTheContract` |
 | UC-041 a fold with no store at all | S2 | S2 | `TestFoldRefusesAnotherInstance`, `TestAChangeRetainsNoApplicationValue` |
 | UC-042 a payload's revisions are round-tripped | S2 (`Fact.RoundTrip`) + S5 (`eventtest.RoundTrip`) | S2 | `TestACodecThatDecodesIntoAReusedBufferIsCaught` |
 | UC-043 a store implementer runs the suite | S5 | S5 | `TestTheMemoryStoreSatisfiesTheContract`, `TestEverySectionInTheInventoryWasReported` |
-| UC-044 a store cannot exercise a capability | S3 (`eventmemory` says what it cannot) + S5 (the suite's three words) | S5 | `TestEverySectionInTheInventoryWasReported`, `store failure classification` |
+| UC-044 a store cannot exercise a capability | S3 (`eventmemory` says what it cannot) + S5 (the suite's three words) | S5 | `TestTheStoreDeclaresWhatItCanDoAndSaysWhatItCannot`, `TestEverySectionInTheInventoryWasReported`, `store failure classification` |
 | UC-045 the suite falsifies itself | S5 | S5 | `TestTheSuiteStillDetectsEveryDefectItWasBuiltToDetect` |
 | UC-046 an ambient transaction, no `Within` | S4 | S4 | `TestWithinAnswersTheStoresTransactionQuestion` |
 | UC-047 close, and everything after | S3 + S5 (`lifecycle`) | S5 | `TestCloseIsIdempotentAndDecidesNothing`, `lifecycle` |
@@ -2990,11 +4648,11 @@ proves it.
 | UC-050 a composite identity | S1 (`Compose`) + S2 (the mapper and `Aggregate.Key`) | S2 | `TestADeclaration`, `TestComposeRendersTheFrozenKey`, `FuzzComposeRendersAKeyThatIsLegalAndReversible` |
 | UC-051 the mapper produces an illegal key | S2 (`New`, `Fold`) + S4 (`Load`, `Append`) + S5 | S5 | `TestAppendRefusesInItsStatedOrder`, `stream identity` |
 | UC-052 a state reaching a slice or a map | S2 | S2 | `TestADeclaration`, `TestAReferenceKindStateFoldsWithoutAliasing` |
-| UC-053 a cursor persisted, resumed, refused when foreign | S3 + S5 (`resumption`) | S5 | `resumption`, `store failure classification` |
+| UC-053 a cursor persisted, resumed, refused when foreign | S3 + S5 (`resumption`) | S5 | `TestACursorIsTheBackingsAndResumesThroughAnyStoreValueOverIt`, `FuzzACursorEitherResumesInsideTheLogOrIsRefused`, `resumption`, `store failure classification` |
 | UC-054 two store values, one backing | S3 | S3 | `TestTwoStoreValuesOverOneLog` |
-| UC-055 a store whose lifetime is one request | S3 + S4 (`Bind` is O(1)) | S4 | `TestBothDoorsCheckTheStore` |
+| UC-055 a store whose lifetime is one request | S3 + S4 (`Bind` is O(1)) | S4 | `TestAStoreIsBuiltPerRequestOverALogThatOutlivesIt`, `TestABindInterrogatesNoCodecAndMutatesNoDeclaration` |
 | UC-056 a payload its own codec cannot encode | S2 | S2 | `TestEveryMalformedDeclarationPanicsAndTryDefineReturnsIt` |
-| UC-057 cancellation during an append, two windows | S3 (the store's half) + S4 (the surfacing) + S5 (`cancellation`) | S5 | `TestAContextCauseNeverTravelsThroughARefusal`, `cancellation` |
+| UC-057 cancellation during an append, two windows | S3 (the store's half) + S4 (the surfacing) + S5 (`cancellation`) | S5 | `TestACancellationTravelsAsItselfFromEveryDoorTheStoreOperates`, `TestAContextCauseNeverTravelsThroughARefusal`, `cancellation` |
 | UC-058 one append, two identical changes | S4 | S4 | `TestOneAppendCarriesTwoIdenticalChanges` |
 | UC-059 two aggregates, one family | S4 (`Bind`) + S5 | S5 | `binding` |
 | UC-060 the backend fails an append | S1 (classification) + S4 (surfacing) + S5 | S5 | `store failure classification`, `refusal classes` |
@@ -3012,40 +4670,40 @@ proves it.
 | INV | Section | Checkpoint | Proved by |
 |---|---|---|---|
 | INV-001 history is append-only | S1 (method inventory) + S5 | S5 | `TestTheStoreSeamHasEightMethodsAndNoneMutatesOrQueries`, `dense versions` |
-| INV-002 admission only at the observed version | S3 + S5 (`expected version`) | S5 | `expected version` |
-| INV-003 one append is one atomic unit | S3 + S5 | S5 | `expected version`, `transactions` |
-| INV-004 folds and upcasters are pure | S2 | S2 | `TestAChangeRetainsNoApplicationValue`, `TestAReferenceKindStateFoldsWithoutAliasing` |
+| INV-002 admission only at the observed version | S3 + S5 (`expected version`) | S5 | `TestAnAppendIsAdmittedOnlyAtTheVersionItWasDecidedAt`, `expected version` |
+| INV-003 one append is one atomic unit | S3 (admission, and each record's own identity) + S5 | S5 | `TestAnAppendIsAdmittedOnlyAtTheVersionItWasDecidedAt`, `TestAnEnvelopeCarriesTheTypeAndRevisionOfTheRecordItWasWrittenFrom`, `expected version`, `transactions` |
+| INV-004 folds and upcasters are pure | S2 | S2 | `TestAFoldIsPureOverTheStateItIsGiven`, `TestAChangeRetainsNoApplicationValue`, `TestAReferenceKindStateFoldsWithoutAliasing` |
 | INV-005 wire identity declared; the key's rendering frozen | S1 (the frozen rendering, byte for byte) + S2 (the declared identifiers) | S1 | `TestComposeRendersTheFrozenKey`, `FuzzComposeRendersAKeyThatIsLegalAndReversible`, `TestADeclaration` |
-| INV-006 no partially rehydrated state from `Load` | S4 | S4 | `TestALoadThatFailsMidStreamReturnsNothing` |
+| INV-006 no partially rehydrated state from `Load` | S4 | S4 | `TestALoadThatFailsMidStreamReturnsNothing`, `TestEveryHistoryClassRefusalIsRaisedByTheThingItNames`, `FuzzALoadFoldsAStoredStreamOrRefusesItWhole` |
 | INV-007 a conflict is never retried by the framework | S4 (a recording store) + S6 (the AST walk) | S6 | `TestOneLoadAndOneAppendMakeExactlyTheStoreCallsTheContractNames`, `TestTheKernelNeverIssuesTransactionControlAndNeverRetries` |
 | INV-008 full replay is the only authority | S4 | S4 | `TestAStreamWithHistoryFoldsToItsCurrentState` |
-| INV-009 dense versions, sparse positions, no clock ordering | S3 + S5 | S5 | `dense versions`, `global order` |
+| INV-009 dense versions, sparse positions, no clock ordering | S3 + S5 | S5 | `TestVersionsAreDenseAndPositionsAscendWhateverTheClockSays`, `TestManyWritersLeaveOneDenseHistoryAndAMonotoneLog`, `dense versions`, `global order` |
 | INV-010 a revision is derived, never typed | S2 (`Revisions()`) | S2 | `TestADeclaration` |
 | INV-011 no identity, payload, version, position, key or cursor becomes a default field | S1 (message table) + S6 (source check) | S6 | `TestEveryRenderingNamesAClassAndNeverAValue`, `TestNoRefusalRendersAnIdentityAPayloadAKeyOrACursor` |
 | INV-012 event history is not a CRUD collection | S1 (method inventory) | S1 | `TestTheStoreSeamHasEightMethodsAndNoneMutatesOrQueries` |
-| INV-013 no package-level mutable state, no constructor starts anything | S3 (obeyed) + S6 (the AST checks) | S6 | `TestNoPackageLevelStateIsEverMutated`, `TestMerelyImportingTheEventExtensionStartsNothing` |
-| INV-014 no start-up migrates, creates or discovers | S3 (by construction) | S3 | `TestTwoStoreValuesOverOneLog` |
+| INV-013 no package-level mutable state, no constructor starts anything | S3 (obeyed) + S6 (the AST checks) | S6 | `TestAStoreIsBuiltPerRequestOverALogThatOutlivesIt`, `TestNoPackageLevelStateIsEverMutated`, `TestMerelyImportingTheEventExtensionStartsNothing` |
+| INV-014 no start-up migrates, creates or discovers | S3 (by construction) | S3 | `TestTwoStoreValuesOverOneLog`, `TestAStoreIsBuiltPerRequestOverALogThatOutlivesIt` |
 | INV-015 an at-token is minted, never manufactured | S4 + `testdata/crossings` | S4 | `TestAForgedTokenIsRefusedBeforeAnyStatement`, `TestTheCrossingsThatMustNotCompile` |
 | INV-016 store identity is the backing; `Equal`, never `==` | S1 | S1 | `TestABackingAndAnAuthorityAreComparedAndNeverIdentical` |
-| INV-017 a fold cannot fail; only an upcaster may refuse | S2 + S4 | S4 | `TestAnUpcasterMayRefuseAndAFoldMayNot`, `TestAFoldPanicUnwindsOutOfLoad`, `TestAPanickingCodecBecomesTheRefusalItsErrorWouldHaveBeen` |
+| INV-017 a fold cannot fail; only an upcaster may refuse | S2 + S4 | S4 | `TestAnUpcasterMayRefuseAndAFoldMayNot`, `TestACodecPanicBecomesThatMethodsOwnRefusal`, `TestAFoldPanicUnwindsOutOfLoad`, `TestAPanickingCodecBecomesTheRefusalItsErrorWouldHaveBeen` |
 | INV-018 the store never sees a Go type; who applies which bound (C4) | S1 (the seam's values carry bytes and no Go type) + S4 (the verification) | S4 | `TestTheSeamsValuesAreDefinedTypesWithTheDeclaredFields`, `TestAnOverLongPageIsRefused`, `TestAMisPagedStreamIsRefusedBeforeItIsFolded` |
 | INV-019 a second store costs zero diffs to `event/` | S4 (the caller half) + S5 (**the proof**) + S6 (the regenerated baseline, a report and not a gate) | S5 | `TestATrivialStoreNeedsNoInternalAccess` |
 | INV-020 one aggregate's value is not usable with another, and the scope | S2 (compile) + S4 (runtime) | S4 | `TestTheCrossingsThatMustNotCompile`, `TestFoldRefusesAnotherInstance`, `TestAppendRefusesInItsStatedOrder` |
-| INV-021 nothing held and nothing handed out share mutable memory | S1 (clauses) + S2 (1, 2, 8) + S3 (4, 7) + S5 (3, 6 and `payload ownership`) | S5 | `TestAChangeRetainsNoApplicationValue`, `TestAPageIsTheCallersIncludingItsCapacity`, `payload ownership` |
-| INV-022 every bound declared, reachable, unescapable; two doors | S4 | S4 | `TestBothDoorsCheckTheStore`, `TestAStoreWhoseProductExceedsTheResidentCeilingIsRefused`, `TestAnAppendWhoseActualBytesExceedTheResidentCeilingIsRefused` |
+| INV-021 nothing held and nothing handed out share mutable memory | S1 (clauses) + S2 (1, 2, 8) + S3 (4, 7, committed and staged alike) + S5 (3, 6 and `payload ownership`) | S5 | `TestAChangeRetainsNoApplicationValue`, `FuzzADecidedFactIsFrozenAgainstItsCallersBuffer`, `TestAPageIsTheCallersIncludingItsCapacity`, `TestAPageOfStagedRecordsIsTheCallersToo`, `TestNothingACallerHandsToAnAppendIsRetainedOrRewritten`, `FuzzAPayloadIsHandedBackByteForByteAndBelongsToWhoeverReadsIt`, `payload ownership` |
+| INV-022 every bound declared, reachable, unescapable; two doors | S3 (the resident ceiling counted in envelopes, where a store derives its page and the kernel checks it again) + S4 | S4 | `TestTheResidentPageIsTheCeilingCountedInEnvelopes`, `TestBothDoorsCheckTheStore`, `TestAStoreWhoseProductExceedsTheResidentCeilingIsRefused`, `TestAnAppendWhoseActualBytesExceedTheResidentCeilingIsRefused` |
 | INV-023 encodability is the codec's question, answered before `main` | S2 | S2 | `TestEveryMalformedDeclarationPanicsAndTryDefineReturnsIt` |
 | INV-024 the refusal vocabulary is a partition | S1 | S1 | `TestTheRefusalVocabularyIsAPartition`, `TestADeclaredWrapIsReachableByErrorsAsAndACauseIsNot` |
 | INV-025 a refusal names identifiers, never data | S1 | S1 | `TestEveryRenderingNamesAClassAndNeverAValue` |
 | INV-026 a conflict carries no version | S1 + S5 | S5 | `TestEveryRenderingNamesAClassAndNeverAValue`, `refusal classes` |
 | INV-027 the framework never opens, commits or rolls back a transaction | S1 (the seam declares none) + S4 (a recording store) + S6 (the AST walk) | S6 | `TestTheStoreSeamHasEightMethodsAndNoneMutatesOrQueries`, `TestOneLoadAndOneAppendMakeExactlyTheStoreCallsTheContractNames`, `TestTheKernelNeverIssuesTransactionControlAndNeverRetries` |
-| INV-028 an authority **is** its transaction's identity | S1 + S4 | S4 | `TestABackingAndAnAuthorityAreComparedAndNeverIdentical`, `TestRepoAuthorityIsTheComparisonTwoSubsystemsUse` |
+| INV-028 an authority **is** its transaction's identity | S1 + S3 (two live transactions on one store are not `Same`) + S4 | S4 | `TestABackingAndAnAuthorityAreComparedAndNeverIdentical`, `TestASecondAppendInOneTransactionIsAdmitted`, `TestRepoAuthorityIsTheComparisonTwoSubsystemsUse` |
 | INV-029 cancellation identity preserved, uncertainty outranks it (C3) | S1 + S5 (`cancellation`) | S5 | `TestAContextCauseNeverTravelsThroughARefusal`, `cancellation` |
 | INV-030 every question is answered by the exact outer value | S1 (all required) + S5 (decorated runs) | S5 | `refusal classes`, `store failure classification` |
 | INV-031 an empty append touches no store | S4 | S4 | `TestAnEmptyAppendChecksTheKeyAndNothingElse` |
 | INV-032 close is idempotent and decides nothing | S3 + S5 (`lifecycle`) | S5 | `TestCloseIsIdempotentAndDecidesNothing`, `lifecycle` |
-| INV-033 a stream is (family, key) byte-exact; injectivity is the application's | S1 (`Compose`'s own two properties, and the rendering they hold over) + S2 + S5 (`stream identity`) | S5 | `FuzzComposeRendersAKeyThatIsLegalAndReversible`, `TestComposeRendersTheFrozenKey`, `TestADeclaration`, `stream identity` |
+| INV-033 a stream is (family, key) byte-exact; injectivity is the application's | S1 (`Compose`'s own two properties, and the rendering they hold over) + S2 + S3 (the store keys its history by both halves) + S5 (`stream identity`) | S5 | `FuzzComposeRendersAKeyThatIsLegalAndReversible`, `TestComposeRendersTheFrozenKey`, `TestADeclaration`, `TestTwoFamiliesSharingOneKeyAreTwoStreams`, `stream identity` |
 | INV-034 the two reads describe one set | S5 (`conservation`) | S5 | `conservation` |
-| INV-035 a returned resume point is safe to persist | S3 + S5 (`resumption`) | S5 | `resumption` |
+| INV-035 a returned resume point is safe to persist | S3 + S5 (`resumption`) | S5 | `TestACursorIsTheBackingsAndResumesThroughAnyStoreValueOverIt`, `FuzzACursorEitherResumesInsideTheLogOrIsRefused`, `resumption` |
 | INV-036 a walk tiles; delivery is at least once | S5 + S6 (the doc arm) | S6 | `global paging`, `TestNoDocPromisesExactlyOnceDelivery` |
 | INV-037 **WITHDRAWN** — resolves to INV-040 | S4 | S4 | — |
 | INV-038 what is safe to copy and to share, plus C9's row | S1 (table, and the inert rows under `-race`) + S5 (`concurrency`) | S5 | `TestTheKernelsValuesAnswerTheSameFromManyGoroutines`, `concurrency` |
@@ -3069,7 +4727,7 @@ proves it.
 | C6 GAP-105 the inbound enumeration is scoped and the remainder named | S1 (clause) + S6 (the module page's table) | S6 | `TestEverySymbolTheDocsCiteIsDeclaredWhereTheDocSaysItIs` |
 | C7 GAP-106 a hand-out is the recipient's including its capacity | S3 (obeyed) + S5 (the one-byte `append` case) | S5 | `TestAPageIsTheCallersIncludingItsCapacity`, `payload ownership` |
 | C8 GAP-107 one defect count, one inventory, computed by a test | S5 | S5 | `TestTheSuiteStillDetectsEveryDefectItWasBuiltToDetect` |
-| C9 GAP-108 codec, mapper, fold, upcaster and clock concurrency | S1, S2, S3 (clauses) + S5 (the policed half) | S5 | `concurrency` |
+| C9 GAP-108 codec, mapper, fold, upcaster and clock concurrency | S1, S2, S3 (clauses) + S5 (the policed half) | S5 | `TestOneDeclarationIsDecidedAndFoldedFromManyGoroutines`, `concurrency` |
 | C10 GAP-109 six residuals | S1 (3, 5), S2 (1, 2), S4 (3, 4, 5), S5 (2, 4), S6 (6) | S6 | `TestTheSealRefusesALateFact` (1), `TestAReferenceKindStateFoldsWithoutAliasing` and `lifecycle` (2, 4), `TestAppendRefusesInItsStatedOrder` (3), `TestRepoAuthorityIsTheComparisonTwoSubsystemsUse` (5), `TestNoDocPromisesExactlyOnceDelivery` (6) |
 
 Every UC-\*, INV-\* and carried item appears exactly once above.
@@ -3144,31 +4802,43 @@ mutable state.
 | `event/outcome.go` | 9 | 0 | 0 | 80 |
 | `event/errors.go` | 25 — 24 sentinels + `CauseOf` (GAP-135) | 2 (`crud`, `errs`) | 0 | 320 |
 | `event/store.go` | 11 | 0 | 0 | 180 |
-| `event/codec.go` | 2 | 0 | 0 | 260 |
-| `event/chain.go` | 3 | 0 | 1 (a `Codec`) | 220 |
-| `event/aggregate.go` | 4 | 0 | 0 | 260 |
-| `event/fact.go` | 3 | 0 | 0 | 280 |
-| `event/change.go` | 1 | 0 | 0 | 90 |
-| `event/seal.go` | 0 | 0 | 0 | 60 |
-| `event/token.go` | 2 | 0 | 0 | 110 |
-| `event/binding.go` | 3 | 0 | 1 (a `Store`) | 150 |
-| `event/repo.go` | 1 + 4 methods | 0 | 1 (a `Store`) | 330 |
-| `event/marker.go` | 0 | 0 | 0 | 80 |
-| `event/reader.go` | 3 | 0 | 1 (a `Log`) | 170 |
-| `event/eventmemory/log.go` | 3 | 1 (`event`) | 0 | 140 |
-| `event/eventmemory/store.go` | 3 | 1 | 0 | 200 |
-| `event/eventmemory/append.go` | 0 | 1 | 0 | 190 |
-| `event/eventmemory/read.go` | 0 | 1 | 0 | 170 |
-| `event/eventmemory/transaction.go` | 2 | 1 | 0 | 230 |
-| `event/eventmemory/cursor.go` | 0 | 1 | 0 | 90 |
-| `event/eventtest/suite.go` | 3 | 1 | 0 | 300 |
-| `event/eventtest/inventory.go` | 0 | 1 | 0 | 120 |
-| `event/eventtest/sections_*.go` (5 files) | 0 | 1 | 0 | ≤ 380 each |
-| `event/eventtest/defects.go` | 0 | 1 | 0 | 360 |
-| `event/eventtest/proxies.go` | 3 | 1 | 0 | 150 |
-| `event/eventtest/report.go` | 0 | 1 | 0 | 90 |
+| `event/codec.go` | 2 | 0 | 0 | 260 → **103 actual** |
+| `event/encodable.go` | 0 | 0 | 0 | — → **290 actual** (round 2's split of `codec.go`) |
+| `event/chain.go` | 3 | 0 | 1 (a `Codec`) | 220 → **106 actual** |
+| `event/aggregate.go` | 4 | 0 | 0 | 260 → **112 actual** |
+| `event/fact.go` | 3 | 0 | 0 | 280 → **312 actual** — over the estimate by the two value walks `RoundTrip`'s two properties are now asked with, and 88 under the threshold |
+| `event/change.go` | 1 | 0 | 0 | 90 → **44 actual** |
+| `event/seal.go` | 0 | 0 | 0 | 60 → **54 actual** |
+| `event/token.go` | 2 + 8 methods | 0 | 0 | 110 → **47 actual** |
+| `event/binding.go` | 3 | 0 | 1 (a `Store`) | 150 → **134 actual** |
+| `event/repo.go` | 1 + 4 methods | 0 | 1 (a `Store`) | 330 → **261 actual** |
+| `event/marker.go` | 0 | 0 | 0 | 80 → **40 actual** |
+| `event/reader.go` | 3 + 3 methods | 0 | 1 (a `Log`) | 170 → **77 actual** |
+| `event/eventmemory/log.go` | 3 | 1 (`event`) | 0 | 140 → **90 actual** |
+| `event/eventmemory/store.go` | 3 | 1 | 0 | 200 → **118 actual** |
+| `event/eventmemory/append.go` | 0 | 1 | 0 | 190 → **64 actual** |
+| `event/eventmemory/read.go` | 0 | 1 | 0 | 170 → **84 actual** |
+| `event/eventmemory/transaction.go` | 2 | 1 | 0 | 230 → **143 actual** |
+| `event/eventmemory/cursor.go` | 0 | 1 | 0 | 90 → **42 actual** |
+| `event/eventtest/suite.go` | 3 | 1 | 0 | 300 → **233 actual** after round 2's split; `Factory` carries **7** fields after round 3's `Unparsable`, at `architecture.md`'s per-class threshold and not over it |
+| `event/eventtest/probe.go` | 0 | 1 | 0 | — → **292 actual** (round 2's split of `suite.go`, plus round 3's constancy reading) |
+| `event/eventtest/inventory.go` | 0 | 1 | 0 | 120 → **74 actual** |
+| `event/eventtest/sections_*.go` (6 files after round 3) | 0 | 1 | 0 | ≤ 380 each → **364 / 354 / 306 / 251 / 238 / 127 actual**, recounted with `wc -l`. Round 3's cursor clause took `sections_read.go` to 421, over the 400 threshold, so `resumption` and the three helpers only it uses moved to `sections_resumption.go` |
+| `event/eventtest/defects.go` | 0 | 1 | 0 | 360 → **335 actual** (18 defects after round 3) |
+| `event/eventtest/proxies.go` | 3 | 1 | 0 | 150 → **92 actual** |
+| `event/eventtest/report.go` | 0 | 1 | 0 | 90 → **66 actual** |
+| `event/eventtest/declaration.go` · `stores.go` | 0 | 1 | 0 | — → **103 / 116 actual** (the two files S5 added) |
 
-**No file breaches 400 lines**; `event/repo.go` at ~330,
+**No file breaches 400 lines**, and one had to be split to keep that true:
+round 2's work took `event/eventtest/suite.go` to **473**, so the probe and every
+call it makes on a store moved to `probe.go` and the two are 224 and 259.
+`sections_read.go` at **399** is one line under and is the next to split.
+`event/encodable.go` is the largest shipped in the kernel
+at **290**, and S4's five files came in at 559 against an estimate of 840. `codec.go` reached **393** once GAP-178's promoted-name walk and
+GAP-179's map-key route were in it — seven lines under the threshold with
+GAP-176's repair still owed — and the walk moved into a file named for the
+question it answers, which is *what a payload may be* rather than *what the codec
+seam is*. `event/repo.go` at ~330,
 `event/eventtest/defects.go` at ~360 and `event/eventtest/sections_*.go` at ~380
 are the three to watch, and the section files split further by name rather than
 by size if they grow.
@@ -3198,6 +4868,7 @@ interface this phase defines rather than a vendor's.
 | Global mutable state | **0** | Enforced by S6's AST check over §INV-013's table, which targets **mutation** rather than kind — so the 24 sentinels (`errors.New`, never reassigned) and the `*Aggregate`/`*Fact` declaration idiom pass, and any assignment, index-assignment, `delete`, `append` or `sync` type fails. A check that must be suppressed on its first run is how a structural check becomes decorative (GAP-63) |
 | Import cycles | **0** | `event` → `crud`, `errs`; `eventmemory` → `event`; `eventtest` → `event`. `crud` and `errs` name neither. Proved by `go list -deps` in S1's and S6's checkpoints |
 | Modules edited for one feature, threshold 3 | 3 in S6 (`scripts/`, `docs/`, `Makefile`) | Structural checks and docs are the change's own obligations, not a feature spread |
+| Fields per class **7** · lines per class **200** · parameters **4** · functions over 50 lines | `event/eventtest`'s `probe`: **7 fields**, ~1 200 lines across **55** methods in eight files, **0** of **157** functions over four parameters, five functions of 50–62 lines (`payloadOwnershipSection` 62, `refusalClassesSection` 60, `streamIdentitySection` 58, `concurrencySection` 55, `bindingSection` 50 after round 3's constancy reading) | **The lines-per-class half is not justified and is carried as debt** (round 1, GAP-10); the other three are closed. Every one of the 55 methods is unexported and on nothing's surface, no public contract turns on the shape, and phase 2 adds no section, so the cost lands the first time somebody writes a twenty-first. Round 1 took the parameter breaches from four to two by moving a case into a `failureCase` value and a door into a function (GAP-4, GAP-9); round 2 took them to **zero** — `wroteWhatItSaid` 7 → 2 through a `fixture` value and `from` 5 → 3 through a `walking` value (GAP-22) — and the field count from 8 to **7** by grouping what the run learns at the door into one embedded `opening`, which is also what let every section derive its counts from `Limits()` (GAP-17). Counted with `go/ast` over the package, not eyeballed. The split — fixture builder, store façade, verdict sink — is in `## Debt` |
 
 ### The one-sentence responsibility of each new package
 
@@ -3463,6 +5134,80 @@ section nobody will look again:
   non-test file and the gate check's message stops claiming a behavioural
   observation it did not make. `[low][deferred]`
 
+**From S5's implementation review (round 1), the findings it graded `[deferred]`:**
+
+- **GAP-10 — `event/eventtest`'s `probe` is one object with twenty entry points.**
+  **7 fields** after round 2, 55 unexported methods across eight files, ~1 200 lines of
+  type-plus-methods against `architecture.md`'s 200, and **no** method over four
+  parameters. It still matches one distributed-god-object signal: a mutable
+  `state` blob (`unmet`, `broke`) written from seven files. It changes no
+  public contract — every method is unexported, `Certify` and the section
+  inventory are `export_test.go`'s — and phase 2 adds no section, so nothing is
+  blocked. The shape when it is paid: the **fixture builder** (`store`,
+  `declared`, `bind`, `open`, `account`, `streamOf`, `keyAtCap`, `tail`), the
+  **store façade** (`load`, `append`, `batched`, `readStream`, `drain`, `readAll`,
+  `walkLog`, `advanced`) and the **verdict sink** (`refuse`, `unable`, `verdict`,
+  `walk`, `context`) as three values with three sentences. Round 1 took the
+  parameter breaches from four to two (GAP-4, GAP-9); round 2 took them to zero
+  and the fields from eight to seven (GAP-17, GAP-22), and split the file in two
+  to stay under 400 lines. What is left is the lines-per-class figure and the
+  method count, which the three-way split is what pays. `[medium][deferred]`
+- **GAP-15 — `cancellation`'s uncertainty window is driven with one context
+  sentinel.** `stores.go`'s `unconfirming` always answers
+  `Failure(Unconfirmed, context.Canceled)`, so the `DeadlineExceeded` arm of the
+  assertion beside it can never be true. The bare-cancellation window *is* driven
+  with both. GAP-135 widened the suppression to the whole cause, so both sentinels
+  go through one branch of `event/errors.go` and the untested arm cannot differ
+  from the tested one — a coverage residue rather than a hole. Closing it is a
+  second `unconfirming` value, or a note on the assertion saying which arm is
+  redundant. `[low][deferred]`
+- **GAP-16 — three small duplications and two dead struct fields.**
+  (a) `defects_test.go`'s `factoriesFor` dispatches the two store-shaped defects on
+  their **prose names**, where the `defect` row could carry what builds its store;
+  it fails loudly (`t.Fatalf`) when a name stops matching, so it cannot silently
+  drift. (b) `report.go`'s `certified` and `export_test.go`'s `Certified` are two
+  bodies for one question. (c) `suite.go`'s `missing` table gives the `Persistence`
+  and `MonotoneVisibility` rows a `hook` of `""` and an `absent` of `false`, so the
+  `Supported && absent` branch is unreachable for them and the table's shape says
+  it rather than its zero values. None can produce a wrong verdict.
+  `[low][deferred]`
+
+**From S5's implementation review (round 3), the findings it graded
+`[deferred]`:**
+
+- **GAP-27 — `payload ownership` writes `max(StreamPage, MaxRead) + 1` events
+  with no ceiling.** The count is derived rather than fitted and is the genuine
+  minimum for the property — a read must answer a page and not a history — but a
+  store publishing `StreamPage` 4 096 and `MaxBatch` 1, both legal, is asked for
+  4 097 appends inside one `sectionWindow`, which at a 5 ms network append is the
+  whole window. The remedy already exists and is the store's (`Factory.Window`);
+  narrowing the count is impossible here because the property under test is what
+  the **store's own** slice does. What is missing is that nobody is told, and two
+  of the three places they should be told now say it: the derivation in
+  `sections_ownership.go` states the cost and names `Factory.Window`, and this row
+  is what **phase 2 reads before it meets it**. What is left is the third — a
+  refusal that names `Factory.Window` when the section's own writes are what ran
+  out of the window, rather than reporting the append. `[medium][deferred]`
+- **GAP-30 — `Factory.Tail`'s answer is trusted.** A hook that answers a cursor
+  minted over another value's backing makes the first `readAll` refuse with the
+  store's name on it; one answering `""` degrades silently to the full scan the
+  hook exists to avoid. It is a factory defect and no in-tree factory has it, but
+  `Tail` is a hook phase 2 must implement and it is the one whose wrong answer is
+  invisible. `[low][deferred]`
+- **GAP-31 — the suite's own key-width reserve is enforced at one door and
+  bypassed at seven.** Nothing is wrong today: the whole suite at `MaxKey` 21,
+  one byte above its own floor, certifies the same twenty verdicts, because the
+  widest directly-built suffix renders to 6 bytes against a reserve of 8. The trap
+  is the next case added there. `[low][deferred]`
+- **GAP-32 — one published number with two spellings, and a value object read one
+  field deep.** `drain` reads `store.Limits().StreamPage` where every other site
+  reads `this.limits`; `injectedAtRead` uses one of `fixture`'s six fields.
+  Neither can produce a wrong verdict. `[low][deferred]`
+- **GAP-33's second half — `persistentFactory`'s captured `shared`** is read and
+  written from `New` with nothing around it. The first half is closed:
+  `stagingTx.done` is an `atomic.Bool` whose transition is a `CompareAndSwap`
+  inside the lock that publishes. `[low][deferred]`
+
 **From this plan's own reconciliation with the tree:**
 
 - **`jobs/queue.go:808:normalizeSenderError` reads its classification with a bare
@@ -3656,3 +5401,369 @@ their reasons):
   trap and not a correctness hole. One clause on `ReadAll`, cheapest written with
   the `resumption` and `global paging` sections in S5, and `resumption` starts a
   read from `Cursor("")` explicitly so the answer is certified. `[low][deferred]`
+
+**From the S2 implementation review, round 1** (GAP-170 to GAP-177): GAP-170,
+GAP-171, GAP-172, GAP-173 and GAP-174 were closed in the section and are not
+carried. These three were graded `[deferred]` and are here because after S2
+nobody will look again:
+
+- **GAP-175 — `Fold` returns a half-applied state through the same signature as
+  an untouched one.** Causes 1–3 return the argument untouched; cause 4 — a
+  decode or upcast failure mid-list — returns the state as of the last change
+  applied, and for a map, slice or pointer state the argument the caller passed
+  has already been written through by the folds that ran. The ordinary Go reflex
+  on an error (`if err != nil { … }` and keep using the variable you already had)
+  therefore keeps a half-rehydrated aggregate. **Kept, deliberately, and the
+  argument is §UC-041's own:** an all-or-nothing `Fold` means decoding the whole
+  list before applying any of it, which holds *n* decoded application values
+  resident at once — the one thing §INV-042 and the whole `Change` design exist
+  to prevent — and for a reference-kind state it is not achievable at all,
+  because the caller's own map is what the fold writes into and the kernel may
+  not copy it. What is owed is not a repair but a **statement**: S6's
+  `docs/modules/en/event.md` must say which of the two a caller gets and that the
+  argument is unusable after any error, beside `Fold`'s own comment, which says
+  it today and is the only place that does. The trigger is narrow in S2 — a
+  `Change` from `Fact.New` always carries the current revision, whose `decode`
+  runs no upcaster — and widens at S4's `Load`, which is where the reload-is-the-
+  authority rule earns its keep. `[medium][deferred]`
+- **GAP-176 — a type graph over the walk's node or edge bound is refused as "the
+  codec cannot encode its own reader type", and the depth bound is unreachable.**
+  Two things. (1) `depth > codecGraphDepth` cannot fire: `visit` returns early
+  for a seen position, so reaching depth 1025 needs 1025 distinct positions and
+  `len(this.seen) >= codecGraphNodes` fires first. (2) exhausting the node or
+  edge bound takes `ErrCodecType` → `ErrDeclaration` and therefore **panics at
+  package initialisation** with a diagnosis that names the wrong thing; `jobs`
+  answers `ErrTooLarge` for the same condition (`jobs/json.go:1067-1070`). The
+  bounds are `jobs`'s own numbers and are not in question — only the
+  classification and the dead branch, and the shape needed to reach either is a
+  generated model with more than 1024 distinct positions or 4096 field edges
+  reachable from one payload. Deferred because no contract depends on it and no
+  data is at risk; the repair is a bound refusal that names the bound and the
+  remedy, and either deleting the depth branch or adding a case that reaches it.
+  Owner: **S6**, with the structural checks. `[low][deferred]`
+- **GAP-177 — a recovered codec or upcaster panic discards the panic value.**
+  `encodeWith`, `decodeWith` and `upcastTo` each build their refusal with a `nil`
+  cause, so `CauseOf` answers `nil` and no message, type or stack of the
+  panicking value survives; a store operator holding an `ErrPayload` from a
+  hand-rolled binary codec that panicked on a truncated buffer has the sentinel
+  and nothing else, and `port.Logger(ctx)` is not reachable from those call
+  sites. §INV-025 forbids the text **travelling in the rendered refusal**; it does
+  not require the cause to be destroyed, and `refusal.cause` exists precisely so
+  a cause can be carried without being rendered. **Not fixed unasked**, because
+  `ErrUpcast` wrapping nothing is an explicit plan decision on
+  `jobs/upcast.go:71`'s shape and `TestAnUpcasterMayRefuseAndAFoldMayNot` asserts
+  `CauseOf(err) != nil` is false for a panicking upcaster — so changing it is a
+  contract question for the owner, not a defect. The two codec doors are
+  separable from the upcaster and could carry the recovered value while
+  `ErrUpcast` keeps its rule; that is the shape to propose. Owner: **S6**, with
+  the ADRs. `[low][deferred]`
+
+**From the S2 implementation review, round 2** (GAP-178 to GAP-184): GAP-178,
+GAP-179, GAP-180 and GAP-181 were closed in the section and are not carried.
+These three were graded `[deferred]`, and they are here because after S2 nobody
+will look again:
+
+- **GAP-182 — a change minted on one aggregate folds through a different
+  aggregate of the same family and state type.** `Change.decidedFor` compares
+  `Stream{Family, Key}` and nothing else, and `apply` is captured from the *fact*
+  at `Fact.New` rather than looked up in the folding aggregate's own table — so
+  two declarations over one family and one state type in one process fold each
+  other's facts, running a fold the second aggregate never declared. It is the
+  third crossing, and the only one the compiler does not close: the state-type
+  and identity-type crossings are build-failure fixtures. **Deferred and not
+  dropped**, because the repair belongs beside S4's `Bind` check 4 (*the family
+  is not already bound through this `Binding` to a different declaration →
+  `ErrFamily`*), which closes the bound path; the store-free `Fold` door
+  (§UC-041) has no `Binding` and therefore no such check, and the two doors must
+  not answer differently. The shape needed is a wiring mistake rather than an
+  ordinary call, and in S2 nothing is written. Owner: **S4**, with `ErrFamily`.
+  `[medium][deferred]`
+- **GAP-183 — `reusesItsBuffer`'s second arm accuses a non-deterministic codec of
+  aliasing.** Round 2's repair made the *first* arm exact — two answers compared
+  for a shared slice or map, which does not re-encode anything — and kept the
+  zero-value disturbance behind it, because that is what reaches reuse through a
+  `string` leaf whose address `reflect` will not give up without `unsafe`. The
+  second arm still assumes `Encode` is a function of its argument, which
+  protobuf's Go implementation is explicitly not for a message with a map field;
+  such a codec answers `before != after` for a value it never aliased and is told
+  it reuses its decode buffer. `RoundTrip` is a declaration-time diagnostic, it
+  fails closed, and the cost is a wrong diagnosis rather than data. **The
+  symmetric false positive is now the first arm's**: a codec that hands out a
+  slice of a table its package keeps for ever — an interned constant, a shared
+  empty payload — is two equal addresses and is not the reuse the contract
+  forbids. Both are one question: establish that `Encode` is deterministic first,
+  and name non-determinism as its own refusal. Owner: **S6**, with the module
+  page, which owes the sentence either way. `[low][deferred]`
+- **GAP-184 — `ownMethods` refuses a working `MarshalText`/`UnmarshalJSON`
+  pair.** The first arm refuses a type whose write route and read route differ in
+  either direction, so `MarshalText` on the value receiver paired with
+  `UnmarshalJSON` on the pointer receiver is refused as *"writes itself through
+  MarshalText and declares no UnmarshalText"* — measured, that pair encodes
+  `{"m":"7"}` and decodes back correctly, because the text output is a JSON
+  string and `UnmarshalJSON` receives it. It fails closed, at declaration, so
+  nothing is at risk; it costs a consumer a workaround for a pair that works.
+  Deferred because loosening the arm is a change to what the walk asks, which
+  GAP-178 and GAP-179 have just settled, and because the crossing pair is rarer
+  than either of the asymmetries the arm exists for. Owner: **S6**.
+  The finding's other half — two comments naming an `eventtest` package no tree
+  provides — was closed in the section instead: both now name the conformance
+  suite and say it has not arrived. `[low][deferred]`
+
+**Two shapes round 2's repairs surfaced and did not close**, recorded so the next
+reader does not have to find them again. Neither is a review finding; both were
+measured against this checkout while GAP-178 was being repaired:
+
+- **A struct that embeds a type with its own JSON codec is written by that
+  codec, and its other fields are dropped.** `type Payload struct{ stamped;
+  Amount int }` promotes `stamped`'s `MarshalJSON` and `UnmarshalJSON` to
+  `Payload`, so `ownMethods` finds a type whose write and read routes agree,
+  stops descending — correctly, by its own rule — and `Amount` is never written:
+  measured `{"Meta":"stamped"}`, `Amount` back as `0`, no refusal at any door.
+  It is GAP-178's class reached through a promoted *method* rather than a
+  promoted *field*, and it is not closed here because `reflect` offers no way to
+  ask whether a method is declared on the type or promoted into it; the
+  distinguishing question has to be reconstructed from the embedded fields, which
+  is a rule of its own and belongs beside a decision rather than inside a repair.
+  `Fact.RoundTrip` does catch it, which is why it is `[low]` rather than
+  critical: as the fidelity refusal where the promoted codec's output varies with
+  its input, and as `ErrSample` — *encodes its sample exactly as its own zero
+  value* — where it does not, which is what the fixture above answers. Owner:
+  **S6**, with the ADRs. `[low][deferred]`
+- **An embedded pointer to an unexported struct type writes and does not read
+  back.** `type P struct{ *inner }` with `inner` carrying exported fields
+  encodes `{"X":5}` and decodes with *"cannot set embedded pointer to unexported
+  struct type"* — a poison pill of GAP-171's exact class, through a shape no arm
+  of the walk asks about. Not closed unasked: it is three lines in
+  `members.collect`, and it is exactly the kind of unrequested arm whose false
+  positive (the same embedding contributing no member at all) nobody would have
+  reviewed. Owner: **S6**. `[low][deferred]`
+
+**Both shapes above were raised as findings by round 3** — GAP-185 and GAP-187 —
+and both are **closed** in the section, in the spelling their close criteria
+asked for. They leave this list; the two paragraphs stay because they are the
+measurement the repair was written against.
+
+**From the S2 test review, round 1** (GAP-T20 to GAP-T33): GAP-T20 to GAP-T27 and
+GAP-T29 were closed in the section and are not carried. These five were graded
+`[deferred]`, and they are here because after S2 nobody will look again:
+
+- **GAP-T28 — §UC-052's own named control, a state holding a `time.Time`, is
+  absent.** The subtest reaches three of the seven shapes [SPEC] enumerates. The
+  property holds today *by construction* — the kernel walks no state type at all
+  — so nothing is broken; what is missing is the regression barrier against the
+  copier walk §UC-052 deleted being reintroduced, which is the reason the control
+  was written into the use case. Owner: **S4**, whose `Load` and `Bind` are the
+  first doors a state type crosses that could grow such a walk.
+  `[medium][deferred]`
+- **GAP-T30 — `Fold` with an empty change list is asserted by nothing**, so a
+  short-circuit that skips the key check survives. §UC-041's cause 1 states no
+  exception for an empty list, and the mirror property at the other door is a
+  planned S4 case (`TestAnEmptyAppendChecksTheKeyAndNothingElse`, §INV-031), so
+  the two doors would disagree. Owner: **S4**, beside that case, so the pair is
+  written once and reads as one rule. `[low][deferred]`
+- **GAP-T31 — the round-trip fidelity cases read the real clock.** Three
+  `time.Now()` calls construct the monotonic-reading and local-zone samples. Not
+  flaky in practice — `time.Time.Equal` ignores both and RFC3339Nano round-trips
+  losslessly, and `-count=5 -shuffle=on` found nothing — but the property under
+  test needs a *stated* instant rather than an incidental one. Owner: **S6**,
+  with the doc-and-surface pass. `[low][deferred]`
+- **GAP-T32 — the concurrency test never crosses an upcaster**, which C9's clause
+  names among the callbacks called from every request goroutine. A `Change`
+  always carries the current revision, so every concurrent decode goes through
+  the current link; four of C9's five callbacks are driven and the upcaster is
+  the fifth. Owner: **S5**, where C9 is checkpointed with the conformance suite's
+  own concurrency section. `[low][deferred]`
+- **GAP-T33 — a marker fact is on the accepted table and can never pass
+  `Fact.RoundTrip`.** The test half of GAP-190, and it moves with whatever that
+  decides: once a `struct{}` payload has an answer, one case drives the accepted
+  shape through the second door and asserts it. Owner: **S5**, with GAP-190 and
+  the `*testing.T` wrapper. `[low][deferred]`
+
+**From the S3 implementation review, round 1** (GAP-1 to GAP-12 of
+`EVENTSOURCE_P1_S3_GAPS.md`): GAP-1 to GAP-7, GAP-9 and GAP-10 were closed in the
+section — the six `[immediate]` ones because they are what the section is
+answerable for, and GAP-7, GAP-9 and GAP-10 because each was one line inside a
+file the closures were already rewriting. These three were deferred with their
+reasons:
+
+- **GAP-8 — an empty `AppendRequest` is admitted without checking `Expected`.**
+  `Append` short-circuits on `len(req.Records) == 0` before the version check, so
+  `Append(Expected: 999)` on a stream at version 1 answers nil, which reads as
+  *the stream was at 999*. Unreachable through the kernel — S4 short-circuits an
+  empty append before step 2 — but `Store` is directly callable and `eventtest`
+  may issue one. The fix is a sentence on `event/store.go`'s `Append`, not code:
+  either an empty batch decides nothing and a store may skip the check, or every
+  store must issue the check anyway, which costs `eventpg` a round trip for a
+  no-op the kernel never sends. **S5** owns it, because the suite is what would
+  otherwise encode whichever answer this store happens to give — and until it is
+  written down, no conformance case may issue an empty append. `[low][deferred]`
+- **GAP-11 — three zero-value behaviours a consumer cannot see from the type.**
+  A nil `Spec.Clock` becomes `time.Now`, every operational `int` at zero becomes a
+  default, and `Check` answers `ctx.Err()` before it answers closure. The plan's
+  contract block now states all three; what is left is the consumer-facing half,
+  `docs/modules/{en,ru}/event.md`, which the house comment rule keeps out of the
+  struct. Owner: **S6**. `[low][deferred]`
+- **GAP-12 — no documentation exists for a package that is complete.**
+  `grep -rln "eventmemory" docs/` is still zero files: no module page, no flow, no
+  reverse-index row, none of the five ADRs. Scheduled in **S6**, which names each
+  file; recorded here so the S3 gate does not read as evidence that `CLAUDE.md`'s
+  same-change obligation was met. `[medium][deferred]`
+
+**From the S3 test review, round 1** (GAP-T1 to GAP-T18 of
+`EVENTSOURCE_P1_S3_TEST_GAPS.md`): GAP-T1 to GAP-T8 — every `[immediate]` one,
+three `[critical]`, four `[high]` and one `[medium]` — were closed in the
+section, with nine mutations applied and killed. These ten were graded
+`[deferred]`, and each names the section that owns the assertion, because after
+S3 nobody will look at this package again:
+
+- **GAP-T9 — `Rollback`'s "reads no deadline" half is asserted nowhere**, though
+  `Commit`'s is: adding `ctx.Err()` to `Rollback` survives the suite. The hazard
+  is the one `transaction.go:77-80` and `doc.go:16-20` both state — a rollback
+  that refuses under the cancelled context of the request that is unwinding
+  leaves its claims held for the life of the process, and every later append to
+  those streams is a conflict that never clears. The code is correct today and
+  the fix is one assertion in an existing subtest. Owner: **S5**, whose
+  `transactions` section runs the same assertion against every store rather than
+  against this one. `[medium][deferred]`
+- **GAP-T10 — what position a staged envelope reads back at is asserted
+  nowhere**, so setting it to `log.position + 1` survives. `read.go:11-12`
+  decides it (a staged envelope carries none, because a position is assigned at
+  commit) and §S3's **Decides** paragraph names it among the nine. Narrow today:
+  §UC-053's cursor comes from `ReadAll`, which returns no staged envelope at all.
+  Owner: **S5**, because what a staged read answers is a store-contract question
+  every store must answer identically. `[medium][deferred]`
+- **GAP-T11 — the commit-time re-validation and `errStaleClaim` have no test and
+  can be deleted outright.** §S3 states plainly that `errStaleClaim` is
+  unreachable while the claim mechanism holds, which is the point of it: this
+  section therefore **records `revalidate` as an unreachable assertion and
+  "gut `revalidate` to `return nil`" as a known-surviving mutation**, rather than
+  as an untested branch. What is left is the reachable arm — a defect fixture
+  that narrows the claim and watches the net fire. Owner: **S5**, with the
+  suite's defect fixtures. `[medium][deferred]`
+- **GAP-T12 — the 200-round transaction race asserts nothing about how often
+  either arm was refused**, so every round could return `nil` from both the
+  append and the read and the test would pass. Its real content — `-race` plus
+  the byte-identity of the refusal when one occurs — is sound; what is missing is
+  the evidence that the interleaving it is named for ever happened, which
+  `CLAUDE.md`'s "put a control case next to any test that could pass vacuously"
+  is exactly about. Owner: **S5**, beside C9's concurrency checkpoint, where the
+  same counting control covers every store. `[medium][deferred]`
+- **GAP-T13 — `Append`'s empty-records branch is dead**, and its position
+  relative to the ambient check is unpinned: both making it answer a conflict and
+  moving it above the ambient resolution survive. It is the test half of GAP-8
+  above and moves with whatever that decides, which is why the two share an
+  owner: until the contract says whether an empty batch decides anything, no case
+  may issue one. Owner: **S5**. `[medium][deferred]`
+- **GAP-T14 — the goroutine-leak test measures a process-global count**, so its
+  strength depends on which test ran before it: under `-shuffle=on` a preceding
+  many-goroutine test can inflate the baseline and `settled(before)` returns on
+  its first poll. Every one of those goroutines is joined by a `WaitGroup`, so
+  this is a strength dependency rather than a flake — five shuffled runs and
+  three `-count=3` runs are green. The fix is a second baseline taken by the same
+  method and asserted equal to the first. Owner: **S6**, the pass that last
+  touches this tree. `[medium][deferred]`
+- **GAP-T15 — the persistence subtest's assertion cannot fail for the reason its
+  message gives.** Opening a fresh log and reading it empty proves two logs are
+  two backings, which two other subtests already pin; non-persistence has no
+  in-process falsifier, so the honest evidence is the capability value plus
+  `doc.go:33`. Cosmetic: the capability value itself is asserted and the claim
+  mutation dies. Owner: **S6**. `[low][deferred]`
+- **GAP-T16 — `Check`'s ordering of the deadline and the closure is unspecified
+  and untested**, and `Append`, `ReadStream`, `ReadAll` and `Begin` all make the
+  same choice. Both answers are defensible; it matters only because §UC-057 and
+  §INV-029 make cancellation identity load-bearing. It is the test half of GAP-11
+  above and moves with it. Owner: **S6**. `[low][deferred]`
+- **GAP-T17 — every key in the suite is short ASCII**, so `MaxKey` and the key's
+  own edges — empty, exactly at the bound, multi-byte, and carrying the cursor
+  separator `":"` — are untouched. The payload side is fuzzed; the key side is
+  not. Low, because the kernel validates the key before the store sees it (§D.14)
+  and the store keys its maps by `event.Stream`, so a separator-bearing key is
+  structurally safe — which is why one cheap table should say so. Owner: **S5**,
+  where a store must round-trip whatever key the kernel admits. `[low][deferred]`
+- **GAP-T18 — §S3's `Covers` names UC-040 and no aggregate is declared anywhere
+  in the package.** Every test builds `event.Record` values by hand, so the
+  ergonomic claim §UC-040 makes — an aggregate unit-tested against this store
+  with no database and no fixtures — is asserted at S5 and nowhere earlier. The
+  coverage matrix already routes UC-040's checkpoint to S5, so this is
+  bookkeeping rather than a hole: either S3's `Covers` drops it or one test in the
+  package drives a declared aggregate through this store. Owner: **S5**, where the
+  aggregate seam and the store meet by design. `[medium][deferred]`
+
+**From the S4 implementation review, round 1** (GAP-1 to GAP-6 of
+`EVENTSOURCE_P1_S4_GAPS.md`): GAP-1 and GAP-2 — the two `[immediate]` ones —
+were closed in the section as the two comment repairs §S4 records. These four
+were graded `[deferred]`:
+
+- **GAP-3 — `admitLimits` and `admitCapabilities` mirror the `Limits` and
+  `Capabilities` structs by hand**, which is the default §INV-043 says cannot
+  happen: a sixth `Capabilities` field not added to the table defaults silently
+  to `Unstated` and every store is admitted with it unstated, and a sixth
+  `Limits` field is an unenforced bound. Not silent end to end — `store_test.go`'s
+  `declaredValues` table fails on a new field — so it is a keep-in-sync defect on
+  the mechanism a stated invariant claims generalises, not a present wrong answer.
+  The repair is either a `reflect` walk that derives the field list, or a test
+  pinning each table's row count to `NumField()`, plus a fixture that adds a field
+  and shows the check fail. Phase 2 is the first realistic occasion for a new
+  field. Owner: **S6**, with the structural checks. `[medium][deferred]`
+- **GAP-4 — `At[S]` and `Commit` marshal to `{}` in silence while `Authority`
+  refuses.** §INV-015 is satisfied literally — no exported field, no unmarshaller
+  — and it fails closed: a token that made a JSON round trip comes back zero and
+  `Append` refuses it at §D.5 step 1 before any store call. The cost is DX. The
+  refusal a developer sees is *"the identity does not render a legal stream key"*,
+  rendered 400, for a mistake that is "an at-token is not transportable", and
+  `{"token":{}}` in a response body gives no hint at the point the mistake was
+  made. `Authority` already carries the sentence that would have said so. Either
+  a `MarshalJSON` that refuses on both, or the plan records why `Authority` was
+  treated differently. Additive; nothing depends on the current behaviour.
+  Owner: **S6**, with the ADRs. `[low][deferred]`
+- **GAP-5 — `replay`'s page loop has no `ctx.Err()` guard.** It terminates only
+  on a short page or a store error; progress is strict, so it cannot spin on one
+  page, but a store that both ignores the context and keeps answering full,
+  correctly-versioned pages holds the request goroutine inside the kernel until
+  `Version` overflows. Everywhere else the kernel treats a store's answers as
+  untrusted; here it trusts the store to honour a deadline. It needs a store that
+  ignores `ctx` **and** lies about the end of a stream — `eventmemory` checks
+  `ctx.Err()` on every `ReadStream` and any real driver does — and the belt is one
+  line. Either the check plus a fixture that runs away without it, or the plan
+  records that the store alone owns cancellation on this path. Owner: **S6**.
+  `[low][deferred]`
+- **GAP-6 — comment weight, and one comment that is a second copy of the code it
+  sits on.** `event/` measures 24 % comment lines against 14 % in `tenancy/`, 3 %
+  in `storage/` and 0 % in the five older subsystems; S4's own files run from
+  `binding.go` at 13 % to `marker.go` at 37 %, and the longest function in the
+  section is `Append` at 36 lines against `CLAUDE.md`'s 40-line gate. Most of it
+  earns the escape hatch — `marker.go`'s resolve-by-backing argument and
+  `repo.go`'s short-page decision are not recoverable from the source. **One does
+  not:** `Repo.Append`'s numbered six-step list restates the six code blocks below
+  it line for line, which is an order kept in sync by hand and was already out of
+  sync once, which is that review's GAP-1. Either the list goes or the plan names
+  what keeps the two in sync; the density figure rides with GAP-154. Owner:
+  **S6**. `[low][deferred]`
+
+**From the S4 test review, round 1** (GAP-1 to GAP-8 of
+`EVENTSOURCE_P1_S4_TEST_GAPS.md`): GAP-1, GAP-2, GAP-3, GAP-4, GAP-7 and GAP-8
+were closed in the section — the `[immediate]` one because it is what the section
+is answerable for, and the other five because each was a row in a table the
+closure was already opening, or a plan edit. These two were deferred with their
+reasons, and both are here because after S4 nobody will look at this seam again:
+
+- **GAP-5 — the whole caller seam is proven against one hand-written fixture and
+  no real store.** `Repo.Load`, `Repo.Append`, `Repo.Within`, `Repo.Authority`,
+  `Bind` and `Read` have never run against `event/eventmemory`, the one complete
+  implementation this phase ships; the store contract is encoded twice, in
+  `repo.go` and in `recordingStore`, and where the two agree wrongly the suite is
+  green and the real store disagrees at runtime. The plan already assigns the
+  crossing to S5, whose `binding`, `stream paging` and `expected version`
+  sections run over `eventmemory` — what is recorded here is that at least one of
+  them must drive `event.Open` → `Bind` → `Load` → `Append` → `Read` rather than
+  the `Store` surface directly, and that deleting `Repo.checkPage`'s length check
+  must turn an S5 section red as well as `TestAnOverLongPageIsRefused`. Owner:
+  **S5**. `[medium][deferred]`
+- **GAP-6 — `*Repo` is documented safe for many goroutines and nothing exercises
+  it.** Adding a mutable field to `Repo` and writing it in `Load` survives
+  `go test -race ./event/...`, because no test calls anything on one `*Repo` from
+  two goroutines. §INV-038's own *falsified by* clause names the missing test, and
+  the row it certifies is the one a consumer most relies on: a process-lifetime
+  repository shared by every request. The plan assigns it to S5's `concurrency`
+  section ("many goroutines, one repository, `-race` clean"); carried so the
+  assignment is checked rather than assumed. Owner: **S5**. `[medium][deferred]`

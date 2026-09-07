@@ -3,8 +3,13 @@ package event
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
+	"reflect"
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 type accountID struct {
@@ -27,6 +32,12 @@ type creditedV2 struct {
 	Reason string
 }
 
+type creditedV3 struct {
+	Minor  int64
+	Reason string
+	By     string
+}
+
 type closed struct{ Reason string }
 
 // A payload whose own marshaller decides what its interface field becomes, so
@@ -40,10 +51,285 @@ func (this stamped) MarshalJSON() ([]byte, error) {
 
 func (this *stamped) UnmarshalJSON([]byte) error { this.Meta = "stamped"; return nil }
 
+// The ordinary Go idiom — the pair on the pointer receiver — which encoding/json
+// reaches only where it can take the value's address.
+type guarded struct{ fields map[string]string }
+
+func (this *guarded) MarshalJSON() ([]byte, error) { return json.Marshal(this.fields) }
+
+func (this *guarded) UnmarshalJSON(payload []byte) error {
+	return json.Unmarshal(payload, &this.fields)
+}
+
+// Exported fields and a working pair on the pointer receiver, which writes a
+// shape its own fields do not: where encoding/json cannot take its address it is
+// written field by field and read back through UnmarshalJSON, and the two halves
+// disagree with nothing else in the walk to notice.
+type posted struct {
+	Amount int64
+	Reason string
+}
+
+func (this *posted) MarshalJSON() ([]byte, error) {
+	return json.Marshal([2]any{this.Amount, this.Reason})
+}
+
+func (this *posted) UnmarshalJSON(payload []byte) error {
+	var pair [2]json.RawMessage
+	if err := json.Unmarshal(payload, &pair); err != nil {
+		return err
+	}
+	if err := json.Unmarshal(pair[0], &this.Amount); err != nil {
+		return err
+	}
+	return json.Unmarshal(pair[1], &this.Reason)
+}
+
+type cents struct{ Amount int64 }
+
+func (this cents) MarshalJSON() ([]byte, error) { return json.Marshal(this.Amount) }
+
+// A shared value type carrying a working pair, which is how Go composes value
+// types — and Go promotes that pair onto everything that embeds it, so the
+// struct writes itself as this value and nothing else. Tagging the embedded
+// field does not undo the promotion; naming it does.
+type money struct{ Cents int64 }
+
+func (this money) MarshalJSON() ([]byte, error) { return json.Marshal(this.Cents) }
+
+func (this *money) UnmarshalJSON(payload []byte) error {
+	return json.Unmarshal(payload, &this.Cents)
+}
+
+type lined struct {
+	money
+	SKU string
+}
+
+type noted struct {
+	time.Time
+	Note string
+}
+
+type itemised struct{ money }
+
+type invoiced struct {
+	Money money
+	SKU   string
+}
+
+type dueAt struct {
+	At   time.Time
+	Note string
+}
+
+// The mistake the compiler allows and go vet does not report, in both of its
+// spellings — a payload type and a map key. encoding/json calls the
+// unmarshaller through the addressable pointer, so a method on the value
+// receiver runs against a copy, everything it writes is discarded and Unmarshal
+// answers nil. The receiver each one writes into is the whole difference from
+// money and settled below.
+type sloppy struct{ Amount int64 }
+
+func (this sloppy) MarshalJSON() ([]byte, error) { return json.Marshal(this.Amount) }
+
+func (this sloppy) UnmarshalJSON(payload []byte) error {
+	return json.Unmarshal(payload, &this.Amount)
+}
+
+type casual string
+
+func (this casual) MarshalText() ([]byte, error) { return []byte("cur:" + this), nil }
+
+func (this casual) UnmarshalText(text []byte) error {
+	this = casual(text)
+	return nil
+}
+
+type region struct{ Code string }
+
+func (this region) MarshalText() ([]byte, error) { return []byte(this.Code), nil }
+
+type district struct{ Code string }
+
+func (this district) MarshalText() ([]byte, error) { return []byte(this.Code), nil }
+
+func (this *district) UnmarshalText(text []byte) error { this.Code = string(text); return nil }
+
+type withheld struct{ owner string }
+
+// A map key type that renders itself for display, which is the most ordinary
+// shape a domain value type takes and the one nothing asked about: JSON routes
+// a key through MarshalText whatever the key's kind is.
+type currency string
+
+func (this currency) MarshalText() ([]byte, error) { return []byte("cur:" + string(this)), nil }
+
+type grade int
+
+func (this grade) MarshalText() ([]byte, error) { return []byte("g" + strconv.Itoa(int(this))), nil }
+
+type kept string
+
+func (this *kept) UnmarshalText(text []byte) error {
+	*this = kept(strings.ToUpper(string(text)))
+	return nil
+}
+
+type settled string
+
+func (this settled) MarshalText() ([]byte, error) { return []byte(this), nil }
+
+func (this *settled) UnmarshalText(text []byte) error { *this = settled(text); return nil }
+
+// Two embedded structs rendering one JSON name at one depth. encoding/json
+// writes neither, the field list of the struct that embeds them names neither
+// collision, and go vet's structtag reads tags against tags — so an untagged
+// pair, which is the ordinary way a Go struct is embedded, is seen by nothing
+// at all.
+type identified struct{ ID int }
+
+type numbered struct{ ID int }
+
+type twice struct {
+	identified
+	numbered
+}
+
+// The same, with a field of its own that survives — so the payload carries data
+// and reads back as an ordinary fact forever, minus the two identifiers.
+type placed struct {
+	identified
+	numbered
+	Amount int
+}
+
+type dated struct{ At string }
+
+type carried struct{ dated }
+
+// An embedded struct with a JSON name of its own is a member and not a
+// promotion, so the name it renders is that one and its fields are written
+// underneath it.
+type labelled struct {
+	dated `json:"at"`
+	At    string
+}
+
+// encoding/json writes the fields promoted through an embedded pointer and
+// cannot read one of them back: reflect will not allocate a pointer it may not
+// set. The named field beside it is the same type through a door json can open.
+type pointed struct{ *dated }
+
+type holdingDated struct{ Held *dated }
+
+// Legal Go, and a claim walk that follows embedded fields without remembering
+// where it has been does not terminate on it.
+type ring struct {
+	*ring
+	N int
+}
+
+// The pair encoding/json reaches, beside a text marshaller it does not: a type
+// declaring both is written as JSON, so asking which route it writes by in the
+// other order refuses a type that round-trips perfectly.
+type priced struct{ Amount int64 }
+
+func (this *priced) MarshalJSON() ([]byte, error) { return json.Marshal([1]int64{this.Amount}) }
+
+func (this *priced) UnmarshalJSON(payload []byte) error {
+	var read [1]int64
+	if err := json.Unmarshal(payload, &read); err != nil {
+		return err
+	}
+	this.Amount = read[0]
+	return nil
+}
+
+func (this priced) MarshalText() ([]byte, error) { return []byte("priced"), nil }
+
+// A tag's name ends at the first comma, and a tag with no name renders the
+// field's own — so both of these render one name twice and encoding/json writes
+// at most one of the two fields.
+type omitted struct {
+	Amount int `json:"Reason,omitempty"`
+	Reason string
+}
+
+type defaulted struct {
+	Amount int `json:",omitempty"`
+	Reason int `json:"Amount"`
+}
+
+type ignored struct {
+	Signal chan int `json:"-"`
+	Amount int
+}
+
+type dropped struct {
+	First  int `json:"-"`
+	Second int `json:"-"`
+	Amount int
+}
+
+type erased struct {
+	Amount int `json:"-"`
+}
+
+// What a pointer buys the field underneath it: encoding/json takes the pointer's
+// element address, so the pair on posted's pointer receiver is reached through
+// this and is not reached through the same struct held by value.
+type held struct{ Posted posted }
+
+// One type at two positions of one walk — addressable where it stands, and not
+// one field over. A visited set keyed by the type alone answers for whichever of
+// the two it met first, and the field order here is what makes that answer the
+// wrong one.
+type twinned struct {
+	Direct posted
+	Held   map[string]posted
+}
+
+type paired struct {
+	Direct posted
+	Held   map[string]*posted
+}
+
+// One name at two depths, which is encoding/json's depth rule: the shallower is
+// written and the deeper is dropped.
+type shadowed struct {
+	carried
+	dated
+}
+
+type distinct struct {
+	identified
+	dated
+	Amount int
+}
+
+// A tag that renders the name of the field beside it. go vet's structtag check
+// reads tags against tags and never a tag against a field name, so nothing but
+// the codec's own walk sees this one: encoding/json writes the tagged field and
+// drops the other without a word.
+type collided struct {
+	Amount int `json:"Reason"`
+	Reason string
+}
+
+type separated struct {
+	Amount int `json:"amount"`
+	Reason string
+}
+
 func accountKey(id accountID) Key { return Compose(id.tenant, id.number) }
 
 func toCreditedV2(from creditedV1) (creditedV2, error) {
 	return creditedV2{Minor: from.Minor, Reason: "migrated"}, nil
+}
+
+func toCreditedV3(from creditedV2) (creditedV3, error) {
+	return creditedV3{Minor: from.Minor, Reason: from.Reason, By: "unknown"}, nil
 }
 
 func openAccount(this account, event opened) account {
@@ -103,8 +389,71 @@ func TestADeclaration(t *testing.T) {
 		if got := declared.credited.Name(); got != "accounts.credited" {
 			t.Fatalf("a fact reports the wire name %q rather than the one it was declared with", got)
 		}
-		if got := declared.aggregate.Family(); got != "accounts.account" {
-			t.Fatalf("an aggregate reports the family %q rather than the one it was declared with", got)
+		for _, family := range []string{"accounts.account", "savings.account"} {
+			aggregate := Define[account](family, accountKey)
+			if got := aggregate.Family(); got != family {
+				t.Fatalf("an aggregate declared as %q reports the family %q; a Family answering a constant makes two declarations one family, and two aggregates over one history fold each other's facts with no error at any point", family, got)
+			}
+			var seam Declaration = aggregate
+			if got := seam.Family(); got != family {
+				t.Fatalf("the non-generic view of the aggregate declared as %q reports %q, and it is what a binding and the conformance suite key their bound families by", family, got)
+			}
+		}
+	})
+
+	t.Run("three revisions report three, and the oldest is carried through both upcasters", func(t *testing.T) {
+		aggregate := Define[account]("accounts.three", accountKey)
+		credited := Declare(aggregate, "accounts.credited",
+			Then(Then(From(JSON[creditedV1]()), JSON[creditedV2](), toCreditedV2), JSON[creditedV3](), toCreditedV3),
+			func(this account, _ creditedV3) account { return this })
+		if got := credited.Revisions(); got != 3 {
+			t.Fatalf("a chain of three reports %d retained revisions, and a revision is nothing but the chain's position", got)
+		}
+		carried, err := credited.RoundTrip(creditedV1{Minor: 1}, creditedV2{Minor: 2, Reason: "second"}, creditedV3{Minor: 3, Reason: "third", By: "acme"})
+		if err != nil {
+			t.Fatalf("a chain of three did not round trip: %v", err)
+		}
+		want := []creditedV3{
+			{Minor: 1, Reason: "migrated", By: "unknown"},
+			{Minor: 2, Reason: "second", By: "unknown"},
+			{Minor: 3, Reason: "third", By: "acme"},
+		}
+		if !slices.Equal(carried, want) {
+			t.Fatalf("the chain carried %+v rather than %+v, so a retained revision is read by the wrong codec or crosses the wrong number of upcasters", carried, want)
+		}
+	})
+
+	t.Run("a type graph larger than the walk is refused rather than walked", func(t *testing.T) {
+		if codecGraphDepth != 1024 || codecGraphNodes != 1024 || codecGraphEdges != 4096 {
+			t.Fatalf("the walk is bounded at %d deep, %d types and %d edges; the shapes below were built against 1024, 1024 and 4096, and a bound nothing pins is a bound that can be raised out of reach",
+				codecGraphDepth, codecGraphNodes, codecGraphEdges)
+		}
+
+		nested := reflect.TypeFor[int]()
+		for range 1100 {
+			nested = reflect.ArrayOf(1, nested)
+		}
+		if chargeJSON(nested) == nil {
+			t.Fatal("a type graph of 1100 distinct types was walked to the end, and the graph is an application's rather than the kernel's to trust")
+		}
+
+		fields := make([]reflect.StructField, 0, 1100)
+		for index := range 1100 {
+			fields = append(fields, reflect.StructField{Name: fmt.Sprintf("F%d", index), Type: reflect.TypeFor[int]()})
+		}
+		if chargeJSON(reflect.StructOf(fields)) == nil {
+			t.Fatal("a struct rendering 1100 JSON names was collected to the end")
+		}
+
+		shallow := reflect.TypeFor[int]()
+		for range 8 {
+			shallow = reflect.ArrayOf(1, shallow)
+		}
+		if err := chargeJSON(shallow); err != nil {
+			t.Fatalf("a graph well inside the bound was refused (%v), so the two cases above pass by refusing every nested type", err)
+		}
+		if err := chargeJSON(reflect.StructOf(fields[:1000])); err != nil {
+			t.Fatalf("a struct of 1000 names, inside the bound, was refused: %v", err)
 		}
 	})
 
@@ -145,6 +494,25 @@ func TestADeclaration(t *testing.T) {
 		}
 	})
 
+	t.Run("the current revision writes with the codec that revision declared", func(t *testing.T) {
+		acme := accountID{tenant: "acme", number: "A-17"}
+		aggregate := Define[account]("accounts.compact", accountKey)
+		compact := Declare(aggregate, "accounts.credited",
+			Then(From(JSON[creditedV1]()), decimalCodec{}, func(from creditedV1) (creditedV1, error) { return from, nil }),
+			func(this account, event creditedV1) account { this.Balance += event.Minor; return this })
+		change := compact.New(acme, creditedV1{Minor: 250})
+		if change.Err() != nil {
+			t.Fatalf("a decision at the current revision was refused: %v", change.Err())
+		}
+		if string(change.payload) != "250" {
+			t.Fatalf("the current revision froze %s rather than the compact form its own codec writes; each revision carries its own codec so that a bump may change the encoding without a data migration, and a chain that discards the codec it was handed goes on writing the previous one while the round trip still passes", change.payload)
+		}
+		state, err := aggregate.Fold(acme, account{}, change)
+		if err != nil || state.Balance != 250 {
+			t.Fatalf("the fact written by the current revision's own codec folded to %+v (%v)", state, err)
+		}
+	})
+
 	t.Run("a composite identity renders through the mapper, and the two spellings are not one", func(t *testing.T) {
 		declared := declareAccounts(t)
 		key, err := declared.aggregate.Key(accountID{tenant: "acme", number: "A-17"})
@@ -167,6 +535,24 @@ func TestADeclaration(t *testing.T) {
 		escaped, _ := composed.Key(crossing)
 		if bare == escaped {
 			t.Fatal("the plain conversion and the composition render one key for an identity carrying a separator, so swapping one for the other after a stream exists would look safe")
+		}
+
+		illegal := Define[account]("accounts.illegal", func(id accountID) Key { return Key(id.number) })
+		for _, refused := range []struct {
+			what   string
+			number string
+		}{
+			{"a blank rendering", ""},
+			{"a rendering carrying a newline", "A\n17"},
+			{"a rendering over the kernel cap", strings.Repeat("k", MaxKeyBytes+1)},
+		} {
+			rendered, err := illegal.Key(accountID{number: refused.number})
+			if !errors.Is(err, ErrKey) {
+				t.Fatalf("%s answered %v", refused.what, err)
+			}
+			if rendered != "" {
+				t.Fatalf("%s was refused and the raw rendering came back beside the refusal, %d bytes of it; a refusal carries a classification and never the value it refused, and the conformance suite's key proxy reads this one", refused.what, len(rendered))
+			}
 		}
 	})
 
@@ -224,6 +610,37 @@ func TestADeclaration(t *testing.T) {
 			{"a map keyed by a float", JSON[map[float64]int]().CanEncode()},
 			{"a map keyed by a struct", JSON[map[accountID]int]().CanEncode()},
 			{"a payload that is an interface", JSON[any]().CanEncode()},
+			{"a type that writes itself and declares no reader", JSON[cents]().CanEncode()},
+			{"a map key that writes itself and declares no reader", JSON[map[region]int]().CanEncode()},
+			{"a marshalling pair on the pointer receiver, held where JSON cannot address it", JSON[map[string]posted]().CanEncode()},
+			{"a struct with fields and none encoding/json writes", JSON[withheld]().CanEncode()},
+			{"a payload reaching a struct with fields and none it writes", JSON[struct{ Held withheld }]().CanEncode()},
+			{"two fields rendering one JSON name", JSON[collided]().CanEncode()},
+			{"two embedded structs rendering one JSON name", JSON[twice]().CanEncode()},
+			{"the same, where the fields of the struct itself survive", JSON[placed]().CanEncode()},
+			{"one JSON name promoted from two depths", JSON[shadowed]().CanEncode()},
+			{"a string-kind map key that writes itself and declares no reader", JSON[map[currency]int]().CanEncode()},
+			{"an integer-kind map key that writes itself and declares no reader", JSON[map[grade]int]().CanEncode()},
+			{"a map key that reads itself and is written as its kind", JSON[map[kept]int]().CanEncode()},
+			{"a complex field", JSON[struct{ Rate complex128 }]().CanEncode()},
+			{"a pair held in an array a map holds", JSON[map[string][2]posted]().CanEncode()},
+			{"a tag that names the field beside it and carries an option", JSON[omitted]().CanEncode()},
+			{"a tag naming no name, colliding with the field beside it", JSON[defaulted]().CanEncode()},
+			{"a struct whose only field encoding/json is told to skip", JSON[erased]().CanEncode()},
+			{"a pair reached through a struct a map holds", JSON[map[string]held]().CanEncode()},
+			{"a type legal where it stands and illegal one field over", JSON[twinned]().CanEncode()},
+			{"a struct embedding a type whose JSON pair it promotes", JSON[lined]().CanEncode()},
+			{"the textbook embedding, whose pair arrives from the standard library", JSON[noted]().CanEncode()},
+			{"the same shape tagged, which does not undo the promotion", JSON[struct {
+				money `json:"money"`
+				SKU   string
+			}]().CanEncode()},
+			{"the same promotion reached through a pointer", JSON[struct{ Line *lined }]().CanEncode()},
+			{"a type whose unmarshaller is on the value receiver", JSON[sloppy]().CanEncode()},
+			{"the same type held in a field", JSON[struct{ Amount sloppy }]().CanEncode()},
+			{"the same type held behind a pointer", JSON[struct{ Amount *sloppy }]().CanEncode()},
+			{"a map key whose UnmarshalText is on the value receiver", JSON[map[casual]int]().CanEncode()},
+			{"a struct promoted through an embedded pointer to an unexported type", JSON[pointed]().CanEncode()},
 		} {
 			if !errors.Is(refused.answer, ErrCodecType) {
 				t.Fatalf("the shipped codec accepted %s (%v), and what it cannot encode must be refused before main", refused.what, refused.answer)
@@ -236,7 +653,37 @@ func TestADeclaration(t *testing.T) {
 			{"a recursive type", JSON[node]().CanEncode()},
 			{"raw JSON", JSON[json.RawMessage]().CanEncode()},
 			{"a map keyed by a string", JSON[map[string]int64]().CanEncode()},
-			{"a type that marshals itself", JSON[stamped]().CanEncode()},
+			{"a type that marshals itself and reads itself back", JSON[stamped]().CanEncode()},
+			{"a map key that writes itself and reads itself back", JSON[map[district]int]().CanEncode()},
+			{"a marshaller on the pointer receiver, where the reader type is addressable", JSON[guarded]().CanEncode()},
+			{"the same pair, where the reader type is addressable", JSON[posted]().CanEncode()},
+			{"the same, behind a pointer and in a slice", JSON[struct {
+				Held *guarded
+				Kept []guarded
+			}]().CanEncode()},
+			{"a marker fact that carries no data at all", JSON[struct{}]().CanEncode()},
+			{"two fields rendering two JSON names", JSON[separated]().CanEncode()},
+			{"one embedded struct per JSON name, beside a field of its own", JSON[distinct]().CanEncode()},
+			{"a struct promoted through one path only", JSON[carried]().CanEncode()},
+			{"a map keyed by an integer", JSON[map[int64]int]().CanEncode()},
+			{"a string-kind map key declaring both text methods", JSON[map[settled]int]().CanEncode()},
+			{"a pair held behind a pointer a map holds", JSON[map[string]*posted]().CanEncode()},
+			{"a pair reached through a struct a map holds behind a pointer", JSON[map[string]*held]().CanEncode()},
+			{"the same two positions, both of them legal", JSON[paired]().CanEncode()},
+			{"a pair held in a slice a map holds", JSON[map[string][]posted]().CanEncode()},
+			{"a type that writes itself as JSON and as text", JSON[priced]().CanEncode()},
+			{"a field encoding/json is told to skip", JSON[ignored]().CanEncode()},
+			{"two fields encoding/json is told to skip", JSON[dropped]().CanEncode()},
+			{"an embedded struct with a JSON name of its own", JSON[labelled]().CanEncode()},
+			{"a struct promoted through an embedded pointer to an exported type", JSON[struct{ *Stream }]().CanEncode()},
+			{"the unexported one held in a named field instead", JSON[holdingDated]().CanEncode()},
+			{"a type embedding a pointer to itself, which renders no promoted name", JSON[ring]().CanEncode()},
+			{"an embedded marshalling type with no field beside it", JSON[itemised]().CanEncode()},
+			{"the same type named rather than embedded", JSON[invoiced]().CanEncode()},
+			{"a time.Time held in a named field", JSON[dueAt]().CanEncode()},
+			{"the same pair with the unmarshaller on the pointer receiver", JSON[money]().CanEncode()},
+			{"the same, held in a field", JSON[struct{ Amount money }]().CanEncode()},
+			{"the same, held behind a pointer", JSON[struct{ Amount *money }]().CanEncode()},
 		} {
 			if accepted.answer != nil {
 				t.Fatalf("the shipped codec refused %s: %v", accepted.what, accepted.answer)
@@ -253,6 +700,84 @@ func TestADeclaration(t *testing.T) {
 		if _, err := TryDeclare(aggregate, "accounts.stamped", From(JSON[stamped]()),
 			func(this account, _ stamped) account { return this }); err != nil {
 			t.Fatalf("a reader type its codec encodes perfectly well was refused: %v", err)
+		}
+	})
+
+	t.Run("what the shipped codec writes is frozen, because a fact log is", func(t *testing.T) {
+		for _, sample := range []struct {
+			what  string
+			write func() ([]byte, error)
+			want  string
+		}{
+			{"an integer", func() ([]byte, error) { return JSON[int]().Encode(42) }, "42"},
+			{"a nil slice", func() ([]byte, error) { return JSON[[]int]().Encode(nil) }, "null"},
+			{"a map", func() ([]byte, error) { return JSON[map[string]int]().Encode(map[string]int{"a": 1}) }, `{"a":1}`},
+			{"raw JSON", func() ([]byte, error) { return JSON[json.RawMessage]().Encode(json.RawMessage(`{"q":1}`)) }, `{"q":1}`},
+			{"a value-receiver marshaller", func() ([]byte, error) { return JSON[stamped]().Encode(stamped{}) }, `{"Meta":"stamped"}`},
+			{"a slice element", func() ([]byte, error) {
+				return JSON[[]creditedV2]().Encode([]creditedV2{{Minor: 1, Reason: "x"}})
+			}, `[{"Minor":1,"Reason":"x"}]`},
+			{"a marshaller on the pointer receiver", func() ([]byte, error) {
+				return JSON[guarded]().Encode(guarded{fields: map[string]string{"owner": "acme"}})
+			}, `{"owner":"acme"}`},
+		} {
+			written, err := sample.write()
+			if err != nil {
+				t.Fatalf("%s was refused by the codec that accepted it at declaration: %v", sample.what, err)
+			}
+			if string(written) != sample.want {
+				t.Fatalf("%s now encodes as %s and every fact already recorded reads %s; the codec marshals a pointer so that the last row is not an empty object, and the other six say what that cost", sample.what, written, sample.want)
+			}
+		}
+	})
+
+	t.Run("a refusal names which asymmetry it found, because the three share one sentinel", func(t *testing.T) {
+		for _, refused := range []struct {
+			what   string
+			answer error
+			names  string
+		}{
+			{"a type that writes itself and declares no reader", JSON[cents]().CanEncode(), "declares no UnmarshalJSON"},
+			{"a map key that writes itself and declares no reader", JSON[map[region]int]().CanEncode(), "declares no UnmarshalText"},
+			{"a pair held where JSON cannot address it", JSON[map[string]posted]().CanEncode(), "cannot take its address"},
+			{"a struct with fields and none encoding/json writes", JSON[withheld]().CanEncode(), "writes none of them"},
+			{"two fields rendering one JSON name", JSON[collided]().CanEncode(), `render the JSON name "Reason"`},
+			{"two embedded structs rendering one JSON name", JSON[twice]().CanEncode(), `render the JSON name "ID"`},
+			{"one JSON name promoted from two depths", JSON[shadowed]().CanEncode(), "carried.dated.At and dated.At"},
+			{"a tag that names the field beside it and carries an option", JSON[omitted]().CanEncode(), `render the JSON name "Reason"`},
+			{"a tag naming no name, colliding with the field beside it", JSON[defaulted]().CanEncode(), `render the JSON name "Amount"`},
+			{"a string-kind map key that writes itself and declares no reader", JSON[map[currency]int]().CanEncode(), "declares no UnmarshalText"},
+			{"a map key that reads itself and is written as its kind", JSON[map[kept]int]().CanEncode(), "declares no MarshalText"},
+			{"a struct embedding a type whose JSON pair it promotes", JSON[lined]().CanEncode(), "the MarshalJSON of the embedded event.money"},
+			{"the textbook embedding", JSON[noted]().CanEncode(), "the MarshalJSON of the embedded time.Time"},
+			{"a type whose unmarshaller is on the value receiver", JSON[sloppy]().CanEncode(), "declares UnmarshalJSON on the value receiver"},
+			{"the same type held behind a pointer", JSON[struct{ Amount *sloppy }]().CanEncode(), "declares UnmarshalJSON on the value receiver"},
+			{"a map key whose UnmarshalText is on the value receiver", JSON[map[casual]int]().CanEncode(), "UnmarshalText on the value receiver"},
+			{"a struct promoted through an embedded pointer to an unexported type", JSON[pointed]().CanEncode(), "through the embedded pointer dated"},
+		} {
+			if refused.answer == nil {
+				t.Fatalf("%s was accepted, so nothing here says which repair it needs", refused.what)
+			}
+			if !strings.Contains(refused.answer.Error(), refused.names) {
+				t.Fatalf("%s was refused with %q, which never says %q; the repairs are a different one each and every case here would still be ErrCodecType through the arm beside it", refused.what, refused.answer, refused.names)
+			}
+		}
+	})
+
+	t.Run("what the shipped codec accepts, it records with its contents", func(t *testing.T) {
+		aggregate := Define[[]string]("documents.document", func(id string) Key { return Compose(id) })
+		written := Declare(aggregate, "documents.written", From(JSON[guarded]()),
+			func(this []string, event guarded) []string { return append(this, event.fields["owner"]) })
+		change := written.New("one", guarded{fields: map[string]string{"owner": "acme"}})
+		if change.Err() != nil {
+			t.Fatalf("a payload the codec accepted at declaration was refused at the decision: %v", change.Err())
+		}
+		state, err := aggregate.Fold("one", nil, change)
+		if err != nil {
+			t.Fatalf("the fold was refused: %v", err)
+		}
+		if len(state) != 1 || state[0] != "acme" {
+			t.Fatalf("the recorded fact folded to %q: a marshaller on the pointer receiver that encoding/json was never able to reach writes an empty object, and every load of that stream then replays a zero value with no refusal at any door", state)
 		}
 	})
 
@@ -295,6 +820,25 @@ func (this refusingCodec) CanEncode() error         { return this.answer }
 type panickingCodec struct{ Codec[opened] }
 
 func (panickingCodec) CanEncode() error { panic("a codec that cannot answer") }
+
+type refusingCredit struct {
+	Codec[creditedV2]
+	answer error
+}
+
+func (this refusingCredit) CanEncode() error { return this.answer }
+
+type panickingCredit struct{ Codec[creditedV2] }
+
+func (panickingCredit) CanEncode() error { panic("a codec that cannot answer") }
+
+type panickingEncode struct{ Codec[opened] }
+
+func (panickingEncode) Encode(opened) ([]byte, error) { panic("an encoder that cannot answer") }
+
+type panickingDecode struct{ Codec[opened] }
+
+func (panickingDecode) Decode([]byte) (opened, error) { panic("a decoder that cannot answer") }
 
 func recoverDeclaration(t *testing.T, what string, declare func()) error {
 	t.Helper()
@@ -397,6 +941,28 @@ func TestEveryMalformedDeclarationPanicsAndTryDefineReturnsIt(t *testing.T) {
 		}
 	})
 
+	t.Run("a codec is asked at every revision, and the refusal names which one", func(t *testing.T) {
+		unencodable := errors.New("a channel is not JSON")
+		for _, malformed := range []struct {
+			what  string
+			chain Chain[creditedV2]
+			names string
+		}{
+			{"a refusing codec at revision 1", From[creditedV2](refusingCredit{answer: unencodable}), "revision 1"},
+			{"a refusing codec at revision 2", Then[creditedV1, creditedV2](From(JSON[creditedV1]()), refusingCredit{answer: unencodable}, toCreditedV2), "revision 2"},
+			{"a panicking codec at revision 2", Then[creditedV1, creditedV2](From(JSON[creditedV1]()), panickingCredit{}, toCreditedV2), "revision 2"},
+		} {
+			aggregate := Define[account]("accounts.account", accountKey)
+			_, err := TryDeclare(aggregate, "accounts.credited", malformed.chain, creditAccount)
+			if !errors.Is(err, ErrCodecType) {
+				t.Fatalf("%s answered %v, so a revision reads bytes through a codec that was never asked whether it can write them", malformed.what, err)
+			}
+			if !strings.Contains(err.Error(), malformed.names) {
+				t.Fatalf("%s was refused with %q, which names no revision; a chain of several is refused once and the caller has to find which one", malformed.what, err)
+			}
+		}
+	})
+
 	t.Run("a fact declared on no aggregate is refused rather than dereferenced", func(t *testing.T) {
 		_, err := TryDeclare[account, accountID](nil, "accounts.opened", From(JSON[opened]()), fold)
 		if !errors.Is(err, ErrDeclaration) {
@@ -408,6 +974,59 @@ func TestEveryMalformedDeclarationPanicsAndTryDefineReturnsIt(t *testing.T) {
 		declared := declareAccounts(t)
 		if declared.credited.Revisions() != 2 {
 			t.Fatal("the control declaration did not build, so every case above passes by refusing everything")
+		}
+	})
+}
+
+func TestACodecPanicBecomesThatMethodsOwnRefusal(t *testing.T) {
+	acme := accountID{tenant: "acme", number: "A-17"}
+	declare := func(t *testing.T, family string, codec Codec[opened]) (*Aggregate[account, accountID], *Fact[account, accountID, opened]) {
+		t.Helper()
+		aggregate := Define[account](family, accountKey)
+		return aggregate, Declare(aggregate, "accounts.opened", From(codec), openAccount)
+	}
+
+	t.Run("an encoder that panics is the refusal its own error would have been", func(t *testing.T) {
+		aggregate, opening := declare(t, "accounts.panicking.encode", panickingEncode{JSON[opened]()})
+		change := opening.New(acme, opened{Owner: "acme"})
+		if !errors.Is(change.Err(), ErrEncode) {
+			t.Fatalf("an encoder's panic left the change carrying %v, so a decision nobody can encode either takes the process down or is minted as a fact", change.Err())
+		}
+		if CauseOf(change.Err()) != nil {
+			t.Fatalf("a recovered panic value travelled as an application error in %v", change.Err())
+		}
+		state, err := aggregate.Fold(acme, account{Balance: 7}, change)
+		if !errors.Is(err, ErrEncode) {
+			t.Fatalf("the fold of a change that never encoded answered %v", err)
+		}
+		if state.Balance != 7 {
+			t.Fatalf("a refused fold advanced the state to %d", state.Balance)
+		}
+	})
+
+	t.Run("a decoder that panics is the refusal its own error would have been", func(t *testing.T) {
+		aggregate, opening := declare(t, "accounts.panicking.decode", panickingDecode{JSON[opened]()})
+		change := opening.New(acme, opened{Owner: "acme"})
+		if change.Err() != nil {
+			t.Fatalf("the encoder of the same codec refused the decision: %v", change.Err())
+		}
+		state, err := aggregate.Fold(acme, account{Balance: 7}, change)
+		if !errors.Is(err, ErrPayload) {
+			t.Fatalf("a decoder's panic answered %v, and the recorded bytes are what cannot be read", err)
+		}
+		if CauseOf(err) != nil {
+			t.Fatalf("a recovered panic value travelled as an application error in %v", err)
+		}
+		if state.Balance != 7 {
+			t.Fatalf("a refused fold advanced the state to %d", state.Balance)
+		}
+	})
+
+	t.Run("the codec that answers is the control", func(t *testing.T) {
+		aggregate, opening := declare(t, "accounts.answering", JSON[opened]())
+		state, err := aggregate.Fold(acme, account{}, opening.New(acme, opened{Owner: "acme"}))
+		if err != nil || len(state.Tags) != 1 {
+			t.Fatalf("the same declaration over the shipped codec folded to %+v (%v), so the two cases above pass by refusing every decision", state, err)
 		}
 	})
 }

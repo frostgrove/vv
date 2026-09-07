@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"sync"
+	"sync/atomic"
 )
 
 type Aggregate[S any, ID any] struct {
@@ -11,7 +12,7 @@ type Aggregate[S any, ID any] struct {
 	key    func(ID) Key
 
 	mutex  sync.Mutex
-	sealed bool
+	sealed atomic.Bool
 	facts  map[string]func(S, int, []byte) (S, error)
 }
 
@@ -22,7 +23,8 @@ type Aggregate[S any, ID any] struct {
 // two identities rendering one key are two aggregates over one history, folding
 // each other's facts, with no error at any point. The framework cannot check
 // that, so it makes the correct rendering the shortest one to write — Compose —
-// and eventtest.Keys is the runnable proxy.
+// and the conformance suite's key proxy, which arrives with the suite, is what
+// runs it against an application's own identities.
 func Define[S any, ID any](family string, key func(ID) Key) *Aggregate[S, ID] {
 	aggregate, err := TryDefine[S, ID](family, key)
 	if err != nil {
@@ -100,7 +102,8 @@ func (this *Aggregate[S, ID]) locate(id ID) (Stream, error) {
 
 // The one non-generic view of a declaration. Its unexported method is what
 // keeps the set to *Aggregate, and it has exactly two readers in phase 1 — the
-// Binding's bound-family set and eventtest.Families.
+// Binding's bound-family set and the conformance suite's family check, neither
+// of which has arrived yet.
 type Declaration interface {
 	Family() string
 	declaration()

@@ -3,6 +3,7 @@ package event
 import (
 	"bytes"
 	"fmt"
+	"reflect"
 )
 
 type Fact[S any, ID any, E any] struct {
@@ -81,21 +82,26 @@ func (this *Fact[S, ID, E]) New(id ID, payload E) Change[S] {
 // and the second is why it is here rather than in a test helper.
 //
 // Fidelity: each sample is encoded by its own revision's codec, read back by
-// that revision's own reader and returned, so a codec that cannot decode its
-// own output and an upcaster that refuses a legal historical value are both
+// that revision's own reader and compared with the sample in the revision's own
+// type, so a codec that drops part of what it was given, one that cannot decode
+// its own output, and an upcaster that refuses a legal historical value are all
 // found before a stream contains one.
 //
-// Non-aliasing: between reading the sample and re-encoding what it produced,
-// that revision's own codec is made to decode a second, different payload — the
-// encoding of its reader type's zero value. A codec that decoded into a buffer
-// it reuses has its first answer rewritten underneath it, and the two encodings
-// of one value differ. Both encodings are the revision's own, over the value its
-// own codec returned, because every declared upcaster between that value and the
-// current type converts and therefore copies: compared after one, an aliasing
-// revision-1 codec behind a copying upcaster passes, and only the last revision
-// of a chain is ever under test. A sample that encodes exactly as that zero value
-// cannot disturb anything and is refused as a sample rather than reported as a
-// pass, because it proves nothing about fidelity either.
+// Non-aliasing: the same bytes are decoded twice, from two separate input
+// buffers, and the two answers are searched for a slice or a map they share. A
+// value that aliases the payload it was handed aliases its own copy of it and
+// is permitted; one that aliases memory the codec keeps is the same address in
+// both answers, and the next Decode rewrites what the application already
+// holds. That comparison is exact. Behind it, the revision's codec is also made
+// to decode a second, different payload — its reader type's zero value — and
+// the first answer re-encoded either side of it, which reaches a reused buffer
+// the value walk cannot see through. Both encodings are the revision's own,
+// because every declared upcaster between that value and the current type
+// converts and therefore copies: compared after one, an aliasing revision-1
+// codec behind a copying upcaster passes, and only the last revision of a chain
+// is ever under test. A sample that encodes exactly as that zero value cannot
+// disturb anything and is refused as a sample rather than reported as a pass,
+// because it proves nothing about fidelity either.
 func (this *Fact[S, ID, E]) RoundTrip(byRevision ...any) ([]E, error) {
 	this.aggregate.seal()
 	if len(byRevision) != len(this.chain.links) {
@@ -132,20 +138,32 @@ func (this *Fact[S, ID, E]) roundTrip(index int, sample any) (E, error) {
 	if bytes.Equal(written, zero) {
 		return none, fmt.Errorf("%w: revision %d of %q encodes its sample exactly as its own zero value, so nothing a second read could disturb is under test", ErrSample, revision, this.name)
 	}
-	reused, err := reusesItsBuffer(read, written, zero)
+	own, err := read.selfDecode(bytes.Clone(written))
+	if err != nil {
+		return none, err
+	}
+	reused, err := reusesItsBuffer(read, own, written, zero)
 	if err != nil {
 		return none, err
 	}
 	if reused {
 		return none, fmt.Errorf("%w: revision %d of %q decoded into memory its codec reuses, so reading the next payload rewrote the value it had already returned", ErrPayload, revision, this.name)
 	}
+	budget := codecGraphNodes
+	if !sameValue(reflect.ValueOf(own), reflect.ValueOf(sample), &budget) {
+		return none, fmt.Errorf("%w: revision %d of %q does not read back the %s it was given: what the sample encoded to decodes to a different value, so a fact recorded through it loses what no load can recover", ErrPayload, revision, this.name, read.typeName)
+	}
 	return read.decode(written)
 }
 
-func reusesItsBuffer[V any](read link[V], written, zero []byte) (bool, error) {
-	own, err := read.selfDecode(written)
+func reusesItsBuffer[V any](read link[V], own any, written, zero []byte) (bool, error) {
+	second, err := read.selfDecode(bytes.Clone(written))
 	if err != nil {
 		return false, err
+	}
+	budget := codecGraphNodes
+	if sharesMemory(reflect.ValueOf(own), reflect.ValueOf(second), &budget) {
+		return true, nil
 	}
 	before, err := read.selfEncode(own)
 	if err != nil {
@@ -162,6 +180,48 @@ func reusesItsBuffer[V any](read link[V], written, zero []byte) (bool, error) {
 	return !bytes.Equal(before, after), nil
 }
 
+// Two values a codec returned for one payload, walked in step for a slice or a
+// map they hold in common. Only the exported half of a struct is walked: an
+// unexported field is the application's own business, and a decoded value
+// carrying a pointer to something a package holds forever — a time zone, an
+// interned constant — is ordinary and is not the reuse this asks about. An
+// empty slice has no address of its own to compare.
+func sharesMemory(first, second reflect.Value, budget *int) bool {
+	if *budget <= 0 || !first.IsValid() || !second.IsValid() || first.Kind() != second.Kind() {
+		return false
+	}
+	*budget--
+	switch first.Kind() {
+	case reflect.Slice, reflect.Map:
+		if first.Len() > 0 && second.Len() > 0 && first.UnsafePointer() == second.UnsafePointer() {
+			return true
+		}
+	case reflect.Pointer, reflect.Interface:
+		return !first.IsNil() && !second.IsNil() && sharesMemory(first.Elem(), second.Elem(), budget)
+	}
+	switch first.Kind() {
+	case reflect.Slice, reflect.Array:
+		for index := range min(first.Len(), second.Len()) {
+			if sharesMemory(first.Index(index), second.Index(index), budget) {
+				return true
+			}
+		}
+	case reflect.Map:
+		for _, key := range first.MapKeys() {
+			if sharesMemory(first.MapIndex(key), second.MapIndex(key), budget) {
+				return true
+			}
+		}
+	case reflect.Struct:
+		for index := range first.NumField() {
+			if first.Type().Field(index).IsExported() && sharesMemory(first.Field(index), second.Field(index), budget) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func applierOf[S, E any](chain Chain[E], fold func(S, E) S) func(S, int, []byte) (S, error) {
 	return func(state S, revision int, payload []byte) (S, error) {
 		if revision < 1 || revision > len(chain.links) {
@@ -173,4 +233,80 @@ func applierOf[S, E any](chain Chain[E], fold func(S, E) S) func(S, int, []byte)
 		}
 		return fold(state, value), nil
 	}
+}
+
+// The sample and what the codec read back, compared the way a recorded fact
+// makes it matter. reflect.DeepEqual is the wrong comparison here and answers
+// false for two payloads nothing is wrong with: a time.Time carries a monotonic
+// reading and a location that no encoding preserves and that its own Equal says
+// are not the difference, and an unexported field is not what was recorded. So
+// the walk asks the type's own Equal method wherever it declares one, compares
+// the exported half of a struct, treats two NaNs as one value because a codec
+// that carries them is not the failure this looks for, and runs out of budget in
+// the caller's favour — this refuses a declaration, so what it cannot answer it
+// does not accuse.
+func sameValue(first, second reflect.Value, budget *int) bool {
+	if *budget <= 0 {
+		return true
+	}
+	*budget--
+	if !first.IsValid() || !second.IsValid() || first.Kind() != second.Kind() {
+		return first.IsValid() == second.IsValid()
+	}
+	if answered, asked := equalByMethod(first, second); asked {
+		return answered
+	}
+	switch first.Kind() {
+	case reflect.Struct:
+		for index := range first.NumField() {
+			if first.Type().Field(index).IsExported() && !sameValue(first.Field(index), second.Field(index), budget) {
+				return false
+			}
+		}
+	case reflect.Slice, reflect.Array:
+		return first.Len() == second.Len() && sameElements(first, second, budget)
+	case reflect.Map:
+		return first.Len() == second.Len() && sameEntries(first, second, budget)
+	case reflect.Pointer, reflect.Interface:
+		if first.IsNil() || second.IsNil() {
+			return first.IsNil() == second.IsNil()
+		}
+		return sameValue(first.Elem(), second.Elem(), budget)
+	case reflect.Float32, reflect.Float64:
+		held, read := first.Float(), second.Float()
+		return held == read || (held != held && read != read)
+	default:
+		return !first.Comparable() || first.Equal(second)
+	}
+	return true
+}
+
+func sameElements(first, second reflect.Value, budget *int) bool {
+	for index := range first.Len() {
+		if !sameValue(first.Index(index), second.Index(index), budget) {
+			return false
+		}
+	}
+	return true
+}
+
+func sameEntries(first, second reflect.Value, budget *int) bool {
+	for _, key := range first.MapKeys() {
+		if !sameValue(first.MapIndex(key), second.MapIndex(key), budget) {
+			return false
+		}
+	}
+	return true
+}
+
+func equalByMethod(first, second reflect.Value) (bool, bool) {
+	equal := first.MethodByName("Equal")
+	if !equal.IsValid() {
+		return false, false
+	}
+	asked := equal.Type()
+	if asked.NumIn() != 1 || asked.In(0) != first.Type() || asked.NumOut() != 1 || asked.Out(0).Kind() != reflect.Bool {
+		return false, false
+	}
+	return equal.Call([]reflect.Value{second})[0].Bool(), true
 }

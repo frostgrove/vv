@@ -165,9 +165,15 @@ func causeAsWrap(cause error) error {
 }
 
 func tooLarge(rule string, actual, bound int) error {
-	fault := errs.TooLarge().Code(errs.CodeTooLarge).
-		Message(fmt.Sprintf("%s is %d bytes against a bound of %d", rule, actual, bound)).Fault()
-	return newRefusal(ErrTooLarge, fault, nil)
+	return overBound(fmt.Sprintf("%s is %d bytes against a bound of %d", rule, actual, bound))
+}
+
+func tooMany(rule string, actual, bound int) error {
+	return overBound(fmt.Sprintf("%s holds %d against a bound of %d", rule, actual, bound))
+}
+
+func overBound(broken string) error {
+	return newRefusal(ErrTooLarge, errs.TooLarge().Code(errs.CodeTooLarge).Message(broken).Fault(), nil)
 }
 
 func upcastRefusal(cause error) error { return newRefusal(ErrUpcast, causeAsWrap(cause), cause) }
