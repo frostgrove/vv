@@ -718,3 +718,108 @@ The first PostgreSQL event-source release is complete only when:
     module has its pages, index rows, flow and regenerated surface baseline;
 12. `make check`, `make unit`, `make vet` and `git diff --check` pass, and the
     live suite ran rather than skipped.
+
+<a id="research-appendices-2026-09-08"></a>
+
+## Дополнительные приложения — 2026-09-08
+
+**ES-01–ES-09 не выполнены.** Это дополнительные механики и уточнения E1/E2,
+а не отчёт о реализации. База сверена с `dev/ai-improvements` на `2199910`.
+Существующие E0–E4 и их gates сохраняются. `event/eventpg` — будущий путь по
+[[D-121]], не старый корневой `eventpg` из исторических примеров выше.
+
+Владельцы — опциональная event-подсистема и выбранный store, не framework kernel.
+Приложение передаёт обработчики, SQL transaction authority и read-model repository
+своего ORM; никакого обязательного ORM, DI, broker или межмодульного registry.
+Новые гарантии требуют отдельного контракта и тестов: нынешний [[UC-032]] ими
+не расширяется. DX ниже — эскизы, не существующие API.
+
+### Приложение ES-01 — durable subscriptions и атомарная SQL-проекция
+
+**Статус: не выполнено.** Уточняет E2, не повторная реализация `Reader.Cursor`.
+
+1. Механизм: [Axon tracking tokens](https://docs.axoniq.io/axon-framework-reference/4.12/events/event-processors/streaming/) — постоянная позиция отдельного подписчика, продолжение после рестарта. [Marten daemon](https://martendb.io/events/projections/async-daemon.html) сохраняет изменения проекции и её продвижение одной транзакцией.
+2. Зачем: падение между изменением read model и checkpoint не должно терять событие или повторно применять уже закоммиченный SQL-эффект.
+3. Адаптация: выбранный SQL-профиль фиксирует effect + checkpoint одной transaction authority. Читать только подтверждённую историю; курсор не проходит незавершённый append, `MAX(sequence)` не доказательство видимости. Чужая БД/HTTP требуют собственной идемпотентности, не получают SQL-гарантию.
+4. Уже есть: [reader и сохраняемый cursor](../../event/reader.go), [capabilities, включая MonotoneVisibility](../../event/store.go), [transaction authority](../../event/authority.go). Нет постоянного subscriber state и SQL-projector.
+5. DX: имя подписчика + read-only log + обработчик batch в предоставленной SQL-транзакции; после crash запуск продолжает сохранённую позицию.
+
+### Приложение ES-02 — параллельные подписчики с порядком внутри последовательности
+
+**Статус: не выполнено.** Дополняет E2.
+
+1. Механизм: [Axon segments и token claims](https://docs.axoniq.io/axon-framework-reference/4.12/events/event-processors/streaming/) распределяют работу между процессами, сохраняя порядок связанных событий.
+2. Зачем: ускорить проекции несколькими воркерами, не получить `OrderPaid` раньше `OrderCreated` при перераспределении нагрузки.
+3. Адаптация: application задаёт ключ последовательности по конфликтующей read model; aggregate ID подходит не для любой multi-stream проекции. SQL commit проверяет актуальное поколение claim вместе с effect/checkpoint. Изменение числа partitions требует согласованной передачи позиции, не замены `hash % N` на ходу. Внешний HTTP такой fence не защищает.
+4. Уже есть: [упорядоченные stream/log reads](../../event/store.go), [host-owned runner](../../runtime/runner.go). Нет subscriber partitions, их ownership и handoff; порядок событий не равен порядку параллельных handlers.
+5. DX: подписчик + `SequenceBy(key)` + число partitions; запуск нескольких instances не меняет прикладной handler.
+
+### Приложение ES-03 — dead-letter queue сохраняет причинный порядок
+
+**Статус: не выполнено.** Дополняет E2; не общий redrive jobs.
+
+1. Механизм: [Axon sequenced DLQ](https://docs.axoniq.io/dead-letter-queue-guide/4.13/) паркует не только ошибочное событие, но и следующие события той же последовательности; остальные продолжают обрабатываться.
+2. Зачем: один сломанный заказ не останавливает весь projector, но его последующие изменения не применяются к неверному состоянию.
+3. Адаптация: parking и scan checkpoint атомарны; успешная applied-позиция считается отдельно. Очередь ограничена числом sequences/bytes; overflow останавливает затронутую partition, не пропускает событие. Retry обрабатывает sequence по порядку; skip — явная операторская операция с отметкой неполноты проекции.
+4. Уже есть: [классы unreadable history](../../event/errors.go), bounded pages. Нет subscriber DLQ, состояния заблокированной sequence и ordered redrive.
+5. DX: политика subscriber failure + `RetrySequence(reference)`; состояние показывает blocked/degraded, не ложное «догнал историю».
+
+### Приложение ES-04 — перестроение проекции рядом с работающей версией
+
+**Статус: не выполнено.** Конкретизирует rebuild/cutover из E2.
+
+1. Механизм: [Marten/Wolverine versioned projections](https://jeremydmiller.com/2025/03/26/projections-consistency-models-and-zero-downtime-deployments-with-the-critter-stack/) строят новую версию в отдельных таблицах, пока старая продолжает обслуживать запросы.
+2. Зачем: исправить расчёт или изменить read model без очистки работающей таблицы и выдачи полупостроенных данных.
+3. Адаптация: generation имеет отдельные данные, checkpoints и claims; catch-up продолжается до согласованного барьера. Переключение read target атомарно для заявленного набора таблиц. Старый worker не пишет в новое поколение. Rollback допустим, пока старое поколение поддерживается актуальным либо снова догнало историю. Rebuild получает отдельный ресурсный бюджет.
+4. Уже есть: [полный log walk](../../event/reader.go); E2 требует rebuild/cutover rollback. Нет generation storage, переключения read target и проверки готовности.
+5. DX: `Rebuild(projection, newGeneration)` → проверка результата/барьера → `Activate(newGeneration)`; старое поколение удаляется отдельной операцией.
+
+### Приложение ES-05 — ожидание конкретного изменения в read model
+
+**Статус: не выполнено.** Дополняет E2.
+
+1. Механизм: [Marten non-stale queries](https://martendb.io/events/projections/async-daemon.html#querying-for-non-stale-data) ждут, пока асинхронная проекция догонит зафиксированную границу истории.
+2. Зачем: после успешной команды следующий read не должен неожиданно показывать старое состояние; тестам не нужны `sleep` и опрос бизнес-таблиц наугад.
+3. Адаптация: ждать подтверждённую stream/version либо store-issued barrier конкретного projection generation, а не «пока lag станет нулём». Scan checkpoint после parking не доказывает применение события. Deadline возвращает timeout/degraded; stale-read разрешается явно. Успех даёт видимость до барьера, не глобальную linearizability и не свежесть чужой read replica.
+4. Уже есть: [Commit.Stream/Last](../../event/token.go), но receipt внутри caller transaction ещё не доказывает её commit. Нет applied progress и ожидания проекции.
+5. DX: после подтверждённого commit — `projection.Wait(ctx, committedVersion)`, затем чтение согласованного read target.
+
+### Приложение ES-06 — replay не повторяет письма и платежи
+
+**Статус: не выполнено.** Дополняет E2/E4.
+
+1. Механизм: [Marten side effects](https://martendb.io/events/projections/side-effects) отделяет обновление проекции от эффектов и подавляет последние при rebuild; [Axon replay policy](https://docs.axoniq.io/axon-framework-reference/4.12/events/event-processors/streaming/#replay-api) исключает выбранные handlers из replay.
+2. Зачем: восстановление read model не должно повторно выставлять счёт, отправлять webhook или создавать новую job за старое событие.
+3. Адаптация: отдельные projection/effect handlers; rebuild не получает effect-dispatch capability. Начальный backfill тоже имеет явную effect policy. При переключении поколения durable граница владения live effects не допускает двух отправителей. Это не sandbox: произвольный HTTP внутри пользовательского projection callback запрещается его контрактом и проверяется тестом, не блокируется магией.
+4. Уже есть: [ReadOnly без append escape](../../event/reader.go), pure rehydration; E4 выбирает staged jobs/outbox. Нет режима доставки и replay-aware effect dispatch.
+5. DX: `Rebuild(projection)` запускает только пересчёт; live effects подключаются отдельным обработчиком с собственной delivery identity.
+
+### Приложение ES-07 — выяснение результата неопределённого append
+
+**Статус: не выполнено.** Дополняет E1; не скрытый retry `Store.Append`.
+
+1. Механизм: [KurrentDB idempotent append](https://docs.kurrent.io/clients/python/v1.3/appending-events) распознаёт повтор того же append по прежним consistency checks и event IDs. Для Frost предлагаем отдельную постоянную квитанцию операции, а не изменение обычного append.
+2. Зачем: после потери соединения на commit узнать, записана ли именно эта операция; одного нового stream version для этого недостаточно.
+3. Адаптация: operation identity + fingerprint + диапазон событий записываются рядом с append в той же caller-owned SQL-транзакции. Повтор проверяет прежнюю квитанцию; другое содержимое с тем же ключом — конфликт. Отсутствующая квитанция не доказывает rollback, пока исходная транзакция не разрешилась. Retention квитанций ограничивает окно проверки; framework не переигрывает доменное решение.
+4. Уже есть: [ErrUncertain](../../event/errors.go), [возвращаемый Commit](../../event/token.go); [Store.Append](../../event/store.go) намеренно не дедуплицирует. Нет durable operation identity и lookup результата. Квитанция — отдельный SQL-профиль, не поле произвольных metadata в event envelope.
+5. DX: operation key перед командой; при unknown outcome — `receipts.Resolve(ctx, operationKey)`, не новый `Load → Decide → Append` вслепую.
+
+### Приложение ES-08 — историческое состояние по версии
+
+**Статус: не выполнено.** Отдельный read-only контракт; не изменение нынешнего `Repo.Load`.
+
+1. Механизм: [Marten time travelling](https://martendb.io/events/projections/live-aggregates#time-travelling) восстанавливает состояние на выбранной версии stream.
+2. Зачем: показать состояние заказа до спорного изменения, воспроизвести инцидент или сравнить расчёт до/после исправления projection code.
+3. Адаптация: читать полный префикс до указанной версии, не произвольный фильтр событий. Результат не выдаёт append token. Первая граница — точная версия; timestamp не объявляется business-time и не заменяет порядок commit. Неподдерживаемая revision или отсутствующий префикс возвращают отказ, не частичное состояние.
+4. Уже есть: [постраничное чтение stream](../../event/store.go), [retained revision chain](../../event/chain.go), [полный replay](../../event/repo.go). Нет top-level ограниченного replay; [[UC-032]] пока требует полный `Load` и должен отдельно описать новый read-only сценарий.
+5. DX: `history.AtVersion(ctx, id, version)` → state + provenance; исправление истории остаётся новой доменной командой.
+
+### Приложение ES-09 — совместимые snapshots с безопасным fallback
+
+**Статус: не выполнено.** Уточняет уже запланированную, условную snapshot-механику E2.
+
+1. Механизм: [Axon snapshot revision filters](https://docs.axoniq.io/axon-framework-reference/4.10/tuning/event-snapshots/) исключают snapshots несовместимой версии агрегата из загрузки.
+2. Зачем: ускорить длинные streams, не получить старое состояние после изменения fold или кодека.
+3. Адаптация: snapshot привязан к backing/stream/version и версии вычисления состояния, независимой от payload revision. Загружается только подтверждённая версия; затем проигрывается весь хвост. Несовместимость/повреждение snapshot ведёт к полному replay; unreadable event не скрывается fallback. Нужны measured benefit и проверка равенства snapshot+tail полному replay. Историю не удаляем.
+4. Уже есть: [полный replay](../../event/repo.go) и revision readers; snapshots нет. E2 уже ставит performance/equivalence gate. Оптимизированный load требует отдельного принятого контракта, а не незаметного изменения гарантий [[UC-032]].
+5. DX: необязательная snapshot policy у конкретного event store; обычные команды не зависят от наличия snapshot, оператор может его отбросить.

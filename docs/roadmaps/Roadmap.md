@@ -362,16 +362,32 @@ independently accepted delivery seam but may not import `eventpg`.
 ## 16. Optional full-i18n extension
 
 The current framework already owns `errs.MessageSource`, loadable error
-catalogues and locale propagation through `port`; HTTP and gRPC renderers accept
-that base seam. There is no full i18n module. The
-[current i18n revision](2026-09-01-i18n-roadmap.md) begins with an evidence gate
-for plural/select application messages beyond those facilities, and that gate
-may legitimately decide not to build anything.
+catalogues and a shared locale context key in `port`; HTTP and CRUD gRPC
+renderers accept that source. There is no full i18n module. HTTP error paths can
+overwrite a prebound locale with the first header tag, while CRUD gRPC preserves
+it; neither helper performs full language negotiation.
 
-If activated, one optional `i18n` module implements the existing message seam
-and owns CLDR/catalogue boilerplate. Applications pass it to current renderers;
-there are no `i18nhttp`, `i18ngrpc`, `i18notel` or tenancy/i18n combination
-packages.
+The [current i18n revision](2026-09-01-i18n-roadmap.md), researched on 2026-09-08,
+describes twelve mechanisms with references across Go, JavaScript, Python,
+Ruby, PHP, Java and C#: locale resolution, layered catalogues, plural/select,
+cultural formatting, typed deferred messages, error adaptation, authoring,
+versioned artefacts, frontend contracts, worker policies, diagnostics and
+presentation boundaries. It recommends a bounded go-i18n cardinal profile
+first, with richer MessageFormat and Go/JS runtime compatibility gated
+separately. Explainable fallback, shared typed contracts and reproducible
+delivery are proposed framework-level compositions, not shipped features.
+Seven explicit integration contracts now cover module contributions/doctor,
+errs and transport path preservation, tenant policy/overlays, typed i18n
+observations with application OTel wiring, value-free cache loaders, restored
+worker identity, and storage/runtime/health lifecycle. The first release needs
+a combined errs + tenancy + OTel application fixture. Event sourcing is excluded
+from this i18n work while its own implementation remains unfinished.
+
+M0 still requires a real application scenario beyond `errs.Messages` and can
+decide that no new module is needed. If activated, one optional `i18n` module
+adapts the existing source. Locale precedence changes belong to existing
+transports with explicit compatibility evidence; there are no `i18nhttp`,
+`i18ngrpc`, `i18notel` or tenancy/i18n combination packages.
 
 ## 17. What is still two statements about one operation
 
