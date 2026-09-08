@@ -267,11 +267,19 @@ type Operation string
     const LookupOperation Operation = "lookup" ...
 type Option interface{ ... }
     func FlightSaturation(value FlightSaturationPolicy) Option
+    func FreshFor(fresh, stale time.Duration) Option
+    func JitterBy(value JitterPolicy) Option
     func MaxFlights(value int) Option
     func MaxTransientBytes(value int64) Option
     func MaxTransientWaiters(value int) Option
     func MaxValueBytes(value int) Option
     func NegativeFor(value time.Duration) Option
+    func NoNegative() Option
+    func OnCorruption(value CorruptionPolicy) Option
+    func OnInvalidateFailure(value FailurePolicy) Option
+    func OnReadFailure(value FailurePolicy) Option
+    func RetainFor(value time.Duration) Option
+    func RetainUntilEvicted() Option
     func StaleBehavior(value StalePolicy) Option
     func TransientSaturation(value TransientSaturationPolicy) Option
 type Outcome string
@@ -1004,6 +1012,80 @@ type Corpus struct{ ... }
 type Err struct{ ... }
 ```
 
+## github.com/frostgrove/vv/event
+```go
+const MaxPayloadBytes = 1 << 20 ...
+var ErrDeclaration = errors.New("event: the declaration is malformed") ...
+func CauseOf(err error) error
+func Failure(outcome Outcome, cause error) error
+func ResidentPage(maxPayload int) int
+type Aggregate[S any, ID any] struct{ ... }
+    func Define[S any, ID any](family string, key func(ID) Key) *Aggregate[S, ID]
+    func TryDefine[S any, ID any](family string, key func(ID) Key) (*Aggregate[S, ID], error)
+type AppendRequest struct{ ... }
+type At[S any] struct{ ... }
+type Authority struct{ ... }
+    func NewAuthority(over Backing, transaction any) (Authority, error)
+type Backing struct{ ... }
+    func NewBacking(identity any) (Backing, error)
+type Binding struct{ ... }
+    func Open(store Store) *Binding
+type Capabilities struct{ ... }
+type Chain[V any] struct{ ... }
+    func From[V any](codec Codec[V]) Chain[V]
+    func Then[A, B any](prev Chain[A], codec Codec[B], up func(A) (B, error)) Chain[B]
+type Change[S any] struct{ ... }
+type Codec[V any] interface{ ... }
+    func JSON[V any]() Codec[V]
+type Commit struct{ ... }
+type Cursor string
+type Declaration interface{ ... }
+type Envelope struct{ ... }
+type Fact[S any, ID any, E any] struct{ ... }
+    func Declare[S, ID, E any](a *Aggregate[S, ID], name string, chain Chain[E], fold func(S, E) S) *Fact[S, ID, E]
+    func TryDeclare[S, ID, E any](a *Aggregate[S, ID], name string, chain Chain[E], fold func(S, E) S) (*Fact[S, ID, E], error)
+type Key string
+    func Compose(parts ...string) Key
+type Limits struct{ ... }
+type Log interface{ ... }
+    func ReadOnly(store Store) Log
+type Outcome uint8
+    const Unclassified Outcome = iota ...
+type Position uint64
+type Reader struct{ ... }
+    func Read(log Log, after Cursor) (*Reader, error)
+type Record struct{ ... }
+type Repo[S any, ID any] struct{ ... }
+    func Bind[S, ID any](b *Binding, a *Aggregate[S, ID]) (*Repo[S, ID], error)
+type Store interface{ ... }
+type Stream struct{ ... }
+type Support uint8
+    const Unstated Support = iota ...
+type Version uint64
+```
+
+## github.com/frostgrove/vv/event/eventmemory
+```go
+func WithTransaction(ctx context.Context, tx *Tx) context.Context
+type Log struct{ ... }
+    func NewLog(spec LogSpec) (*Log, error)
+type LogSpec struct{ ... }
+type Spec struct{ ... }
+type Store struct{ ... }
+    func New(spec Spec) (*Store, error)
+type Tx struct{ ... }
+```
+
+## github.com/frostgrove/vv/event/eventtest
+```go
+func Families(t *testing.T, declarations ...event.Declaration)
+func Keys[S, ID any](t *testing.T, a *event.Aggregate[S, ID], ids ...ID)
+func RoundTrip[S, ID, E any](t *testing.T, fact *event.Fact[S, ID, E], byRevision ...any)
+func Run(t *testing.T, factory Factory)
+type Factory struct{ ... }
+type Tx interface{ ... }
+```
+
 ## github.com/frostgrove/vv/health
 ```go
 const DefaultTimeout = 2 * time.Second ...
@@ -1311,6 +1393,7 @@ type LeaseRenewal struct{ ... }
     func NewLeaseRenewal(previous LeaseRef, current LeaseRef, mutation DeliveryMutationStatus, ...) (LeaseRenewal, error)
 type LegacyIntent struct{ ... }
     func RestoreLegacyIntent(raw string) (LegacyIntent, error)
+type ListCursor struct{ ... }
 type ListSpec struct{ ... }
 type Name struct{ ... }
     func ParseName(raw string) (Name, error)
@@ -1438,8 +1521,6 @@ type ScheduleCadence struct{ ... }
 type ScheduleCadenceOption interface{ ... }
     func Anchor(value time.Time) ScheduleCadenceOption
 type ScheduleDescription struct{ ... }
-type ScheduleOverlap uint8
-    const AllowOverlap ScheduleOverlap = iota ...
 type ScheduleRevision uint16
 type ScheduleRunResult struct{ ... }
 type ScheduleSpec[P any] struct{ ... }
@@ -1713,12 +1794,14 @@ type Scanner struct{ ... }
 const MaxKeyBytes = 768 ...
 var ErrInvalid = kindError{ ... } ...
 func ExactSize(n int64) *int64
+func IfMatch(etag string) *string
 func NewError(operation string, kind Kind, cause error) error
 type Backend interface{ ... }
 type Capabilities struct{ ... }
 type CleanupOptions struct{ ... }
 type CleanupResult struct{ ... }
 type Config struct{ ... }
+type DeleteOptions struct{ ... }
 type Error struct{ ... }
 type Info struct{ ... }
 type Key struct{ ... }
@@ -1734,6 +1817,7 @@ type Namespace struct{ ... }
     func ParseNamespace(raw string) (Namespace, error)
 type PromoteOptions struct{ ... }
 type PutOptions struct{ ... }
+type ReadOptions struct{ ... }
 type StageID struct{ ... }
     func NewStageID() (StageID, error)
     func ParseStageID(raw string) (StageID, error)
@@ -1762,6 +1846,7 @@ const MaxReferenceBytes = 128
 const MinDurableKeyBytes = 32
 var ErrMalformed = fmt.Errorf("tenancy: value is not a well-formed tenant reference: %w", crud.ErrBadRequest) ...
 func Classify(err error) error
+func Failures(outcomes []Member) int
 func Unbound(ctx context.Context) context.Context
 type Admission struct{ ... }
     func Admit(class Class, states ...Lifecycle) Admission
@@ -1824,7 +1909,11 @@ func IdentityRestorer(authority *tenancy.Authority) (jobs.TrustedIdentityRestore
 ## github.com/frostgrove/vv/tenancy/tenancyrow
 ```go
 func Policy[M any, ID comparable](authority *tenancy.Authority, ownership Ownership[M]) security.Policy[M, ID]
+func PolicyIn[M any, ID comparable](authority *tenancy.Authority, ownership Ownership[M], classes Classes) security.Policy[M, ID]
 func Repository[M any, ID comparable](authority *tenancy.Authority, ownership Ownership[M]) crud.Middleware[M, ID]
+func RepositoryIn[M any, ID comparable](authority *tenancy.Authority, ownership Ownership[M], classes Classes) crud.Middleware[M, ID]
+type Classes struct{ ... }
+    func RequestClasses() Classes
 type Mode uint8
     const Derive Mode = iota ...
 type Ownership[M any] interface{ ... }
@@ -2038,6 +2127,7 @@ type GrantPermissionCommand struct{ ... }
 type GrantRoleCommand struct{ ... }
 type GrantService struct{ ... }
     func NewGrantService(store *Store) *GrantService
+    func NewUnguardedGrantService(store *Store) *GrantService
 type Grants interface{ ... }
 type GrantsDto struct{ ... }
 type GrantsService struct{ ... }
@@ -2079,6 +2169,8 @@ type Profile struct{ ... }
 type Protection struct{ ... }
 type RefreshRequest struct{ ... }
 type Registrar[P any] interface{ ... }
+type Rehasher interface{ ... }
+    func RehasherOf(hasher Hasher) (Rehasher, bool)
 type RevocationSink interface{ ... }
 type Role struct{ ... }
 type RoleAttrs struct{ ... }
@@ -2329,6 +2421,7 @@ type Option func(*config)
 ## github.com/frostgrove/vv/cache/cachefx
 ```go
 func Activating(constructor any) fx.Option
+func AsObserver(constructor any) any
 func AsProvider(constructor any) any
 func AsResource(constructor any) any
 func AsSet(constructor any) any
@@ -2493,6 +2586,19 @@ type TransportOption func(*transport)
     func WithVocabulary(c *errs.Codes) TransportOption
 ```
 
+## github.com/frostgrove/vv/event/eventpg
+```go
+const DefaultSchema = "frostgrove_events" ...
+var ErrSpec = errors.New("eventpg: this store cannot be assembled from this spec") ...
+func MigrationStatements(schema Schema) ([]string, error)
+type Schema struct{ ... }
+type SchemaManagement uint8
+    const UnsetSchemaManagement SchemaManagement = iota ...
+type Spec struct{ ... }
+type Store struct{ ... }
+    func New(spec Spec) (*Store, error)
+```
+
 ## github.com/frostgrove/vv/health/healthfx
 ```go
 func AsCheck(constructor any) any
@@ -2584,6 +2690,7 @@ const DefaultPrefix = "frostgrove:jobs"
 const FormatVersion = "1"
 var ErrFormatMismatch = errors.New("jobsredis: format mismatch")
 var ErrNotReady = errors.New("jobsredis: driver is not ready")
+var ErrRevisionChanged = fmt.Errorf("%w: delivery changed under this operation", jobs.ErrConflict)
 type Driver struct{ ... }
     func New(spec Spec) (*Driver, error)
     func Open(ctx context.Context, client redis.UniversalClient, namespace jobs.Namespace) (*Driver, error)

@@ -1,0 +1,51 @@
+eventpg/schema/v1
+schema frostgrove_events
+bounds maxpayload=65536 maxkey=512
+check events events_family_check CHECK (octet_length(family) >= 1 AND octet_length(family) <= 128)
+check events events_key_check CHECK (octet_length(key) >= 1 AND octet_length(key) <= 512)
+check events events_payload_check CHECK (octet_length(payload) <= 65536)
+check events events_revision_check CHECK (revision > 0)
+check events events_type_check CHECK (octet_length(type) >= 1 AND octet_length(type) <= 128)
+check events events_version_check CHECK (version > 0)
+check schema_meta schema_meta_log_check CHECK (octet_length(log) = 16)
+check schema_meta schema_meta_singleton_check CHECK (singleton)
+check schema_meta schema_meta_version_check CHECK (version > 0)
+check streams streams_family_check CHECK (octet_length(family) >= 1 AND octet_length(family) <= 128)
+check streams streams_key_check CHECK (octet_length(key) >= 1 AND octet_length(key) <= 512)
+check streams streams_version_check CHECK (version > 0)
+column events family 2 text true - -
+column events key 3 text true - -
+column events payload 7 bytea true - -
+column events position 1 bigint true - always
+column events recorded_at 8 timestamp with time zone true - -
+column events revision 6 integer true - -
+column events type 5 text true - -
+column events version 4 bigint true - -
+column schema_meta created_at 5 timestamp with time zone true clock_timestamp() -
+column schema_meta fingerprint 4 text true - -
+column schema_meta log 3 bytea true - -
+column schema_meta singleton 1 boolean true - -
+column schema_meta version 2 integer true - -
+column streams family 1 text true - -
+column streams key 2 text true - -
+column streams version 3 bigint true - -
+fk events events_stream_fkey (family, key) -> streams (family, key)
+function events_are_append_only BEGIN RAISE EXCEPTION 'eventpg: % on an event row: history is append-only', TG_OP; END
+function events_assign_writer_xid BEGIN PERFORM pg_current_xact_id(); RETURN NULL; END
+persistence events permanent
+persistence schema_meta permanent
+persistence streams permanent
+pk events (position)
+pk schema_meta (singleton)
+pk streams (family, key)
+rls events disabled
+rls schema_meta disabled
+rls streams disabled
+rule events none
+rule schema_meta none
+rule streams none
+sequence events position increment=1 cache=1 cycle=false
+trigger events events_append_only_row BEFORE UPDATE OR DELETE ROW events_are_append_only columns=all condition=none
+trigger events events_append_only_truncate BEFORE TRUNCATE STATEMENT events_are_append_only columns=all condition=none
+trigger events events_position_needs_xid BEFORE INSERT STATEMENT events_assign_writer_xid columns=all condition=none
+unique events events_stream_version_key (family, key, version)

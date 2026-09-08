@@ -21,10 +21,13 @@ func TestNoBaseSubsystemDependsOnTheEventExtension(t *testing.T) {
 // A store is a package beside the core and costs the core alone. A package that
 // is not charged here fails rather than being skipped, which is the half a
 // written table cannot do: the table is what the next store is added beside.
-// Charging is a set because no package of this extension costs a first-party
-// package the vocabulary does not already reach; a store that does — a SQL one
-// reaching `crud/adapter/crudsql`, say — turns this into a map from the package
-// to what it may add, and its row is where that dependency is argued.
+// Charging is a map from the package to what it may add on top of the
+// vocabulary, and a row is where that dependency is argued. `eventpg` is the
+// one that adds anything: a store that speaks SQL reaches
+// `crud/adapter/crudsql` for the caller's transaction, and the closure of that
+// one allowance is `crud`, `crud/catalog`, `crud/sqlfault`, `errs`,
+// `errs/sqlerr` and `utils` — everything a PostgreSQL store needs and nothing
+// more, which is why `health`, `port` and `runtime` stay outside it.
 func TestNoEventPackageCostsMoreThanTheSeamItNames(t *testing.T) {
 	costsNoMoreThanItNames(t, extensionCost{
 		prefix:    eventExtension,
@@ -32,6 +35,7 @@ func TestNoEventPackageCostsMoreThanTheSeamItNames(t *testing.T) {
 		contracts: []string{"./crud", "./errs"},
 		charged: map[string]string{
 			eventExtension + "/eventmemory": "",
+			eventExtension + "/eventpg":     "./crud/adapter/crudsql",
 			eventExtension + "/eventtest":   "",
 		},
 		core: func(reached string) string {
@@ -40,8 +44,11 @@ func TestNoEventPackageCostsMoreThanTheSeamItNames(t *testing.T) {
 		uncharged: func(path string) string {
 			return path + " is a package of the extension and says nothing about what it costs — the vocabulary and one store each is the whole layout, and what a package costs is written down here"
 		},
-		overreach: func(path, reached, _ string) string {
-			return path + " reaches " + reached + ", and its row here says it costs the vocabulary and nothing else"
+		overreach: func(path, reached, allowance string) string {
+			if allowance == "" {
+				return path + " reaches " + reached + ", and its row here says it costs the vocabulary and nothing else"
+			}
+			return path + " reaches " + reached + ", and its row here says it costs the vocabulary and " + allowance
 		},
 	})
 }

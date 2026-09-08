@@ -322,27 +322,64 @@ isolated module graphs are release gates; there is no `auditotel` or
 
 ## 15. The PostgreSQL event store
 
-**The vocabulary is delivered and this item has narrowed to the store.**
-`event`, `event/eventmemory` and `event/eventtest` are in the root module: the
-declaration seam, the eight-method store contract, expected-version append, full
-replay, the bounded log walk, a complete in-memory store with transactions, and
-the conformance suite a store implementer runs against their own store
-([[D-121]], [[FL-036]], [[UC-032]]). The
-[PostgreSQL event-sourcing revision](2026-09-01-postgres-event-sourcing-roadmap.md)
+**The vocabulary and the PostgreSQL store are both delivered, and this item has
+narrowed to what is built on top of them.** `event`, `event/eventmemory` and
+`event/eventtest` are in the root module: the declaration seam, the eight-method
+store contract, expected-version append, full replay, the bounded log walk, a
+complete in-memory store with transactions, and the conformance suite a store
+implementer runs against their own store ([[D-121]], [[FL-036]], [[UC-032]]).
+`event/eventpg` is a module beside them: one-statement expected-version
+admission, an append-only history the database enforces, three-level schema
+verification on a deployment-profile choice, and a log walk that hands over a
+settled watermark rather than the newest position ([[D-126]], [[D-127]],
+[[FL-037]]). It runs `eventtest` unchanged, twice, with zero diffs to the kernel
+— `make check-event-kernel` is what holds that — and nineteen of its twenty
+sections report *passed*; `monotone visibility` is *not certified* with the
+store's own reason, because a settled watermark declines that claim. That census
+is asserted rather than read off the log: `eventtest` reports a section it could
+not certify without failing the run, so a hook that stops answering would
+otherwise downgrade a section behind a green suite ([[FL-037]]).
+The [PostgreSQL event-sourcing revision](2026-09-01-postgres-event-sourcing-roadmap.md)
 is superseded in the two E0 decisions that said none of that would be written,
 in place and with the reason.
 
-What is left is `eventpg` — one independently selected module for a PostgreSQL
-store implementing `event.Store`, with the driver its live fixtures need. It is
-blocked on one decision and it is not a technical one: the aggregate, which comes
-from a consumer rather than from this repository. That blocker is aimed at a live
-schema, which is why it did not gate the vocabulary and does gate the store.
+The three debts phase 1 handed phase 2 are disposed of, each by name:
 
-Phase 2 inherits three named debts from phase 1: no decode-side depth or size
-bound beyond the byte cap (`eventpg` must add its own), the git-diff arm of the
-zero-diff check once a tag exists — as a report, never as a `make check` arm —
-and the savepoint half of the authority rule, which is `crudsql` vocabulary the
-memory store has none of.
+- **The git-diff arm of the zero-diff check**, which this file used to say should
+  exist "as a report, never as a `make check` arm". That objection was to a
+  **tag**-dependent check: before the first tag there is no tag, so the arm would
+  pass vacuously — the worst kind. It is now `make check-event-kernel`, and it
+  pins a recorded *revision* rather than a tag, refuses rather than reporting ok
+  when git is absent or the baseline does not resolve, reads `git status` beside
+  `git diff` so an untracked file under `event/` is caught too, and is self-tested
+  in `scripts/checks_test.go` with four cases — one each for the diff arm, the
+  untracked arm, the pathspec and the refuse-when-it-cannot-run branch. What the
+  original objection leaves standing is real and deferred rather than argued away:
+  it cannot run from a tarball or a vendor directory, and it freezes `event/`
+  against a fixed commit with no stated re-baselining rule.
+- **The savepoint half of the authority rule** — struck, against
+  `TestASavepointWritesUnderItsParentsAuthorityAndARollbackDiscardsThem` rather
+  than against a claim: a receipt taken inside a `crudsql` savepoint and one taken
+  outside the same transaction compare `Same`, `ROLLBACK TO SAVEPOINT` discards
+  the events appended inside it while the parent stays live, and a receipt from a
+  second transaction on the same pool compares not-`Same` as the control.
+- **A decode-side depth or size bound beyond the byte cap.** This file used to
+  assign it to `eventpg`, and **that assignment was wrong**. `eventpg` decodes
+  nothing: `payload` is `bytea`, it is scanned into `[]byte` and it reaches the
+  consumer as `event.Envelope.Payload` untouched. Decoding is the declaration's
+  codec, one level up, and `event/encodable.go`'s `codecGraphDepth` bounds the
+  *type graph* a declaration walks at seal time rather than the nesting of a
+  stored document at read time. The store's whole share of the bound is the byte
+  cap, and that **is** delivered — the read door refuses a row whose payload
+  exceeds `MaxPayload` before an envelope is built, and the `CHECK` constraint
+  carrying the same number is a fingerprint input. The remaining bound belongs to
+  the codec seam in `event/`, which is where it is now owed.
+
+What is left is what sits on top of the store rather than beside it: a projector
+and a checkpoint store, a retention or archival path for a history that outgrows
+one table, and an `eventpgfx` that derives schema management from the same
+`DeploymentProfile` `jobspgfx` already reads ([[D-127]]). None of the three is
+blocked on a decision; each is blocked on a consumer that needs it.
 
 A transaction-local outbox joins that same module only if the later E4 gate
 activates it, and it is weighed against `jobs.Stager`, which already stages
@@ -350,14 +387,17 @@ durable intent inside the caller's transaction. [[D-118]] settles what that
 comparison is against rather than leaving it to be rediscovered: the
 transactional enqueue **is** this framework's outbox, it is the only one, and
 what it promises — at-least-once, unordered, producer-side deduplication only —
-is written down. The first slice starts with a
-direct API: an event-specific root chain is added only after a second
-implementation justifies that base contract.
+is written down. [[D-118]] is also the one answer both `jobspg` and `eventpg` give
+to the ambient-transaction question, which is why there is no second spelling of
+it to reconcile. The first slice starts with a direct API: an event-specific root
+chain is added only after a second implementation justifies that base contract.
 
 Tenancy, audit and OTel are application/base-seam composition, not
-`eventtenancy`, `eventaudit` or `eventotel`. A broker sender is injected through
-a neutral application-owned contract; a future broker adapter may target an
-independently accepted delivery seam but may not import `eventpg`.
+`eventtenancy`, `eventaudit` or `eventotel`. A store per tenant schema is
+expressible today, because the backing is the pool and the schema name together;
+no affordance is exported for it. A broker sender is injected through a neutral
+application-owned contract; a future broker adapter may target an independently
+accepted delivery seam but may not import `eventpg`.
 
 ## 16. Optional full-i18n extension
 

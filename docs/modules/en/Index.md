@@ -116,6 +116,7 @@ the exception ([[D-048]], [[D-055]]).
 |---|---|---|
 | [event](event.md) | `vv/event` | Optional. Declared facts, a reader chain per payload shape, expected-version append, full replay, a bounded log walk and a six-class refusal vocabulary — over any store |
 | [eventmemory](eventmemory.md) | `vv/event/eventmemory` | A complete in-memory store, transactions included. Not a test double |
+| [eventpg](eventpg.md) | `vv/event/eventpg` | **Module** — the store on PostgreSQL: one-statement append, three-level schema verification, an append-only history and a settled-watermark log walk |
 | [eventtest](eventtest.md) | `vv/event/eventtest` | The store contract as a conformance suite, plus three proxies an application runs over its own declaration |
 
 ## Observability — tracing and metrics

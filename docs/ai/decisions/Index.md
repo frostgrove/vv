@@ -178,6 +178,8 @@ and the next decision written before its code does should say so here.
 | [D-123](D-123-the-declaration-panics-and-try-returns-the-error.md) | `event.Define` and `event.Declare` panic on a malformed declaration and `TryDefine`/`TryDeclare` return the same value through the same code path; the short name is the one an application writes at package level, the `Try…` name is the one a negative test writes, and there is no `MustDefine` inversion | accepted | event sourcing, API design |
 | [D-124](D-124-event-json-is-deliberately-smaller-than-the-codecs-beside-it.md) | `event/encodable.go` asks only whether a type survives its own encode-and-decode and asks it once, at declaration; it carries no `goexperiment.jsonv2` build-tag pair and no decode-side depth or size bound, the byte cap is the trust boundary, and a fourth analyser or a build-tag pair here is the trigger to extract a shared one | accepted | event sourcing, caching, jobs, process & tooling |
 | [D-125](D-125-a-composed-key-is-a-wire-format.md) | `event.Compose` escapes the separator, the escape byte and exactly what the kernel text rule refuses, then joins with `/`, and the rendering is frozen because it is part of every stream ever written under it; a length-prefixed key is refused because a stream key is read, indexed and grepped where `cache`'s namespace prefix is only ever hashed | accepted | event sourcing, core seam |
+| [D-126](D-126-the-event-store-chooses-no-isolation-level.md) | `eventpg` selects no isolation level, opens no transaction outside its migration, reads no stream version into Go, and admits an append through one statement whose zero row count is the only conflict there is; `40001`, `40P01` and `55P03` carry a retryable cause and are never conflicts | accepted | event sourcing, transactions & datasources |
+| [D-127](D-127-an-event-schema-is-migrated-on-the-same-deployment-profile-choice.md) | An event schema migrates only under `ManageSchema`, `Migrate` refuses under `VerifySchema`, there is no zero-configuration `Open`, and a verified start-up compares version, fingerprint and catalog before it serves — D-101's rule, over a subsystem whose data is history | accepted | event sourcing, process & tooling |
 
 ## By area
 
@@ -376,7 +378,10 @@ outcome enum, the six-class partition, the two traversals and the cause only
 `CauseOf` reaches, and the bounded walk a foreign error chain is read under),
 D-123 (which of the pair panics and why the `Must` inversion is refused), D-124
 (what the shipped codec refuses, what it deliberately does not bound, and when a
-third analyser becomes a shared one), D-125 (the frozen key rendering, and why
+third analyser becomes a shared one), D-126 (why the store chooses no isolation
+level and why a serialisation failure is not a conflict), D-127 (migrating an
+event schema is D-101's deployment-profile choice, over a subsystem whose data is
+history), D-125 (the frozen key rendering, and why
 `cache`'s length prefix is the wrong precedent for it).
 
 **Philosophy & docs** — D-021 (magic over orthodoxy, and D-050 as its newest

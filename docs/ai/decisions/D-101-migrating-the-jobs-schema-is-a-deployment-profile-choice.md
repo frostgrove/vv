@@ -91,4 +91,6 @@ otherwise.
 
 ## See also
 
-[[D-021]] [[D-096]]
+[[D-021]] [[D-096]] [[D-127]] — the same rule over `event/eventpg`, whose data
+is history: a schema migrated by accident under a running deployment mints a new
+log id and every persisted cursor becomes foreign.

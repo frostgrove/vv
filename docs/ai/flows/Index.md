@@ -56,6 +56,7 @@ through it.
 | command or storage telemetry spans, duration metrics or cache observers | [[FL-034]] |
 | a transactional enqueue, a staged placement, a lease, a takeover, or an effect that must not outlive a rollback | [[FL-035]] |
 | an aggregate declaration, a fact, a reader chain, an expected-version append, a stream replay, a log walk or an event store | [[FL-036]] |
+| the PostgreSQL event schema, its migration or verification, the one-statement append, the settled-watermark cursor or the conformance run | [[FL-037]] |
 
 **A code change that alters a path must update its flow document in the same
 change.** Not afterwards, not in a follow-up. A flow that describes a path the
@@ -108,6 +109,7 @@ phase 3 landed FL-014 and before phase 5 landed FL-015.
 | [FL-034](FL-034-command-telemetry-lifecycle.md) | Command and storage telemetry lifecycle | `otel/service.go:executeCommand` / `otel/storage.go:executeStorage` | [[UC-030]] |
 | [FL-035](FL-035-a-committed-decision-becomes-a-delivered-effect.md) | A committed decision becomes a delivered effect | `jobs.Enqueue` / `jobs.EnqueueIn` / `jobspg.Driver.Place` | [[UC-031]] |
 | [FL-036](FL-036-a-decision-becomes-a-recorded-fact.md) | A decision becomes a recorded fact | `event.Define` / `event.Bind` / `event.Repo.Load` / `event.Repo.Append` | [[UC-032]] |
+| [FL-037](FL-037-a-recorded-fact-becomes-a-postgresql-row.md) | A recorded fact becomes a PostgreSQL row | `eventpg.New` / `eventpg.Store.Prepare` / `eventpg.Store.Append` / `eventpg.Store.ReadAll` | [[UC-032]] |
 
 ## By file — which flows touch this file
 
@@ -503,6 +505,17 @@ phase 3 landed FL-014 and before phase 5 landed FL-015.
 | `event/eventtest/defects_ownership.go` | FL-036 |
 | `event/eventtest/defects_lifecycle.go` | FL-036 |
 | `event/eventtest/stores.go` | FL-036 |
+| `event/eventpg/doc.go` | FL-037 |
+| `event/eventpg/schema.go` | FL-037 |
+| `event/eventpg/config.go` | FL-037 |
+| `event/eventpg/migration.go` | FL-037 |
+| `event/eventpg/verify.go` | FL-037 |
+| `event/eventpg/catalog.go` | FL-037 |
+| `event/eventpg/executor.go` | FL-037 |
+| `event/eventpg/classify.go` | FL-037 |
+| `event/eventpg/append.go` | FL-037 |
+| `event/eventpg/read.go` | FL-037 |
+| `event/eventpg/cursor.go` | FL-037 |
 
 `crud/sqlrepo/repository.go` is in eleven of them. It is the layer everything else
 decorates, and almost no change to it is local.

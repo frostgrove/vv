@@ -16,6 +16,14 @@ TIER0_SEALED=(errs)
 # else of this repository.
 TIER0_STDLIB=(crud "${SHARED[@]}")
 SUBSYSTEMS=(crud auth port remote storage app tenancy event)
+
+# The commit that landed the phase-1 event kernel. Everything under event/ that
+# is not event/eventpg is frozen against it: a second store is added with zero
+# diffs to the vocabulary, or the kernel gap it needs is reported out loud rather
+# than patched. Overridable because the self-test runs this script inside a
+# fixture repository, where this commit does not exist and every case would
+# otherwise take the does-not-resolve branch and prove nothing about the diff.
+EVENT_KERNEL_BASELINE=${EVENT_KERNEL_BASELINE:-c798fc0b28b270ec0368a918810ff3d7c17e6f8a}
 TRIPLETS=(
 	'crud/http/crudnet,crud/http/crudgin,crud/http/crudfiber'
 	'auth/http/authnet,auth/http/authgin,auth/http/authfiber'
@@ -319,6 +327,37 @@ check_workspace() {
 	echo 'check-workspace: ok'
 }
 
+# Every arm refuses rather than reporting ok when it cannot ask its question: a
+# check that passes because git is missing, because this is a tarball, or because
+# the baseline does not resolve is a green line nobody earned.
+check_event_kernel() {
+	local moved untracked
+	if ! command -v git >/dev/null 2>&1; then
+		echo 'check-event-kernel needs git and this environment has none, so the frozen kernel was compared with nothing'
+		return 1
+	fi
+	if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+		echo 'check-event-kernel is not inside a git work tree, so the frozen kernel was compared with nothing'
+		return 1
+	fi
+	if ! git rev-parse --verify --quiet "$EVENT_KERNEL_BASELINE^{commit}" >/dev/null; then
+		echo "EVENT_KERNEL_BASELINE names $EVENT_KERNEL_BASELINE and this repository does not carry that commit"
+		return 1
+	fi
+	moved=$(git diff --stat "$EVENT_KERNEL_BASELINE" -- event/ ':(exclude)event/eventpg')
+	untracked=$(git status --porcelain -- event/ ':(exclude)event/eventpg')
+	if [[ -n $moved || -n $untracked ]]; then
+		echo "event/ outside event/eventpg has moved since $EVENT_KERNEL_BASELINE:"
+		[[ -z $moved ]] || echo "$moved" | sed 's/^/  /'
+		[[ -z $untracked ]] || echo "$untracked" | sed 's/^/  /'
+		echo '  a second store is written with zero diffs to the vocabulary. Either the'
+		echo '  constructor you need already exists and was not found, or this is a real'
+		echo '  kernel gap — which is reported out loud rather than patched here.'
+		return 1
+	fi
+	echo 'check-event-kernel: ok'
+}
+
 case ${1:-} in
 	all)
 		check_deps
@@ -330,6 +369,7 @@ case ${1:-} in
 		check_tidy
 		check_otel_schema
 		check_workspace
+		check_event_kernel
 		;;
 	deps) check_deps ;;
 	tiers) check_tiers ;;
@@ -341,5 +381,6 @@ case ${1:-} in
 	otel-schema) check_otel_schema ;;
 	otel-module) check_otel_module ;;
 	workspace) check_workspace ;;
+	event-kernel) check_event_kernel ;;
 	*) echo "unknown check: ${1:-}" >&2; exit 2 ;;
 esac
