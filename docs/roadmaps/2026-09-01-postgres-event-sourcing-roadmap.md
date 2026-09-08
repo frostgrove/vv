@@ -1,6 +1,13 @@
 # PostgreSQL event sourcing roadmap — 2026-09-01
 
-**Status:** proposal, not a delivery commitment, for **`eventpg`**. The
+**Current baseline, 2026-09-08 (`c938866`):** the PostgreSQL store
+[`event/eventpg`](../modules/en/eventpg.md) landed in `6e1c846` ([[FL-037]]).
+Earlier store-absence and aggregate-blocker statements below are historical;
+E0–E4 are retained, not rewritten as a completion report. The
+[nine additional mechanisms](#research-appendices-2026-09-08) remain unimplemented.
+
+**Historical proposal status, before PostgreSQL implementation:** proposal,
+not a delivery commitment, for **`eventpg`**. The
 PostgreSQL store is not implemented and E0's first decision — the aggregate —
 still gates it. Activation of everything below E1 still requires the gates in
 this document and the live product roadmap.
@@ -724,9 +731,10 @@ The first PostgreSQL event-source release is complete only when:
 ## Дополнительные приложения — 2026-09-08
 
 **ES-01–ES-09 не выполнены.** Это дополнительные механики и уточнения E1/E2,
-а не отчёт о реализации. База сверена с `dev/ai-improvements` на `2199910`.
-Существующие E0–E4 и их gates сохраняются. `event/eventpg` — будущий путь по
-[[D-121]], не старый корневой `eventpg` из исторических примеров выше.
+а не отчёт о реализации. База сверена с `dev/ai-improvements` на `c938866`,
+включая реализованный [PostgreSQL store](../../event/eventpg/) из `6e1c846`.
+Существующие E0–E4 и их gates здесь не пересматриваются. Реализация store
+не закрывает ES-01–ES-09.
 
 Владельцы — опциональная event-подсистема и выбранный store, не framework kernel.
 Приложение передаёт обработчики, SQL transaction authority и read-model repository
@@ -740,8 +748,8 @@ The first PostgreSQL event-source release is complete only when:
 
 1. Механизм: [Axon tracking tokens](https://docs.axoniq.io/axon-framework-reference/4.12/events/event-processors/streaming/) — постоянная позиция отдельного подписчика, продолжение после рестарта. [Marten daemon](https://martendb.io/events/projections/async-daemon.html) сохраняет изменения проекции и её продвижение одной транзакцией.
 2. Зачем: падение между изменением read model и checkpoint не должно терять событие или повторно применять уже закоммиченный SQL-эффект.
-3. Адаптация: выбранный SQL-профиль фиксирует effect + checkpoint одной transaction authority. Читать только подтверждённую историю; курсор не проходит незавершённый append, `MAX(sequence)` не доказательство видимости. Чужая БД/HTTP требуют собственной идемпотентности, не получают SQL-гарантию.
-4. Уже есть: [reader и сохраняемый cursor](../../event/reader.go), [capabilities, включая MonotoneVisibility](../../event/store.go), [transaction authority](../../event/authority.go). Нет постоянного subscriber state и SQL-projector.
+3. Адаптация: выбранный SQL-профиль фиксирует effect + checkpoint одной transaction authority. У текущего `eventpg` log читается вне write transaction, чтобы не принять собственные staged rows за подтверждённую историю; обработчик пишет effect/checkpoint в предоставленной SQL-транзакции. Курсор не проходит незавершённый append, `MAX(sequence)` не доказательство видимости. Чужая БД/HTTP требуют своей идемпотентности.
+4. Уже есть: [reader и сохраняемый cursor](../../event/reader.go), [PostgreSQL settled watermark](../../event/eventpg/read.go) и [caller-owned SQL transaction binding](../../event/eventpg/executor.go). [Capabilities](../../event/eventpg/config.go): Transactions/Persistence/SharedBacking поддержаны, MonotoneVisibility — нет. Постоянного subscriber state и SQL-projector нет.
 5. DX: имя подписчика + read-only log + обработчик batch в предоставленной SQL-транзакции; после crash запуск продолжает сохранённую позицию.
 
 ### Приложение ES-02 — параллельные подписчики с порядком внутри последовательности
@@ -801,7 +809,7 @@ The first PostgreSQL event-source release is complete only when:
 1. Механизм: [KurrentDB idempotent append](https://docs.kurrent.io/clients/python/v1.3/appending-events) распознаёт повтор того же append по прежним consistency checks и event IDs. Для Frost предлагаем отдельную постоянную квитанцию операции, а не изменение обычного append.
 2. Зачем: после потери соединения на commit узнать, записана ли именно эта операция; одного нового stream version для этого недостаточно.
 3. Адаптация: operation identity + fingerprint + диапазон событий записываются рядом с append в той же caller-owned SQL-транзакции. Повтор проверяет прежнюю квитанцию; другое содержимое с тем же ключом — конфликт. Отсутствующая квитанция не доказывает rollback, пока исходная транзакция не разрешилась. Retention квитанций ограничивает окно проверки; framework не переигрывает доменное решение.
-4. Уже есть: [ErrUncertain](../../event/errors.go), [возвращаемый Commit](../../event/token.go); [Store.Append](../../event/store.go) намеренно не дедуплицирует. Нет durable operation identity и lookup результата. Квитанция — отдельный SQL-профиль, не поле произвольных metadata в event envelope.
+4. Уже есть: [ErrUncertain](../../event/errors.go), [возвращаемый Commit](../../event/token.go) и [классификация SQL append outcomes](../../event/eventpg/classify.go) без скрытого retry; [Store.Append](../../event/store.go) намеренно не дедуплицирует. Нет durable operation identity и lookup результата. Квитанция — отдельный SQL-профиль, не произвольные metadata в event envelope.
 5. DX: operation key перед командой; при unknown outcome — `receipts.Resolve(ctx, operationKey)`, не новый `Load → Decide → Append` вслепую.
 
 ### Приложение ES-08 — историческое состояние по версии

@@ -1,6 +1,6 @@
 # Frostgrove: механики фреймворка и magic-first DX
 
-Framework `dev/ai-improvements` · `2199910200cb32c9682c5c6952f20fc005b07b87` · 2026-09-08. Предложения, не реализованный API; соседние CLI/templates вне оценки.
+Framework `dev/ai-improvements` · `c93886680a96502a67d126a20249466b5e07d3ab` · 2026-09-08. Предложения, не реализованный API; соседние CLI/templates вне оценки.
 
 Настройки принадлежат модулям, их сборка — приложению; готовые recipes сокращают проводку, не вводя общий Options, обязательный DI или замену native SDK. [Архитектурная граница](2026-09-01-extension-architecture-roadmap.md).
 
@@ -256,7 +256,7 @@ HTTP — optional интеграция Huma с auth, errs и DTO Frost; серв
 
 1. Механизм: [Spring Cloud Contract](https://docs.spring.io/spring-cloud-contract/reference/getting-started/introducing-spring-cloud-contract.html) проверяет producer по контрактам потребителей; Go recipe использует готовый [Pact verifier](https://docs.pact.io/implementation_guides/go).
 2. Зачем: корректно сгенерированный новый сервер ещё может сломать прежнего клиента изменением ответов или ошибок.
-3. Адаптация: тестовое приложение поднимает production registration, supplies provider states и проверяет сохранённые consumer artifacts штатным verifier. Зафиксировать нужные code/path/presence/null expectations и версии сторон. Проверка доказывает только заявленные contracts; для собственного Proto A06 добавить native [Buf breaking](https://buf.build/docs/breaking/) с выбранным уровнем wire/source compatibility.
+3. Адаптация: тестовое приложение поднимает production registration, задаёт provider states и проверяет сохранённые consumer artifacts штатным verifier. Зафиксировать нужные code/path/presence/null expectations и версии сторон. Проверка доказывает только заявленные contracts; для собственного Proto A06 добавить native [Buf breaking](https://buf.build/docs/breaking/) с выбранным уровнем wire/source compatibility.
 4. Уже есть: [manifest/drift checks](../../internal/codegen/manifest.go), [roundtrip tests](../../remote/roundtrip_test.go), A10/A11. Нет consumer-contract fixture; воспроизводимость генерации не доказывает совместимость.
 5. DX: прежний consumer contract → production test server + fixtures → native verifier.
 
@@ -464,7 +464,7 @@ HTTP — optional интеграция Huma с auth, errs и DTO Frost; серв
 
 1. Механизм: [BullMQ](https://docs.bullmq.io/guide/workers/pausing-queues) различает глобальную паузу очереди и локального worker; уже взятые jobs завершаются.
 2. Зачем: на время инцидента остановить новые отправки интеграции, сохранив jobs и работающие процессы.
-3. Адаптация: jobs backend хранит pause revision; claim сериализован с изменением pause state. Resume проверяет expected revision. Успешная пауза запрещает новые claims, но не отменяет выданные до неё attempts и внешние effects.
+3. Адаптация: jobs backend хранит pause revision; выдача новых attempts через Claim и Recover сериализована с pause state. Recovery продолжает reconciliation/отзыв прежних attempts, но не начинает новую доставку. Resume проверяет expected revision. Пауза не отменяет выданные до неё attempts и внешние effects.
 4. Уже есть: [held admission](../../jobs/admission.go), [локальный Drain](../../jobs/workers_run.go), [Cancel/Terminate invocation](../../jobs/control.go). Нет durable administrative pause/resume для всего binding.
 5. DX: pause binding + причина → revision; resume + expected revision.
 
@@ -482,7 +482,7 @@ HTTP — optional интеграция Huma с auth, errs и DTO Frost; серв
 
 ### [ ] R09. Request-scoped DataLoader
 
-1. Механизм: [gqlgen DataLoader recipe](https://gqlgen.com/v0.17.94/reference/dataloaders/) собирает независимые Load(key) в один bulk вызов и возвращает результаты в порядке исходных ключей.
+1. Механизм: [dataloadgen](https://github.com/vikstrous/dataloadgen) собирает независимые Load(key) в один bulk вызов. Fetch adapter обязан сопоставить результаты исходным keys: через mapped loader либо явную перестановку по ID, не порядок SQL rows.
 2. Зачем: параллельные resolvers или сборщики DTO не делают N запросов к одному SDK/БД.
 3. Адаптация: native loader создаётся на request/attempt, имеет предел batch size/wait/bytes. Tenant/access scope не смешивается, missing/error сопоставляются каждому ключу. После mutation очищается затронутый request memo; singleton с результатами пользователей запрещён.
 4. Уже есть: [batched preloads](../../crud/preload.go), [ResolveMany](../../cache/resolve_many.go) для заранее известных keys и [execution memo](../../cache/memo.go). Нет автоматического объединения независимых Load.
@@ -524,7 +524,7 @@ HTTP — optional интеграция Huma с auth, errs и DTO Frost; серв
 
 1. Механизм: [S3 GetObject(versionId)](https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetObject.html) адресует сохранённую версию объекта, а не текущее содержимое ключа.
 2. Зачем: выдавать именно проверенный или подписанный файл, даже после перезаписи того же key.
-3. Адаптация: storage-owned reference сохраняет backend/key/version; native read и URL signing выбирают эту версию. Неподдерживаемый backend отказывает, а не выдаёт latest. Удаление версии/retention остаётся отдельной политикой: version reference не обещает вечного хранения. P07 связывает проверки с этой идентичностью, не с ETag как якобы content hash.
+3. Адаптация: storage reference содержит backing/namespace/key и подтверждённую backend неизменяемую revision; операции проверяют caller scope. Пустая revision и [перезаписываемая S3 null version](https://docs.aws.amazon.com/AmazonS3/latest/userguide/AddingObjectstoVersionSuspendedBuckets.html) не подходят. Native read/signing выбирают точную версию либо отказывают, не выдают latest. Retention/удаление отдельны: ссылка не гарантирует вечного хранения. P07 связывает проверку с этой revision, не с ETag как якобы content hash.
 4. Уже есть: [Info.Version](../../storage/types.go), но ReadOptions/TemporaryURLOptions не выбирают версию; [MinIO signing](../../storage/storageminio/backend.go) не передаёт versionId. Native SDK доступен уже сейчас; недостаёт согласованного facade contract.
 5. DX: сохранить versioned reference → `Open(reference)` / signed URL именно этой версии; примерный API, не существующая перегрузка.
 
@@ -558,7 +558,7 @@ HTTP — optional интеграция Huma с auth, errs и DTO Frost; серв
 
 1. Механизм: [Spring Security Passkeys](https://docs.spring.io/spring-security/reference/servlet/authentication/passkeys.html) разделяет регистрацию credential и проверку подписанного challenge; в Go криптографию и протокол выполняет [go-webauthn](https://github.com/go-webauthn/webauthn).
 2. Зачем: passwordless-вход и аппаратный фактор без собственного WebAuthn implementation.
-3. Адаптация: optional auth adapter связывает native ceremony с caller-owned subject/credential storage. Challenge одноразовый, ограничен временем, RP/origin и попыткой; привязка нового ключа требует подтверждённого владельца. Успешная проверка, обновление credential state и локальная issuance согласованы транзакционно; потеря гонки не выдаёт вторую сессию.
+3. Адаптация: native ceremony использует caller-owned subject/credential storage. Challenge одноразовый, ограничен временем, RP/origin и попыткой; добавление ключа требует подтверждённого владельца. Первый SQL-профиль атомарно расходует challenge через CAS, обновляет credential и выполняет issuance в одном source; active проверяется до Issue, ответ выходит после commit. Произвольные раздельные stores общей транзакции не получают.
 4. Уже есть: [SessionIssuer](../../auth/access/access.strategy.go), [active check и выдача сессии](../../auth/access/usecase.login.go). Нет WebAuthn ceremonies/credential store; модель аккаунта остаётся приложению по [D-066](../ai/decisions/D-066-access-owns-no-identity-and-no-route.md).
 5. DX: native WebAuthn config + subject/credential stores → register/login begin/finish → прежняя local session.
 
@@ -608,7 +608,7 @@ HTTP — optional интеграция Huma с auth, errs и DTO Frost; серв
 
 1. Механизм: [Spring Cloud Vault](https://docs.spring.io/spring-cloud-vault/reference/advanced-topics.html#_lease_lifecycle_management_renewal_and_revocation) получает leased secrets, продлевает их до предела и отзывает принадлежащие процессу leases при завершении.
 2. Зачем: работать с временными паролями БД и токенами вместо бессрочного секрета в config.
-3. Адаптация: native Vault SDK владеет renew/revoke. Resource owner сначала открывает и проверяет новый client/pool, затем переключает новые операции и дренирует старый; borrowed client самовольно не закрывается. Ошибка обновления допускает старый credential только до его допустимого срока; межресурсной hot-reload транзакции нет.
+3. Адаптация: native SDK выполняет renew/revoke; обновление credentials использует native refresh hook. Замена client допустима только через явный resource-specific owner, закрепляющий экземпляр на операцию/транзакцию и дренирующий старый. Уже связанные с pool repositories без такого пути требуют controlled restart, не подмены переменной или повторной DI-инъекции. Borrowed resources не закрываются; expired credentials не сохраняются как fallback.
 4. Уже есть: [startup loading](../../utils/vvcfg/vvcfg.go), [Supervisor](../../runtime/supervisor.go), ownership C11. Нет secret-lease recipe и безопасного переключения конкретного клиента; это не глобальный live-config/DI rebuild.
 5. DX: native secret source + resource-specific renew/swap policy → работающий client; readiness отражает невозможность обновления.
 
@@ -618,7 +618,7 @@ HTTP — optional интеграция Huma с auth, errs и DTO Frost; серв
 
 1. Механизм: [Laravel Sanctum](https://laravel.com/framework/docs/12.x/sanctum#api-token-authentication) выдаёт несколько персональных токенов с abilities, expiry и отдельным отзывом; хранится hash, raw secret показывается при выпуске.
 2. Зачем: выдать CI или партнёру доступ только на чтение и отозвать его без закрытия пользовательских сессий.
-3. Адаптация: auth-owned lifecycle поверх выбранного store: owner, bounded scopes, expires/revoked, last-used. Эффективные права — пересечение token scopes и текущих прав владельца; scopes не дают доступ к чужому tenant. Listing не раскрывает secret; ротация и период перекрытия явные, revocation-cache имеет оговорённую задержку либо отключён.
+3. Адаптация: auth-owned store хранит owner, scopes, expires/revoked, last-used. Lookup проверяет active владельца; доступ требует и token scope, и текущего разрешения владельца. Scope проверяется независимо от выбора `Has`/ролей/Attrs/ReBAC: скопированная роль admin не даёт обход. Tenant boundary сохраняется. Listing не раскрывает secret; ротация/перекрытие явные, revocation-cache имеет оговорённую задержку либо отключён.
 4. Уже есть: [apikey.Store/Authenticator](../../auth/apikey/apikey.go) принимает готовый lookup, [access sessions](../../auth/access/access.model.go) управляют входом. Нет готового PAT issuance/list/revoke и attenuation scopes.
 5. DX: owner + «read reports» + expiry → token один раз; list metadata → revoke конкретного token ID.
 
