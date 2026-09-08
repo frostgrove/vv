@@ -1,0 +1,102 @@
+-- statement 1
+CREATE SCHEMA IF NOT EXISTS "frostgrove_events";
+-- statement 2
+CREATE TABLE IF NOT EXISTS "frostgrove_events".schema_meta (
+	singleton boolean NOT NULL,
+	version integer NOT NULL,
+	log bytea NOT NULL,
+	fingerprint text NOT NULL,
+	created_at timestamp with time zone NOT NULL DEFAULT clock_timestamp(),
+	CONSTRAINT schema_meta_pkey PRIMARY KEY (singleton),
+	CONSTRAINT schema_meta_singleton_check CHECK (singleton),
+	CONSTRAINT schema_meta_version_check CHECK (version > 0),
+	CONSTRAINT schema_meta_log_check CHECK (octet_length(log) = 16)
+);
+-- statement 3
+CREATE TABLE IF NOT EXISTS "frostgrove_events".streams (
+	family text NOT NULL,
+	key text NOT NULL,
+	version bigint NOT NULL,
+	CONSTRAINT streams_pkey PRIMARY KEY (family, key),
+	CONSTRAINT streams_family_check CHECK (octet_length(family) >= 1 AND octet_length(family) <= 128),
+	CONSTRAINT streams_key_check CHECK (octet_length(key) >= 1 AND octet_length(key) <= 512),
+	CONSTRAINT streams_version_check CHECK (version > 0)
+);
+-- statement 4
+CREATE TABLE IF NOT EXISTS "frostgrove_events".events (
+	position bigint GENERATED ALWAYS AS IDENTITY (INCREMENT 1 CACHE 1 NO CYCLE) NOT NULL,
+	family text NOT NULL,
+	key text NOT NULL,
+	version bigint NOT NULL,
+	type text NOT NULL,
+	revision integer NOT NULL,
+	payload bytea NOT NULL,
+	recorded_at timestamp with time zone NOT NULL,
+	CONSTRAINT events_pkey PRIMARY KEY (position),
+	CONSTRAINT events_stream_version_key UNIQUE (family, key, version),
+	CONSTRAINT events_stream_fkey FOREIGN KEY (family, key) REFERENCES "frostgrove_events".streams (family, key),
+	CONSTRAINT events_family_check CHECK (octet_length(family) >= 1 AND octet_length(family) <= 128),
+	CONSTRAINT events_key_check CHECK (octet_length(key) >= 1 AND octet_length(key) <= 512),
+	CONSTRAINT events_version_check CHECK (version > 0),
+	CONSTRAINT events_type_check CHECK (octet_length(type) >= 1 AND octet_length(type) <= 128),
+	CONSTRAINT events_revision_check CHECK (revision > 0),
+	CONSTRAINT events_payload_check CHECK (octet_length(payload) <= 65536)
+);
+-- statement 5
+CREATE OR REPLACE FUNCTION "frostgrove_events".events_are_append_only() RETURNS trigger
+LANGUAGE plpgsql AS $eventpg$
+	BEGIN
+		RAISE EXCEPTION 'eventpg: % on an event row: history is append-only', TG_OP;
+	END
+$eventpg$;
+-- statement 6
+CREATE OR REPLACE FUNCTION "frostgrove_events".events_assign_writer_xid() RETURNS trigger
+LANGUAGE plpgsql AS $eventpg$
+	BEGIN
+		PERFORM pg_current_xact_id();
+		RETURN NULL;
+	END
+$eventpg$;
+-- statement 7
+DO $eventpg$
+	BEGIN
+		DROP TRIGGER IF EXISTS events_append_only_row ON "frostgrove_events".events;
+		CREATE TRIGGER events_append_only_row BEFORE UPDATE OR DELETE ON "frostgrove_events".events
+			FOR EACH ROW EXECUTE FUNCTION "frostgrove_events".events_are_append_only();
+	END
+$eventpg$;
+-- statement 8
+DO $eventpg$
+	BEGIN
+		DROP TRIGGER IF EXISTS events_append_only_truncate ON "frostgrove_events".events;
+		CREATE TRIGGER events_append_only_truncate BEFORE TRUNCATE ON "frostgrove_events".events
+			FOR EACH STATEMENT EXECUTE FUNCTION "frostgrove_events".events_are_append_only();
+	END
+$eventpg$;
+-- statement 9
+DO $eventpg$
+	BEGIN
+		DROP TRIGGER IF EXISTS events_position_needs_xid ON "frostgrove_events".events;
+		CREATE TRIGGER events_position_needs_xid BEFORE INSERT ON "frostgrove_events".events
+			FOR EACH STATEMENT EXECUTE FUNCTION "frostgrove_events".events_assign_writer_xid();
+	END
+$eventpg$;
+-- statement 10
+INSERT INTO "frostgrove_events".schema_meta (singleton, version, log, fingerprint)
+VALUES (true, 1, decode(replace(gen_random_uuid()::text, '-', ''), 'hex'), 'sha256:fadfff742d234efabc84f46bccb1caa41aea00dc78237d1a1e7dbeabe097aaeb')
+ON CONFLICT (singleton) DO NOTHING;
+-- statement 11
+DO $eventpg$
+	DECLARE
+		deployed record;
+	BEGIN
+		SELECT version, fingerprint INTO deployed FROM "frostgrove_events".schema_meta WHERE singleton;
+		IF deployed.version IS DISTINCT FROM 1 OR deployed.fingerprint IS DISTINCT FROM 'sha256:fadfff742d234efabc84f46bccb1caa41aea00dc78237d1a1e7dbeabe097aaeb' THEN
+			RAISE EXCEPTION USING
+				ERRCODE = 'EVPG1',
+				MESSAGE = format('eventpg: this schema is version %s at %s', deployed.version, deployed.fingerprint),
+				DETAIL = 'eventpg: this migration builds version 1 at sha256:fadfff742d234efabc84f46bccb1caa41aea00dc78237d1a1e7dbeabe097aaeb',
+				HINT = 'eventpg: version 1 creates and never alters, so it cannot make this schema the one it describes';
+		END IF;
+	END
+$eventpg$;

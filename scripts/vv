@@ -23,6 +23,7 @@ Usage: make <command>
   check-utils, check-triplets
   check-todo, check-replaces
   check-tidy, check-otel-schema, check-otel-module, check-workspace, check-otel-consumer
+  check-event-kernel
   api, vuln                    Regenerate API baseline or scan vulnerabilities
   main-deps, version, release  Maintain module versions and publish a release
   clean                        Stop databases and clear Go's test cache
@@ -49,6 +50,7 @@ case ${1:-help} in
 	check-otel-schema) exec "$SCRIPT_DIR/checks.sh" otel-schema ;;
 	check-otel-module) exec "$SCRIPT_DIR/checks.sh" otel-module ;;
 	check-workspace) exec "$SCRIPT_DIR/checks.sh" workspace ;;
+	check-event-kernel) exec "$SCRIPT_DIR/checks.sh" event-kernel ;;
 	check-otel-consumer) exec "$SCRIPT_DIR/otel-consumer.sh" ;;
 	up|down|logs|psql|mysql|mariadb) exec "$SCRIPT_DIR/database.sh" "$1" ;;
 	fmt) exec gofmt -l -w . ;;

@@ -21,6 +21,7 @@ use (
 	./crud/http/crudfiber
 	./crud/http/crudgin
 	./crud/rpc/crudgrpc
+	./event/eventpg
 	./health/healthfx
 	./jobs/jobsfx
 	./jobs/jobspg

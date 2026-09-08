@@ -45,8 +45,14 @@ func fixture(t *testing.T, files map[string]string) string {
 
 func runCheck(t *testing.T, root, check string) (string, int) {
 	t.Helper()
+	return runCheckWithEnv(t, root, check)
+}
+
+func runCheckWithEnv(t *testing.T, root, check string, environment ...string) (string, int) {
+	t.Helper()
 	command := exec.Command("bash", filepath.Join(root, "scripts", "checks.sh"), check)
 	command.Env = append(os.Environ(), "GOWORK=off", "GOPROXY=off", "GOTOOLCHAIN=local")
+	command.Env = append(command.Env, environment...)
 	output, err := command.CombinedOutput()
 	if err == nil {
 		return string(output), 0
@@ -308,5 +314,114 @@ func TestNoTestInTheRootModuleOfThisRepositoryImportsAThirdPartyPackage(t *testi
 	output, err := command.CombinedOutput()
 	if err != nil {
 		t.Fatalf("check-deps refuses this repository:\n%s", output)
+	}
+}
+
+const (
+	kernelSource = "package event\n\nfunc Family() string { return \"event\" }\n"
+	storeSource  = "package eventpg\n\nfunc Store() string { return \"eventpg\" }\n"
+)
+
+// A git repository of the fixture's own, because the arm under test compares a
+// working tree against a recorded commit and the fixture the other cases use is
+// a directory. Git being absent is a failure and never a skip: a self-test that
+// skips is the shape the arm itself exists to refuse.
+func eventKernelFixture(t *testing.T) (string, string) {
+	t.Helper()
+	root := fixture(t, map[string]string{
+		"go.mod":                   libraryGoMod,
+		"event/store.go":           kernelSource,
+		"event/eventpg/eventpg.go": storeSource,
+	})
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Fatalf("check-event-kernel is a git-only arm and this environment has no git: %v", err)
+	}
+	git := func(args ...string) string {
+		command := exec.Command("git", append([]string{"-c", "user.email=fixture@example.com", "-c", "user.name=fixture"}, args...)...)
+		command.Dir = root
+		output, err := command.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v in the fixture answered %v:\n%s", args, err, output)
+		}
+		return strings.TrimSpace(string(output))
+	}
+	git("init", "-q", "-b", "main")
+	git("add", ".")
+	git("commit", "-q", "--no-gpg-sign", "-m", "the fixture kernel")
+	return root, git("rev-parse", "HEAD")
+}
+
+func writeInto(t *testing.T, root, name, content string) {
+	t.Helper()
+	path := filepath.Join(root, name)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("cannot create %s: %v", filepath.Dir(name), err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("cannot write %s: %v", name, err)
+	}
+}
+
+// Four cases, and they do not all guard the same thing: the first is what a
+// gutted arm fails, the second what an arm with no untracked half fails, the
+// third what an over-broad one fails, and the fourth what a silently vacuous one
+// fails. The third alone certifies nothing, which is why it is never run alone.
+func TestCheckEventKernelReportsADifferenceAndOtherwiseOk(t *testing.T) {
+	t.Run("a tracked file under event/ differs from the baseline", func(t *testing.T) {
+		root, baseline := eventKernelFixture(t)
+		writeInto(t, root, "event/store.go", kernelSource+"\nfunc Added() int { return 1 }\n")
+
+		output, code := runCheckWithEnv(t, root, "event-kernel", "EVENT_KERNEL_BASELINE="+baseline)
+		if code != 1 {
+			t.Fatalf("the kernel moved and check-event-kernel exited %d:\n%s", code, output)
+		}
+		if !strings.Contains(output, "event/store.go") {
+			t.Errorf("check-event-kernel refused without naming the file that moved:\n%s", output)
+		}
+	})
+
+	t.Run("an untracked new file under event/", func(t *testing.T) {
+		root, baseline := eventKernelFixture(t)
+		writeInto(t, root, "event/second.go", kernelSource)
+
+		output, code := runCheckWithEnv(t, root, "event-kernel", "EVENT_KERNEL_BASELINE="+baseline)
+		if code != 1 {
+			t.Fatalf("a new file under event/ that git diff cannot see was admitted with %d:\n%s", code, output)
+		}
+		if !strings.Contains(output, "event/second.go") {
+			t.Errorf("check-event-kernel refused without naming the file nobody tracked:\n%s", output)
+		}
+	})
+
+	t.Run("only event/eventpg differs", func(t *testing.T) {
+		root, baseline := eventKernelFixture(t)
+		writeInto(t, root, "event/eventpg/eventpg.go", storeSource+"\nfunc Added() int { return 1 }\n")
+		writeInto(t, root, "event/eventpg/read.go", storeSource)
+
+		output, code := runCheckWithEnv(t, root, "event-kernel", "EVENT_KERNEL_BASELINE="+baseline)
+		if code != 0 {
+			t.Fatalf("the store the exemption exists for moved and check-event-kernel exited %d:\n%s", code, output)
+		}
+	})
+
+	t.Run("the baseline names a commit this repository does not carry", func(t *testing.T) {
+		root, _ := eventKernelFixture(t)
+
+		output, code := runCheckWithEnv(t, root, "event-kernel",
+			"EVENT_KERNEL_BASELINE=0000000000000000000000000000000000000000")
+		if code == 0 {
+			t.Fatalf("the baseline resolves to nothing and check-event-kernel reported ok:\n%s", output)
+		}
+		if !strings.Contains(output, "EVENT_KERNEL_BASELINE") {
+			t.Errorf("check-event-kernel refused without naming the constant a person has to set:\n%s", output)
+		}
+	})
+}
+
+func TestTheEventKernelOfThisRepositoryIsWhereThePhaseOneCommitLeftIt(t *testing.T) {
+	command := exec.Command("bash", "checks.sh", "event-kernel")
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("check-event-kernel refuses this repository:\n%s", output)
 	}
 }
