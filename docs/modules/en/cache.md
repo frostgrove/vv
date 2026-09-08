@@ -179,9 +179,18 @@ result, err := ProductCards.Resolve(ctx, ProductCardKey{ID: productID}, func(ctx
 
 `Result.State` distinguishes `Hit`, `Miss`, `Negative`, `Stale` and `Loaded`.
 `LookupMany` preserves input order and duplicates; a backend with
-`BatchReadCapability` may satisfy it in one call. `Put` and `Forget` are fenced
-against concurrent loads so an older loader cannot publish over a newer
-mutation.
+`BatchReadCapability` may satisfy it in one call. Without that capability it
+reads one address at a time, and an address the backend will not answer for is a
+miss on **that address** — the entries already read are kept, so one flaky key
+does not send the whole batch back to the origin.
+
+`Put` and `Forget` are fenced against concurrent loads so an older loader cannot
+publish over a newer mutation. **That fence is process-local**: it is a
+generation counter on the address inside this process, so it orders a load and a
+mutation issued by the same process and says nothing about another replica
+writing the same key at the same time. On a shared backend the last write still
+wins between processes. A backend with `CompareAndSwapCapability` is where a
+cross-process fence would come from, and the core does not yet use it.
 
 `ResolveMany` is the batch form. It reads once, calls a typed
 `BatchLoader[K, V] func(ctx, []K) ([]LoadResult[V], error)` at most once with
@@ -352,8 +361,37 @@ cards, err := cache.New(
 ```
 
 `New` remains useful for libraries, tests and consumers with their own
-composition system. It does not weaken validation, policy or bounded-work
-semantics.
+composition system. It applies the same policy validation and the same
+bounded-work semantics as the declarative path.
+
+**It is not equivalent, and what it skips is the graph-level checks** — the ones
+that can only be made by looking at every cache at once:
+
+| Checked by `Auto`/`Define` activation | Checked by `New` |
+|---|---|
+| two caches colliding on one physical namespace | no |
+| `Requires` against the backend's capabilities | no |
+| eviction-domain separation ([[D-104]]) | no |
+| a resource nobody declared ([[D-111]]) | no |
+| policy, bounds, codec and runtime validity | yes |
+
+A deployment that reaches for `New` to escape the three profiles is trading
+those four away for a policy adjustment. It usually does not need to: the
+options below adjust a profile in place, and the activation graph still sees the
+result.
+
+```go
+cache.Auto("catalog", "test").With(
+    cache.FreshFor(2*time.Minute, time.Minute),  // TTL
+    cache.RetainFor(10*time.Minute),             // how long a stale value is kept
+    cache.RetainUntilEvicted(),                  // ... or no time bound at all
+    cache.NoNegative(),                          // never remember an absence
+    cache.JitterBy(cache.NoJitter()),
+    cache.OnCorruption(cache.CorruptAsMiss),
+    cache.OnReadFailure(cache.Propagate),
+    cache.OnInvalidateFailure(cache.Ignore),
+)
+```
 
 ## Backends
 
@@ -385,3 +423,39 @@ requirement is refused at activation, not at the first call. See [[D-093]].
 
 See [[UC-024]], [[FL-025]], [[D-084]], [[D-085]], [[D-093]], [[D-094]],
 [[D-095]], [[D-096]], [[D-104]] and [[D-111]].
+
+## What changed, and why
+
+A short record of the behaviours a consumer can observe, because each of these
+was a promise the code did not keep.
+
+**A `ValueSchema` rotation is a miss, not corruption.** The envelope's hash has
+already verified by the time the schema is compared, so those bytes are sound —
+they were written under a previous schema, which is what a deployment does on
+purpose when a cached type changes. Reading them as corruption made a routine
+rotation fail every `Resolve` under `RefuseCorrupt`, with the loader never
+running and nothing evicting the entry.
+
+**A cache write error never fails a `Resolve`, and a `Put` never hides one.**
+These were one knob, `WriteFailure`, pointing in opposite directions: under
+`Propagate` a backend that would not take the value destroyed a value the loader
+had already produced, and under `Ignore` an explicit `Put` returned `nil` without
+storing. There is one right answer on each path — the loaded value is handed over
+and the store failure is observed; the explicit write is reported — so the knob is
+gone.
+
+**`MaxFlights` bounds distinct concurrent loads across the whole cache**, and the
+shipped profiles now admit eight rather than one. Per-address coalescing is
+unconditional and separate, so a value of 1 never meant "one load per key"; it
+meant the second key to miss was refused with `ErrSaturated`. The transient
+budget each profile declares is the one that admits its own flight count, rather
+than being quietly raised at build time — and `PolicyDescription.ConcurrentResolves`
+reports how many read-through resolves the budget admits, so the ceiling is
+readable at start-up instead of arriving as `ErrSaturated` under load.
+
+**`Namespace.Digest()` is exported** so a backend outside this package can match a
+namespace to the addresses written under it, which `TagInvalidator` requires and
+could not do.
+
+**`cachefx.AsObserver` contributes to a group.** Two modules that both want to
+watch the cache — metrics and tracing, say — no longer replace each other.

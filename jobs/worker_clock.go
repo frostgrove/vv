@@ -8,9 +8,10 @@ import (
 type workerClock struct {
 	source Clock
 
-	mu      sync.Mutex
-	last    time.Time
-	started bool
+	mu          sync.Mutex
+	last        time.Time
+	started     bool
+	regressions uint64
 }
 
 func newWorkerClock(source Clock) (*workerClock, error) {
@@ -30,17 +31,40 @@ func (clock *workerClock) Now() (time.Time, error) {
 	return clock.now()
 }
 
+// A wall clock goes backwards for ordinary reasons: an NTP step, a VM resumed
+// from a snapshot, an operator correcting a drifting host. Treating that as
+// ErrInvalid made it a fatal, unrestartable runtime failure — the pool stopped
+// and stayed stopped over a time correction, which is a far worse outcome than
+// the skew that caused it.
+//
+// The clock is instead held non-decreasing: a regression answers the last time
+// observed, so nothing computed from it moves backwards, and the fact is reported
+// through Regressions() rather than by killing the process. Stamps stay wall-clock
+// because they are compared across processes and against the database.
 func (clock *workerClock) now() (time.Time, error) {
 	now, err := callWorkerClockNow(clock.source)
 	if err != nil {
 		return time.Time{}, err
 	}
 	if clock.started && now.Before(clock.last) {
-		return time.Time{}, ErrInvalid
+		clock.regressions++
+		return clock.last, nil
 	}
 	clock.last = now
 	clock.started = true
 	return now, nil
+}
+
+// How many times this clock has been read going backwards. A non-zero count is a
+// host whose time is being corrected under a running worker, which is worth an
+// operator's attention and is not worth stopping for.
+func (clock *workerClock) Regressions() uint64 {
+	if clock == nil {
+		return 0
+	}
+	clock.mu.Lock()
+	defer clock.mu.Unlock()
+	return clock.regressions
 }
 
 func (clock *workerClock) startTimer(duration time.Duration) (time.Time, time.Time, *workerTimer, error) {

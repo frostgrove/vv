@@ -113,10 +113,64 @@ type noted struct {
 
 type itemised struct{ money }
 
+type skipped struct {
+	money `json:"-"`
+	SKU   string
+}
+
+type tallied struct {
+	money `json:"-"`
+}
+
+// A field beside a promoted marshaller that encoding/json was told to skip is a
+// field nobody asked to have written, so the promotion hides nothing from
+// anybody: the accepting mirror of skipped, whose SKU carries no tag at all.
+type muted struct {
+	money
+	Note string `json:"-"`
+}
+
+// A struct that declares its own pair and embeds one declaring none. The
+// embedded type writes nothing of its own, so no pair is promoted and the field
+// beside it is written by the outer pair like any other: the accepting mirror of
+// lined.
+type summed struct{ Amount int64 }
+
+type remitted struct {
+	summed
+	Note string
+}
+
+func (this *remitted) MarshalJSON() ([]byte, error) {
+	return json.Marshal([2]any{this.Amount, this.Note})
+}
+
+func (this *remitted) UnmarshalJSON(payload []byte) error {
+	var read [2]json.RawMessage
+	if err := json.Unmarshal(payload, &read); err != nil {
+		return err
+	}
+	if err := json.Unmarshal(read[0], &this.Amount); err != nil {
+		return err
+	}
+	return json.Unmarshal(read[1], &this.Note)
+}
+
 type invoiced struct {
 	Money money
 	SKU   string
 }
+
+// Nothing allocates an embedded pointer before encoding/json calls the pair
+// promoted through it, so this one does not lose a field quietly: it panics on
+// every load, and on the write of a value whose pointer was never set. The
+// second has no field beside it and panics all the same.
+type charged struct {
+	*money
+	SKU string
+}
+
+type owed struct{ *money }
 
 type dueAt struct {
 	At   time.Time
@@ -135,6 +189,20 @@ func (this sloppy) MarshalJSON() ([]byte, error) { return json.Marshal(this.Amou
 
 func (this sloppy) UnmarshalJSON(payload []byte) error {
 	return json.Unmarshal(payload, &this.Amount)
+}
+
+// An embedded type that writes itself and reads nothing back: naming the field,
+// which is the promotion refusal's first remedy, moves the refusal one hop in
+// rather than closing it, so the message says which hop has to be repaired. The
+// second reads nothing back either — its reader runs against a copy.
+type billed struct {
+	cents
+	SKU string
+}
+
+type mislaid struct {
+	sloppy
+	SKU string
 }
 
 type casual string
@@ -181,6 +249,37 @@ type settled string
 func (this settled) MarshalText() ([]byte, error) { return []byte(this), nil }
 
 func (this *settled) UnmarshalText(text []byte) error { *this = settled(text); return nil }
+
+// The same promotion as money's, one route over. encoding/json reaches a text
+// pair on a payload type as readily as a JSON one.
+type termed struct {
+	settled
+	SKU string
+}
+
+type netted struct{ settled }
+
+type agreed struct {
+	Terms settled
+	SKU   string
+}
+
+// Promotion carries through as many embeddings as it takes, so a struct that
+// hides a field behind an embedded marshaller hides it just as completely one
+// or two wrappers further out — where the outer struct has nothing of its own
+// beside the embed, which is what factoring a shared block out of several
+// payloads produces. folded is the control: nothing is hidden at either level.
+type stacked struct{ lined }
+
+type layered struct{ stacked }
+
+type filed struct{ noted }
+
+type staged struct{ termed }
+
+type owing struct{ charged }
+
+type folded struct{ itemised }
 
 // Two embedded structs rendering one JSON name at one depth. encoding/json
 // writes neither, the field list of the struct that embeds them names neither
@@ -635,6 +734,17 @@ func TestADeclaration(t *testing.T) {
 				money `json:"money"`
 				SKU   string
 			}]().CanEncode()},
+			{`the same shape spelled json:"-", which does not undo it either`, JSON[skipped]().CanEncode()},
+			{"the same promotion on the text route", JSON[termed]().CanEncode()},
+			{"the same promotion one embedding further out", JSON[stacked]().CanEncode()},
+			{"the same at three levels, hidden at the innermost", JSON[layered]().CanEncode()},
+			{"the standard library's pair, one embedding further out", JSON[filed]().CanEncode()},
+			{"the text route, one embedding further out", JSON[staged]().CanEncode()},
+			{"a promoted marshaller whose type reads nothing back", JSON[billed]().CanEncode()},
+			{"the same, whose reader is on the value receiver", JSON[mislaid]().CanEncode()},
+			{"a marshalling pair promoted from an embedded pointer", JSON[charged]().CanEncode()},
+			{"the same with no field beside it, which panics on every load", JSON[owed]().CanEncode()},
+			{"the same embedded pointer one embedding further out", JSON[owing]().CanEncode()},
 			{"the same promotion reached through a pointer", JSON[struct{ Line *lined }]().CanEncode()},
 			{"a type whose unmarshaller is on the value receiver", JSON[sloppy]().CanEncode()},
 			{"the same type held in a field", JSON[struct{ Amount sloppy }]().CanEncode()},
@@ -679,7 +789,14 @@ func TestADeclaration(t *testing.T) {
 			{"the unexported one held in a named field instead", JSON[holdingDated]().CanEncode()},
 			{"a type embedding a pointer to itself, which renders no promoted name", JSON[ring]().CanEncode()},
 			{"an embedded marshalling type with no field beside it", JSON[itemised]().CanEncode()},
+			{`the same, spelled json:"-"`, JSON[tallied]().CanEncode()},
+			{`a field beside the embedding that encoding/json is told to skip`, JSON[muted]().CanEncode()},
+			{"a struct declaring its own pair and embedding one that declares none", JSON[remitted]().CanEncode()},
+			{"a pair held in an array where encoding/json can take its address", JSON[struct{ Held [2]posted }]().CanEncode()},
 			{"the same type named rather than embedded", JSON[invoiced]().CanEncode()},
+			{"an embedded text-marshalling type with no field beside it", JSON[netted]().CanEncode()},
+			{"a struct embedding one of those, with nothing hidden at either level", JSON[folded]().CanEncode()},
+			{"the same text pair named rather than embedded", JSON[agreed]().CanEncode()},
 			{"a time.Time held in a named field", JSON[dueAt]().CanEncode()},
 			{"the same pair with the unmarshaller on the pointer receiver", JSON[money]().CanEncode()},
 			{"the same, held in a field", JSON[struct{ Amount money }]().CanEncode()},
@@ -749,7 +866,22 @@ func TestADeclaration(t *testing.T) {
 			{"a string-kind map key that writes itself and declares no reader", JSON[map[currency]int]().CanEncode(), "declares no UnmarshalText"},
 			{"a map key that reads itself and is written as its kind", JSON[map[kept]int]().CanEncode(), "declares no MarshalText"},
 			{"a struct embedding a type whose JSON pair it promotes", JSON[lined]().CanEncode(), "the MarshalJSON of the embedded event.money"},
+			{"the same, untagged, which says nothing about a tag", JSON[lined]().CanEncode(), "read back by nobody; name the embedded field"},
 			{"the textbook embedding", JSON[noted]().CanEncode(), "the MarshalJSON of the embedded time.Time"},
+			{`the embedding spelled json:"-"`, JSON[skipped]().CanEncode(), "the embedded event.money, so SKU is written by nobody"},
+			{"the same, which names the tag the developer wrote", JSON[skipped]().CanEncode(), `the json:"-" you put on it does not undo that`},
+			{"the same promotion on the text route", JSON[termed]().CanEncode(), "the MarshalText of the embedded event.settled, so SKU is written by nobody"},
+			{"a promotion one embedding further out", JSON[stacked]().CanEncode(), "the event.money embedded in lined, so lined.SKU is written by nobody"},
+			{"the same at three levels", JSON[layered]().CanEncode(), "the event.money embedded in stacked.lined, so stacked.lined.SKU is written by nobody"},
+			{"the standard library's pair, one embedding further out", JSON[filed]().CanEncode(), "the time.Time embedded in noted, so noted.Note is written by nobody"},
+			{"the text route, one embedding further out", JSON[staged]().CanEncode(), "the event.settled embedded in termed, so termed.SKU is written by nobody"},
+			{"a promoted marshaller whose type reads nothing back", JSON[billed]().CanEncode(), "event.cents declares no UnmarshalJSON, so naming the embedded field"},
+			{"the same, whose reader is on the value receiver", JSON[mislaid]().CanEncode(), "event.sloppy declares UnmarshalJSON on the value receiver, where encoding/json calls it on a copy"},
+			{"a pair promoted from an embedded pointer", JSON[charged]().CanEncode(), "the embedded pointer *event.money"},
+			{"the same, which names the field it hides as well", JSON[charged]().CanEncode(), "SKU is written by nobody either"},
+			{"the same pointer one embedding further out", JSON[owing]().CanEncode(), "the pointer *event.money embedded in charged, which nothing allocates"},
+			{"the same, which names the field it hides through both hops", JSON[owing]().CanEncode(), "charged.SKU is written by nobody either"},
+			{"the same with no field beside it, which is refused all the same", JSON[owed]().CanEncode(), "the embedded pointer *event.money"},
 			{"a type whose unmarshaller is on the value receiver", JSON[sloppy]().CanEncode(), "declares UnmarshalJSON on the value receiver"},
 			{"the same type held behind a pointer", JSON[struct{ Amount *sloppy }]().CanEncode(), "declares UnmarshalJSON on the value receiver"},
 			{"a map key whose UnmarshalText is on the value receiver", JSON[map[casual]int]().CanEncode(), "UnmarshalText on the value receiver"},
@@ -873,6 +1005,8 @@ func TestEveryMalformedDeclarationPanicsAndTryDefineReturnsIt(t *testing.T) {
 		{"a family carrying a NUL", "accounts\x00account", accountKey, ErrDeclaration},
 		{"a family carrying a newline", "accounts\naccount", accountKey, ErrDeclaration},
 		{"a family that is not valid UTF-8", "accounts\xffaccount", accountKey, ErrDeclaration},
+		{"a family carrying a bracket, which is what a rendered stream is written inside", "accounts[account", accountKey, ErrDeclaration},
+		{"a family carrying the bracket that closes it", "accounts]account", accountKey, ErrDeclaration},
 		{"an aggregate with no identity mapper", "accounts.account", nil, ErrDeclaration},
 	}
 	for _, malformed := range aggregates {
@@ -898,6 +1032,8 @@ func TestEveryMalformedDeclarationPanicsAndTryDefineReturnsIt(t *testing.T) {
 		{"an empty wire type name", "", From(JSON[opened]()), fold, ErrDeclaration},
 		{"a wire type name over the kernel cap", long, From(JSON[opened]()), fold, ErrDeclaration},
 		{"a wire type name carrying a control character", "accounts.\topened", From(JSON[opened]()), fold, ErrDeclaration},
+		{"a wire type name carrying a bracket, which is what a rendered field is written inside", "accounts.[opened", From(JSON[opened]()), fold, ErrDeclaration},
+		{"a wire type name carrying the bracket that closes it", "accounts.]opened", From(JSON[opened]()), fold, ErrDeclaration},
 		{"a fact with no fold", "accounts.opened", From(JSON[opened]()), nil, ErrDeclaration},
 		{"a fact with no reader chain", "accounts.opened", Chain[opened]{}, fold, ErrDeclaration},
 		{"a chain whose first codec is nil", "accounts.opened", From[opened](nil), fold, ErrDeclaration},

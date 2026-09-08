@@ -1,6 +1,7 @@
 package tenancy
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/binary"
@@ -32,12 +33,15 @@ func (this *Authority) Sealer() (Sealer, error) {
 }
 
 // The binding fields tie the token to the record that carries it — for a job, the
-// queue and the definition — so a record lifted out of one and replayed into
-// another fails the comparison rather than the handler. Each field is
-// length-prefixed, because a token whose fields can be slid past one another
-// authenticates a different record than it travelled with. A seam that shares a
-// deployment's key with another therefore binds something that names it, the way
-// the job seam binds the queue it was written for.
+// queue, the definition, the invocation and a digest of the payload — so a record
+// lifted out of one and replayed into another fails the comparison rather than
+// the handler. Each field is length-prefixed, because a token whose fields can be
+// slid past one another authenticates a different record than it travelled with.
+//
+// A seam that binds only what is constant across the records of one queue has a
+// token that authenticates all of them, which is a bearer credential for the
+// tenant rather than a claim about a row: at least one field must distinguish one
+// record from the next. See [[D-119]].
 //
 // The scope is accepted for the durable class rather than merely checked for this
 // authority's mint: sealing is what turns a scope into a record another process
@@ -45,12 +49,23 @@ func (this *Authority) Sealer() (Sealer, error) {
 // that admits no durable work for a lifecycle must not get a durable record for
 // it — one that would execute the moment the tenant becomes active again, with
 // no generation change to stop it.
-func (this Sealer) Seal(scope Scope, binding ...[]byte) ([]byte, error) {
+//
+// The context is here for the grant. Sealing under a cohort grant that permits
+// only reads would otherwise write a durable record for every tenant in the
+// cohort — work that runs later, outside the grant's own deadline, with a class
+// the grant never named. Every other verb asks; this one has to ask too.
+func (this Sealer) Seal(ctx context.Context, scope Scope, binding ...[]byte) ([]byte, error) {
 	if this.authority == nil {
+		return nil, ErrUntrusted
+	}
+	if ctx == nil {
 		return nil, ErrUntrusted
 	}
 	sealed, err := this.authority.accept(scope, ClassDurable)
 	if err != nil {
+		return nil, err
+	}
+	if err := this.authority.permittedByGrant(ctx, ClassDurable); err != nil {
 		return nil, err
 	}
 	token := make([]byte, sealHeaderBytes, sealHeaderBytes+len(sealed.reference.Value()))
@@ -80,11 +95,26 @@ func (this Sealer) Unseal(token []byte, binding ...[]byte) (Reference, Epoch, er
 	if err != nil {
 		return Reference{}, 0, ErrUntrusted
 	}
-	want := this.mac(binding, generation, reference)
-	if !hmac.Equal(token[sealGenerationBytes:sealHeaderBytes], want[:]) {
+	if !this.verified(token[sealGenerationBytes:sealHeaderBytes], binding, generation, reference) {
 		return Reference{}, 0, ErrUntrusted
 	}
 	return reference, generation, nil
+}
+
+// The sealing key first, then every retired one. A rotation leaves records in the
+// queue that were sealed with the previous key, and a deployment that could only
+// verify the current one would have to drain the backlog to zero before it could
+// change a key — which is the same as not being able to change it. Every
+// candidate is compared, and each comparison is constant time.
+func (this Sealer) verified(mac []byte, binding [][]byte, epoch Epoch, reference Reference) bool {
+	ok := false
+	for _, key := range this.authority.sealingKeys() {
+		want := macWith(key, this.authority.origin, binding, epoch, reference)
+		if hmac.Equal(mac, want[:]) {
+			ok = true
+		}
+	}
+	return ok
 }
 
 // The origin is inside the seal for the same reason it is inside a scope's
@@ -92,8 +122,12 @@ func (this Sealer) Unseal(token []byte, binding ...[]byte) (Reference, Epoch, er
 // deployment cloned from another's. Two environments that share the key still
 // refuse each other's records.
 func (this Sealer) mac(binding [][]byte, epoch Epoch, reference Reference) [32]byte {
-	mac := hmac.New(sha256.New, this.authority.durableKey)
-	writeField(mac, this.authority.origin)
+	return macWith(this.authority.durableKey, this.authority.origin, binding, epoch, reference)
+}
+
+func macWith(key []byte, origin string, binding [][]byte, epoch Epoch, reference Reference) [32]byte {
+	mac := hmac.New(sha256.New, key)
+	writeField(mac, origin)
 	for _, field := range binding {
 		writeBytes(mac, field)
 	}

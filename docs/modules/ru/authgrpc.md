@@ -54,7 +54,7 @@ articles := Articles.Bind(db, security.Gate(policy))
 ```go
 srv := grpc.NewServer(
 	grpc.ChainUnaryInterceptor(crudgrpc.Errors(), authgrpc.Unary(guard)),
-	grpc.ChainStreamInterceptor(authgrpc.Stream(guard)),
+	grpc.ChainStreamInterceptor(crudgrpc.StreamErrors(), authgrpc.Stream(guard)),
 )
 crudgrpc.New(articles).Register(srv, "Article")
 ```
@@ -108,8 +108,18 @@ authgrpc.Unary(guard, authgrpc.Skip(
 
 **Стрим аутентифицируется один раз, при открытии.** Истечение учётных данных
 посреди стрима не замечается — интерсептор отрабатывает до первого сообщения и
-больше не вызывается. Долгоживущий стрим, которому нужна перепроверка, делает её
-в своём цикле.
+больше не вызывается.
+
+Долгоживущий стрим, которому нужна перепроверка, вызывает в своём цикле
+**`Authenticator` напрямую**. Он не должен снова вызывать guard на
+`stream.Context()`: этот контекст уже несёт маркер того же guard, поэтому второй
+вызов видит подряд идущий повтор последнего guard и возвращается сразу, ничего не
+перепроверив ([[D-076]]). Такая перепроверка была бы постоянным no-op.
+
+**`crudgrpc.StreamErrors()` идёт в цепочке первым.** Без него отказ
+аутентификации остаётся обычной Go-ошибкой интерсептора, и в проводе клиент
+видит `Unknown`, а не `Unauthenticated` — то есть не может отличить отклонённые
+учётные данные от бага сервера.
 
 **Композиция guard одинакова для Unary и Stream.** Последовательный A -> A
 аутентифицируется один раз; A -> B запускает оба и показывает principal B.

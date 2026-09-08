@@ -16,22 +16,33 @@ type Resolver interface {
 }
 
 type Spec struct {
-	Resolver   Resolver
-	Admission  Admission
-	Origin     string
-	DurableKey []byte
+	Resolver  Resolver
+	Admission Admission
+	Origin    string
+
+	// The key every durable record is sealed with. Rotating it is a two-deploy
+	// procedure rather than a restart, because records written by the old key are
+	// already sitting in a queue: deploy the new key with the old one in
+	// RetiredDurableKeys so every process verifies both, wait for the backlog to
+	// drain, then deploy again without it. A single key with no retired list means
+	// a rotation strands every enqueued record, and a second authority is not a
+	// workaround — the seam holds one.
+	DurableKey         []byte
+	RetiredDurableKeys [][]byte
+
 	Revalidate bool
 	Now        func() time.Time
 }
 
 type Authority struct {
-	resolver   Resolver
-	admission  Admission
-	origin     string
-	salt       []byte
-	durableKey []byte
-	revalidate bool
-	now        func() time.Time
+	resolver    Resolver
+	admission   Admission
+	origin      string
+	salt        []byte
+	durableKey  []byte
+	retiredKeys [][]byte
+	revalidate  bool
+	now         func() time.Time
 }
 
 func New(spec Spec) (*Authority, error) {
@@ -60,14 +71,26 @@ func New(spec Spec) (*Authority, error) {
 	if len(spec.DurableKey) != 0 && len(spec.DurableKey) < MinDurableKeyBytes {
 		return nil, fmt.Errorf("tenancy: a durable key is at least %d bytes", MinDurableKeyBytes)
 	}
+	if len(spec.RetiredDurableKeys) != 0 && len(spec.DurableKey) == 0 {
+		return nil, errors.New("tenancy: retired durable keys without a durable key to seal with; " +
+			"a seam that can only verify is a seam that cannot produce")
+	}
+	retired := make([][]byte, 0, len(spec.RetiredDurableKeys))
+	for _, key := range spec.RetiredDurableKeys {
+		if len(key) < MinDurableKeyBytes {
+			return nil, fmt.Errorf("tenancy: a retired durable key is at least %d bytes", MinDurableKeyBytes)
+		}
+		retired = append(retired, append([]byte(nil), key...))
+	}
 	return &Authority{
-		resolver:   spec.Resolver,
-		admission:  admission,
-		origin:     spec.Origin,
-		salt:       salt,
-		durableKey: append([]byte(nil), spec.DurableKey...),
-		revalidate: spec.Revalidate,
-		now:        now,
+		resolver:    spec.Resolver,
+		admission:   admission,
+		origin:      spec.Origin,
+		salt:        salt,
+		durableKey:  append([]byte(nil), spec.DurableKey...),
+		retiredKeys: retired,
+		revalidate:  spec.Revalidate,
+		now:         now,
 	}, nil
 }
 
@@ -153,4 +176,13 @@ func (this Fixed) Lookup(_ context.Context, reference Reference) (Resolution, er
 		return Resolution{}, ErrUnmapped
 	}
 	return Resolution(this), nil
+}
+
+// The key a record is sealed with, followed by the keys a record may still have
+// been sealed with. Order matters only for cost: the current key is the common
+// case and is tried first.
+func (this *Authority) sealingKeys() [][]byte {
+	keys := make([][]byte, 0, 1+len(this.retiredKeys))
+	keys = append(keys, this.durableKey)
+	return append(keys, this.retiredKeys...)
 }

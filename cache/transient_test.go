@@ -95,7 +95,7 @@ type transientInlineValue [4096]byte
 
 type transientInlineKey [8192]byte
 
-type transientMassiveInlineValue [256 << 10]byte
+type transientMassiveInlineValue [2 << 20]byte
 
 type transientInlineCodec struct{}
 
@@ -452,7 +452,7 @@ func TestMaxTransientBytesRemainsAnOrderIndependentHardCap(t *testing.T) {
 			t.Fatalf("undersized explicit cap error = %v", err)
 		}
 	}
-	const capBytes = int64(512 << 20)
+	const capBytes = int64(4096 << 20)
 	for _, profile := range []Profile{
 		Hot.With(MaxTransientBytes(capBytes), MaxValueBytes(32<<20)),
 		Hot.With(MaxValueBytes(32<<20), MaxTransientBytes(capBytes)),
@@ -752,9 +752,9 @@ func TestBuiltInProfilesPublishAttainableFlightCapacityWithoutHiddenRaise(t *tes
 		flights int
 		bytes   int64
 	}{
-		{profile: Hot, flights: 1, bytes: 256 << 20},
-		{profile: Warm, flights: 1, bytes: 256 << 20},
-		{profile: Durable, flights: 2, bytes: 512 << 20},
+		{profile: Hot, flights: 8, bytes: 1024 << 20},
+		{profile: Warm, flights: 8, bytes: 1024 << 20},
+		{profile: Durable, flights: 8, bytes: 1024 << 20},
 	} {
 		policy, err := test.profile.Build()
 		if err != nil {
@@ -807,7 +807,7 @@ func TestTransientWaiterPolicyIsIndependentAndDescribed(t *testing.T) {
 }
 
 func TestTransientWaiterOptionsPreserveExplicitCapOrder(t *testing.T) {
-	const capBytes = int64(512 << 20)
+	const capBytes = int64(4096 << 20)
 	for _, profile := range []Profile{
 		Hot.With(MaxTransientBytes(capBytes), MaxTransientWaiters(2)),
 		Hot.With(MaxTransientWaiters(2), MaxTransientBytes(capBytes)),
@@ -4236,5 +4236,61 @@ func receiveTransientValue(t *testing.T, values <-chan any) any {
 	case <-time.After(coordinationTestTimeout):
 		t.Fatal("timed out waiting for transient value")
 		return nil
+	}
+}
+
+// MaxFlights bounds distinct concurrent loads across the whole cache; per-address
+// coalescing is unconditional and separate. Defaulting it to 1 therefore did not
+// mean "one load per key" — it meant the second key to miss was refused with
+// ErrSaturated while the first was still loading, on every shipped profile.
+func TestTheShippedProfilesAdmitConcurrentMissesOnDistinctKeys(t *testing.T) {
+	for _, profile := range []Profile{Hot, Warm, Durable} {
+		t.Run(profile.Name(), func(t *testing.T) {
+			policy, err := profile.Build()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if policy.MaxFlights < 4 {
+				t.Fatalf("MaxFlights = %d — a miss on the %dth distinct key is refused while the others load", policy.MaxFlights, policy.MaxFlights+1)
+			}
+			// And the budget admits what the profile says it admits, rather than
+			// being quietly raised to fit at build time.
+			plan, err := transientPlanFor(policy)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if plan.minimum > policy.MaxTransientBytes {
+				t.Fatalf("plan minimum %d exceeds the declared budget %d", plan.minimum, policy.MaxTransientBytes)
+			}
+			if policy.MaxTransientBytes != policy.transientResolved {
+				t.Fatalf("declared %d but resolved %d — the budget was raised behind the profile", policy.MaxTransientBytes, policy.transientResolved)
+			}
+		})
+	}
+}
+
+// The transient budget, the per-operation charge and MaxValueBytes together
+// decide how many readers a cache admits, and none of them says so. A profile
+// that admitted two concurrent resolves looked identical, at start-up, to one
+// that admitted two hundred — the difference only showed up as ErrSaturated
+// under load.
+func TestAPolicySaysHowManyConcurrentResolvesItAdmits(t *testing.T) {
+	policy, err := Hot.Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	described := describePolicy(policy)
+	if described.ConcurrentResolves < 4 {
+		t.Fatalf("ConcurrentResolves = %d — the shipped profile admits almost nothing", described.ConcurrentResolves)
+	}
+
+	// The control: it follows from the budget rather than being a constant, so a
+	// cache given twice the budget reports admitting more.
+	wider, err := Hot.With(MaxTransientBytes(policy.MaxTransientBytes * 2)).Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := describePolicy(wider).ConcurrentResolves; got <= described.ConcurrentResolves {
+		t.Fatalf("doubling the budget reported %d, was %d", got, described.ConcurrentResolves)
 	}
 }

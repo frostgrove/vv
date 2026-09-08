@@ -251,3 +251,123 @@ func TestACohortRunFromInsideABoundRequestIsRefusedRatherThanEmpty(t *testing.T)
 		}
 	})
 }
+
+// One member failing is deliberately not a failed run — that is the resumability
+// the loop exists for, and TestOneCohortMemberFailingLeavesTheRestResumable pins
+// it. A run where *nobody* completed is a different thing, and answering nil
+// there means the ordinary wrapper — check err, log the slice — records a total
+// failure as a finished run and never pages anyone.
+func TestACohortRunWhereNobodyCompletedIsNotAFinishedRun(t *testing.T) {
+	clock := time.Now()
+	epoch, err := tenancy.NewEpoch(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	acme, globex := reference(t, "acme"), reference(t, "globex")
+	authority, err := tenancy.New(tenancy.Spec{
+		Now: func() time.Time { return clock },
+		Resolver: directory{byReference: map[tenancy.Reference]tenancy.Resolution{
+			acme:   {Reference: acme, Lifecycle: tenancy.Active, Epoch: epoch},
+			globex: {Reference: globex, Lifecycle: tenancy.Active, Epoch: epoch},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	grant, err := authority.Accept(purpose(t, "monthly-billing"), []tenancy.Reference{acme, globex}, clock.Add(time.Hour), tenancy.ClassWrite)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	everyoneFails := errors.New("the downstream this job needs is down")
+	outcomes, err := authority.Each(context.Background(), grant, tenancy.ClassWrite, func(context.Context) error {
+		return everyoneFails
+	})
+	if !errors.Is(err, tenancy.ErrCohortFailed) {
+		t.Fatalf("err = %v, want tenancy.ErrCohortFailed", err)
+	}
+	if len(outcomes) != 2 || tenancy.Failures(outcomes) != 2 {
+		t.Fatalf("outcomes = %v — the per-member record must survive the run-level error, or the run cannot be resumed", outcomes)
+	}
+
+	// The control: one member completing is still a nil error, so the assertion
+	// above is about nobody completing rather than about anybody failing.
+	var attempts int
+	partial, err := authority.Each(context.Background(), grant, tenancy.ClassWrite, func(context.Context) error {
+		attempts++
+		if attempts == 1 {
+			return everyoneFails
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("a run with one success answered %v", err)
+	}
+	if tenancy.Failures(partial) != 1 {
+		t.Fatalf("Failures = %d, want 1", tenancy.Failures(partial))
+	}
+}
+
+// A grant names the classes the cohort run may spend, and every verb asks. Sealing
+// used to be the one that did not: it took a bare scope and no context, so a run
+// under a read-only grant could still write a durable record for every tenant in
+// the cohort — work that executes later, outside the grant's deadline, with a
+// class the grant never named.
+func TestAReadOnlyGrantSealsNoDurableRecord(t *testing.T) {
+	clock := time.Now()
+	epoch, err := tenancy.NewEpoch(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	acme := reference(t, "acme")
+	authority, err := tenancy.New(tenancy.Spec{
+		Now:        func() time.Time { return clock },
+		DurableKey: []byte("a-durable-key-of-at-least-32-bytes!!"),
+		Resolver: directory{byReference: map[tenancy.Reference]tenancy.Resolution{
+			acme: {Reference: acme, Lifecycle: tenancy.Active, Epoch: epoch},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sealer, err := authority.Sealer()
+	if err != nil {
+		t.Fatal(err)
+	}
+	binding := [][]byte{[]byte("billing"), []byte("send-invoice")}
+
+	readOnly, err := authority.Accept(purpose(t, "monthly-report"), []tenancy.Reference{acme}, clock.Add(time.Hour), tenancy.ClassRead)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var refusal error
+	if _, err := authority.Each(context.Background(), readOnly, tenancy.ClassRead, func(ctx context.Context) error {
+		scope, _ := tenancy.From(ctx)
+		_, refusal = sealer.Seal(ctx, scope, binding...)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if !errors.Is(refusal, tenancy.ErrGrantRequired) {
+		t.Fatalf("err = %v, want ErrGrantRequired — a read-only cohort run wrote durable work", refusal)
+	}
+
+	// The control: a grant that does name the durable class seals, so the refusal
+	// above is the grant's classes rather than sealing being broken under Each.
+	durable, err := authority.Accept(purpose(t, "monthly-billing"), []tenancy.Reference{acme}, clock.Add(time.Hour), tenancy.ClassRead, tenancy.ClassDurable)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sealed []byte
+	var sealErr error
+	if _, err := authority.Each(context.Background(), durable, tenancy.ClassRead, func(ctx context.Context) error {
+		scope, _ := tenancy.From(ctx)
+		sealed, sealErr = sealer.Seal(ctx, scope, binding...)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if sealErr != nil || len(sealed) == 0 {
+		t.Fatalf("a grant that names the durable class sealed nothing: %v", sealErr)
+	}
+}

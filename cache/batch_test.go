@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -383,4 +384,65 @@ func batchTestEnvelope(t *testing.T, core *cacheCore[string, []byte], value []by
 		t.Fatalf("encodeEnvelope() error = %v", err)
 	}
 	return encoded
+}
+
+// The non-BatchReader fallback reads one address at a time, and a failure on any
+// one of them threw away every entry it had already read. Under AsMiss that made
+// one flaky key a full-batch reload from the origin — the opposite of what the
+// cache is for — and the entries discarded were sitting in hand.
+func TestOneFailedAddressDoesNotDiscardTheEntriesAlreadyRead(t *testing.T) {
+	backend := newCoordinationBackend()
+	policy := coordinationPolicy()
+	policy.ReadFailure = AsMiss
+	keys := MustKeyFunc(KeyVersion(1), func(key string, _ KeyLimit) ([]byte, error) { return []byte(key), nil })
+	instance, err := New(Runtime{
+		LoaderTimeout:  coordinationTestTimeout,
+		BackendTimeout: coordinationTestTimeout,
+		CleanupTimeout: coordinationTestTimeout,
+	}, backend, Global[string](MustNamespace("tests", "unit", "batch-partial", 1)), keys, String(ValueSchema(1)), policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	for _, key := range []string{"a", "b", "c"} {
+		if err := instance.Put(ctx, key, "cached-"+key); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// One address the backend will not answer for, in the middle of the batch.
+	var failing atomic.Value
+	backend.setGetHook(func(ctx context.Context, address Address, limit ReadLimit, _ int) ([]byte, bool, error) {
+		if target, ok := failing.Load().(Address); ok && address == target {
+			return nil, false, ErrBackend
+		}
+		_ = limit
+		return backend.load(ctx, address)
+	})
+	core, err := instance.core()
+	if err != nil {
+		t.Fatal(err)
+	}
+	target, _, err := addressOf(core.scope, core.keys, core.keyVersion, "b", core.policy.MaxKeyBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	failing.Store(target)
+
+	results, err := instance.LookupMany(ctx, []string{"a", "b", "c"})
+	if err != nil {
+		t.Fatalf("lookup many = %v", err)
+	}
+	if len(results) != 3 {
+		t.Fatalf("results = %d, want 3", len(results))
+	}
+	if results[0].State != Hit || results[0].Value != "cached-a" {
+		t.Fatalf("first entry = %+v — an entry already read was discarded over another address", results[0])
+	}
+	if results[2].State != Hit || results[2].Value != "cached-c" {
+		t.Fatalf("third entry = %+v — an entry already read was discarded over another address", results[2])
+	}
+	if results[1].State != Miss {
+		t.Fatalf("failing entry = %+v, want Miss", results[1])
+	}
 }

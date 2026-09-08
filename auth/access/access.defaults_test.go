@@ -2,6 +2,9 @@ package access
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"github.com/frostgrove/vv/crud"
 	"log/slog"
 	"strings"
 	"testing"
@@ -14,6 +17,10 @@ import (
 
 func testSeeder(recorder *crudtest.Recorder) *Seeder {
 	return NewSeeder(NewStore(recorder), slog.New(slog.DiscardHandler))
+}
+
+func permissionRow(id uuid.UUID, code string) []any {
+	return []any{id.String(), code, code, "tests", time.Now()}
 }
 
 func roleRow(id uuid.UUID, slug string) []any {
@@ -259,4 +266,47 @@ func wroteInto(recorder *crudtest.Recorder, table string) bool {
 		}
 	}
 	return false
+}
+
+// Every write in the start-up sync is a check-then-insert, and replicas start
+// together. A unique violation between the read and the write therefore means a
+// peer declared the same thing — the outcome this call wanted — and used to fail
+// the OnStart hook instead, so a rolling deploy of two replicas could refuse to
+// start.
+func TestASyncToleratesAPeerThatDeclaredTheSameThingFirst(t *testing.T) {
+	roleID := uuid.New()
+	lost := fmt.Errorf("duplicate key value violates unique constraint: %w", crud.ErrConflict)
+
+	recorder := crudtest.Postgres()
+	recorder.Push(
+		crudtest.Rows(),                               // no permissions yet
+		crudtest.Result{Err: lost},                    // a peer inserted the permission first
+		crudtest.Rows(permissionRow(uuid.New(), "x")), // ... so read theirs
+		crudtest.Rows(),                               // the role is not there yet either
+		crudtest.Result{Err: lost},                    // and a peer created it first
+		crudtest.Rows(roleRow(roleID, "admin")),       // ... so read theirs
+		crudtest.Rows(),                               // it holds no permissions yet
+	)
+
+	err := Sync(context.Background(), NewStore(recorder), []ModuleGrants{{
+		Module:      "tests",
+		Permissions: []PermissionDef{{Code: "x", Name: "X"}},
+	}}, slog.New(slog.DiscardHandler))
+	if err != nil {
+		t.Fatalf("a replica that lost both races failed to start: %v", err)
+	}
+
+	// The control: a failure that is not a peer getting there first still stops
+	// the start-up, or this has traded the check away for the convenience.
+	broken := crudtest.Postgres()
+	broken.Push(
+		crudtest.Rows(),
+		crudtest.Result{Err: errors.New("the database is unreachable")},
+	)
+	if err := Sync(context.Background(), NewStore(broken), []ModuleGrants{{
+		Module:      "tests",
+		Permissions: []PermissionDef{{Code: "x", Name: "X"}},
+	}}, slog.New(slog.DiscardHandler)); err == nil {
+		t.Fatal("a start-up sync that could not reach the database reported success")
+	}
 }

@@ -141,3 +141,56 @@ func TestAdminMethodsRequireReadinessAndValidateWithoutDatabaseAccess(t *testing
 		t.Fatalf("SweepTerminalRetention before readiness = %v", err)
 	}
 }
+
+// An offset makes the database walk and discard every row before the page, so the
+// cost of page N grows with N and the last pages of a long-retention namespace
+// become unusable. A cursor reads the page and nothing else.
+func TestAListCursorReadsThePageAndNotEverythingBeforeIt(t *testing.T) {
+	repo := newRepository("jobspg_list_cursor")
+	id, err := jobs.NewInvocationID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	at := time.Date(2035, 3, 4, 5, 6, 7, 0, time.UTC)
+
+	paged, err := normalizeListSpec(jobs.ListSpec{Limit: 10, After: &jobs.ListCursor{CreatedAt: at, ID: id}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if paged.after == nil {
+		t.Fatal("the cursor was dropped in normalization")
+	}
+
+	// A cursor and an offset name two different pages, so asking for both is a
+	// mistake in the caller rather than something to silently resolve.
+	if _, err := normalizeListSpec(jobs.ListSpec{Limit: 10, Offset: 5, After: &jobs.ListCursor{CreatedAt: at, ID: id}}); !errors.Is(err, jobs.ErrInvalid) {
+		t.Fatalf("cursor with offset = %v, want ErrInvalid", err)
+	}
+	if _, err := normalizeListSpec(jobs.ListSpec{Limit: 10, After: &jobs.ListCursor{CreatedAt: at}}); !errors.Is(err, jobs.ErrInvalid) {
+		t.Fatalf("cursor with no id = %v, want ErrInvalid", err)
+	}
+
+	// The control: without a cursor the offset form still works, so the branch
+	// above is the cursor rather than paging having been broken.
+	plain, err := normalizeListSpec(jobs.ListSpec{Limit: 10, Offset: 20})
+	if err != nil || plain.after != nil || plain.offset != 20 {
+		t.Fatalf("offset paging = %#v, %v", plain, err)
+	}
+	_ = repo
+}
+
+// The outbox promise is that the invocation row and the rows the caller wrote
+// commit together or not at all. A *sql.Tx does not say which database it began
+// on, so a transaction from somewhere else made "atomic with your write" a claim
+// with nothing behind it: the two would commit independently.
+func TestAStagerRefusesATransactionFromAnotherDatabase(t *testing.T) {
+	driver := &Driver{db: &sql.DB{}}
+	other := &sql.DB{}
+
+	if _, err := driver.Stager(other, &sql.Tx{}); !errors.Is(err, jobs.ErrUnsupported) {
+		t.Fatalf("err = %v, want ErrUnsupported — a transaction from another database was adopted as an outbox", err)
+	}
+	if _, err := driver.Stager(nil, &sql.Tx{}); !errors.Is(err, jobs.ErrInvalid) {
+		t.Fatalf("err = %v, want ErrInvalid — the check was skipped when the caller named no database", err)
+	}
+}

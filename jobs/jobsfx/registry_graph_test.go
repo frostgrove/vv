@@ -17,7 +17,10 @@ type registryCatalogHandler struct{ catalog jobs.Catalog }
 func (*registryCatalogHandler) Handle(context.Context, string) error { return nil }
 
 func TestRegistryCatalogDoesNotDependOnHandlerConstruction(t *testing.T) {
-	binding := jobsfx.AutoFor[*registryCatalogHandler, string]().JSON("jobsfx.catalog-handler", 1)
+	// TrustedJSON and not JSON: what this pins is the graph, and safe JSON is
+	// refused at activation under a jsonv2 runtime ([[D-085]]), which would make
+	// the test fail for a reason it is not about.
+	binding := jobsfx.AutoFor[*registryCatalogHandler, string]().TrustedJSON("jobsfx.catalog-handler", 1)
 	registry := jobsfx.MustRegistry(binding)
 	namespace, err := jobs.NamespaceOf("jobsfx", "catalog-handler")
 	if err != nil {

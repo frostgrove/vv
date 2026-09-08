@@ -3,7 +3,9 @@ package storagefs
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -21,6 +23,11 @@ import (
 
 const privateHeaderSize = 16 << 10
 
+// The worst case a placement path can be: the private object directory, a
+// namespace and a key at its ceiling. It is reserved in the preflight so a
+// header that fits at write time still fits once a promote stamps its intent.
+const maxPlacementNameBytes = 256 + storage.MaxKeyBytes
+
 const maxConsecutiveEmptyReads = 100
 
 var privateMagic = [8]byte{'V', 'V', 'S', 'T', 'O', 'R', '0', '1'}
@@ -34,6 +41,33 @@ type privateHeader struct {
 	Metadata    map[string]string `json:"metadata,omitempty"`
 	ModifiedAt  int64             `json:"modified_at"`
 	ExpiresAt   int64             `json:"expires_at,omitempty"`
+
+	// When the operation currently holding this stage stops being believed, and
+	// where it was about to place the object when it took the lease. The stage
+	// and its claim are two names for one inode, so both live here rather than
+	// beside them; a reader that predates the fields sees zero and empty, which
+	// claimStage reads as "no live holder, nothing placed".
+	//
+	// PlacingAt is what makes a takeover safe. Placement is a rename that happens
+	// *before* the two unlinks that retire the stage, so a process killed in that
+	// window leaves the same two names on disk as one killed before placing
+	// anything. Recording the destination first is the only way to tell those
+	// apart: if the destination now exists, the work was done and the claim is
+	// garbage rather than an opportunity.
+	ClaimedUntil int64  `json:"claimed_until,omitempty"`
+	PlacingAt    string `json:"placing_at,omitempty"`
+}
+
+// A version token for the object's current content, derived from what the header
+// already records: the size and the nanosecond stamp of the write that produced
+// it. Two writes of the same bytes at the same instant would collide, which is
+// the same bound S3's own ETag carries, and it is what IfMatch compares.
+func (this privateHeader) etag() string {
+	if this.ModifiedAt == 0 {
+		return ""
+	}
+	sum := sha256.Sum256(fmt.Appendf(nil, "%d\x00%d", this.Size, this.ModifiedAt))
+	return hex.EncodeToString(sum[:16])
 }
 
 func (this privateHeader) info() storage.Info {
@@ -49,6 +83,7 @@ func (this privateHeader) info() storage.Info {
 		ContentType: this.ContentType,
 		Metadata:    metadata,
 		ModifiedAt:  time.Unix(0, this.ModifiedAt).UTC(),
+		ETag:        this.etag(),
 	}
 }
 
@@ -70,12 +105,14 @@ func (this *Backend) writePrivateFile(ctx context.Context, file *os.File, source
 	}
 
 	preflight, err := encodePrivateHeader(privateHeader{
-		Version:     1,
-		Size:        math.MaxInt64,
-		ContentType: contentType,
-		Metadata:    cloneMetadata(metadata),
-		ModifiedAt:  math.MaxInt64,
-		ExpiresAt:   math.MaxInt64,
+		Version:      1,
+		Size:         math.MaxInt64,
+		ContentType:  contentType,
+		Metadata:     cloneMetadata(metadata),
+		ModifiedAt:   math.MaxInt64,
+		ExpiresAt:    math.MaxInt64,
+		ClaimedUntil: math.MaxInt64,
+		PlacingAt:    strings.Repeat("x", maxPlacementNameBytes),
 	})
 	if err != nil {
 		return storage.Info{}, storage.NewError("write", storage.KindInternal, err)
@@ -327,3 +364,39 @@ func cloneMetadata(metadata storage.Metadata) map[string]string {
 }
 
 var _ fs.File = (*os.File)(nil)
+
+// The header block is fixed-width and written whole, so re-stamping one field is
+// a read, an edit and a WriteAt of the same 16 KiB. It is called on the claim
+// name, which is a second link to the stage's inode: the lease therefore belongs
+// to the stage rather than to either name.
+func (this *Backend) stampClaim(name string, edit func(*privateHeader)) error {
+	file, header, err := this.openPrivateFile(name)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = file.Close() }()
+	edit(&header)
+	encoded, err := encodePrivateHeader(header)
+	if err != nil {
+		return err
+	}
+	if len(encoded) > privateHeaderSize-12 {
+		return fmt.Errorf("%w: private header exceeds fixed bound", errInvalidPrivateFormat)
+	}
+	writable, err := this.root.OpenFile(name, os.O_RDWR, this.fileMode)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = writable.Close() }()
+	block := make([]byte, privateHeaderSize)
+	copy(block[:8], privateMagic[:])
+	binary.BigEndian.PutUint32(block[8:12], uint32(len(encoded)))
+	copy(block[12:], encoded)
+	if _, err := writable.WriteAt(block, 0); err != nil {
+		return err
+	}
+	if this.syncWrites {
+		return writable.Sync()
+	}
+	return nil
+}

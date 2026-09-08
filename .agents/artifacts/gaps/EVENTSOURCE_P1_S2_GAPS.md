@@ -1250,6 +1250,8 @@ one route at a time — and one contradiction between two doors of the same sect
         itself" without the exception
 - **Status:** closed 2026-09-07 — `ownMethods` no longer settles a struct position on a marshaller it did not find declared there: `promotedMarshaller` (`event/encodable.go`) asks whether an anonymous field carries the route the struct writes by, and refuses when any field of the struct's own stands beside it, naming the embedded type and the field it hides. The tagged spelling is refused too, and measurement says that is right — a `json:"money"` tag does not undo method promotion, so this finding's own suggested control was wrong and the accepting control is a **named** field. `declaration_test.go` carries shapes (a), (b) and the tagged one as `ErrCodecType` refusals with four accepting controls (a named field of the same type, the embedded type with no field beside it, a `time.Time` in a named field, the same pair on the pointer receiver) and two diagnosis rows. Shape (d) is shape (a) one level down and is refused by the same arm through the descent. Verified by mutation: deleting the arm turns the three rows red; making `besideIt` count the embedded field itself turns the *control* red.
 
+  **Amended 2026-09-08 (S2 test round 3, GAP-T41).** Close criterion 2 was **not** met in full when this was marked closed: shape (c) — an embedded type carrying the **text** pair, `struct{ Code; Note string }` where `Code` has `MarshalText`/`UnmarshalText` — was never given a row, and the closing note above accounts for (a), (b), the `json:"money"` spelling and (d) without mentioning it. `promotedMarshaller` was route-generic from the start and refused the shape correctly, so nothing was ever lost through it; what was missing was the gate, and `if writes == byTextMethods { return nil }` survived the whole suite until GAP-T41 closed it. The criterion is met now: `termed`, `netted` and `agreed` in `event/declaration_test.go`.
+
 ---
 
 ### GAP-186 [critical][immediate] A read route through a method on the value receiver counts as a read route, so a payload field and a map key both decode back to their zero value with no error at any door
@@ -1444,7 +1446,7 @@ one route at a time — and one contradiction between two doors of the same sect
         the other
   - [ ] `#### event/fact.go`'s clause 6 states what `Equal` is asked, when, and what happens when
         it disagrees with the field walk
-- **Status:** open
+- **Status:** closed 2026-09-08, round 5 — `event/comparison.go` (`equalByMethod` reached only from `sameFields`, and only where the struct has no exported field; its panic recovered into `ErrSample`), `event/codec.go` (the panic-policy row), `event/roundtrip_test.go` (three new subtests, two new diagnosis rows, the `weighed` fixture moved to an unexported field so the signature check is still reached). Criterion 3 taken by the narrowing branch
 
 ---
 
@@ -1494,7 +1496,7 @@ one route at a time — and one contradiction between two doors of the same sect
         today's code
   - [ ] `#### event/fact.go`'s "which of the two properties it proved" sentence and the S6 module
         page name the size limit
-- **Status:** open
+- **Status:** closed 2026-09-08, round 5 — `event/comparison.go` (`valueWalkNodes = 1 << 16` with its justification, `valueWalk.beyond`, `valueWalk.unanswered`), `event/roundtrip_test.go` (*a sample larger than the walk is refused rather than reported as a pass*, carrying `n=2000 @ 1500` with `n=10 @ 5` as its control, plus the exhaustion case)
 
 ---
 
@@ -1536,7 +1538,7 @@ one route at a time — and one contradiction between two doors of the same sect
         fact whose sample happens to be the zero value as its control (that one is a caller mistake
         and must still be refused)
   - [ ] the module page (S6) says which facts the non-aliasing half cannot be run for
-- **Status:** open
+- **Status:** closed 2026-09-08, round 5, in S2 rather than deferred to S5 — `event/comparison.go` (`singleValued`), `event/fact.go` (the zero-value refusal conditioned on it, the non-aliasing half skipped for a single-valued reader type), `event/roundtrip_test.go` (*a fact whose whole content is that it happened round trips*, with `note{}` as its control). Its test half GAP-T33 closes with it
 
 ---
 
@@ -1574,7 +1576,7 @@ their test half and cannot be green without them.
 
 | Finding | Disposition |
 |---|---|
-| **GAP-185** | **closed.** `promotedMarshaller` in `event/encodable.go`; refusal 6 of the walk. The finding's suggested accepting control — *the same shape with the embedded type tagged* — was **wrong** and is not used: a `json:"money"` tag does not undo Go's method promotion, and the tagged spelling still writes `500` and drops `SKU`. It is on the **refused** table with the untagged one, and the control is a named field. |
+| **GAP-185** | **closed.** `promotedMarshaller`, now in `event/routing.go`; refusal 6 of the walk. The finding's suggested accepting control — *the same shape with the embedded type tagged* — was **wrong** and is not used: a `json:"money"` tag does not undo Go's method promotion, and the tagged spelling still writes `500` and drops `SKU`. It is on the **refused** table with the untagged one, and the control is a named field. **Amended 2026-09-08:** criterion 2's shape (c), the text-pair route, was outstanding until S2 test round 3 (GAP-T41) — refused correctly all along, gated by nothing. |
 | **GAP-186** | **closed.** `readsAs` and `objectKey`; refusal 7. |
 | **GAP-187** | **closed**, and narrower than the close criterion's wording. The criterion asked the walk to refuse *"an anonymous field whose type is a pointer to an unexported struct type"*. Measured, that over-refuses: `type ring struct{ *ring; N int }` encodes `{"N":7}` and decodes back correctly, because the promoted `N` is shadowed by the outer one and `encoding/json` never has to allocate the pointer. The rule implemented is `encoding/json`'s own — refuse where a **rendered name** is reached through such a pointer — which refuses every shape the finding measured (`struct{ *hidden }`, `struct{ *inner; Note string }`, `pointed`) and keeps the two that work. Refusal 8. |
 | **GAP-188** | still **open**. Not touched here: it is `[high][immediate]` in the *implementation* review and no test-review finding depends on it. `sameValue`'s `Equal` arm still runs before the nil guard and still vetoes the field walk. |
@@ -1585,3 +1587,1709 @@ their test half and cannot be green without them.
 changed; `event/encodable.go` grows from 290 to 379 lines and remains the section's longest file.
 The walk's own contract comment and `#### event/codec.go`'s refusal list both go from five shapes
 to eight, in the same change.
+
+---
+
+## Round 4 amendment — 2026-09-08 — GAP-185's depth, and where the walk lives
+
+Appended while closing the S2 test review's round 5 cluster (GAP-T46, GAP-T47). No finding of this
+file was reopened; two of its closing notes stopped being true and are corrected here rather than
+edited into agreement.
+
+| Note | Correction |
+|---|---|
+| **GAP-185** — *"`promotedMarshaller` in `event/encodable.go`; refusal 6 of the walk"* | The refusal was asked **one hop deep**: `struct{ B }` where `B` is `struct{ money; Extra string }` was accepted while `B` alone was refused, so every shape refusal 6 exists for was legal again the moment it was wrapped in one more struct — the `Audit`/`Timestamps` block a consumer factors out of several payloads. Closed in S2 test round 5 as **GAP-T46**: the question is asked along the whole promotion chain and the refusal names the hop it came through. |
+| **the file it lives in** | `promotedMarshaller`, `ownMethods`, `besideIt`, `objectKey`, `writeRoute`, `readRoute`, `readsAs`, `writesAs`, `onTheValueReceiver` and the `route` methods are `event/routing.go` as of S2 test round 6 (GAP-T47); `event/encodable.go` keeps the walk — `chargeJSON`, `jsonWalk`, `position`, `members` and the three graph budgets. The single file had reached **422** lines against the 400-line budget, which this file's own round 3 note predicted at 379. The two are **212** and **256**, and no exported name moved. |
+
+---
+
+## Round 5 — remediation of the round-3 cluster — 2026-09-08
+
+The three findings round 3 left open — GAP-188, GAP-189, GAP-190 — closed together, because all
+three are `Fact.RoundTrip`'s comparison and two of them are the same sentence read twice: *what the
+round trip could not establish it must not report as a pass.* Every transcript below was produced
+in this worktree.
+
+### Reproduction, before the fix
+
+An in-package probe (`event/zzprobe_test.go`, deleted after) drove the reviewer's own inputs:
+
+```
+=== RUN   TestProbe188Nil
+panic: runtime error: invalid memory address or nil pointer dereference
+	event.(*probeNode).Equal(0x0?, ...)
+	event.equalByMethod(...)                 event/fact.go:311
+	event.sameValue(...)                     event/fact.go:256
+	event.(*Fact[...]).roundTrip(...)        event/fact.go:153
+	event.(*Fact[...]).RoundTrip(...)        event/fact.go:112
+
+=== RUN   TestProbe188Lenient
+    lenient Equal: out=[{Title:t Body:}] err=<nil>
+
+=== RUN   TestProbe189Budget
+    n=10   corrupts element 5:    refuses=true   (the control)
+    n=2000 corrupts element 5:    refuses=true
+    n=2000 corrupts element 1500: refuses=false  err=<nil>
+    n=5000 corrupts element 4999: refuses=false  err=<nil>
+
+=== RUN   TestProbe190Marker
+    CanEncode(struct{}) = <nil>      TryDeclare = <nil>
+    RoundTrip(marker{}) err=event: this sample cannot prove what a round trip claims for it:
+      … encodes its sample exactly as its own zero value …
+```
+
+Byte for byte the four transcripts the findings carry.
+
+### Dispositions
+
+| Finding | Disposition |
+|---|---|
+| **GAP-188** | **closed** by narrowing where `Equal` is asked and recovering its panic. `valueWalk.equalByMethod` is now reached **only** from `sameFields`, and only where the struct has no exported field — the one shape the field walk has nothing to compare, and the shape `time.Time` is. The pointer arm's nil guard therefore runs before it by construction, so the nil-receiver call cannot be made at all; and a lenient application `Equal` can no longer veto a walk that had an answer. The call is recovered into `ErrSample` naming the type, and `event/codec.go`'s panic-policy paragraph carries the row (as does `[[D-124]]`, which is where the rule lives). Criterion 3 taken by the **narrowing** branch, not the disagreement branch. |
+| **GAP-189** | **closed.** Both value walks take `valueWalkNodes = 1 << 16`, declared in `event/comparison.go` with the sentence that justifies it — a sample is a specimen, not a production payload, and `codecGraphNodes` bounds a *type* graph while one type has any number of values. `valueWalk` carries a `beyond` flag, and `RoundTrip` answers `ErrSample` naming the bound and the repair, which is the answer the type walk already gives for the same reason. The finding's `n=2000 @ 1500` case now refuses with `ErrPayload` — the genuine difference, found because the walk reaches it — and a sample of `valueWalkNodes + 8` values refuses with `ErrSample`. |
+| **GAP-190** | **closed**, and not deferred to S5: the repair turned out to be one predicate in the kernel rather than a policy in the `*testing.T` wrapper. A reader type of **size zero** holds exactly one value; for one, the zero-value-sample refusal does not fire and the non-aliasing half is skipped — there is no second payload to disturb anything with — while fidelity still runs. `ErrSample` is kept for a sample that is *wrong*: the wrong count, the wrong dynamic type, and the zero value of a type that carries data. Its test half **GAP-T33** closes with it and is struck from the plan's `## Debt`. |
+
+### What changed
+
+- `event/fact.go` — `roundTrip` splits its two halves into `notAliased` and `readBack`; the
+  zero-value refusal is conditioned on `singleValued`.
+- `event/comparison.go` — **new file.** `event/fact.go` reached **403** lines against the 400-line
+  budget, so the two walks moved out exactly as `event/routing.go` moved out of
+  `event/encodable.go` in round 4. `fact.go` **193**, `comparison.go` **216**. Every symbol in it
+  is unexported and `make api` regenerates `docs/api/surface.md` **byte-identical**, so
+  `event/eventpg`'s zero-diff obligation is untouched: no exported symbol was added, removed or
+  changed by any of the three repairs.
+- `event/codec.go` — the panic-policy paragraph gains the `Equal` row it claimed to enumerate.
+- `event/roundtrip_test.go` — five new subtests; the `weighed` fixture moved to an unexported
+  field with a codec of its own, because under the narrowing its old exported-field spelling never
+  reached the signature check it exists to pin; the diagnosis table goes from five rows to seven.
+- Docs in the same change: `[[D-124]]` (the `Equal` row, two new *What it forbids* clauses, the
+  file list, *Proven by*), `[[FL-036]]` and `docs/ai/flows/Index.md` (the new file),
+  `[[UC-032]]` clause 4, `docs/modules/{en,ru}/event.md` and `docs/modules/{en,ru}/eventtest.md`
+  (what a green round trip means, the size limit, and which facts the non-aliasing half cannot be
+  run for), and `#### event/fact.go` in the plan, which gains clauses 6a, 6b and 6c.
+
+### Mutation campaign — every repair is held by a named test
+
+Each mutation applied to the shipped code, the suite run, the mutation reverted:
+
+| Mutation | Killed by |
+|---|---|
+| `Equal` asked at every node again (the pre-fix call site) | `…/a pointer field is not asked its own type's Equal through a nil` — **panics**, exactly as before the fix |
+| the same mutation, lenient-`Equal` subtest | `…/an application's own Equal does not decide whether the codec kept what it was handed` — `answered <nil>` |
+| `recover` removed from `equalByMethod` | `…/an Equal that panics refuses the sample rather than unwinding` — **panics** |
+| the signature check removed | `…/what an encoding drops by design is not what it lost` — the `weighed` row is refused |
+| `valueWalkNodes` set back to `codecGraphNodes` | `…/a sample larger than the walk is refused rather than reported as a pass` — element 1500 of 2000 goes unreported |
+| `unanswered` returning `nil` always | the same subtest, the `Equal`-panics subtest, **and** the diagnosis table |
+| `singleValued` dropped from the zero-value guard | `…/a fact whose whole content is that it happened round trips` |
+| `sameFields` never falling through to `equalByMethod` | `…/a codec that records less than it was handed is caught` (the `time.Time` case) and two more |
+
+### Gate
+
+`gofmt -l .` silent · `go build ./...` · `go vet ./event/...` · `go test -race -count=1 ./event/...`
+green twice · `make unit` exit 0 · `make check` nine arms `ok` · `make api` byte-identical.
+
+---
+
+## Round 6 — econv-implementation-reviewer (clean context, re-audit of the round-5 cluster) — 2026-09-08
+
+Scope: GAP-188, GAP-189, GAP-190 and the round-5 change that closed them
+(`event/comparison.go` new, `event/fact.go`, `event/codec.go`,
+`event/roundtrip_test.go`). Every transcript below was produced in this worktree
+with an in-package probe (`event/zzaudit_test.go`, deleted after; the tree is
+byte-identical to how it was found — `event/comparison.go` and `event/fact.go`
+both md5-match the copies taken before the mutation campaign, `git status`
+back to 251 entries).
+
+### Gate, run here
+
+`gofmt -l .` silent · `go vet ./event/...` exit 0 · `go build ./...` exit 0 ·
+`go test -race -count=2 ./event/...` green (`event` 5.9 s, `eventmemory` 1.1 s,
+`eventtest` 4.0 s). No flake in two runs.
+
+### Metrics — counted
+
+| Metric | Value |
+|---|---|
+| `event/comparison.go` | 216 lines, 10 functions, longest `shares` at 34 lines |
+| `event/fact.go` | 193 lines, 10 functions, longest `roundTrip` at 35 lines |
+| longest non-test file under `event/` | `errors.go` 369, then `repo.go` 269, `routing.go` 256 — all under the 400-line budget |
+| exported declarations in `event/comparison.go` | **0** (`grep -cE "^(func\|type\|const\|var) [A-Z]"`) |
+| exported declarations changed in `fact.go` + `codec.go` | **0** (`git diff HEAD -- event/fact.go event/codec.go \| grep -E "^[+-](func\|type\|const\|var) [A-Z]" \| wc -l`) |
+| kernel imports of / branches on a concrete store | **0** (`grep -rn "eventmemory\|eventpg" event/*.go \| grep -v _test.go \| wc -l`) |
+| functions over the 4-parameter ceiling | **2** — see GAP-194 |
+
+### Microkernel — derived, not inherited
+
+`event/eventpg`'s zero-diff obligation is **intact**. Every value a store must
+construct is still constructible from outside package `event`: `Envelope`,
+`Stream`, `Record`, `AppendRequest`, `Limits` and `Capabilities` have no
+unexported field; `Backing` and `Authority` have `NewBacking` and `NewAuthority`;
+failures are `Failure(outcome, cause)`. The empirical proof is that
+`event/eventmemory` — a package outside `event` — already constructs all of them
+(`event/eventmemory/append.go:49` `event.Envelope{…}`, `:25` `event.Failure(…)`).
+The round-5 change added one file whose every symbol is unexported and changed no
+exported signature, so `docs/api/surface.md` cannot have moved.
+
+### The three findings, verified against the code
+
+| Finding | Verdict |
+|---|---|
+| **GAP-188** criterion 1 (nil guard before `Equal`) | **closed.** `equalByMethod` is reached from `sameFields` alone (`comparison.go:170`), and `same`'s `Pointer`/`Interface` arm (`:143-147`) nil-guards before it can descend. Probe: `referring{Ref *target, Note string}` with `Equal` on `*target` — `err=<nil>`, no panic. |
+| **GAP-188** criterion 2 (a panic policy, and the table's row) | **closed.** `equalByMethod:210-214` recovers into `panicked`; `unanswered:73` renders it as `ErrSample` naming the type; `event/codec.go:31-34` carries the row. |
+| **GAP-188** criterion 3 (the arm must not decide the verdict on its own) | **closed for the override, open for the omission.** The narrowing branch was taken and it works: `document.Equal` comparing titles no longer vetoes the field walk. But for the shape the narrowing hands to `Equal`, the *absence* of `Equal` is now reported as agreement — GAP-191 below. |
+| **GAP-188** criterion 4 (clause 6 of `#### event/fact.go`) | **closed.** Plan clause 6a states where `Equal` is asked and why there is no disagreement case. |
+| **GAP-189** all four criteria | **closed.** `valueWalkNodes = 1 << 16` with its justification at `comparison.go:41-45`; `beyond`/`unanswered` at `:58-78`; the `n=2000 @ 1500` case with `n=10 @ 5` as its control at `roundtrip_test.go:649-663`; the size limit is on `docs/modules/en/event.md:263`. |
+| **GAP-190** all three criteria | **closed.** `singleValued` at `comparison.go:13-16`, the guard at `fact.go:145`, the marker test with `note{}` as its control at `roundtrip_test.go:676-691`, and `docs/modules/en/event.md:256-261` names which facts the non-aliasing half cannot be run for. Criterion 2's "through the helper" is satisfied by `Fact.RoundTrip`, which criterion 1 explicitly allows; `eventtest.RoundTrip` (`event/eventtest/proxies.go:16-31`) is a pass-through with no policy of its own, so a copy of the case there would re-test the kernel and nothing else. |
+
+### Mutation campaign — re-run here, not inherited
+
+Each mutation applied to the shipped code, the suite run, the mutation reverted
+and the file md5-checked back:
+
+| Mutation | Result |
+|---|---|
+| `Equal` asked at every node again (before the `switch` in `same`) | **killed** by *…a pointer field is not asked its own type's Equal through a nil* and *…an application's own Equal does not decide whether the codec kept what it was handed* |
+| `recover` removed from `equalByMethod` | **killed** by *…an Equal that panics refuses the sample rather than unwinding* — panics, `spanned.Equal` index out of range |
+| `valueWalkNodes = codecGraphNodes` | **killed** by *…a sample larger than the walk is refused rather than reported as a pass* — element 1500 of 2000 goes unreported |
+| `unanswered` returning `nil` always | **killed** by three subtests, including the diagnosis table |
+| `singleValued` dropped from the zero-value guard | **killed** by *…a fact whose whole content is that it happened round trips* |
+| `sameFields` never falling through to `equalByMethod` | **killed** by *…a codec that records less than it was handed is caught* and two more |
+
+The round-5 mutation table is honest. Every repair is held by a named test.
+
+---
+
+### GAP-191 [high][immediate] A struct with no exported field and no `Equal(T) bool` is compared by nothing and reported as a pass, so the narrowing that closed GAP-188 left the check optional by omission
+
+- **Where:** `event/comparison.go:167-170` (`sameFields` falls through to
+  `equalByMethod` when nothing was compared), `event/comparison.go:202-209`
+  (`equalByMethod` returns **true** when the name is absent or the signature does
+  not match), `event/fact.go:84-88` (the `RoundTrip` contract comment that claims
+  the opposite)
+- **What:** the narrowing made `Equal` the **only** answer for a struct with no
+  exported field. When the type does not declare one, `equalByMethod` returns
+  `true` and `RoundTrip` reports a pass having compared nothing. Measured:
+
+  ```
+  located{IP netip.Addr; Note string}
+    JSON[located]().CanEncode()                     → <nil>
+    codec sets read.IP = netip.Addr{} (drops it)
+    RoundTrip(located{IP: 10.0.0.1, Note: "n"})     → err=<nil>  out=[{IP:invalid IP Note:n}]
+
+  hushed struct{ marks []int64 }   (no exported field, no Equal)
+    sample {1,2,3}, codec decodes {99,99}
+    RoundTrip                                        → err=<nil>  out=[{marks:[99 99]}]
+
+  heldTight struct{ marks []int64 }, func (*heldTight) Equal(*heldTight) bool
+    a pointer-receiver Equal is not in the value's method set, so it is never found
+    codec drops everything
+    RoundTrip(heldTight{marks: []int64{7}})          → err=<nil>  out=[{marks:[]}]
+  ```
+
+  `netip.Addr`, `netip.Prefix`, `big.Int`, `big.Rat` and every application value
+  object that keeps its state privately and does not happen to spell
+  `Equal(T) bool` are that shape. Swap `time.Time` for `netip.Addr` in the
+  suite's own `stamp`/`forgetfulCodec` case — the one that pins *"a codec that
+  wrote the note and forgot the time"* — and it goes green.
+
+  The file's own stated policy is at `comparison.go:48-51`: *"a walk that stopped
+  early has compared nothing past where it stopped, and answering the caller's
+  way there is a check that cannot fail. What went unanswered is carried out
+  rather than resolved."* `valueWalk` already carries the machinery (`beyond`,
+  `panicked`, `unanswered`) and applies it to budget exhaustion and to a
+  panicking `Equal`. This is the third unanswered route and it is resolved in the
+  caller's favour instead.
+- **Why this severity:** `high`. This is the exact defect GAP-178's third close
+  criterion added the comparison to catch and GAP-188's own text named — *"it
+  makes the check it was added for optional"*. The narrowing removed the
+  **override** and left the **omission**, and the omission is the wider case: a
+  lenient `Equal` needs a consumer to have written one, while no `Equal` at all
+  is the default. It is a `universality.md` finding: whether the only check that
+  says a codec recorded what it was handed runs at all is decided by whether the
+  payload type happens to declare a method with a fixed name and signature — the
+  mechanism is "the sample looked like `time.Time`". It is not `critical` because
+  it needs a defective codec of the consumer's own before anything is lost; the
+  shipped `JSON` codec does not drop such a field.
+- **Why this timing:** `immediate`. A `universality.md` finding is never
+  deferred. `eventtest.RoundTrip` is the report a store author reads and it
+  reports a pass. And the repair changes what a green round trip means, which
+  `docs/modules/{en,ru}/event.md` and `#### event/fact.go` clause 6 both state —
+  so it is cheaper before S5/S6 depend on the current sentence than after.
+- **Close criteria:**
+  - [ ] `sameFields` records "nothing compared" on the walk — a third arm beside
+        `beyond` and `panicked` — when the struct has no exported field and
+        `equalByMethod` did not run, and `RoundTrip` answers `ErrSample` naming
+        the type and the repair
+  - [ ] a **zero-size** reader type is excluded from that arm, so GAP-190 stays
+        closed: *…a fact whose whole content is that it happened round trips*
+        must stay green, and a mutation that drops the exclusion must turn it red
+  - [ ] `roundtrip_test.go` carries the `netip.Addr` case above — a codec that
+        drops a field whose type keeps its state privately and declares no
+        `Equal` — asserting the chosen answer, with the existing
+        `stamp`/`time.Time` case as its control, so the repair cannot be made by
+        refusing every all-unexported struct
+  - [ ] a control pins that a **pointer-receiver** `Equal` is not silently taken
+        as an answer (`heldTight` above)
+  - [ ] `event/fact.go:84-88` stops claiming that *"a codec that drops part of
+        what it was given … [is] found before a stream contains one"* unqualified,
+        and `docs/modules/{en,ru}/event.md`'s *"and by nothing if it does not"* is
+        replaced by whatever the code now does
+- **Status:** open
+
+---
+
+### GAP-192 [high][immediate] A payload reached through an interface panics `reflect` out of `Fact.RoundTrip`, which is the failure GAP-188 was closed for, on a route the closure never covered
+
+- **Where:** `event/comparison.go:158-165` (`sameFields` indexes `second` by
+  `first`'s field count), `event/comparison.go:182-189` (`sameEntries` indexes
+  `second` with a key of `first`'s key type), `event/fact.go:111` (`RoundTrip`
+  has no `recover`), `event/eventtest/proxies.go:16-31` (the conformance wrapper
+  has none either)
+- **What:** two raw runtime panics unwind out of exported kernel API. Measured:
+
+  ```
+  boxed struct{ Meta any }
+    sample  boxed{Meta: narrow{A: 1}}          (1 field)
+    codec   decodes boxed{Meta: wide{A,B,C}}   (3 fields)
+    RoundTrip → panic: reflect: Field index out of range
+
+    sample  boxed{Meta: map[string]int{"a": 1}}
+    codec   decodes boxed{Meta: map[int]string{1: "a"}}
+    RoundTrip → panic: reflect.Value.MapIndex: value of type int is not assignable to type string
+  ```
+
+  `sameFields` walks `first.NumField()` — the **decoded** value's shape — and
+  indexes `second`, the sample, with it. `sameEntries` does the same with map
+  keys. Two values only reach those arms with different `reflect.Type` when they
+  are reached through an interface, and the shipped codec refuses an interface
+  field at declaration with *"declare the concrete type **or a codec of your
+  own**"* — so this is the path the kernel itself points a consumer down, and
+  `Codec[V]` is the extension point that exists to admit it.
+
+  GAP-188's disposition argued only the nil route: *"The pointer arm's nil guard
+  therefore runs before it by construction, so the nil-receiver call cannot be
+  made at all."* The panic route through mismatched dynamic types was never
+  closed, and in `eventtest` it aborts the conformance binary rather than
+  reporting a refusal — the S5 consequence GAP-188 itself named.
+- **Why this severity:** `high`, on exactly the reasoning GAP-188(1) was rated
+  `high`: it fails loudly and writes no wrong fact by itself, but a raw runtime
+  panic unwinds out of an exported kernel method with no diagnosis, in the one
+  helper whose whole job is to diagnose. It is not `critical` because it needs a
+  consumer-written codec over an interface-typed payload.
+- **Why this timing:** `immediate`. Same grounds as GAP-188: exported kernel API,
+  and S5's `eventtest.RoundTrip` is written directly over this algorithm.
+- **Close criteria:**
+  - [ ] `same` (and `shares`) never index or key one value with the other's
+        shape: two valid values whose `reflect.Type` differs are answered, not
+        walked
+  - [ ] both measured cases are in `roundtrip_test.go` asserting a refusal rather
+        than a panic, with a same-dynamic-type interface payload as the control,
+        so the repair cannot be made by refusing every interface field
+  - [ ] a mutation that restores the current indexing turns those cases red
+  - [ ] whichever answer is chosen is stated in `event/codec.go`'s policy
+        paragraph or in `#### event/fact.go` clause 6, because that paragraph
+        claims to enumerate what the kernel does with a call into code it was
+        promised nothing about
+- **Status:** open
+
+---
+
+### GAP-193 [medium][immediate] Two valid values of different kinds are reported as the same value, so a codec that substitutes one thing for another passes
+
+- **Where:** `event/comparison.go:133-135`
+- **What:**
+
+  ```go
+  if !first.IsValid() || !second.IsValid() || first.Kind() != second.Kind() {
+      return first.IsValid() == second.IsValid()
+  }
+  ```
+
+  When both are valid and the kinds differ this returns **true** — "the same
+  value". Measured:
+
+  ```
+  bagged struct{ Meta any; Note string }
+    sample  Meta = map[string]any{"a": 1}
+    codec   decodes Meta = "dropped"
+    RoundTrip → err=<nil>  out=[{Meta:dropped Note:n}]
+
+  boxed struct{ Meta any }
+    sample  Meta = [3]int{1,2,3}
+    codec   decodes Meta = [3]string{"x","y","z"}
+    RoundTrip → err=<nil>  out=[{Meta:[x y z]}]
+  ```
+
+  The arm presumably exists for the widening a JSON codec legitimately produces —
+  an `int` in an `any` read back as a `float64`, which also answers `<nil>` here.
+  The two are opposite answers and the code cannot tell them apart, because they
+  take the same branch.
+- **Why this severity:** `medium` — reachable only through an interface-typed
+  field or element, which the shipped codec refuses at declaration, so it needs a
+  codec of the consumer's own. It is not `low` because a whole substituted value
+  is reported as fidelity proved, which is the same class of wrong answer as
+  GAP-191 through a different arm, and because `[3]int` → `[3]string` is not a
+  representation difference by any reading.
+- **Why this timing:** `immediate` — it is the same arm and the same repair as
+  GAP-192, and doing them separately means touching `same` twice.
+- **Close criteria:**
+  - [ ] a kind mismatch between two valid values is either a difference
+        (`ErrPayload`) or unanswered (`ErrSample`), never agreement
+  - [ ] the numeric widening a codec legitimately produces is named and handled
+        explicitly rather than by falling into the same branch
+  - [ ] `roundtrip_test.go` carries the mangled-`any` case with the widened
+        numeric case as its control
+- **Status:** open
+
+---
+
+### GAP-194 [medium][deferred] Two helpers take five parameters against `architecture.md`'s ceiling of four
+
+- **Where:** `event/comparison.go:18`
+  (`reusesItsBuffer(read, own, written, zero, walk)` — 5),
+  `event/fact.go:163`
+  (`notAliased(read, own, written, zero, revision)` — 5)
+- **What:** counted, both are 5 against `architecture.md:54` — *"Function
+  parameters | <= 4"*. Four of the five in each are one concept: the revision
+  under test and the three byte strings its round trip produced (`written`,
+  `zero`, and what `own` was decoded from). `roundTrip` (`fact.go:127-161`)
+  assembles all of them and hands them on twice.
+- **Why this severity:** `architecture.md`'s table puts a measured-threshold
+  breach at `high`; I am calling it `medium` and saying why rather than
+  inflating it — both functions are unexported, both are short (22 and 11
+  lines), no contract crosses them, and the repair is a body refactor with no
+  behavioural surface. Nothing fails on any input because of it.
+- **Why this timing:** `deferred` — module-internal, no external contract, and
+  nothing in S5 or S6 bends around it.
+- **Close criteria:**
+  - [ ] both are at 4 parameters or fewer, e.g. by a small unexported value
+        carrying the revision's `read`, `written` and `zero`
+  - [ ] `go test -race ./event/...` unchanged and no exported symbol moves
+- **Status:** open
+
+---
+
+### What is genuinely clean and worth saying so
+
+- **GAP-189 and GAP-190 are fully closed**, by the code and by tests that go red
+  when the code is reverted. I ran both reverts here.
+- **GAP-188 is three-quarters closed.** The nil-receiver crash it named is
+  structurally impossible now, not merely guarded: `equalByMethod` has exactly
+  one caller and the pointer arm cannot reach it through a nil. The panic policy
+  is real and `event/codec.go` carries the row it claimed to enumerate.
+- **The suite does not pass vacuously.** Every one of the five new subtests
+  carries its own control, and the controls are the right ones: the `time.Time`
+  case is beside the lenient-`Equal` case so neither half of the narrowing can be
+  made by breaking the other, and `marksOf(8)` is beside `marksOf(valueWalkNodes+8)`.
+- **No exported symbol moved**, so `event/eventpg`'s zero-diff obligation is
+  untouched. Derived above, not inherited.
+- **House style** holds in `event/comparison.go`: six comment blocks, each on
+  either a non-trivial walk or an invariant the code cannot show (why
+  `reflect.DeepEqual` is wrong, why 65 536, why size zero means one value). None
+  restates code and none exists because a symbol is exported — every symbol in
+  the file is unexported.
+
+---
+
+## Round 7 — remediation of the round-6 cluster — 2026-09-08
+
+The four findings round 6 left open — GAP-191, GAP-192, GAP-193, GAP-194 — closed
+together. The first three are one position in `event/comparison.go` reached three
+ways, and doing them separately means touching `same` three times, which is what
+GAP-193's own timing argument said.
+
+### Reproduced first, in this worktree, before anything was changed
+
+An in-package probe (`event/zzprobe_test.go`, deleted after) drove each finding's
+own input through `Fact.RoundTrip`. What it printed:
+
+```
+191 netip.Addr dropped                   err=<nil> out=[{IP:invalid IP Note:n}]
+191 hushed, no exported field, no Equal  err=<nil> out=[{marks:[99 99]}]
+191 pointer-receiver Equal               err=<nil> out=[{marks:[]}]
+192 struct widened behind an interface   PANIC reflect: Field index out of range
+192 map rekeyed behind an interface      PANIC reflect.Value.MapIndex: value of type int is not assignable to type string
+193 map replaced by a string             err=<nil> out=[{Meta:dropped Note:n}]
+193 [3]int read back as [3]string        err=<nil> out=[{Meta:[x y z]}]
+193 control: int widened to float64      err=<nil> out=[{Meta:1}]
+```
+
+and the two routes GAP-192 named in `shares`, which round 6 measured only through
+`same`, panic as well — a codec whose two answers for one payload have different
+dynamic types drives the **aliasing** walk into the same indexing:
+
+```
+192 shares walks a struct by the other's shape  PANIC reflect: Field index out of range
+192 shares keys a map by the other's key        PANIC reflect.Value.MapIndex: value of type string is not assignable to type int
+```
+
+After the change, the same eight inputs:
+
+```
+191 netip.Addr dropped                   ErrPayload  does not read back the event.located it was given
+191 hushed, no exported field, no Equal  ErrSample   carries a event.hushed: … declares no Equal(event.hushed) bool …
+191 pointer-receiver Equal               ErrSample   carries a event.heldTight: … declares no Equal(event.heldTight) bool …
+192 struct widened behind an interface   ErrPayload  does not read back the event.boxed it was given
+192 map rekeyed behind an interface      ErrPayload  does not read back the event.boxed it was given
+193 map replaced by a string             ErrPayload  does not read back the event.bagged it was given
+193 [3]int read back as [3]string        ErrPayload  does not read back the event.boxed it was given
+193 control: int widened to float64      err=<nil>   out=[{Meta:1}]
+192 shares (both routes)                 err=<nil>   no panic
+```
+
+### What changed
+
+`event/comparison.go`. The position `Equal` was asked at now has **three answers
+in a fixed order** — `sameOpaque`: a type of size zero (one value, nothing to
+lose), then the type's own `Equal(T) bool`, then `==` where the type is
+comparable, then **none**, recorded on the walk as `incomparable` and carried out
+by `unanswered` as `ErrSample` naming the type and the repair. `equalByMethod`
+returns `(answered, same)` instead of resolving its own absence as agreement.
+`same` and `shares` compare `reflect.Type` rather than `reflect.Kind` and answer a
+difference instead of walking one value by the other's shape; the numeric
+widening that arm used to swallow is `sameNumber`, a named arm of its own.
+`event/fact.go` grew `roundTripping`, which takes `notAliased` and
+`reusesItsBuffer` from five parameters to three.
+
+### Gate, run here
+
+`gofmt -l .` silent · `go build ./...` exit 0 · `go vet ./event/...` exit 0 ·
+`go test -race -count=1 ./event/...` green · `make unit` green · `make check`
+green.
+
+### Mutation campaign — nine mutations, each applied to the shipped code, the
+suite run, the mutation reverted and `event/comparison.go` md5-checked back to
+`8cf623edad2ca590e0af2e23be394aee`
+
+| Mutation | Result |
+|---|---|
+| `same` guards on `Kind` again (the round-6 spelling) | **killed** — *a value substituted for another behind an interface is answered, not walked* panics `reflect: Field index out of range` |
+| `shares` guards on `Kind` again | **killed** — the same subtest, through the two `inTurn` rows |
+| `sameOpaque` reports agreement where nothing compared | **killed** by *a struct nothing can compare…* and by the diagnosis row *a payload nothing can compare* |
+| `sameOpaque` drops the `==` arm | **killed** by *a struct nothing can compare…* (the `netip.Addr` row) and by *what an encoding drops by design is not what it lost* (`weighed`) |
+| `sameOpaque` drops the zero-size exclusion | **killed** by *a fact whose whole content is that it happened round trips* — the `witnessed` row, whose type forbids `==` |
+| `sameNumber` always agrees | **killed** by the substitution table and by the diagnosis row |
+| `sameNumber` never agrees | **killed** by the widened-number control |
+| `equalByMethod` stops checking the signature | **killed** by *what an encoding drops by design…* — `weighed.Equal(int64, int64)` panics and becomes `ErrSample` |
+| `equalByMethod` takes a missing `Equal` for agreement | **killed** by *a struct nothing can compare…* and the diagnosis row |
+
+### Dispositions
+
+| Finding | Disposition |
+|---|---|
+| **GAP-191** | **closed** by `sameOpaque`'s three answers. Criterion 1: `sameFields` falls through to `sameOpaque`, which records `incomparable` on the walk beside `beyond` and `panicked`, and `unanswered` renders it as `ErrSample` naming the type and both repairs. Criterion 2: `singleValued(first.Type())` is the first arm, and it is load-bearing rather than decorative — `struct{ _ [0]func() }` is size zero and **not** comparable, so the new `witnessed` row in *a fact whose whole content is that it happened round trips* goes red when the arm is dropped. Criterion 3: the `netip.Addr` case is `roundtrip_test.go`'s *a struct nothing can compare is refused rather than reported as a pass*, and the chosen answer is **`ErrPayload`, a difference** rather than `ErrSample` — because the `==` arm can compare a `netip.Addr` and does, which is a stronger close than refusing it; its two controls are a faithful codec over the same type and the `time.Time` case, so the repair cannot be made by refusing every all-unexported struct. Criterion 4: `heldTight`, whose `Equal` sits on the pointer receiver and is therefore not in the value's method set, is refused with `ErrSample` naming it. Criterion 5: `event/fact.go:88-94`, `docs/modules/{en,ru}/event.md` and `docs/modules/{en,ru}/eventtest.md` all say what the position does now; the `and by nothing if it does not` sentence is gone. `[[D-124]]` carries the rule and the forbid, and plan clause **6d** carries the contract. |
+| **GAP-192** | **closed** by comparing `reflect.Type` in both walks. Criterion 1: `same:147` answers a type difference through `sameNumber` and never enters a `switch` arm with it; `shares:87` returns false. Criterion 2: both measured cases are rows of *a value substituted for another behind an interface is answered, not walked*, and the same-dynamic-type rows (`narrow` for `narrow`, `map[string]int` for `map[string]int`) are the controls, so the repair cannot be made by refusing every interface field. The two `shares` routes round 6 did not measure are rows too, driven by `inTurn`. Criterion 3: the mutation table above, rows 1 and 2. Criterion 4: plan clause **6e** and `[[D-124]]` state the answer; `event/codec.go`'s paragraph is about the panic policy and keeps its `Equal` row unchanged, because nothing here is a call into application code. |
+| **GAP-193** | **closed** with GAP-192, one repair. Criterion 1: two valid values of different types are a difference. Criterion 2: `sameNumber` is the named arm, and it compares the numbers rather than waving them through — `1` read back as `float64(2)` is refused. Criterion 3: the mangled-`any` and `[3]int`→`[3]string` rows sit in the same table as the widened-number control. |
+| **GAP-194** | **closed**, not deferred: `roundTripping{read, written, zero, revision}` is one concept and `notAliased` and `reusesItsBuffer` are at **three** parameters each. No exported symbol moved and `go test -race ./event/...` is unchanged. |
+
+### What this round changed in the tests, and why
+
+`sealedNote` gained `Equal(sealedNote) bool` on the value receiver. It is the
+fixture whose contents are unreachable to the **aliasing** walk, which is what
+*a codec that reaches its buffer through a field no comparison walks is caught
+too* is about; under GAP-191's repair its allocating control was refused as
+uncomparable, which would have replaced a `nil`-vs-`ErrPayload` discriminator
+with an `ErrSample`-vs-`ErrPayload` one. Declaring the `Equal` keeps the
+aliasing half blind to `body` — `shares` walks exported fields alone — and lets
+fidelity answer, so the subtest still pins what it was written to pin.
+
+### Zero-diff obligation
+
+Intact. Every symbol added is unexported (`sameOpaque`, `sameNumber`, `asFloat`,
+`roundTripping`, `valueWalk.incomparable`), no exported signature moved, and
+`docs/api/surface.md` regenerates byte-identical.
+
+---
+
+## Round 8 — econv-implementation-reviewer (clean context, re-audit of the round-7 cluster) — 2026-09-08
+
+Scope: the GAP-188 / GAP-189 / GAP-190 cluster and everything round 5 and round 7
+changed to close it and its follow-ons (`event/comparison.go`, `event/fact.go`,
+`event/codec.go`, `event/roundtrip_test.go`). Every transcript below was produced
+in this worktree by an in-package probe (`event/zzaudit8_test.go`,
+`zzaudit8b_test.go`, `zzaudit8c_test.go`) and an out-of-module probe
+(`/tmp/zzmk`), all deleted afterwards. The tree is byte-identical to how it was
+found: `git status --porcelain | wc -l` = 251 before and after,
+`event/comparison.go` md5 `8cf623edad2ca590e0af2e23be394aee`, `event/fact.go`
+`078d1fa59687c92a78da8e688fedf45f`, `event/codec.go`
+`52e480c9cbd64bfa526601f3772ce9b6`, `event/roundtrip_test.go`
+`ab738f167671f0dba0f9b41983c73759`.
+
+### Gate, run here
+
+`gofmt -l .` silent · `go vet ./event/...` exit 0 · `go build ./...` exit 0 ·
+`go test -race -count=2 ./event/...` green twice in a row (`event` 5.95 s / 5.94 s,
+`eventmemory` 1.09 s, `eventtest` 4.01 s / 4.04 s — no flake) · `make check`
+green (`check-deps`, `check-tiers`, `check-utils`, `check-triplets`, `check-todo`,
+`check-replaces`, `check-tidy`, `check-otel-schema`, `check-workspace` all `ok`) ·
+`make api` regenerates `docs/api/surface.md` **byte-identical** (`diff` empty).
+
+### Metrics — counted, not eyeballed
+
+| Metric | Command | Value |
+|---|---|---|
+| `event/comparison.go` | `wc -l` | 280 |
+| `event/fact.go` | `wc -l` | 205 |
+| `event/codec.go` | `wc -l` | 106 |
+| longest non-test file under `event/` | `wc -l event/*.go` | `errors.go` 369, then `comparison.go` 280, `repo.go` 269 — all under 400 |
+| longest function in `comparison.go` | awk over `^func`…`^}` | `shares` 34 lines |
+| longest function in `fact.go` | same | `roundTrip` 34 lines |
+| exported declarations in `comparison.go` | `grep -cE "^(func\|type\|const\|var) [A-Z]"` | **0** |
+| non-test functions in `event/` over 4 parameters | regex scan of every `^func` | **0** — GAP-194 closed |
+| kernel imports of / branches on a concrete store | `grep -rn "eventmemory\|eventpg\|eventtest" event/*.go \| grep -v _test.go \| wc -l` | **0** |
+| extensions importing each other | `grep -rn "eventtest" event/eventmemory/*.go`, `grep -rn "eventmemory" event/eventtest/*.go`, non-test | **0** and **0** |
+
+### Microkernel — derived here, not inherited
+
+**`event/eventpg`'s zero-diff obligation is intact.** Derived by writing a
+throwaway module `zzmk` (its own `go.mod`, a `replace` onto this checkout, so
+nothing in `event/` could be relied on) that implements the full `event.Store`
+interface and returns every value the contract makes a store construct:
+`Capabilities{Transactions: event.Supported, …}`, `Limits{…}`,
+`NewBacking(identity)`, `NewAuthority(backing, tx)`, `Envelope{Stream, Version,
+Position, Type, Revision, Payload, RecordedAt}`, `Record{Type, Revision,
+Payload}`, `AppendRequest{Stream, Expected, Records}`, `Cursor`, and
+`Failure(NotWritten, cause)` / `Failure(Conflict, cause)`. It compiles and its
+`var _ event.Store = store{}` assertion holds. Nothing a store must build is
+gated behind an unexported field or a package-internal constructor.
+
+### The three cluster findings, verified against the code
+
+Each verified by constructing the finding's own input and by reverting the repair
+in place, running the suite, and restoring the file to its md5.
+
+| Finding | Verdict |
+|---|---|
+| **GAP-188 (1) — nil-receiver `Equal` panic** | **closed.** `equalByMethod` (`comparison.go:265`) has exactly one caller, `sameOpaque:255`, itself reached only from `sameFields:209` where no exported field was compared; `same`'s `Pointer`/`Interface` arm (`:157-160`) nil-guards before descending. Probe: `referring{Ref: nil, Note: "hello"}` → `err=<nil>`, no panic. **Mutation M1** (ask `Equal` at every node before the `switch`, the round-2 spelling) → *a pointer field is not asked its own type's Equal through a nil* red. |
+| **GAP-188 (2) — no panic policy, no row in the table** | **closed.** `equalByMethod:274-278` recovers into `walk.panicked`; `unanswered:73` renders `ErrSample` naming the type; `codec.go:31-34` carries the row and it matches the code ("asks of a struct whose every field is unexported, and there alone"). **Mutation M2** (drop the `recover`) → *an Equal that panics refuses the sample rather than unwinding* panics with `index out of range [0] with length 0`. |
+| **GAP-188 (3) — an application `Equal` disables the fidelity check** | **closed for the shape the finding measured.** `document{Title, Body}` with a title-only `Equal` and a body-dropping codec → `ErrPayload`. Mutation M1 also turns *an application's own Equal does not decide whether the codec kept what it was handed* red. Residual at the narrowed position measured and recorded as GAP-197 below. |
+| **GAP-189 — both walks on the type-graph budget, exhausting in the caller's favour** | **closed.** `valueWalkNodes = 1 << 16` at `comparison.go:44` with its justification at `:40-43`; `beyond` / `unanswered` at `:58-80`; `notAliased` and `readBack` (`fact.go:181`, `:192`) both build `valueWalk{budget: valueWalkNodes}` and both carry the answer out. **Mutation M4** (`valueWalkNodes = codecGraphNodes`) → *a sample larger than the walk is refused rather than reported as a pass* red on the `n=2000 @ 1500` row. **Mutation M5** (`unanswered` returns `nil` always) → four subtests red. |
+| **GAP-190 — a marker fact can never satisfy UC-042** | **closed.** `singleValued` at `comparison.go:13-15`; the zero-value refusal conditioned on it at `fact.go:146`; the non-aliasing half skipped at `:152`. Probe: `RoundTrip(voided{})` → `err=<nil>`, one value carried. **Mutation M6** (drop `singleValued` from the `fact.go` guard) and **M7** (drop the zero-size arm from `sameOpaque`) each turn *a fact whose whole content is that it happened round trips* red — M7 through the `witnessed` row, whose type forbids `==`, so the arm is load-bearing rather than decorative. |
+| **GAP-191 — the absence of `Equal` reported as agreement** | **closed** at the position the finding named. `sameOpaque:251-263` answers in three steps and records `incomparable` where there is none. **Mutation M9** (`sameOpaque` reports agreement when nothing compared) and **M10** (drop the `==` arm) both turn *a struct nothing can compare…* red. New consequence recorded as GAP-195 below. |
+| **GAP-192 / GAP-193 — one value walked by the other's shape / two valid values of different kinds called equal** | **closed.** `same:147` and `shares:92` compare `reflect.Type`. **Mutation M8** (guard on `Kind` again) → *a value substituted for another behind an interface is answered, not walked* panics `reflect: Field index out of range`. **Mutation M11** (`sameNumber` always agrees) → the same subtest plus the diagnosis row red. |
+| **GAP-194 — five-parameter helpers** | **closed.** `notAliased(carried, own)` = 2, `reusesItsBuffer(carried, own, walk)` = 3. A regex scan of every `^func` in `event/*.go` (non-test) finds **zero** functions over four parameters. |
+
+Nine mutations applied to the shipped code and reverted, `event/comparison.go`
+and `event/fact.go` md5-checked back after each. **Every one was killed by a
+named test.** The round-5 and round-7 mutation tables are honest.
+
+---
+
+### GAP-195 [high][immediate] The GAP-191 repair made a payload carrying a `math/big` value permanently unprovable: a declaration the kernel accepts, over the kernel's own shipped codec, which round-trips perfectly, is refused forever with a repair the consumer cannot perform
+
+- **Where:** `event/comparison.go:251-263` (`sameOpaque` — `incomparable` is the
+  answer when a struct has no exported field, declares no `Equal(T) bool` on the
+  value receiver, and is not comparable), `event/comparison.go:75`
+  (`unanswered`'s message and the two repairs it names),
+  `docs/modules/en/event.md:250-258` (which names `big.Int` and offers the same
+  two repairs), `docs/ai/decisions/D-124…md:157-173`
+- **What:** round 7 closed GAP-191 by turning "nothing compared → pass" into
+  "nothing compared → `ErrSample`". D-124 and the module page both justify that
+  with a list — *"`netip.Addr`, `netip.Prefix`, `big.Int` and every value object
+  that keeps its state privately"* — but that list holds two different classes
+  and only one of them the `==` arm can answer. `netip.Addr` and `netip.Prefix`
+  are **comparable**, so `==` compares them and the fidelity check works.
+  `big.Int`, `big.Rat` and `big.Float` hold a slice, so they are **not**
+  comparable and declare no `Equal`, and `sameOpaque` falls to `incomparable`
+  for them **whatever the codec did**. Measured in this worktree:
+
+  ```
+  reflect: big.Int   NumField=2  field 0 exported=false  Comparable=false  hasEqual=false
+           big.Rat   Comparable=false  hasEqual=false
+           big.Float Comparable=false  hasEqual=false
+
+  JSON[credited]().CanEncode()                      -> <nil>          (declaration accepts it)
+  Declare(a, "credited", From(JSON[credited]()), …) -> ok             (no refusal at any door)
+  fact.RoundTrip(credited{Amount: big.NewInt(1234), Note: "n"})
+     through the SHIPPED JSON codec, which encodes and decodes it perfectly
+     -> event: this sample cannot prove what a round trip claims for it: …
+        carries a big.Int: every field of it is unexported, it declares no
+        Equal(big.Int) bool on the value receiver and == cannot compare it …
+        declare that Equal, or record what the fact carries in an exported field
+  ```
+
+  **Neither repair the message names exists for this type.** You cannot declare a
+  method on `math/big.Int` from your own package. And wrapping does not help:
+  the walk descends through the exported field into `big.Int` regardless, so
+  declaring `Equal` on the payload struct itself is not reached — `sameOpaque`
+  runs only where a struct has *no* exported field. Measured:
+
+  ```
+  type owned struct{ Amount *big.Int; Note string }
+  func (this owned) Equal(other owned) bool { … Amount.Cmp … }   // the obvious workaround
+  fact.RoundTrip(owned{Amount: big.NewInt(5), Note: "n"})
+     -> the same ErrSample naming big.Int
+  ```
+
+  The only escape is to stop carrying a `math/big` value in the payload at all.
+- **Why this severity:** `high`. This is GAP-190's shape exactly — *"a legal
+  declaration whose UC-042 obligation is unsatisfiable"* — moved from `struct{}`
+  to `math/big`, and it is worse than GAP-190 in one respect: GAP-190's refusal
+  was reached only by a caller who had no other sample to give, while this one is
+  reached by a **correct codec doing everything right**. `eventtest.RoundTrip`
+  (`event/eventtest/proxies.go:16-21`) is `t.Fatal` on any error, so a store
+  author whose domain records an exact amount as a `*big.Int` — an accounting
+  ledger, which is event sourcing's own canonical domain — gets a red conformance
+  run they cannot make green. It is a `universality.md` finding: whether an
+  entirely correct declaration can be proved at all is decided by whether its type
+  happens to spell one method with one fixed name and one fixed signature, and
+  that mechanism is wrong on the standard library's own arbitrary-precision types.
+  It is not `critical` because it fails closed at test time, writes no wrong fact
+  and loses nothing.
+- **Why this timing:** `immediate`. A `universality.md` finding is never deferred.
+  It was introduced by round 7's own repair, which is the case a re-audit exists
+  for. `docs/modules/{en,ru}/event.md`, `docs/modules/{en,ru}/eventtest.md`,
+  `[[D-124]]` and plan clause 6d all state the current sentence, and S5's
+  conformance report and phase 2's `eventpg` round-trip cases are written over
+  it — so it is cheaper to settle before those depend on it than after.
+- **The general mechanism that should replace the fixed method name:** compare at
+  the **wire**, which needs no method and no name. `reusesItsBuffer`
+  (`comparison.go:25`) already computes `before := read.selfEncode(own)`; where
+  the value walk has nothing to compare, `bytes.Equal(before, carried.written)`
+  is a real answer for **every** type — a codec that dropped a `big.Int` re-encodes
+  to different bytes and is caught, and one that kept it re-encodes to the same
+  bytes and passes. (It is weaker than the value walk for a codec that drops the
+  same thing on both sides, so it belongs *behind* the walk, not instead of it —
+  which is exactly the position `incomparable` occupies today.) A second option,
+  if the wire comparison is rejected: let the caller supply the comparison for
+  the one revision it cannot answer for, which stays constructible from outside
+  `event` and keeps the kernel free of a rule about a payload's shape — the thing
+  `[[D-124]]`'s own "What it forbids" list forbids.
+- **Close criteria:**
+  - [ ] a **faithful** codec over a payload carrying a `*big.Int` round-trips
+        without error, through the shipped `JSON` codec and through a codec of the
+        caller's own
+  - [ ] a codec that **drops** that `*big.Int` and keeps the field beside it is
+        still refused, and is refused as a difference (`ErrPayload`) rather than
+        as an unusable sample — this is the control that stops the repair being
+        made by widening the pass
+  - [ ] `roundtrip_test.go` carries both rows above beside the existing
+        `hushed` / `heldTight` rows, so whatever stays `ErrSample` is a shape a
+        consumer can actually repair
+  - [ ] `unanswered`'s message names only repairs that exist for the type it
+        names, or the `incomparable` arm no longer fires for a type the consumer
+        does not own
+  - [ ] `docs/modules/{en,ru}/event.md` stops presenting "declare `Equal` on the
+        value receiver, or record what the fact carries in an exported field" as
+        the remedy for `big.Int`, and `[[D-124]]` stops listing `netip.Addr` and
+        `big.Int` as one class — the `==` arm answers the first and nothing
+        answers the second
+  - [ ] a mutation that reverts whichever mechanism is chosen turns the
+        `*big.Int` row red
+- **Status:** closed — round 9, by asking the wire where the value walk has nothing to compare
+
+---
+
+### GAP-196 [medium][immediate] `same`'s default arm answers agreement for a kind it cannot compare, which is the fourth unanswered route and the one `[[D-124]]`'s forbid list already names
+
+- **Where:** `event/comparison.go:165-167`
+  (`default: return !first.Comparable() || first.Equal(second)`)
+- **What:** the arm reads "if the value is not comparable, say the two are the
+  same". Every kind reaching `default` is comparable except one — `Func` — so the
+  `!first.Comparable()` short-circuit is not a guard against a `reflect` panic,
+  it is an answer in the caller's favour for a position that compared nothing.
+  Measured:
+
+  ```
+  type fn struct{ Do func() int; Note string }
+  codec decodes Do as a different closure, Note unchanged
+  RoundTrip(fn{Do: func() int { return 1 }, Note: "n"})  ->  err=<nil>
+  ```
+
+  A `chan` field takes the same arm and is refused correctly (`ErrPayload`),
+  because `Chan` *is* comparable — which is what shows the `Func` answer is an
+  accident of the guard rather than a decision. The same value is reached through
+  `sameElements` and `sameEntries` as well, so `[]func()`, `[2]func()` and
+  `map[string]func()` all agree with anything.
+
+  `[[D-124]]`'s "What it forbids" says in terms: *"Do not answer an exhausted
+  value walk in the caller's favour, and do not answer a walk that had nothing to
+  compare either… There are three of those routes now."* This is a fourth,
+  answered the other way, and `comparison.go:47-50` states the same policy in the
+  file itself.
+- **Why this severity:** `medium`, and I am saying why rather than inflating it.
+  It needs a codec of the consumer's own — `chargeJSON` refuses `Func` at
+  declaration (`encodable.go:80-81`), so the shipped codec never reaches it — and
+  a function is not data anyone records, so nothing is lost in practice. It is
+  not `low` because it is the same class of wrong answer as GAP-191 through a
+  fourth arm, in the one helper whose entire job is to answer honestly, and
+  because a binding decision doc forbids exactly this.
+- **Why this timing:** `immediate` on GAP-193's own accepted timing argument —
+  it is the same function and the same repair as GAP-195, and doing them
+  separately means touching `same` twice.
+- **Close criteria:**
+  - [ ] a kind the walk cannot compare is recorded on the walk (`incomparable`,
+        or whatever GAP-195 settles on) rather than answered as agreement
+  - [ ] `roundtrip_test.go` carries the `func`-field row above asserting the
+        chosen answer, with the `chan` row as its control so the repair cannot be
+        made by refusing every non-struct leaf
+  - [ ] a mutation restoring `!first.Comparable() || …` turns that row red
+- **Status:** closed — round 9, by recording a `func` rather than agreeing with it
+
+---
+
+### GAP-197 [low][deferred] At the one position `Equal` is still asked, a lenient application `Equal` still decides the verdict — GAP-188(2)'s defect, narrowed rather than removed
+
+- **Where:** `event/comparison.go:255-257` (`sameOpaque` asks `equalByMethod`
+  first), `.agents/artifacts/plans/EVENTSOURCE_P1_PLAN.md` clause 6a (*"removes
+  the case where an application's own question overrides the framework's"*)
+- **What:** measured, for a struct with no exported field the application's own
+  `Equal` is still the whole verdict:
+
+  ```
+  type quiet struct{ title, body string }
+  func (this quiet) Equal(other quiet) bool { return this.title == other.title }
+  codec drops body
+  RoundTrip(quiet{title: "t", body: "the body the codec drops"})
+     -> err=<nil>   carried=[{title:t body:}]
+
+  and the same through an interface-typed field:
+  RoundTrip(boxed{Meta: quiet{title: "t", body: "dropped"}})  -> err=<nil>
+  ```
+
+  This is GAP-188(2)'s exact transcript with an all-unexported struct in place of
+  `Doc`. `[[D-124]]` decided it deliberately — *"a type that declares one says
+  there what its equality is"* — and `docs/modules/en/event.md:257-260` states it
+  accurately and with the right hedge (*"cannot switch this check off **for a
+  struct the field walk could answer**"*). So the code and the docs agree and this
+  is a recorded trade, not drift. It is recorded here because a reader of plan
+  clause 6a's unhedged sentence would not expect it, and because the wire-level
+  comparison proposed in GAP-195 would close it in the same change: `Equal` would
+  become one of two answers rather than the only one.
+- **Why this severity:** `low`. It needs a consumer to have written a lenient
+  `Equal` on an all-unexported struct, and `[[D-124]]` accepted it with an
+  argument. Nothing is wrong on any input the decision did not foresee.
+- **Why this timing:** `deferred` — no external contract moves, nothing in S5 or
+  S6 bends around it, and the honest close may well be `wontfix` citing
+  `[[D-124]]`. It must not be dropped: if GAP-195 is closed by the wire
+  comparison, this closes with it for free, and if it is closed some other way
+  this stays open.
+- **Close criteria:**
+  - [ ] either a second answer runs beside a declared `Equal` at that position so
+        a lenient one cannot pass a codec that dropped a field, with `time.Time`
+        as the control that must stay green
+  - [ ] or `wontfix` with the argument written into `[[D-124]]`, and plan clause
+        6a's *"removes the case where an application's own question overrides the
+        framework's"* gains the module page's hedge
+- **Status:** rejected — round 9, `wontfix`: the repair accuses a codec that normalises a time.Time to UTC
+
+---
+
+### What is genuinely clean, and worth saying so
+
+- **The cluster this round was sent to audit — GAP-188, GAP-189, GAP-190 — is
+  fully closed by the code**, not by a disposition note. I constructed each
+  finding's own input and ran it, and I reverted each repair in place and watched
+  a named test go red: nine mutations, nine kills, every file md5-checked back.
+- **GAP-191, GAP-192, GAP-193 and GAP-194 are closed too**, on the same evidence.
+  GAP-195 is not a re-opening of GAP-191 — the repair works for the case
+  GAP-191 measured (`netip.Addr`, `hushed`, `heldTight`) and the new finding is
+  the class the `==` arm cannot reach, which GAP-191's own text did not separate
+  out.
+- **No exported symbol moved.** `docs/api/surface.md` regenerates byte-identical,
+  and every symbol round 5 and round 7 added is unexported. Derived here.
+- **`event/eventpg`'s zero-diff obligation is intact**, derived from outside the
+  repository's own packages by a throwaway module that implements `event.Store`
+  in full.
+- **The suite does not pass vacuously.** Every subtest in
+  `TestACodecThatDecodesIntoAReusedBufferIsCaught` carries its own control, and
+  the controls are the right ones: `time.Time` sits beside the lenient-`Equal`
+  case so neither half of the narrowing can be made by breaking the other,
+  `marksOf(8)` beside `marksOf(valueWalkNodes+8)`, the faithful `located` codec
+  beside the dropping one, and the same-dynamic-type interface rows beside the
+  substituted ones.
+- **House style holds.** `event/comparison.go` carries seven comment blocks, each
+  on either a walk of 30-plus lines or an invariant the code cannot make visible
+  (why `reflect.DeepEqual` is the wrong comparison, why 65 536 and not 1 024, why
+  size zero means one value, why the three answers are in that order). None
+  restates code, none narrates a test, and none exists because a symbol is
+  exported — the file exports nothing. Receiver name is `this` throughout. Every
+  refusal in the cluster is matched with `errors.Is` against an exported sentinel
+  and every message states what broke in words.
+
+---
+
+## Round 9 — remediation of the round-8 cluster — 2026-09-08
+
+GAP-195, GAP-196 and GAP-197 closed together. They are one position reached three
+ways — what the value walk does when it has no answer — and round 6's own timing
+argument applies again: doing them separately means touching `sameOpaque` three
+times.
+
+### Reproduced first, in this worktree, before anything was changed
+
+An in-package probe (`event/zzprobe_test.go`, deleted afterwards) drove each
+finding's own input through `Fact.RoundTrip`. What it printed against the code as
+found:
+
+```
+reflect: big.Int Comparable= false hasEqual= false
+195 JSON[pCredited]().CanEncode() = <nil>
+195 faithful shipped codec over *big.Int  -> event: this sample cannot prove what a round trip
+    claims for it: ... carries a big.Int: every field of it is unexported, it declares no
+    Equal(big.Int) bool on the value receiver and == cannot compare it ...
+195 the obvious workaround, Equal on the payload -> the same ErrSample naming big.Int
+195 control, a codec that drops the *big.Int -> the same ErrSample naming big.Int
+196 a func field read back as another closure -> err=<nil> carried=1
+196 control, a chan field read back as another chan -> ErrPayload does not read back the
+    event.pPiped it was given
+197 a codec that normalises to UTC: At.Equal=true  wire same=false
+    ("2026-09-08T04:18:10.036921382+05:00" vs "2026-09-07T23:18:10.036921382Z")
+```
+
+Two things that transcript settles beyond the findings' own text. The `big.Int`
+refusal is **indistinguishable from a real defect** — the faithful codec and the
+one that drops the amount answer with the same sentence, so the message told a
+consumer to perform a repair that does not exist *and* hid the case where one was
+needed. And the 197 row is the measurement that decides 197's disposition: the
+hypothetical repair — a second answer beside a declared `Equal` — accuses a codec
+that normalises an instant to UTC of losing what it kept.
+
+After the change, the same inputs:
+
+```
+195 faithful shipped codec over *big.Int  -> <nil>
+195 the obvious workaround, Equal on the payload -> <nil>
+195 control, a codec that drops the *big.Int -> ErrPayload  does not read back the
+    event.pCredited it was given: nothing can compare the big.Int it carries, so what came
+    back was encoded again and the bytes are not the ones the sample encoded to
+196 a func field read back as another closure -> ErrSample  carries a func() int, which no
+    wire format records and no two values of which can be compared ... record what
+    identifies the behaviour — a name, a code — and choose the function from that when you fold
+196 control, a chan field read back as another chan -> ErrPayload (unchanged)
+```
+
+### What changed
+
+`event/comparison.go`. `valueWalk.incomparable` is gone and two fields stand in
+its place, because the two things it held are not one thing. **`opaque`** — a
+struct with no exported field, no `Equal(T) bool` and no `==` — is carried out of
+the walk to `Fact.readBack`, which answers it at the **wire**: `readsBackOnTheWire`
+encodes what the codec returned with the revision's own codec and compares those
+bytes with the ones the sample encoded to. That question needs no method and no
+name, so it answers for `big.Int`, `big.Rat`, `big.Float` and every other type a
+consumer cannot declare a method on. It is the weaker of the two answers — a codec
+that drops the same thing on the way out and on the way in re-encodes to the bytes
+it was given — so it runs **behind** the walk and only where the walk had nothing,
+which is exactly the position `incomparable` occupied. **`unrecordable`** — a
+`func`, the only kind `same`'s last arm reaches that Go declines to compare — is
+`ErrSample` through `unanswered`, naming a repair that does exist: record what
+identifies the behaviour and choose the function from it when you fold. `same`'s
+`default` arm no longer reads `!first.Comparable() || first.Equal(second)`, which
+answered agreement for the one kind it could not compare.
+
+`event/fact.go`. `readBack` gained the three statements that ask the wire, and
+`RoundTrip`'s comment says what the position does now. The helper is **inlined
+rather than extracted**: a call that returns an `error` and takes a `string` is
+what `TestNoRefusalRendersAnIdentityAPayloadAKeyOrACursor` reads as a message
+being worded, and passing `roundTripping` — which carries the payload bytes — to
+one is what it forbids. That check found it; the first spelling here was a helper.
+
+### Gate, run here
+
+`gofmt -l .` silent · `go build ./...` exit 0 · `go vet ./event/...` exit 0 ·
+`go test -race -count=2 ./event/...` green twice (`event` 6.17 s, `eventmemory`
+1.09 s, `eventtest` 4.08 s) · `make unit` exit 0 · `make check` green
+(`check-deps`, `check-tiers`, `check-utils`, `check-triplets`, `check-todo`,
+`check-replaces`, `check-tidy`, `check-otel-schema`, `check-workspace` all `ok`) ·
+`make api` regenerates `docs/api/surface.md` **byte-identical**.
+
+### Mutation campaign — eleven mutations, each applied to the shipped code, the
+suite run, the mutation reverted and both files md5-checked back
+(`comparison.go` `de3200a11d9601804a83cfd9b2e86f1b`, `fact.go`
+`c9294425c45a0ffbbf9c14cdddb6c27e`)
+
+| Mutation | Result |
+|---|---|
+| M1 `same`'s default arm asks `!first.Comparable() \|\| ...` again (the round-7 spelling) | **killed** — *a leaf no wire format records is refused rather than reported as a pass*, and the diagnosis row |
+| M2 `readBack` never asks the wire and passes what the walk could not compare | **killed** — five subtests, including *a payload the caller does not own the type of is provable all the same* |
+| M3 `readBack` refuses `opaque` instead of asking the wire (round 7's spelling) | **killed** — the `*big.Int` rows and the `hushed`/`heldTight` rows |
+| M4 the wire always agrees | **killed** — the same three subtests |
+| M5 `unanswered` drops the arm for what no wire format records | **killed** — the `func` subtest and the diagnosis row |
+| M6 `sameOpaque` drops the `==` arm | **killed** — *what an encoding drops by design is not what it lost*, through the codec that loses the same digit both ways, which the wire cannot see |
+| M7 `sameOpaque` drops the `Equal` arm | **killed** — four subtests |
+| M8 `sameOpaque` drops the zero-size arm | **killed** — *a fact whose whole content is that it happened round trips*, through the marker-beside-data row |
+| M9 the wire compares against the zero value's encoding instead of the sample's | **killed** — the `*big.Int` rows and the `hushed`/`heldTight` rows |
+| M10 `same`'s default arm sends a `func` to the wire instead of refusing it | **killed** — the `func` subtest and the diagnosis row |
+| M11 the wire is asked beside a declared `Equal` as well as behind it (the rejected GAP-197 repair) | **killed** — *what an encoding drops by design is not what it lost*, through the UTC-normalising codec |
+
+M8 and M11 are new tension this round put there rather than found. M8 **survived**
+on the first campaign: with the wire answering for a type nothing can compare, the
+zero-size arm became indistinguishable for a marker fact standing alone. It is not
+indistinguishable for a **marker beside data** — recording `opaque` stops the walk,
+so the field next to the marker would be left to a wire its own codec agrees with —
+and `witnessedNote` + `trimmingCodec` (three bytes of six, read back exactly as
+written) is the row that says so, with a body it records whole as its control. M11
+is the mutation that would be applied by anyone closing GAP-197 the other way, and
+the UTC codec is what stops them.
+
+### Dispositions
+
+| Finding | Disposition |
+|---|---|
+| **GAP-195** | **closed by asking the wire where the walk has nothing**, which is the general mechanism the finding itself proposed. Criterion 1: a `*big.Int` payload round-trips through the shipped `JSON` codec **and** through `tallyingCodec`, a codec of the caller's own — both rows of *a payload the caller does not own the type of is provable all the same*, and both assert the carried value as well as the `nil`. Criterion 2: `untalliedCodec` reads the amount back as nothing and keeps the note, and is refused as **`ErrPayload`** naming `big.Int` — a difference, not an unusable sample. Criterion 3: both rows sit in `roundtrip_test.go`, and `hushed`/`heldTight` moved to `ErrPayload` in the subtest beside it, which now carries `murmuringCodec` as the control that the answer is not "refuse every all-unexported struct". Criterion 4: the `incomparable` arm no longer fires at all — `unanswered` has no branch for it — so no message names a repair that does not exist. Criterion 5: `docs/modules/{en,ru}/event.md` and `{en,ru}/eventtest.md` say the wire answers there; `[[D-124]]` separates the two classes in terms (`netip.Addr` comparable, `big.Int` not) and its forbid list gained two lines; plan clause **6f** carries the contract and 6d hands off to it. Criterion 6: mutations M2, M3, M4 and M9. |
+| **GAP-196** | **closed by recording the kind rather than agreeing with it.** Criterion 1: `same`'s default arm records `unrecordable` and `unanswered` renders it as `ErrSample` naming the type and a repair that exists. Criterion 2: *a leaf no wire format records is refused rather than reported as a pass* carries the `func` row, the `chan` row as the control that keeps `==` answering for a comparable leaf, and a third row where the repair the message names — record what identifies the behaviour — round-trips. Criterion 3: mutations M1, M5 and M10. The finding's own fixture (a codec that writes only the note) is refused now for the reason the walk gives, before the wire is consulted at all, so the answer does not depend on what the codec chose to write. |
+| **GAP-197** | **rejected — `wontfix`, with the argument measured rather than cited**, which is the second of the two close criteria the finding offered. The proposed repair is a second answer beside a declared `Equal`, and the transcript above is what it costs: `utcCodec` records an instant and hands it back in UTC, `time.Time.Equal` says nothing was lost and the re-encoding says otherwise, so the repair accuses a faithful codec. That is the false accusation `Equal` is asked at that position to prevent, and it is the reason `[[D-124]]` gives for asking the method first. The wire therefore sits behind the walk and never beside it, which is also what keeps a lenient `Equal` deciding at that one position — a consumer who writes one on an all-unexported struct has said there what its equality is. Written into `[[D-124]]` (*"Do not ask the wire beside an answer the walk already has"*, in the forbid list) and into plan clause 6a, which gained the module page's hedge — *"for a struct the field walk could answer"* — and a pointer to 6f. The rejection is held by a test rather than a sentence: mutation M11 is exactly this repair and *what an encoding drops by design is not what it lost* goes red for it. |
+
+### What this round changed in the tests, and why
+
+- `hushed` and `heldTight` moved from `ErrSample` to `ErrPayload`, and the subtest
+  they live in is now *a struct nothing can compare is answered at the wire rather
+  than reported as a pass*. Both are codecs that genuinely lose what they were
+  handed, and naming that as a difference is a stronger close than refusing the
+  sample. `murmuringCodec` — the same wire format read back whole — joins them as
+  the control.
+- The diagnosis table grew a row and is now *ten of them share two sentinels*. The
+  `hushed` row's expected sentence changed with the message; the `func` row is new.
+- Three fixtures added for the `*big.Int` case (`ledgered`, `tallyingCodec`,
+  `untalliedCodec`), four for the `func` case (`routed`, `routingCodec`, `named`,
+  `piped`/`pipingCodec`), and three for the mutation tension described above
+  (`coarseCodec`, `utcCodec`, `witnessedNote`/`trimmingCodec`).
+
+### Zero-diff obligation
+
+Intact. Every symbol this round added is unexported (`readsBackOnTheWire`,
+`valueWalk.opaque`, `valueWalk.unrecordable`), no exported signature moved, and
+`make api` regenerates `docs/api/surface.md` byte-identical — diffed here.
+
+---
+
+## Round 10 — econv-implementation-reviewer (clean context, re-audit of the round-9 cluster) — 2026-09-08
+
+Scope: GAP-188, GAP-189, GAP-190 and every repair layered on them through rounds 5,
+7 and 9 (`event/comparison.go`, `event/fact.go`, `event/codec.go`,
+`event/roundtrip_test.go`). Nothing was inherited: each closed finding was
+re-derived by constructing its own input, and each repair was reverted in place,
+the suite run, and the file restored to its md5.
+
+Every transcript below was produced by an **out-of-module** probe
+(`/tmp/zzaudit10`, its own `go.mod` with a `replace` onto this checkout) so that
+nothing unexported in `event/` could be relied on, and by an out-of-module store
+(`/tmp/zzmk10`). The tree is byte-identical to how it was found:
+`git status --porcelain | wc -l` = 251 before and after; `event/comparison.go`
+md5 `de3200a11d9601804a83cfd9b2e86f1b`, `event/fact.go`
+`c9294425c45a0ffbbf9c14cdddb6c27e`, `event/codec.go`
+`52e480c9cbd64bfa526601f3772ce9b6`, `event/roundtrip_test.go`
+`5698171f08468bb1f6543fad7c2eb85f`.
+
+### Gate, run here
+
+`gofmt -l .` silent (exit 0) · `go vet ./event/...` exit 0 ·
+`go test -race -count=2 ./event/...` green, no flake (`event` 5.953 s,
+`eventmemory` 1.085 s, `eventtest` 4.032 s).
+
+### Metrics — counted
+
+| Metric | Command | Value |
+|---|---|---|
+| `event/comparison.go` | `wc -l` | 313 |
+| `event/fact.go` | `wc -l` | 221 |
+| `event/codec.go` | `wc -l` | 106 |
+| longest function in the two | `awk` over `^func`…`^}` | `shares` 34, `roundTrip` 34, `same` 33 |
+| exported declarations in `comparison.go` | `grep -cE "^(func\|type\|const\|var) [A-Z]"` | **0** |
+| non-test functions in `event/` over 4 parameters | paren-depth scan of every `^func` | **0** |
+| kernel imports of / branches on a concrete store | `grep -rn "eventmemory\|eventpg\|eventtest" event/*.go \| grep -v _test.go \| wc -l` | **0** |
+
+### Microkernel — derived here, not inherited
+
+**`event/eventpg`'s zero-diff obligation is intact.** Derived by building
+`/tmp/zzmk10`, a module outside this repository that implements the whole
+`event.Store` interface and constructs every value the contract makes a store
+produce: `Capabilities{Transactions: event.Supported, …}`, `Limits{…}`,
+`NewBacking(identity)`, `NewAuthority(backing, tx)`,
+`Envelope{Stream, Version, Position, Type, Revision, Payload, RecordedAt}`,
+`Record{…}`, `AppendRequest{…}`, `Cursor`, `Failure(NotWritten, cause)` and
+`Failure(Conflict, cause)`. It compiles and `var _ event.Store = store{}` holds.
+Nothing a store must build is behind an unexported field or a package-internal
+constructor. The two findings below are both in unexported code
+(`valueWalk.spend`, `Fact.readBack`) and neither repair moves an exported symbol.
+
+### The cluster, verified against the code
+
+Each verified by constructing the finding's own input **and** by reverting the
+repair in place, running the suite, and restoring the file to its md5.
+
+| Finding | Verdict |
+|---|---|
+| **GAP-188 (1)** nil-receiver `Equal` panic | **closed.** `equalByMethod` (`comparison.go:298`) has one caller, `sameOpaque:288`, reached only from `sameFields:236` where no exported field was compared; `same`'s `Pointer`/`Interface` arm (`:180-184`) nil-guards first. **Mutation:** ask `Equal` before the `switch` in `same` → *a pointer field is not asked its own type's Equal through a nil* red, with the panic text in the message. |
+| **GAP-188 (2)** no panic policy / no row in the table | **closed.** `equalByMethod:307-311` recovers into `walk.panicked`; `unanswered:91` renders `ErrSample`; `codec.go:31-34` carries the row and matches the code. **Mutation:** drop the `recover` → *an Equal that panics refuses the sample rather than unwinding* **panics** (`index out of range [0] with length 0`). |
+| **GAP-188 (3)** an application `Equal` disables the fidelity check | **closed for the shape the finding measured.** Same mutation turns *an application's own Equal does not decide whether the codec kept what it was handed* red. |
+| **GAP-189** both walks on the type-graph budget | **closed.** `valueWalkNodes = 1 << 16` at `comparison.go:60` with its justification at `:56-59`. **Mutation:** `valueWalkNodes = codecGraphNodes` → *a sample larger than the walk is refused rather than reported as a pass* red on the `n=2000 @ 1500` row. |
+| **GAP-190** a marker fact can never satisfy §UC-042 | **closed.** `singleValued` at `comparison.go:13`, the guard at `fact.go:160`, the non-aliasing half skipped at `:167`. **Mutation:** drop `singleValued` from the guard → *a fact whose whole content is that it happened round trips* red. |
+| **GAP-195** a `*big.Int` payload permanently unprovable | **closed at the position the finding named.** **Mutation:** `readBack` never asks the wire → three subtests red, including *a payload the caller does not own the type of is provable all the same*. New consequences recorded as GAP-198 and GAP-199 below. |
+| **GAP-196** `default:` answering agreement for a `func` | **closed.** **Mutation:** restore `!first.Comparable() \|\| first.Equal(second)` → *a leaf no wire format records is refused rather than reported as a pass* red, plus the diagnosis row. |
+| **GAP-197** a lenient `Equal` at the narrowed position | **`wontfix` stands, and the argument is now measured rather than cited.** I re-ran the rejection's own transcript: a decode-side UTC-normalising codec over `stamp` alone answers `<nil>` (`3b` below), which is what the rejection protects. |
+
+Six mutations applied and reverted, all four files md5-checked back. **Every
+repair in the cluster is held by a named test.** No finding closed above was
+closed by a disposition note.
+
+### What the round-9 repair introduced
+
+The wire answer closed GAP-195 at the node it was measured on and left two
+routes open **around** that node, because `valueWalk.opaque` is a *per-node* fact
+used as a *whole-walk* verdict. Both are measured below; both are direct
+violations of `[[D-124]]`'s own forbid list, and one of them makes
+`Fact.RoundTrip` report a pass for a codec that permanently drops a field.
+
+---
+
+### GAP-198 [high][immediate] Recording `opaque` stops the whole value walk, so every field after a `big.Int` is left to a wire its own codec agrees with — a codec that drops a field passes or is refused depending on the order the fields are declared in
+
+- **Where:** `event/comparison.go:77` (`spend` returns false once `this.opaque != ""`),
+  `event/comparison.go:294` (`sameOpaque` sets it and returns `true`),
+  `event/comparison.go:164-166` (`same` answers **true** for every node reached
+  after that), `event/fact.go:198-206` (`readBack` then asks the wire for the
+  **whole** value), `event/fact.go:84-97` (the `RoundTrip` contract comment:
+  *"What the value comparison cannot answer it does not pass over"*)
+- **What:** `sameOpaque` records the type name of a struct nothing can compare
+  and returns agreement; `spend` treats that record as a stop condition, so the
+  walk compares nothing after it — including fields it has a perfectly good
+  answer for. `readBack` then falls to `readsBackOnTheWire`, which is the
+  **weaker** answer by the file's own comment (`comparison.go:45-47`) and by
+  `[[D-124]]`: *"a codec that drops the same thing on the way out and on the way
+  in re-encodes to the bytes it was given"*. So the strong answer is discarded
+  for every field past the opaque one and the weak one stands in for it.
+
+  Measured, out of module, on the repository's own `ledgered` shape
+  (`{Amount *big.Int; Note string}`) with a codec that writes the amount and
+  never writes the note — the mirror image of the shipped `untalliedCodec`
+  fixture, which is tested and caught:
+
+  ```
+  1a  type amountFirst struct{ Amount *big.Int; Note string }
+      codec writes only Amount, reads back only Amount
+      RoundTrip(amountFirst{big.NewInt(1234), "the note the codec drops"})
+        -> err=<nil>   carried=[{1234 }]          <-- the note is gone, and it passed
+
+  1b  type noteFirst struct{ Note string; Amount *big.Int }    (the SAME codec semantics,
+      RoundTrip(noteFirst{"the note the codec drops", big.NewInt(1234)})   fields swapped)
+        -> ErrPayload  "does not read back the main.noteFirst it was given"
+  ```
+
+  The two payloads carry the same data through the same codec and disagree only
+  in the order the fields are declared in. Nothing about a fact depends on that
+  order, so this is a proof that fires or does not fire for a reason outside the
+  domain.
+
+  It is not confined to a struct's own fields — it stops the walk wherever the
+  opaque node is reached, so a batch loses every row:
+
+  ```
+  4  type row struct{ Amount *big.Int; Note string }; type batched struct{ Rows []row }
+     codec writes every row's amount and no row's note
+     RoundTrip(batched{Rows: []row{{1,"first note"},{2,"second note"}}})
+       -> err=<nil>   carried=[{[{1 } {2 }]}]      <-- every note in the batch dropped
+  ```
+
+  **Causation confirmed in place:** deleting `|| this.opaque != ""` from
+  `spend` (`comparison.go:77`) and re-running the same probe turns `1a` into the
+  same `ErrPayload` as `1b`. The file was restored to md5
+  `de3200a11d9601804a83cfd9b2e86f1b`.
+
+  `[[D-124]]`'s forbid list already rules this out in terms: *"Do not answer an
+  exhausted value walk in the caller's favour, and do not answer a walk that had
+  nothing to compare either. **A walk that stopped early compared nothing past
+  where it stopped, and reporting that as a pass is a check that cannot fail**"*.
+  The walk stops early here, and what is past the stop is reported as a pass.
+  Plan clause 6f says the wire *"runs behind the walk and only where the walk had
+  nothing"*; the walk had an answer for `Note` and was prevented from giving it.
+  `docs/modules/en/event.md:259-262` tells a consumer the same untrue thing.
+
+  The neighbouring stop conditions do not have this consequence and that is what
+  isolates it: `beyond`, `panicked` and `unrecordable` also stop the walk, and
+  all three end in `unanswered` — a **refusal**. `opaque` is the only one that
+  stops the walk and then passes. The zero-size arm (`sameOpaque:285`)
+  deliberately does **not** record anything, precisely so the field beside a
+  marker stays compared (`[[D-124]]` line 171, `witnessedNote`/`trimmingCodec`
+  in `roundtrip_test.go:376-396`) — the same reasoning was not applied one arm
+  down.
+- **Why this severity:** `high`. `Fact.RoundTrip` is the only mechanism the
+  framework has for §UC-042, and here it answers `nil` for a codec that
+  permanently deletes a field from every fact ever written through it — the exact
+  defect the comparison exists to catch (GAP-178 criterion 3, GAP-191, GAP-195
+  criterion 2), reached by declaring an ordinary accounting payload with the
+  amount first. `[[D-124]]` names an accounting ledger as *"event sourcing's own
+  canonical domain"* and a `*big.Int` amount is what put the opaque arm there in
+  the first place, so the shape is not exotic — it is the shape round 9 was
+  written for. It is not `critical` because it takes a codec of the consumer's
+  own: the shipped `JSON` codec writes every exported field, and a field it
+  skips by design (`json:"-"`, unexported) is one no load was going to read. It
+  is not `medium` because the answer is a **pass**, `architecture.md`'s "a check
+  that cannot fail", and because `eventtest.RoundTrip` is the conformance
+  suite's own proxy, so a green conformance run means nothing here.
+- **Why this timing:** `immediate`. It is a `universality.md` finding — whether
+  the only check that says a codec kept what it was handed runs at all is decided
+  by field declaration order, which is behaviour undefined for a neighbouring
+  input — and those are never deferred. It was introduced by round 9's own
+  repair, which is what a re-audit exists for. `[[D-124]]`, plan clause 6f and
+  `docs/modules/{en,ru}/event.md` all state the opposite of what the code does,
+  and S5's conformance report and phase 2's `eventpg` round-trip cases are
+  written over those sentences.
+- **The general mechanism that should replace the stop:** a node the walk could
+  not answer is a fact **about that node**, not about the walk. Record it and
+  keep walking — every other node still gets the strong answer, and the weak
+  wire answer is consulted only if the strong one found nothing wrong anywhere.
+  `spend`'s three refusal flags may keep stopping the walk, because each ends in
+  a refusal; `opaque` must not, because it ends in a pass.
+- **Close criteria:**
+  - [ ] a node recorded as `opaque` no longer stops the walk: every other node the
+        walk can reach is still compared, and a difference found after it is
+        `ErrPayload`
+  - [ ] `roundtrip_test.go` carries the `1a` row above — the mirror of
+        `untalliedCodec`: a codec that keeps the `*big.Int` and drops the `Note`
+        beside it — asserting `ErrPayload`, with the field-swapped spelling
+        (`1b`) beside it as the control that says the answer does not depend on
+        declaration order, and the faithful `tallyingCodec` row as the control
+        that the repair was not made by refusing every payload holding a
+        `big.Int`
+  - [ ] the batched row (`4` above) is carried too, so the fix is to the walk
+        rather than to one struct shape
+  - [ ] a mutation restoring `|| this.opaque != ""` in `spend` turns those rows
+        red
+  - [ ] `event/fact.go`'s `RoundTrip` comment, plan clause 6f, `[[D-124]]` and
+        `docs/modules/{en,ru}/event.md` stop claiming the wire runs *"only where
+        the walk had nothing"* unless that is what the code does
+- **Status:** open
+
+---
+
+### GAP-199 [high][immediate] The wire is a whole-value question asked whenever any node was opaque, so it is asked beside every answer the walk already gave — and a faithful codec that hands a `time.Time` back in UTC is accused of losing data as soon as the payload also carries a `big.Int`
+
+- **Where:** `event/fact.go:198-208` (`readBack` asks
+  `readsBackOnTheWire(carried, own)` for the **whole** payload when
+  `walk.opaque != ""`), `event/comparison.go:48-54` (`readsBackOnTheWire`
+  re-encodes the whole value), `event/comparison.go:274-283` (`sameOpaque`'s
+  comment: *"It is not asked a second question either … asking the wire beside
+  the method would call it a difference"*)
+- **What:** the walk's record is per node; the wire question is per payload. So
+  the moment one node is opaque, the re-encoding is compared for **every** node,
+  including the ones the walk answered — which is the one thing `[[D-124]]`'s
+  forbid list rules out by name: *"Do not ask the wire beside an answer the walk
+  already has — not beside a declared `Equal`, not beside `==`, not beside the
+  field walk. Re-encoding is a question about bytes, and a codec that normalises
+  what it records answers it differently while losing nothing; it is a second
+  answer only where there is no first one."*
+
+  Measured, out of module, with the shape the suite's own `utcCodec` fixture
+  pins (`roundtrip_test.go:659-678`, `:859-864`) plus a `*big.Int` field beside
+  it — a codec that records the instant as given and hands it back in UTC:
+
+  ```
+  3a  type held struct{ At time.Time; Amount *big.Int }
+      codec: Encode = the instant as given; Decode = at.UTC()
+      RoundTrip(held{At: 2026-09-08T04:18:10.036921382+05:00, Amount: big.NewInt(5)})
+        -> ErrPayload  "does not read back the main.held it was given: nothing can
+                        compare the big.Int it carries, so what came back was encoded
+                        again and the bytes are not the ones the sample encoded to"
+
+  3b  type heldAlone struct{ At time.Time }        (the control — the same codec,
+      RoundTrip(heldAlone{At: <the same instant>})  without the big.Int)
+        -> err=<nil>
+  ```
+
+  `time.Time.Equal` answers that nothing was lost; the walk asked it and got that
+  answer; the wire then overrode it. The refusal even names `big.Int` — the one
+  field the codec handled perfectly — so the diagnosis points at the wrong value
+  and names a repair (`docs/modules/en/event.md:250-266`) that has nothing to do
+  with the difference.
+
+  This is the exact false accusation the round-9 disposition rejected GAP-197 to
+  avoid, and mutation **M11** of that round (*"the wire is asked beside a declared
+  `Equal` as well as behind it"*) is the mutation the shipped code already
+  contains for any payload with an opaque node in it. `roundtrip_test.go:862-864`
+  asserts in its own failure message that *"nothing may be asked beside it"*; the
+  assertion holds only because the fixture has no second field nothing can
+  compare.
+- **Why this severity:** `high`, and it is GAP-195's own severity argument
+  reappearing one field over. `eventtest.RoundTrip` (`event/eventtest/proxies.go:16-21`)
+  is `t.Fatal` on any error, so a store author whose ledger event is
+  `{At time.Time; Amount *big.Int; …}` — the payload `[[D-124]]` calls the
+  canonical domain — and whose codec normalises instants on read (which is what
+  every store that stores UTC does) gets a red conformance run for a correct
+  declaration, with a message naming a field that is not the problem and a repair
+  that does not apply. It is not `critical` because it fails closed at test time,
+  writes no fact and loses nothing. It is not `medium` because a binding decision
+  doc forbids exactly this, a shipped test's own failure text asserts the
+  opposite, and the consumer cannot make it green without changing the payload.
+- **Why this timing:** `immediate`. It is the same function, the same field and
+  the same repair as GAP-198, so doing them separately means touching `readBack`
+  twice — round 6's and round 8's accepted timing argument. It is a
+  `universality.md` finding: a correct declaration is provable or not depending
+  on whether some *other* field of the payload happens to be a type nothing can
+  compare. And `[[D-124]]`, plan clause 6a/6f and both module pages state the
+  rule the code breaks, so leaving it open leaves S5's conformance report and
+  S6's module page written over a false sentence.
+- **The general mechanism:** the wire cannot be made a per-node question — a
+  codec encodes `V` and nothing smaller — so the whole-value answer must not be
+  allowed to contradict a per-node answer the walk already gave. Either the
+  walk records that some node was answered by a method or by `==` and a wire
+  disagreement is then reported as *inconclusive* (`ErrSample`, naming both the
+  opaque type and the answered one) rather than as a difference, or the wire is
+  consulted only where it is the sole answer for the whole payload. Whichever is
+  chosen, `readBack` must not turn "one node was opaque" into "compare all the
+  bytes".
+- **Close criteria:**
+  - [ ] `roundtrip_test.go` carries the `3a` row above — the existing `utcCodec`
+        shape with a `*big.Int` field beside the instant — asserting that a
+        faithful codec is **not** accused, with `3b` (the same codec without the
+        `big.Int`) as the control that the repair was not made by dropping the
+        wire, and the `untalliedCodec` row as the control that a codec which
+        genuinely drops the amount is still `ErrPayload`
+  - [ ] a mutation restoring the unconditional whole-value wire comparison turns
+        the `3a` row red
+  - [ ] if the answer chosen is *inconclusive*, the refusal names the node that
+        could not be compared **and** the node whose own answer it could not be
+        reconciled with, so the message does not point at a field the codec
+        handled correctly
+  - [ ] `[[D-124]]`'s *"Do not ask the wire beside an answer the walk already
+        has"*, plan clause 6a/6f and `docs/modules/{en,ru}/event.md`'s *"nothing
+        is asked beside it"* either become true of the code or are corrected in
+        the same change
+- **Status:** open
+
+---
+
+### GAP-200 [low][deferred] Two top-level declarations in `event/fact.go` run together with no blank line between them
+
+- **Where:** `event/fact.go:209-210` (`readBack`'s closing brace and
+  `func applierOf` on the next line)
+- **What:** every other pair of top-level declarations in the file is separated
+  by a blank line; these two are not. `gofmt -l .` is silent, so nothing catches
+  it.
+- **Why this severity:** `low` — cosmetic, no behaviour.
+- **Why this timing:** `deferred` — no contract moves and nothing bends around it.
+- **Close criteria:**
+  - [ ] a blank line separates the two declarations
+- **Status:** open
+
+---
+
+### What is genuinely clean, and worth saying so
+
+- **GAP-188, GAP-189, GAP-190, GAP-195, GAP-196 are closed by the code**, not by
+  a disposition note. I constructed each finding's own input out of module and
+  ran it, and reverted each repair in place and watched a named test go red: six
+  mutations, six kills, all four files md5-checked back.
+- **GAP-197's `wontfix` stands and its argument is reproducible**: a decode-side
+  UTC-normalising codec over `stamp` alone answers `<nil>` here.
+- **No exported symbol moved.** `event/comparison.go` exports nothing
+  (`grep -cE "^(func|type|const|var) [A-Z]"` = 0) and neither of the two open
+  findings needs an exported symbol to close.
+- **`event/eventpg`'s zero-diff obligation is intact**, derived by building a
+  module outside this repository that implements `event.Store` in full.
+- **Kernel purity holds.** Zero imports of or branches on `eventmemory`,
+  `eventtest` or `eventpg` in non-test kernel files; adding a second store costs
+  zero diffs under `event/*.go`, which is what `/tmp/zzmk10` demonstrates.
+- **The suite does not pass vacuously** where the cluster is concerned: every
+  subtest I mutated has a control beside it, and the controls are the right ones
+  (`marksOf(8)` beside `marksOf(valueWalkNodes+8)`, `murmuringCodec` beside
+  `hushingCodec`, the faithful `tallyingCodec` rows beside `untalliedCodec`, the
+  `chan` row beside the `func` row). What is missing is a control for the case
+  **beside** an opaque node, which is what GAP-198 and GAP-199 are.
+- **House style holds in the two changed files.** Receiver name `this`
+  throughout; every refusal matched with `errors.Is` against an exported
+  sentinel; every message states what broke in words. The comment blocks in
+  `comparison.go` sit on walks of 30-plus lines or state an invariant the code
+  cannot make visible; none restates code and none exists because a symbol is
+  exported — the file exports nothing. Two of them are now **wrong** rather than
+  superfluous (`comparison.go:45-47` and `:274-283`), and that is carried by
+  GAP-198 and GAP-199 rather than as a separate finding.
+
+---
+
+## Remediation-pass dispositions — 2026-09-08
+
+Cluster `aggregate-crossing-and-log-injection` of `EVENTSOURCE_P1_REMEDIATION.md` § 11. One finding
+from this file.
+
+| Gap | Severity | Disposition |
+|---|---|---|
+| GAP-182 | `[medium][deferred]` | **closed by the first of its two close criteria** — a `Change` carries the `Declaration` it was decided on and `decidedFor` compares it beside the stream, at both doors, with `ErrFamily` |
+
+**Reproduced first, from `/tmp/vvprobe` through the exported API** — two `Define[ledger, string]`
+values over one family, the first declaring `credited` (appends `len(Items)`), the second `other`
+(appends `-1000`):
+
+```
+second.Fold("k", ledger{}, firstCredited.New("k", Batch{Items: []int{1,2,3}}))
+before:  state={Applied:[3]}  err=<nil>        ← the first aggregate's fold ran on the second
+after:   state={Applied:[]}   err=event: this family is already bound to another aggregate:
+                                   "credited" was decided on another aggregate of this family
+```
+
+**What changed.** `Change[S]` gains an unexported `origin Declaration`, set by `Fact.New` from the
+fact's own aggregate. `decidedFor(stream Stream, on Declaration)` admits only `stream == this.stream
+&& origin == on`, and both callers pass their aggregate: `Aggregate.Fold` passes `this`, and
+`Repo.Append` passes `this.aggregate` — the two doors that pair a change list with an instance. The
+existing order is untouched, so a carried refusal still outranks the comparison and a zero change
+still reads as *a change no fact ever decided*; the crossing arm splits into the stream half
+(`ErrWrongStream`, unchanged) and the declaration half (`ErrFamily`, new).
+
+**Why `ErrFamily` and not a new sentinel.** The finding's own timing note asks for it: `Bind` check
+4 refuses two declarations of one family through one `*Binding` with `ErrFamily`, §INV-039 admits
+the two-`Binding` escape deliberately, and these two doors close that escape where it can actually
+be seen — at the value that knows both parties. One question, one answer, three doors. Adding a
+sentinel would have been additive but would have made a caller branch twice on one wiring mistake.
+
+**Why not the second criterion (`Fold` looks `apply` up in `this.facts[change.name]`).** It answers
+the crossing by *running the receiving aggregate's fold over the minting aggregate's bytes*, which
+is a second, silent answer to a question `Bind` already answers with a refusal — and where the two
+declarations spell one wire name differently it degrades to `ErrUnknownType`, history class, for
+what is a wiring mistake. Recorded so it is not re-proposed.
+
+**The `eventpg` zero-diff obligation is untouched.** `origin` is unexported and set only by
+`Fact.New`; a store constructs `Envelope`, `Record`, `Failure`, `Backing`, `Authority` and `Cursor`,
+never a `Change`. Nothing on the store seam changed shape.
+
+**Left behind, and both were watched fail with `case this.stream == stream && this.origin == on`
+reverted to `case this.stream == stream`:**
+
+| Test | Answer with the fix reverted |
+|---|---|
+| `TestFoldRefusesAnotherInstance/two aggregates over one family are told apart by the declaration` | `a change minted on another aggregate of this family folded with <nil>; one family names one aggregate, and the two are told apart at Bind by the same sentinel` |
+| `TestAnAppendRefusesAChangeDecidedOnAnotherAggregateOfThisFamily` | `a change decided on another aggregate of this family appended with <nil>, and a fact recorded through it is unloadable by the declaration that wrote it` |
+
+Both carry the control the case could otherwise pass vacuously against: each asserts **first** that
+the two declarations render one and the same `Stream` — so if a later change ever made the families
+or the keys differ, the control fails and says the stream comparison is what refuses, and the case
+has stopped proving what it claims. The append case's second control is stronger still: the *same
+token* and the *same change*, appended through the repository whose aggregate minted it, must
+succeed.
+
+**Docs updated in the same change:** `PLAN.md`'s `Fold` contract block (cause 2 now asks two
+questions) and its `## Debt` entry; `[[FL-036]]`'s append-order step 2, its test table and the new
+test name; `docs/modules/en/event.md` and `docs/modules/ru/event.md` gain *One family names one
+aggregate* / *Одно семейство именует один агрегат*.
+
+---
+
+## Round 11 — econv-implementation-reviewer (clean context, re-audit of the remediation cluster) — 2026-09-08
+
+Scope: **GAP-182** (a change folding through an aggregate that never declared it) and every file
+the remediation touched for it — `event/change.go`, `event/aggregate.go`, `event/fact.go`,
+`event/fold_test.go`, `event/repo_test.go`. Nothing was inherited from the disposition note: the
+defect was re-derived by reverting the repair in place, running the suite, and restoring the file.
+
+The tree was left byte-identical to how it was found. `md5sum` before the mutation and after the
+restore: `event/change.go` `16fe2a4be211940732c77d53ec850198`, `event/aggregate.go`
+`c9610ad1a3033239c267a221dc8daf27`, `event/identity.go` `f95198de6e880da5eeadbc158e7cacb6`.
+The two throwaway probes were deleted; `git status --porcelain | grep -c "zzaudit\|eventpgprobe"`
+= **0**.
+
+### Gate, run here
+
+`gofmt -l .` silent (exit 0, whole repository) · `go vet ./event/...` exit 0 ·
+`go test -race -count=2 ./event/...` green, no flake — `event` 6.081 s, `eventmemory` 1.489 s,
+`eventtest` 4.004 s.
+
+### Metrics — counted, not eyeballed
+
+| Metric | Command | Value |
+|---|---|---|
+| `event/change.go` | `wc -l` | 54 |
+| `event/aggregate.go` | `wc -l` | 113 |
+| `Change[S].decidedFor` | lines 42–54 | 13 |
+| `Aggregate.Fold` | lines 71–94 | 24 |
+| fields on `Change[S]` | count | **7** — at the threshold, not over it |
+| fields on `Aggregate[S, ID]` | count | 5 |
+| exported methods on `*Aggregate[S, ID]` | `Family`, `Key`, `Fold` | 3 |
+| exported methods on `Change[S]` | `Stream`, `Err` | 2 |
+| parameters, `decidedFor` / `Fold` | count | 2 / 3 |
+| nesting depth, both | count | 2 |
+| new exported surface from this repair | `git diff HEAD -- event/change.go event/aggregate.go \| grep "^+" \| grep -E "^\+(func\|type\|var\|const) [A-Z]"` | **0** — `origin` is an unexported field, `Declaration` already existed |
+| callers of `decidedFor` | `rg -n "decidedFor" event/*.go \| grep -v _test` | **2** — `aggregate.go:78`, `repo.go:76` |
+
+### Microkernel — derived here, not inherited
+
+**`event/eventpg` can still be written with zero diffs under `event/`.** Derived by building
+`eventpgprobe/`, a package outside `event` that implements the whole `event.Store` and `event.Log`
+interface (`var _ event.Store = (*store)(nil)` compiled) and constructs every value the contract
+makes a store produce from exported API alone: `Capabilities{Transactions: event.Supported, …}`,
+`Limits{…}`, `event.NewBacking(identity)`, `event.NewAuthority(backing, tx)`,
+`Envelope{Stream, Version, Position, Type, Revision, Payload, RecordedAt}`,
+`event.Stream{Family, Key}`, `event.Compose(...)`, `event.Cursor("42")`, `event.Record{…}`,
+reading `AppendRequest{Stream, Expected, Records}`, and `event.Failure(outcome, err)` over all
+seven exported outcomes. `go build ./eventpgprobe/` and `go vet ./eventpgprobe/` both exit 0; the
+package was then deleted. **A store never constructs a `Change`**, so the new `origin Declaration`
+field changes nothing on the store seam. Verdict: **microkernel passes**.
+
+### GAP-182 — closed, verified by mutation and not by the note
+
+Both doors were checked against the code. `event/change.go:44` is
+`case this.stream == stream && this.origin == on:`; `origin` is set once, at
+`event/fact.go:59`, from `this.aggregate`; `event/aggregate.go:78` passes `this` and
+`event/repo.go:76` passes `this.aggregate`. `Declaration` carries an unexported `declaration()`
+method, so its dynamic type is always `*Aggregate[S, ID]` — a pointer, always comparable, so
+`this.origin == on` cannot panic, and `TryDeclare` refuses a nil aggregate so a nil pointer is
+never boxed into it.
+
+Reverting `case this.stream == stream && this.origin == on:` to `case this.stream == stream:`
+turned **both** doors red in one run:
+
+| Test | Answer with the repair reverted |
+|---|---|
+| `TestFoldRefusesAnotherInstance/two aggregates over one family are told apart by the declaration` (`fold_test.go:291`) | *a change minted on another aggregate of this family folded with `<nil>`* |
+| `TestAnAppendRefusesAChangeDecidedOnAnotherAggregateOfThisFamily` (`repo_test.go:157`) | *a change decided on another aggregate of this family appended with `<nil>`* |
+
+The controls are real and each one is the right control. `fold_test.go:279` asserts the two
+declarations render **one and the same** `Stream` before the crossing is attempted, so the case
+cannot silently degrade into the stream comparison it is meant to sit beside; `fold_test.go:286`
+folds the same change through the aggregate that minted it and requires success, so the refusal is
+not a `Fold` that refuses everything; and `second`'s fold **subtracts** where `first`'s adds, so
+`state.Balance != 7` distinguishes *no fold ran* from *the wrong fold ran*. `repo_test.go:147`
+does the same stream-equality control, and `repo_test.go:167` appends the *same token and the same
+change* through the twin's own repository and requires it to reach the store exactly once.
+`errors.Is(err, ErrFamily) && !errors.Is(err, ErrWrongStream)` is asserted at both doors, so the
+two cannot answer one question with two sentinels.
+
+The branch order was re-derived rather than read. A change whose `locate` failed carries `err` and
+a **zero** stream, so the first case misses and the carried `ErrKey` still outranks the comparison;
+a change whose encode failed carries `err` and a **valid** stream and origin, so the first case
+matches and the refusal is caught by `Fold`'s second loop — which is what
+`TestFoldRefusesAnotherInstance/a payload over the kernel ceiling …` pins. The zero `Change` still
+reads as *a change no fact ever decided*. Nothing was widened: the new `this.stream != stream` arm
+carries the message the old fall-through carried, and the fall-through is now reachable only when
+the streams match, in which case the families necessarily match and `ErrFamily`'s wording is true.
+
+Docs verified present, not assumed: `docs/modules/en/event.md:249` / `docs/modules/ru/event.md:254`
+state that a `Change` names the aggregate it was decided on and that the crossing is `ErrFamily`;
+`docs/ai/flows/FL-036…:355` names `TestAnAppendRefusesAChangeDecidedOnAnotherAggregateOfThisFamily`
+in its test table.
+
+### GAP-202 [low][deferred] `Fold`'s doc comment carries the ragged rewrap the repair left, and one clause in it is now imprecise
+
+- **Where:** `event/aggregate.go:63-67`.
+- **What:** the sentence the repair extended was not rewrapped: line 67 reads
+  `// refusal from Fact.New. The fourth is per change and` — 52 columns against the ~75 every
+  other line in the block holds — which is the visible trace of an in-place edit rather than a
+  rewrite. In the same clause, *"the first three are checks over the whole list before any fold
+  runs"* is true of causes two and three and not of cause one, which is a single `locate(id)`
+  before the list is looked at.
+- **Why this severity:** low. It is cosmetics and one imprecise clause in a comment; no caller and
+  no test reads it, and the comment's substantive content — the fixed order, the consumed state,
+  and what the returned state means on each failure — is accurate and is an invariant the code
+  genuinely cannot make visible, so the comment itself belongs there under this tree's house rule.
+- **Why this timing:** deferred. Module-internal prose with no effect on any contract, and it is
+  one rewrap in a file the next section will open anyway.
+- **Close criteria:**
+  - [ ] `event/aggregate.go:63-67` is rewrapped so no line in the block is short of the block's own
+        width without a sentence ending there.
+  - [ ] The clause distinguishes the one check that runs before the list from the two that run over
+        it, or drops the count.
+- **Status:** **closed** by round 12's remediation pass — see the dispositions below.
+
+
+---
+
+## Round 12 dispositions — remediation pass, 2026-09-08
+
+Cluster `aggregate-crossing-and-log-injection` of `EVENTSOURCE_P1_REMEDIATION.md` § 11, re-opened by
+round 11 for the prose the (a) repair left. One finding from this file.
+
+| Gap | Severity | Disposition |
+|---|---|---|
+| GAP-202 | `[low][deferred]` | **closed** — `event/aggregate.go`'s `Fold` block is rewrapped and the count clause is replaced by the distinction it was eliding |
+
+**Reproduced first:** measured over the nine lines of the block as round 9 left them, the rune
+widths were `76 80 79 74 54 75 79 78 20` — the `54` is the finding's `// refusal from Fact.New. The
+fourth is per change and`, mid-sentence and 20-odd short of its neighbours, which is the visible
+trace of the in-place edit. Re-measured after the rewrite: `75 76 79 78 77 80 76 73 62`, and the
+only line under the block's width, the `62`, ends the block's last sentence.
+
+**What changed.** The clause *"the first three are checks over the whole list before any fold runs"*
+is now *"The first is one check before the list is looked at: the identity renders an illegal key.
+The next two are passes over the whole list before any fold runs: …"*, which is what the code does —
+`locate(id)` runs once before either loop. The block is rewrapped at the width the rest of it holds;
+re-measured, no line is short of it without a sentence ending there. Nothing else in the comment
+changed: the fixed order, the consumed state and what the returned state means on each failure are
+the invariant the code cannot make visible and stay.
+
+**No test is left behind and that is deliberate.** The finding is prose with no caller and no test
+reading it; a test over a comment's line widths would pin formatting rather than behaviour, which is
+not what this tree's suites are for. The substantive half of the clause — that a `Fold` refusal from
+the first three causes returns the state untouched — is already pinned by
+`TestFoldRefusesAnotherInstance`, whose subtests assert the returned state on each of them.
+
+### Gate, run here
+
+`gofmt -l .` silent · `go vet ./event/...` ok · `go test -race -count=2 ./event/...` green ·
+`make unit` exit 0 · `make check` exit 0. GAP-182 itself was not touched: `decidedFor`'s
+`this.origin == on` arm and both its doors are unchanged, and
+`TestFoldRefusesAnotherInstance/two aggregates over one family are told apart by the declaration`
+and `TestAnAppendRefusesAChangeDecidedOnAnotherAggregateOfThisFamily` are both still green.
+
+---
+
+## Round 13 — econv-implementation-reviewer (clean context, re-audit of the round-12 remediation cluster) — 2026-09-08
+
+Scope: the aggregate-crossing half of cluster `aggregate-crossing-and-log-injection` — **GAP-182**
+and the **GAP-202** it left behind — and every file the two remediations touched:
+`event/change.go`, `event/aggregate.go`, `event/fact.go`, `event/repo.go`, `event/fold_test.go`,
+`event/repo_test.go`. Nothing was inherited from the disposition notes: the crossing was
+re-constructed from outside `package event` through the exported API, and the repair was reverted in
+place, the suite run, and the file restored from a byte-level backup.
+
+The tree was left byte-identical to how it was found. `md5sum` before the mutation and after the
+restore: `event/change.go` `16fe2a4be211940732c77d53ec850198`, `event/aggregate.go`
+`dc59c1e5efb6c86e886c91964f4e2097`, `event/fact.go` `d400976d4395769889aa2085227a4876`,
+`event/repo.go` `f360915020180a2279242f952b83e05a`. Three throwaway probe packages were deleted;
+`git status --porcelain | grep -c zzaudit` = **0**.
+
+### Gate, run here
+
+`gofmt -l .` silent (exit 0, whole repository) · `go vet ./event/...` exit 0 ·
+`go test -race -count=2 ./event/...` green, no flake, twice — `event` 6.030 s / 6.064 s,
+`eventmemory` 1.488 s / 1.499 s, `eventtest` 4.009 s / 4.031 s.
+
+### Metrics — counted, not eyeballed
+
+| Metric | Command | Value |
+|---|---|---|
+| `event/change.go` | `wc -l` | 54 |
+| `event/aggregate.go` | `wc -l` | 113 |
+| `Change[S].decidedFor` | `awk '/decidedFor/,/^}/' \| wc -l` | 13 |
+| `Aggregate.Fold` | `awk '/\) Fold/,/^}/' \| wc -l` | 24 |
+| fields on `Change[S]` | count | **7** — at `architecture.md`'s threshold, not over it |
+| exported methods on `Change[S]` | `Stream`, `Err` | 2 |
+| exported methods on `*Aggregate[S, ID]` | `Family`, `Key`, `Fold` | 3 |
+| parameters, `decidedFor` / `Fold` | count | 2 / 3 (limit 4) |
+| nesting depth, `decidedFor` / `Fold` | count | 1 / 2 (limit 3) |
+| exported surface added by the repair | `git diff HEAD -- event/change.go event/aggregate.go \| grep -E "^\+(func\|type\|var\|const) [A-Z]"` | **0** — `origin` is unexported, `Declaration` pre-existed |
+| callers of `decidedFor` | `rg -n decidedFor event/*.go \| grep -v _test` | **2** — `aggregate.go:78`, `repo.go:76` |
+| readers of the `Declaration` interface (non-test) | `grep -rn Declaration event/*.go event/eventtest/*.go \| grep -v _test` | **3** — `binding.go:17`, `change.go:18`, `eventtest/proxies.go:69` |
+| kernel imports of a concrete store | `grep -rn "eventmemory\|eventpg\|eventtest" event/*.go \| grep -v _test.go \| wc -l` | **0** |
+
+### Microkernel — derived here, not inherited
+
+An external package implementing the whole eight-method `event.Store` (`var _ event.Store =
+(*store)(nil)` compiled) was written and run: it constructs `Capabilities`, `Limits`,
+`NewBacking`, `NewAuthority`, `Stream`, `Compose`, `Envelope` with an arbitrary `Type`, `Record`,
+`Cursor`, reads `AppendRequest`, and builds `Failure` over all seven exported outcomes — then drove
+`Repo.Load` and `Repo.Append` end to end. **A store never constructs a `Change`**, so the `origin
+Declaration` field the GAP-182 repair added changes nothing a store must build.
+**`event/eventpg` is still writable with zero diffs under `event/`. Microkernel passes.**
+
+### GAP-182 — closed, verified by construction and by mutation
+
+Reproduced from outside the package: two `*Aggregate[account, accountID]` values over the family
+`ledger.account`, the second declaring `ledger.credited` with a **subtracting** fold, a change minted
+on the first, folded through the second:
+
+```
+streams equal : true ("acme/A-17" vs "acme/A-17")     ← the stream comparison cannot be what refuses
+own fold      : balance=250 err=<nil>                 ← control: the minting aggregate still folds it
+crossed fold  : balance=7
+                err=event: this family is already bound to another aggregate:
+                    "ledger.credited" was decided on another aggregate of this family
+                isFamily=true  isWrongStream=false
+```
+
+`balance=7` is the argument unchanged, so the refusal is *no fold ran* and not *the wrong fold ran*.
+Reverting `event/change.go:44` from `case this.stream == stream && this.origin == on:` to
+`case this.stream == stream:` turned **both** doors red in one run:
+
+| Test | Answer with the repair reverted |
+|---|---|
+| `TestFoldRefusesAnotherInstance/two aggregates over one family are told apart by the declaration` (`fold_test.go:291`) | *a change minted on another aggregate of this family folded with `<nil>`* |
+| `TestAnAppendRefusesAChangeDecidedOnAnotherAggregateOfThisFamily` (`repo_test.go:157`) | *a change decided on another aggregate of this family appended with `<nil>`* |
+
+Nothing was widened, re-derived branch by branch rather than read: the first case is now a
+**conjunction**, so it accepts strictly less than before; a change carrying `err` with a zero stream
+still misses it and answers the carried `ErrKey`; a change carrying `err` with a matching stream and
+origin still enters `Fold`'s second loop; the new `this.stream != stream` arm carries the message
+the old fall-through carried, and the fall-through is reachable only when the streams match, where
+`ErrFamily`'s wording is true. `this.origin == on` cannot panic: `Declaration`'s unexported
+`declaration()` keeps the dynamic type to `*Aggregate[S, ID]`, a pointer, and `decidedFor` is
+unexported so no foreign non-comparable implementor can reach it. The controls hold —
+`fold_test.go:279` and `repo_test.go:147` assert stream equality *before* the crossing, so the case
+cannot degrade into the comparison it sits beside, and `repo_test.go:167` appends the same token and
+the same change through the twin's own repository and requires it to reach the store exactly once.
+`errors.Is(err, ErrFamily) && !errors.Is(err, ErrWrongStream)` is asserted at both doors.
+
+The spec is not contradicted. §INV-039/UC-002's stated control is *"the crossing is `ErrWrongStream`
+with zero events"* for two aggregates over **one state type and two families**, and
+`fold_test.go/two aggregates over one state type are told apart by the family` still answers
+`ErrWrongStream` there. The same-family case the spec left to the implementation is the one that
+now answers `ErrFamily`.
+
+### GAP-202 — closed
+
+Re-measured over `event/aggregate.go:57-70`: rune widths `75 78 77 66 2 75 76 79 78 77 80 76 73 62`.
+The only two lines short of the block's width, the `66` and the `62`, each end a sentence; the
+finding's mid-sentence `54` is gone. The clause is now *"The first is one check before the list is
+looked at … The next two are passes over the whole list before any fold runs"*, which is what the
+code does — `locate(id)` runs once at `aggregate.go:73`, before either loop at `:77` and `:82`.
+
+### GAP-203 [low][immediate] The `Declaration` interface's comment says it has exactly two readers and that neither has arrived; it has three, and this repair added the third
+
+- **Where:** `event/aggregate.go:104-108`.
+- **What:** the comment reads *"it has exactly two readers in phase 1 — the Binding's bound-family
+  set and the conformance suite's family check, **neither of which has arrived yet**"*. Counted:
+  `grep -rn "Declaration" event/*.go event/eventtest/*.go | grep -v _test.go | grep -v ErrDeclaration
+  | grep -v "declaration()"` finds **three** readers and both of the two named have arrived —
+  `event/binding.go:17` (`families map[string]Declaration`, plus `:21` and `:48`),
+  `event/eventtest/proxies.go:69` (`func Families(t *testing.T, declarations ...event.Declaration)`),
+  and `event/change.go:18` + `:42` (`origin Declaration`, `decidedFor(stream Stream, on Declaration)`),
+  which is the GAP-182 repair itself. So the comment is wrong on the count and wrong on the tense,
+  and the repair under audit is what made the count wrong.
+- **Why this severity:** low. It misleads a reader and nothing else: no caller and no test reads it,
+  and `Declaration`'s contract — one non-generic view, kept closed by an unexported method — is still
+  accurately described by the first sentence. It is not `medium` because no public name or signature
+  is wrong.
+- **Why this timing:** immediate. `Declaration` is exported and is the seam a phase-2 author meets
+  when asking what may hold one; the enumeration is the only place that answers, `seal.go:12-24`
+  establishes the tree's convention that such an enumeration is exhaustive and load-bearing (a row
+  without a reader fails a test there), and this comment now says the opposite of the code in a file
+  phase 2 will open. It is one sentence, and it is cheap exactly now.
+- **Close criteria:**
+  - [ ] `event/aggregate.go:104-108` names the readers that exist — the `Binding`'s bound-family set,
+        a `Change`'s origin, and the conformance suite's family check — or drops the count rather
+        than carrying a wrong one.
+  - [ ] `grep -rn "Declaration" event/*.go event/eventtest/*.go | grep -v _test.go` and the comment
+        agree, and nothing in the comment claims a reader has not arrived when it has.
+- **Status:** open
+
+### GAP-204 [low][deferred] `ErrFamily`'s own text asserts a binding, and the store-free `Fold` door that now raises it binds nothing
+
+- **Where:** `event/errors.go:28` (`ErrFamily = errors.New("event: this family is already bound to
+  another aggregate")`) reached from `event/change.go:53` through `event/aggregate.go:78`.
+- **What:** measured here, on the pure `Aggregate.Fold` path with no `Binding`, no `Bind` and no store
+  anywhere in the program:
+
+  ```
+  event: this family is already bound to another aggregate: "ledger.credited" was decided on
+  another aggregate of this family
+  ```
+
+  The sentinel half states a fact that is false for this caller — nothing was bound — and the wrapped
+  half states the true one. The class is right and the reuse is the plan's own decision (the two doors
+  answer one question, `PLAN.md:6265`); the *text* was written for `Binding.hold` at
+  `event/binding.go:53` and was not revisited when a second, bindingless door started raising it.
+- **Why this severity:** low. `errors.Is` is unaffected, the refusal is correct, and the wrapped
+  clause carries the accurate sentence; only the leading phrase reads wrong in a log line. §INV-025 is
+  not breached — no data is rendered, and `"ledger.credited"` is a declared identifier that passed
+  `checkName`.
+- **Why this timing:** deferred. The spec's own compatibility rule (§INV-024's growth clause) makes
+  adding or moving a sentinel breaking and says nothing about its message, so the text can change
+  after the tag; `TestEveryRenderingNamesAClassAndNeverAValue/a rendering says which kind of thing it
+  is and which one of them` compares sentinel messages for uniqueness and would keep holding. Nothing
+  in phase 2 depends on it.
+- **Close criteria:**
+  - [ ] `ErrFamily`'s message is true at both doors that raise it — `Bind` and the `Fold`/`Append`
+        crossing — or the doc comment on `decidedFor` states why `Bind`'s wording is kept at a door
+        that binds nothing.
+  - [ ] The sentinel-uniqueness subtest still passes and `docs/modules/{en,ru}/event.md`'s *One family
+        names one aggregate* section quotes whatever text is chosen.
+- **Status:** open
+
+### Round 13 verdict
+
+**GAP-182 and GAP-202 are genuinely closed**, verified by re-constructing the crossing from outside
+the package and by reverting the comparison and watching both doors go red in one run. The repair
+narrowed rather than widened, added no exported surface, introduced no nil or panic path, and left
+`event/eventpg`'s zero-diff obligation untouched because no store ever constructs a `Change`. The
+three controls that keep the two new tests from passing vacuously were each checked against the code
+rather than read off the note. Zero open `[critical][immediate]` or `[high][immediate]` from this
+file. GAP-203 is `[low][immediate]` — one sentence the repair itself falsified — and GAP-204 is
+`[low][deferred]`.

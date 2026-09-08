@@ -80,6 +80,8 @@ func sentinelKind(err error) errs.Kind {
 		return errs.KindForbidden
 	case errors.Is(err, crud.ErrConflict):
 		return errs.KindConflict
+	case errors.Is(err, crud.ErrUnavailable):
+		return errs.KindRetryable
 	case errors.Is(err, ErrBadRequest), errors.Is(err, crud.ErrBadRequest), errors.As(err, &qe), errors.As(err, &uf), errors.As(err, &se),
 		errors.Is(err, crud.ErrMissingID):
 		return errs.KindBadRequest
@@ -111,6 +113,9 @@ func FaultOf(err error) *errs.Fault {
 
 	case errors.Is(err, crud.ErrConflict):
 		return synth(errs.Conflict(), errs.CodeConflict, nil, "")
+
+	case errors.Is(err, crud.ErrUnavailable):
+		return synth(errs.Retryable(), errs.CodeUnavailable, nil, "")
 
 	case errors.As(err, &qe):
 		return synth(errs.BadRequest(), errs.CodeBadQuery, errs.ParsePath(qe.Path), qe.Reason)

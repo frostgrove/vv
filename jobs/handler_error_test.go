@@ -1,6 +1,7 @@
 package jobs
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"testing"
@@ -22,7 +23,7 @@ func TestDefaultClassifierRecognizesHandlerIntent(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			disposition := classifyHandlerResult(nil, invokeHandlerContained(func() error { return test.err }))
+			disposition := classifyHandlerResult(nil, invokeHandlerContained(context.Background(), func() error { return test.err }))
 			if disposition.Kind() != test.kind || disposition.Reason() != test.reason {
 				t.Fatalf("disposition = (%s, %s), want (%s, %s)", disposition.Kind(), disposition.Reason(), test.kind, test.reason)
 			}

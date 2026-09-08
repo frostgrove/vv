@@ -95,32 +95,27 @@ func (cadence ScheduleCadence) occurrence(now time.Time) (time.Time, time.Time, 
 	return due, due.Add(cadence.every), true
 }
 
-type ScheduleOverlap uint8
-
-const (
-	AllowOverlap ScheduleOverlap = iota
-	SkipOverlap
-)
-
-func (overlap ScheduleOverlap) Valid() bool { return overlap == SkipOverlap || overlap == AllowOverlap }
-
+// A scheduled run may overlap the previous one. There is no way to ask for
+// otherwise, and there was not before either: SkipOverlap was a public constant
+// DefineSchedule refused every time, and ScheduleDescription.NoOverlap could
+// therefore never be true. Naming a capability that does not exist is worse than
+// not naming it, so both are gone. A consumer that needs one run at a time takes
+// its own lock inside the handler, where it knows what "at a time" means.
 type ScheduleSpec[P any] struct {
 	Name     Name
 	Revision ScheduleRevision
 	Cadence  ScheduleCadence
 	Job      DefinitionOf[P]
 	Payload  func(time.Time) (P, error)
-	Overlap  ScheduleOverlap
 }
 
 type ScheduleDescription struct {
-	Name      Name
-	Revision  ScheduleRevision
-	Job       Name
-	At        time.Time
-	Anchor    time.Time
-	Every     time.Duration
-	NoOverlap bool
+	Name     Name
+	Revision ScheduleRevision
+	Job      Name
+	At       time.Time
+	Anchor   time.Time
+	Every    time.Duration
 }
 
 type Schedule interface {
@@ -141,24 +136,37 @@ type scheduleEntry struct {
 }
 
 func DefineSchedule[P any](spec ScheduleSpec[P]) (Schedule, error) {
-	if !spec.Name.valid() || !spec.Revision.Valid() || !spec.Cadence.valid() || nilInterface(spec.Job) || spec.Payload == nil || !spec.Overlap.Valid() {
+	if !spec.Name.valid() || !spec.Revision.Valid() || !spec.Cadence.valid() || nilInterface(spec.Job) || spec.Payload == nil {
 		return nil, invalid("schedule")
-	}
-	if spec.Overlap == SkipOverlap {
-		return nil, fmt.Errorf("%w: durable no-overlap scheduling is not available", ErrUnsupported)
 	}
 	declaration := declarationOf(spec.Job)
 	if nilInterface(declaration) || !declaration.declarationName().valid() || spec.Job.Partition() != PartitionGlobal {
 		return nil, fmt.Errorf("%w: schedule job must be a resolved global definition", ErrUnsupported)
 	}
+	// The scheduler has exactly one placement path — EnqueueOnce, keyed on the
+	// occurrence — and EnqueueOnce needs a payload identity. Accepting a job
+	// without one built a schedule whose every run fails at enqueue, and it fails
+	// at run time on the scheduler's goroutine rather than here, where the
+	// deployment is still looking at the wiring.
+	// The only thing stopping one occurrence firing twice is the EnqueueOnce
+	// intent it is keyed on, and that intent is swept on the job's own
+	// IntentRetention — a value chosen for deduplicating producers, with no
+	// relation to this cadence. When the retention is shorter than the period,
+	// the occurrence's intent is gone while the occurrence is still the current
+	// one, and the next cycle places it again.
+	if spec.Cadence.every > 0 && spec.Job.Policy().IntentRetention < spec.Cadence.every {
+		return nil, fmt.Errorf("%w: the job's intent retention is shorter than this cadence, so an occurrence would be placed more than once", ErrUnsupported)
+	}
+	if !spec.Job.PayloadIdentity().Available {
+		return nil, fmt.Errorf("%w: schedule job has no payload identity, and the scheduler places only with EnqueueOnce", ErrUnsupported)
+	}
 	description := ScheduleDescription{
-		Name:      spec.Name,
-		Revision:  spec.Revision,
-		Job:       spec.Job.Name(),
-		At:        spec.Cadence.at,
-		Anchor:    spec.Cadence.anchor,
-		Every:     spec.Cadence.every,
-		NoOverlap: spec.Overlap == SkipOverlap,
+		Name:     spec.Name,
+		Revision: spec.Revision,
+		Job:      spec.Job.Name(),
+		At:       spec.Cadence.at,
+		Anchor:   spec.Cadence.anchor,
+		Every:    spec.Cadence.every,
 	}
 	return &typedSchedule[P]{description: description, definition: spec.Job, payload: spec.Payload}, nil
 }
@@ -221,6 +229,7 @@ type Scheduler struct {
 	queue     *Queue
 	clock     *workerClock
 	schedules []scheduleEntry
+	placed    map[int]time.Time
 	cycle     atomic.Bool
 	state     atomic.Uint32
 }
@@ -261,7 +270,7 @@ func NewScheduler(spec SchedulerSpec, schedules ...Schedule) (*Scheduler, error)
 		names[description.Name] = struct{}{}
 		entries[index] = entry
 	}
-	return &Scheduler{queue: spec.Queue, clock: guarded, schedules: entries}, nil
+	return &Scheduler{queue: spec.Queue, clock: guarded, schedules: entries, placed: make(map[int]time.Time, len(entries))}, nil
 }
 
 func (scheduler *Scheduler) RunDue(ctx context.Context) (ScheduleRunResult, error) {
@@ -281,10 +290,19 @@ func (scheduler *Scheduler) RunDue(ctx context.Context) (ScheduleRunResult, erro
 
 func (scheduler *Scheduler) runDue(ctx context.Context, now time.Time) (ScheduleRunResult, error) {
 	var result ScheduleRunResult
-	for _, schedule := range scheduler.schedules {
+	for index, schedule := range scheduler.schedules {
 		cadence := ScheduleCadence{at: schedule.description.At, anchor: schedule.description.Anchor, every: schedule.description.Every}
 		due, _, ready := cadence.occurrence(now)
 		if !ready {
+			continue
+		}
+		// An At occurrence never advances, so once it is past it is due on every
+		// cycle forever and the intent is the only thing refusing it. This makes
+		// the refusal local as well, which is what stops a swept intent turning a
+		// run-once schedule into a run-every-retention-period one for as long as
+		// the scheduler stays up. A restart still forgets, which is why the
+		// interval form refuses a retention shorter than its period at wiring.
+		if placed, seen := scheduler.placed[index]; seen && !due.After(placed) {
 			continue
 		}
 		result.Due++
@@ -292,6 +310,7 @@ func (scheduler *Scheduler) runDue(ctx context.Context, now time.Time) (Schedule
 		if err != nil {
 			return result, err
 		}
+		scheduler.placed[index] = due
 		switch outcome {
 		case EnqueueCreated:
 			result.Placed++

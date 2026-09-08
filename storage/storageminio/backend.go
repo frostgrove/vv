@@ -3,6 +3,7 @@ package storageminio
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/frostgrove/vv/storage"
 	"github.com/minio/minio-go/v7"
+	"github.com/minio/minio-go/v7/pkg/credentials"
 	"github.com/minio/minio-go/v7/pkg/s3utils"
 )
 
@@ -41,16 +43,25 @@ type Config struct {
 	Bucket     string
 	Prefix     string
 	MaxLinkTTL time.Duration
-	Clock      Clock
+
+	// How long one Stage, Promote or Abort may hold a stage before another
+	// process may take it over. It bounds an interruption, not the stage: a
+	// process killed mid-promote leaves a claim nobody can break until this
+	// elapses, and the stage's own TTL is measured in days. Defaults to
+	// DefaultStageClaimTTL.
+	StageClaimTTL time.Duration
+
+	Clock Clock
 }
 
 type Backend struct {
-	client     clientAPI
-	core       coreAPI
-	bucket     string
-	prefix     string
-	maxLinkTTL time.Duration
-	clock      Clock
+	client        clientAPI
+	core          coreAPI
+	bucket        string
+	prefix        string
+	maxLinkTTL    time.Duration
+	stageClaimTTL time.Duration
+	clock         Clock
 
 	admin bucketAdmin
 }
@@ -103,6 +114,14 @@ func newBackend(config *Config, client clientAPI, core coreAPI) (*Backend, error
 		return nil, storage.NewError("construct", storage.KindInvalid, errors.New("maximum link TTL is invalid"))
 	}
 
+	stageClaimTTL := config.StageClaimTTL
+	if stageClaimTTL == 0 {
+		stageClaimTTL = storage.DefaultStageClaimTTL
+	}
+	if stageClaimTTL < time.Second || stageClaimTTL > storage.MaxStageClaimTTL {
+		return nil, storage.NewError("construct", storage.KindInvalid, errors.New("stage claim TTL is invalid"))
+	}
+
 	clock := config.Clock
 	if clock == nil {
 		clock = time.Now
@@ -124,12 +143,13 @@ func newBackend(config *Config, client clientAPI, core coreAPI) (*Backend, error
 	}
 
 	return &Backend{
-		client:     client,
-		core:       core,
-		bucket:     config.Bucket,
-		prefix:     config.Prefix,
-		maxLinkTTL: maxLinkTTL,
-		clock:      clock,
+		client:        client,
+		core:          core,
+		bucket:        config.Bucket,
+		prefix:        config.Prefix,
+		stageClaimTTL: stageClaimTTL,
+		maxLinkTTL:    maxLinkTTL,
+		clock:         clock,
 	}, nil
 }
 
@@ -154,7 +174,7 @@ func (this *Backend) Put(ctx context.Context, namespace storage.Namespace, key s
 	if options.Mode == storage.CreateOnly && options.Size == nil {
 		return this.putUnknownCreateOnly(ctx, namespace, object, source, options)
 	}
-	return this.put(ctx, "put", object, source, callerSource, options.Mode, options.Size, options.ContentType, options.Metadata, nil)
+	return this.put(ctx, "put", object, source, callerSource, options.Mode, options.Size, options.ContentType, options.Metadata, nil, options.IfMatch)
 }
 
 func (this *Backend) putUnknownCreateOnly(ctx context.Context, namespace storage.Namespace, finalObject string, source io.Reader, options storage.PutOptions) (storage.Info, error) {
@@ -172,7 +192,7 @@ func (this *Backend) putUnknownCreateOnly(ctx context.Context, namespace storage
 		stageExpiryKey: expiresAt.Format(time.RFC3339Nano),
 	}
 
-	if _, err := this.put(ctx, "put", stageObject, source, callerSource, storage.Replace, nil, options.ContentType, options.Metadata, internal); err != nil {
+	if _, err := this.put(ctx, "put", stageObject, source, callerSource, storage.Replace, nil, options.ContentType, options.Metadata, internal, nil); err != nil {
 		_ = this.client.RemoveObject(ctx, this.bucket, stageObject, minio.RemoveObjectOptions{})
 		return storage.Info{}, err
 	}
@@ -196,19 +216,31 @@ func (this *Backend) putUnknownCreateOnly(ctx context.Context, namespace storage
 		return storage.Info{}, storage.NewError("put", storage.KindInternal, errors.New("stage size is invalid"))
 	}
 	size := objectInfo.Size
-	info, err := this.put(ctx, "put", finalObject, body, backendBody, storage.CreateOnly, &size, objectInfo.ContentType, options.Metadata, nil)
+	info, err := this.put(ctx, "put", finalObject, body, backendBody, storage.CreateOnly, &size, objectInfo.ContentType, options.Metadata, nil, nil)
 	if err != nil {
 		return storage.Info{}, err
 	}
 	return info, nil
 }
 
-func (this *Backend) Open(ctx context.Context, namespace storage.Namespace, key storage.Key) (io.ReadCloser, storage.Info, error) {
+func (this *Backend) Open(ctx context.Context, namespace storage.Namespace, key storage.Key, options storage.ReadOptions) (io.ReadCloser, storage.Info, error) {
 	object, err := this.objectName(namespace, key)
 	if err != nil {
 		return nil, storage.Info{}, storage.NewError("open", storage.KindInvalid, err)
 	}
-	body, objectInfo, _, err := this.core.GetObject(ctx, this.bucket, object, minio.GetObjectOptions{})
+	get := minio.GetObjectOptions{}
+	if options.Offset != 0 || options.Length != nil {
+		// S3 ranges are inclusive on both ends, and an open-ended range is
+		// expressed by asking for everything from the offset on.
+		end := int64(0)
+		if options.Length != nil {
+			end = options.Offset + *options.Length - 1
+		}
+		if err := get.SetRange(options.Offset, end); err != nil {
+			return nil, storage.Info{}, storage.NewError("open", storage.KindInvalid, err)
+		}
+	}
+	body, objectInfo, _, err := this.core.GetObject(ctx, this.bucket, object, get)
 	if err != nil {
 		if body != nil {
 			_ = body.Close()
@@ -242,12 +274,26 @@ func (this *Backend) Head(ctx context.Context, namespace storage.Namespace, key 
 	return info, nil
 }
 
-func (this *Backend) Delete(ctx context.Context, namespace storage.Namespace, key storage.Key) error {
+func (this *Backend) Delete(ctx context.Context, namespace storage.Namespace, key storage.Key, options storage.DeleteOptions) error {
 	object, err := this.objectName(namespace, key)
 	if err != nil {
 		return storage.NewError("delete", storage.KindInvalid, err)
 	}
-	err = this.client.RemoveObject(ctx, this.bucket, object, minio.RemoveObjectOptions{})
+	remove := minio.RemoveObjectOptions{}
+	if options.IfMatch != nil {
+		// S3 DELETE carries no precondition, so the comparison is made here and
+		// the version it observed is what is deleted. A concurrent write between
+		// the two answers ErrPreconditionFailed rather than removing it.
+		current, statErr := this.client.StatObject(ctx, this.bucket, object, minio.StatObjectOptions{})
+		if mapped := mapError("delete", statErr, 0, nil); mapped != nil {
+			return mapped
+		}
+		if strings.Trim(current.ETag, `"`) != *options.IfMatch {
+			return storage.NewError("delete", storage.KindPreconditionFailed, errors.New("object ETag does not match the precondition"))
+		}
+		remove.VersionID = current.VersionID
+	}
+	err = this.client.RemoveObject(ctx, this.bucket, object, remove)
 	return mapError("delete", err, 0, nil)
 }
 
@@ -261,13 +307,31 @@ func (this *Backend) Stage(ctx context.Context, namespace storage.Namespace, sou
 	if err != nil {
 		return storage.Staged{}, storage.NewError("stage", storage.KindInvalid, err)
 	}
+	// Refused here rather than at the promote it would fail. A stage is accepted,
+	// billed and held for its TTL; discovering only at Promote that the default
+	// CreateOnly placement cannot take it leaves the caller holding a StageID that
+	// was never promotable, which is a worse answer than refusing the upload.
+	if options.Size != nil && *options.Size > MaxCreateOnlySize {
+		return storage.Staged{}, storage.NewError("stage", storage.KindUnsupported,
+			errors.New("staged payload exceeds the size a create-only promotion can place"))
+	}
 	internal := map[string]string{
 		stageMarkerKey: stageMarkerValue,
 		stageExpiryKey: expiresAt.Format(time.RFC3339Nano),
 	}
-	info, err := this.put(ctx, "stage", object, source, callerSource, storage.Replace, options.Size, options.ContentType, options.Metadata, internal)
+	info, err := this.put(ctx, "stage", object, source, callerSource, storage.Replace, options.Size, options.ContentType, options.Metadata, internal, nil)
 	if err != nil {
 		return storage.Staged{}, err
+	}
+	if info.Size > MaxCreateOnlySize {
+		// The declared size was absent or wrong; the real one is only knowable
+		// now. Removing the stage is what keeps "a Staged you hold is promotable"
+		// true, and the caller learns immediately rather than at Promote.
+		if removeErr := this.client.RemoveObject(ctx, this.bucket, object, minio.RemoveObjectOptions{}); removeErr != nil {
+			return storage.Staged{}, mapError("stage", removeErr, 0, nil)
+		}
+		return storage.Staged{}, storage.NewError("stage", storage.KindUnsupported,
+			errors.New("staged payload exceeds the size a create-only promotion can place"))
 	}
 	return storage.Staged{ID: id, Info: info, ExpiresAt: expiresAt}, nil
 }
@@ -323,7 +387,7 @@ func (this *Backend) Promote(ctx context.Context, namespace storage.Namespace, i
 	if !this.now().Before(expiresAt) {
 		return storage.Info{}, storage.NewError("promote", storage.KindExpired, nil)
 	}
-	metadata, err := portableMetadata(objectInfo)
+	metadata, _, err := portableMetadata(objectInfo)
 	if err != nil {
 		return storage.Info{}, storage.NewError("promote", storage.KindInternal, err)
 	}
@@ -331,7 +395,7 @@ func (this *Backend) Promote(ctx context.Context, namespace storage.Namespace, i
 		return storage.Info{}, storage.NewError("promote", storage.KindInternal, errors.New("stage size is invalid"))
 	}
 	size := objectInfo.Size
-	info, err := this.put(ctx, "promote", finalObject, body, backendBody, options.Mode, &size, objectInfo.ContentType, metadata, nil)
+	info, err := this.put(ctx, "promote", finalObject, body, backendBody, options.Mode, &size, objectInfo.ContentType, metadata, nil, options.IfMatch)
 	if err != nil {
 		if uncertain(err) {
 			release = false
@@ -517,6 +581,9 @@ func (this *Backend) TemporaryURL(ctx context.Context, namespace storage.Namespa
 	if options.ExpiresIn < time.Second || options.ExpiresIn > this.maxLinkTTL || options.ExpiresIn%time.Second != 0 {
 		return storage.Link{}, storage.NewError("temporary URL", storage.KindInvalid, errors.New("link TTL exceeds backend policy"))
 	}
+	if err := this.withinCredentialLifetime(options.ExpiresIn); err != nil {
+		return storage.Link{}, err
+	}
 	object, err := this.objectName(namespace, key)
 	if err != nil {
 		return storage.Link{}, storage.NewError("temporary URL", storage.KindInvalid, err)
@@ -537,16 +604,47 @@ func (this *Backend) TemporaryURL(ctx context.Context, namespace storage.Namespa
 	return link, nil
 }
 
+// A presigned URL stops working when the credentials that signed it expire, and
+// a client with static keys has none while one using STS, IRSA or an instance
+// role has a session measured in an hour. Handing back a link that says it is
+// good for a day, over a session with twenty minutes left, is a promise this
+// package makes and the object store breaks — so the request is refused by name
+// instead. A client that cannot be asked, or that answers no expiry, is a static
+// credential and passes.
+func (this *Backend) withinCredentialLifetime(ttl time.Duration) error {
+	source, ok := this.client.(interface {
+		GetCreds() (credentials.Value, error)
+	})
+	if !ok {
+		return nil
+	}
+	value, err := source.GetCreds()
+	if err != nil {
+		return storage.NewError("temporary URL", storage.KindUnavailable, err)
+	}
+	if value.Expiration.IsZero() {
+		return nil
+	}
+	remaining := value.Expiration.Sub(this.now())
+	if ttl > remaining {
+		return storage.NewError("temporary URL", storage.KindInvalid,
+			fmt.Errorf("link TTL outlives the signing credentials, which expire in %s", remaining.Truncate(time.Second)))
+	}
+	return nil
+}
+
 func (this *Backend) Capabilities() storage.Capabilities {
 	return storage.Capabilities{
-		CreateOnly:   true,
-		Replace:      true,
-		Staging:      true,
-		TemporaryURL: true,
+		CreateOnly:       true,
+		Replace:          true,
+		Staging:          true,
+		TemporaryURL:     true,
+		ConditionalWrite: true,
+		RangeRead:        true,
 	}
 }
 
-func (this *Backend) put(ctx context.Context, operation, object string, source io.Reader, provenance readProvenance, mode storage.WriteMode, size *int64, contentType string, metadata storage.Metadata, internal map[string]string) (storage.Info, error) {
+func (this *Backend) put(ctx context.Context, operation, object string, source io.Reader, provenance readProvenance, mode storage.WriteMode, size *int64, contentType string, metadata storage.Metadata, internal map[string]string, ifMatch *string) (storage.Info, error) {
 	if ctx == nil {
 		return storage.Info{}, storage.NewError(operation, storage.KindInvalid, errors.New("context is nil"))
 	}
@@ -580,6 +678,12 @@ func (this *Backend) put(ctx context.Context, operation, object string, source i
 		putOptions.DisableMultipart = true
 	} else if mode != storage.Replace {
 		return storage.Info{}, storage.NewError(operation, storage.KindInvalid, errors.New("write mode is invalid"))
+	}
+	if ifMatch != nil {
+		if mode == storage.CreateOnly {
+			return storage.Info{}, storage.NewError(operation, storage.KindInvalid, errors.New("a create-only write cannot also require an existing ETag"))
+		}
+		putOptions.SetMatchETag(*ifMatch)
 	}
 
 	tracked := &sourceReader{ctx: ctx, reader: source}

@@ -153,7 +153,6 @@ func reviewPolicy() Policy {
 		MaxBatchKeyBytes:    4 << 10,
 		MaxBatchResultBytes: 64 << 10,
 		ReadFailure:         Propagate,
-		WriteFailure:        Propagate,
 		InvalidateFailure:   Propagate,
 		Corruption:          RefuseCorrupt,
 		profile:             "review",
@@ -407,11 +406,12 @@ func TestReviewServeOnLoaderErrorOnlyCatchesLoaderFailures(t *testing.T) {
 	codecErr := errors.New("codec failed")
 	backendErr := errors.New("backend put failed")
 	tests := []struct {
-		name      string
-		configure func(*reviewClock, *coordinationBackend, *reviewCodec)
-		load      func(*reviewClock) (LoadResult[string], error)
-		wantError error
-		wantStale bool
+		name       string
+		configure  func(*reviewClock, *coordinationBackend, *reviewCodec)
+		load       func(*reviewClock) (LoadResult[string], error)
+		wantError  error
+		wantStale  bool
+		wantLoaded bool
 	}{
 		{
 			name: "loader failure",
@@ -443,6 +443,10 @@ func TestReviewServeOnLoaderErrorOnlyCatchesLoaderFailures(t *testing.T) {
 			wantError: ErrInvalid,
 		},
 		{
+			// Neither stale nor a failure: the loader succeeded, so what the
+			// caller gets is the value it produced. ServeOnLoaderError not
+			// catching this is the point of the test — and a cache write error
+			// no longer destroys a value that was already in hand.
 			name: "backend put failure",
 			configure: func(_ *reviewClock, backend *coordinationBackend, _ *reviewCodec) {
 				backend.setPutHook(func(context.Context, Address, []byte, Expiry, int) error {
@@ -452,7 +456,7 @@ func TestReviewServeOnLoaderErrorOnlyCatchesLoaderFailures(t *testing.T) {
 			load: func(*reviewClock) (LoadResult[string], error) {
 				return Present("new"), nil
 			},
-			wantError: ErrBackend,
+			wantLoaded: true,
 		},
 		{
 			name: "runtime clock failure",
@@ -484,6 +488,10 @@ func TestReviewServeOnLoaderErrorOnlyCatchesLoaderFailures(t *testing.T) {
 			if test.wantStale {
 				if err != nil || result.Value != "stale" || result.State != Stale {
 					t.Fatalf("resolve = %+v, err = %v", result, err)
+				}
+			} else if test.wantLoaded {
+				if err != nil || result.Value != "new" || result.State != Loaded {
+					t.Fatalf("resolve = %+v, err = %v — the loaded value was not handed back", result, err)
 				}
 			} else if !errors.Is(err, test.wantError) || result.State != 0 {
 				t.Fatalf("resolve = %+v, err = %v, want %v", result, err, test.wantError)

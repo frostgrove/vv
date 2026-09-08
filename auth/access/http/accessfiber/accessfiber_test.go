@@ -2,9 +2,11 @@ package accessfiber
 
 import (
 	"encoding/json"
+	"github.com/frostgrove/vv/errs"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/gofiber/fiber/v3"
@@ -189,7 +191,35 @@ func TestACookieBorneWriteFromAnotherSiteIsRefusedByThisTransport(t *testing.T) 
 		t.Fatalf("the deployment's own page was refused: %v", err)
 	}
 
-	if err := answer(crossSiteWrite(), handler.SignOut); err == nil {
-		t.Fatal("signing out ran for a request made from another site; the handler never asks")
+	// The fault, not its nil-ness. SignOut fails for plenty of reasons on a
+	// handler wired with nothing — deleting the Protect call left an error here
+	// and the assertion still passed, which is why the check is on the code.
+	err := answer(crossSiteWrite(), handler.SignOut)
+	fault, ok := errs.AsFault(err)
+	if !ok {
+		t.Fatalf("signing out from another site answered %v, which is not a fault", err)
+	}
+	if fault.Code != accesshttp.CodeCrossSite || fault.Kind != errs.KindForbidden {
+		t.Fatalf("fault = %s/%v, want %s/%v — the handler never asked about the origin",
+			fault.Code, fault.Kind, accesshttp.CodeCrossSite, errs.KindForbidden)
+	}
+}
+
+// Agent.IP is a bare address, and every binding must produce one. Fiber's IP
+// already does; the assertion is here so the three cannot drift again.
+func TestThisTransportReportsABareClientAddress(t *testing.T) {
+	var got string
+	app := fiber.New()
+	app.Post("/", func(c fiber.Ctx) error {
+		got = agentOf(c).IP
+		return c.SendStatus(http.StatusOK)
+	})
+	request := httptest.NewRequest(http.MethodPost, "/", nil)
+	request.RemoteAddr = "203.0.113.7:54321"
+	if _, err := app.Test(request); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(got, ":") {
+		t.Fatalf("IP = %q, want the address without its port", got)
 	}
 }

@@ -86,6 +86,21 @@ func Missing(capabilities event.Capabilities, factory Factory) string {
 	return missing(capabilities, factory)
 }
 
+// What a run reports beyond the section list, so a test one process out can ask
+// whether the run it drove said it rather than matching prose it wrote itself.
+
+const (
+	BuildsNoStore    = buildsNoStore
+	AnswersNoStore   = answersNoStore
+	CertifiedNothing = certifiedNothing
+)
+
+func NoVerdictFrom(section string) string { return noVerdictFrom(section) }
+
+func NarrowKey(maxKey int) string {
+	return narrowKey(maxKey, 2*narrowestRunName+reserve(inventory()))
+}
+
 // What the three proxies answer before their wrappers turn it into a failed
 // test, so the branch each of them exists for can be driven by a test that stays
 // green.

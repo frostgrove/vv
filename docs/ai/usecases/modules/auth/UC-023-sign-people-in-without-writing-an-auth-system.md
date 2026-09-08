@@ -75,9 +75,10 @@ declaration, not to the sign-in code.
     refreshing at the same moment is not an error — including when both of them
     read the session at the same instant, where the one that loses the race
     leaves with a working credential rather than a sign-out; a credential
-    replayed after it was spent closes the session it belonged to. A rotation
-    that cannot be answered spends nothing: the credential the caller holds still
-    works.
+    replayed after it was spent closes the session it belonged to — however long
+    ago it was spent, so waiting does not make a stolen credential safer to try.
+    A rotation that cannot be answered spends nothing: the credential the caller
+    holds still works.
 16. Routes exist for a framework the author already uses, and choosing one does
     not drag in the others.
 17. One deployment serves a browser and a native client without either of them

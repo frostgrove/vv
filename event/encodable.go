@@ -1,8 +1,6 @@
 package event
 
 import (
-	"encoding"
-	"encoding/json"
 	"fmt"
 	"reflect"
 	"strings"
@@ -12,13 +10,6 @@ const (
 	codecGraphDepth = 1024
 	codecGraphNodes = 1024
 	codecGraphEdges = 4096
-)
-
-var (
-	jsonMarshaler   = reflect.TypeFor[json.Marshaler]()
-	jsonUnmarshaler = reflect.TypeFor[json.Unmarshaler]()
-	textMarshaler   = reflect.TypeFor[encoding.TextMarshaler]()
-	textUnmarshaler = reflect.TypeFor[encoding.TextUnmarshaler]()
 )
 
 // A type and whether encoding/json can take its address where it stands, which
@@ -36,30 +27,25 @@ type jsonWalk struct {
 	edges int
 }
 
-type route uint8
-
-const (
-	byFields route = iota
-	byJSONMethods
-	byTextMethods
-)
-
 // Whether a value of this type survives Encode and then Decode through this
 // codec, charged once when the codec value is built so a declaration asks it
 // once per retained revision. "Can encoding/json encode it" is the wrong
 // question and was the one asked first: encoding/json answers nil for a type it
 // writes as an empty object, and that fact is then recorded, stored and
 // replayed as a zero value with no refusal at any door. So the walk refuses the
-// eight shapes whose bytes no declaration reads back — a type that writes
+// nine shapes whose bytes no declaration reads back — a type that writes
 // itself and declares no matching unmarshaller, one whose unmarshaller sits on
 // the value receiver and is therefore called on a copy, one whose marshaller
 // sits on a pointer receiver where encoding/json cannot address it, a map key
 // whose text methods do not come as a pair or come with the reader on the value
 // receiver, a struct with fields and no field encoding/json writes, two fields
 // rendering one JSON name, a struct written by a marshaller promoted from an
-// embedded field with a field of its own beside it, and a field reached through
-// an embedded pointer to an unexported struct type, which encoding/json writes
-// and can never allocate to read back.
+// embedded field with a field of its own beside it, at any depth of the
+// promotion chain and however that field is tagged, since no tag undoes
+// promotion, a struct whose marshalling pair is promoted from an embedded
+// pointer, which encoding/json never allocates before calling through it, and a
+// field reached through an embedded pointer to an unexported struct type, which
+// encoding/json writes and can never allocate to read back.
 //
 // It stops at a type that both writes and reads itself, because its fields are
 // then not what is written — except at a struct, where the pair may have been
@@ -206,159 +192,6 @@ func (this *members) collect(owner reflect.Type, prefix, blocked string, chain m
 		this.held[rendered] = path
 	}
 	return nil
-}
-
-func ownMethods(at position, where string) (bool, error) {
-	writes, reads := writeRoute(at), readRoute(at)
-	switch {
-	case writes != byFields && writes == reads:
-		if behind, promotes := structBehind(at.value); promotes {
-			return true, promotedMarshaller(behind, writes, where)
-		}
-		return true, nil
-	case writes != byFields && onTheValueReceiver(at.value, writes.unmarshaler()):
-		return true, fmt.Errorf("%w: %s declares %s on the value receiver, so encoding/json calls it on a copy and discards everything it writes; every fact recorded with it reads back as the zero value with no error at any door — declare it on the pointer receiver", ErrCodecType, where, writes.reader())
-	case writes != byFields:
-		return true, fmt.Errorf("%w: %s writes itself through %s and declares no %s, so a fact recorded with it is read back by no declaration", ErrCodecType, where, writes.writer(), writes.reader())
-	case writeRoute(position{value: at.value, addressable: true}) != byFields:
-		return true, fmt.Errorf("%w: %s stands where encoding/json cannot take its address, so the marshaller on its pointer receiver is never reached and it is written field by field; hold it behind a pointer, or declare the marshaller on the value receiver", ErrCodecType, where)
-	}
-	return false, nil
-}
-
-// Go promotes an embedded type's methods onto the struct that embeds it, so a
-// struct embedding a time.Time or any other shared value type with a
-// marshalling pair writes itself as that value and nothing else: every field
-// declared beside the embedded one is written by nobody and read back by
-// nobody, with nil at every door, and a JSON tag on the embedded field does not
-// undo the promotion. reflect will not say whether a method is declared on the
-// type or promoted into it, so the question is asked of the embedded fields
-// instead. A struct that declares its own pair and embeds a marshalling type is
-// refused too — it fails closed at declaration with one remedy, which is the
-// trade the walk already makes elsewhere.
-func promotedMarshaller(value reflect.Type, writes route, where string) error {
-	for index := range value.NumField() {
-		field := value.Field(index)
-		if !field.Anonymous || field.Tag.Get("json") == "-" {
-			continue
-		}
-		if writeRoute(position{value: field.Type, addressable: true}) != writes {
-			continue
-		}
-		if hidden := besideIt(value, index); hidden != "" {
-			return fmt.Errorf("%w: %s writes itself through the %s of the embedded %s, so %s is written by nobody and read back by nobody; name the embedded field instead of promoting it, or declare a codec of your own", ErrCodecType, where, writes.writer(), field.Type, hidden)
-		}
-	}
-	return nil
-}
-
-func besideIt(value reflect.Type, embedded int) string {
-	for index := range value.NumField() {
-		field := value.Field(index)
-		if index == embedded || field.Tag.Get("json") == "-" || !readAsJSON(field) {
-			continue
-		}
-		return field.Name
-	}
-	return ""
-}
-
-func writeRoute(at position) route {
-	switch {
-	case writesAs(at, jsonMarshaler):
-		return byJSONMethods
-	case writesAs(at, textMarshaler):
-		return byTextMethods
-	}
-	return byFields
-}
-
-func readRoute(at position) route {
-	switch {
-	case readsAs(at.value, jsonUnmarshaler):
-		return byJSONMethods
-	case readsAs(at.value, textUnmarshaler):
-		return byTextMethods
-	}
-	return byFields
-}
-
-// Decode always passes a pointer and encoding/json walks down one, so the read
-// side asks nothing about the position: every value it fills is addressable.
-// What it does ask is the receiver. encoding/json calls the unmarshaller through
-// that pointer, so a method declared on the value receiver runs against a copy
-// and every field it sets is discarded — json.Unmarshal returns nil and the
-// value is its zero. Such a method is present, is inert, and is therefore not a
-// read route.
-func readsAs(value, unmarshaler reflect.Type) bool {
-	if value.Kind() == reflect.Pointer {
-		return readsAs(value.Elem(), unmarshaler)
-	}
-	return reflect.PointerTo(value).Implements(unmarshaler) && !value.Implements(unmarshaler)
-}
-
-func onTheValueReceiver(value, unmarshaler reflect.Type) bool {
-	if value.Kind() == reflect.Pointer {
-		return onTheValueReceiver(value.Elem(), unmarshaler)
-	}
-	return value.Implements(unmarshaler)
-}
-
-func writesAs(at position, marshaler reflect.Type) bool {
-	if at.value.Implements(marshaler) {
-		return true
-	}
-	return at.addressable && at.value.Kind() != reflect.Pointer &&
-		reflect.PointerTo(at.value).Implements(marshaler)
-}
-
-func (this route) writer() string {
-	if this == byTextMethods {
-		return "MarshalText"
-	}
-	return "MarshalJSON"
-}
-
-func (this route) reader() string {
-	if this == byTextMethods {
-		return "UnmarshalText"
-	}
-	return "UnmarshalJSON"
-}
-
-func (this route) unmarshaler() reflect.Type {
-	if this == byTextMethods {
-		return textUnmarshaler
-	}
-	return jsonUnmarshaler
-}
-
-// A map key is routed through MarshalText whatever its kind and read back
-// through UnmarshalText whatever its kind, so the question is the one
-// ownMethods asks of a value — do the two routes agree — and it is asked before
-// the kinds JSON renders on their own. Asking the kinds first is what accepted
-// `type Currency string` with a MarshalText written for display and no reader:
-// every key it wrote was a rendered name that read back as itself.
-func objectKey(key reflect.Type, where string) error {
-	writes := key.Implements(textMarshaler)
-	reads := readsAs(key, textUnmarshaler)
-	switch {
-	case writes && reads:
-		return nil
-	case writes && onTheValueReceiver(key, textUnmarshaler):
-		return fmt.Errorf("%w: %s is keyed by a type declaring UnmarshalText on the value receiver, so encoding/json calls it on a copy and discards it; every key it wrote reads back as the zero key, and a map of them collapses to one entry with no error at any door — declare it on the pointer receiver", ErrCodecType, where)
-	case writes:
-		return fmt.Errorf("%w: %s is keyed by a type that writes itself through MarshalText and declares no UnmarshalText, so the names it writes are read back by no declaration", ErrCodecType, where)
-	case reads:
-		return fmt.Errorf("%w: %s is keyed by a type that reads itself through UnmarshalText and declares no MarshalText a map key can reach, so the names it writes are not the names it reads back; a key is never addressable, and a MarshalText on the pointer receiver is not one", ErrCodecType, where)
-	}
-	switch key.Kind() {
-	case reflect.String,
-		reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
-		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
-		return nil
-	}
-	return fmt.Errorf("%w: %s is keyed by a %s and JSON renders no object key from one", ErrCodecType, where, key.Kind())
 }
 
 func taggedName(field reflect.StructField) string {

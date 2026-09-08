@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/frostgrove/vv/cache"
+	"github.com/frostgrove/vv/cache/cachememory"
 	"github.com/frostgrove/vv/tenancy"
 )
 
@@ -151,5 +153,97 @@ func TestASeamWiredWithNoAuthorityRefusesRatherThanPanics(t *testing.T) {
 	}
 	if _, err := Keyed(ctx, nil, tenancy.ClassRead, "invoice"); !errors.Is(err, tenancy.ErrNoScope) {
 		t.Fatalf("err = %v, want ErrNoScope — a seam wired without an authority addressed a cache entry", err)
+	}
+}
+
+// Partition is exercised above as a function; Partitioned is what a deployment
+// actually wires, and until this test nothing walked it. Replacing its body with
+// cache.Global left the whole suite green, which is the definition of a hole:
+// every assertion above compares two partitions to each other and none of them
+// asks whether the partition reaches the cache at all.
+func partitionedCache(t *testing.T) *cache.Cache[Key[string], string] {
+	t.Helper()
+	backend, err := cachememory.New(cachememory.Limits{MaxEntries: 128, MaxBytes: 1 << 20, MaxItemBytes: 1 << 16})
+	if err != nil {
+		t.Fatal(err)
+	}
+	keys := cache.MustKeyFunc(1, func(key Key[string], limit cache.KeyLimit) ([]byte, error) {
+		// Only the logical key. Everything separating the tenants has to come
+		// from the scope, or this test proves the key codec rather than the seam.
+		encoded := []byte(key.Unwrap())
+		if len(encoded) > limit.MaxBytes {
+			return nil, cache.ErrTooLarge
+		}
+		return encoded, nil
+	})
+	instance, err := cache.New(
+		cache.Runtime{ClockSkew: cache.SingleProcessClock()},
+		backend,
+		Partitioned[string](cache.MustNamespace("billing", "test", "invoices", 1)),
+		keys,
+		cache.String(1),
+		cache.Policy{
+			Freshness:        cache.Expiring(time.Hour, time.Hour),
+			Retention:        cache.ExpireAfter(3 * time.Hour),
+			Negative:         cache.NoNegativeCaching(),
+			Jitter:           cache.NoJitter(),
+			MaxKeyBytes:      256,
+			MaxValueBytes:    4 << 10,
+			MaxValueDepth:    16,
+			MaxFlights:       8,
+			FlightSaturation: cache.WaitBounded(time.Hour),
+			Stale:            cache.RefreshBlocking,
+			LastWaiter:       cache.CancelLoader,
+			Corruption:       cache.RefuseCorrupt,
+		},
+	)
+	if err != nil {
+		t.Fatalf("cannot build a cache over the tenant partition: %v", err)
+	}
+	return instance
+}
+
+func TestOneTenantsCachedValueIsNotReadByAnother(t *testing.T) {
+	instance := partitionedCache(t)
+	ours := keyed(t, fixedAuthority(t, "acme", tenancy.Active, 1), "invoice:1")
+	theirs := keyed(t, fixedAuthority(t, "globex", tenancy.Active, 1), "invoice:1")
+
+	if err := instance.Put(context.Background(), ours, "acme's invoice"); err != nil {
+		t.Fatalf("put: %v", err)
+	}
+
+	// The control. Without it a Partitioned that refused every read would pass
+	// the assertion below and prove nothing.
+	mine, err := instance.Lookup(context.Background(), ours)
+	if err != nil {
+		t.Fatalf("the tenant that wrote the value cannot read it back: %v", err)
+	}
+	if mine.State != cache.Hit || mine.Value != "acme's invoice" {
+		t.Fatalf("the writing tenant read state=%v value=%q", mine.State, mine.Value)
+	}
+
+	other, err := instance.Lookup(context.Background(), theirs)
+	if err != nil {
+		t.Fatalf("the second tenant's lookup failed for some other reason: %v", err)
+	}
+	if other.State != cache.Miss {
+		t.Fatalf("one tenant read another's cached value: state=%v %q", other.State, other.Value)
+	}
+}
+
+func TestARestoredGenerationDoesNotReadThePreviousOnesCachedValue(t *testing.T) {
+	instance := partitionedCache(t)
+	before := keyed(t, fixedAuthority(t, "acme", tenancy.Active, 1), "invoice:1")
+	after := keyed(t, fixedAuthority(t, "acme", tenancy.Active, 2), "invoice:1")
+
+	if err := instance.Put(context.Background(), before, "written before the restore"); err != nil {
+		t.Fatalf("put: %v", err)
+	}
+	restored, err := instance.Lookup(context.Background(), after)
+	if err != nil {
+		t.Fatalf("lookup: %v", err)
+	}
+	if restored.State != cache.Miss {
+		t.Fatalf("a restored generation read the previous one's value: state=%v %q", restored.State, restored.Value)
 	}
 }

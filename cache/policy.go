@@ -141,13 +141,20 @@ const (
 )
 
 type Policy struct {
-	Freshness           Freshness
-	Retention           Retention
-	Negative            NegativeCaching
-	Jitter              JitterPolicy
-	MaxKeyBytes         int
-	MaxValueBytes       int
-	MaxValueDepth       int
+	Freshness     Freshness
+	Retention     Retention
+	Negative      NegativeCaching
+	Jitter        JitterPolicy
+	MaxKeyBytes   int
+	MaxValueBytes int
+	MaxValueDepth int
+
+	// How many *distinct* addresses may be loading at once, across the whole
+	// cache. It is not per-address coalescing — that is unconditional, and two
+	// callers who miss on one key always share one load. So a value of 1 does not
+	// mean "one load per key"; it means the second key to miss is refused with
+	// ErrSaturated while the first is still loading, which is what the shipped
+	// profiles used to do.
 	MaxFlights          int
 	FlightSaturation    FlightSaturationPolicy
 	Stale               StalePolicy
@@ -159,7 +166,6 @@ type Policy struct {
 	MaxTransientWaiters int
 	TransientSaturation TransientSaturationPolicy
 	ReadFailure         FailurePolicy
-	WriteFailure        FailurePolicy
 	InvalidateFailure   FailurePolicy
 	Corruption          CorruptionPolicy
 
@@ -188,18 +194,17 @@ var (
 		MaxKeyBytes:         16 << 10,
 		MaxValueBytes:       16 << 20,
 		MaxValueDepth:       128,
-		MaxFlights:          1,
+		MaxFlights:          8,
 		FlightSaturation:    WaitBounded(time.Second),
 		Stale:               ServeOnLoaderError,
 		LastWaiter:          CancelLoader,
 		MaxBatchKeys:        256,
 		MaxBatchKeyBytes:    1 << 20,
 		MaxBatchResultBytes: 64 << 20,
-		MaxTransientBytes:   256 << 20,
+		MaxTransientBytes:   1024 << 20,
 		MaxTransientWaiters: 64,
 		TransientSaturation: WaitForTransient(time.Second),
 		ReadFailure:         AsMiss,
-		WriteFailure:        Propagate,
 		InvalidateFailure:   Propagate,
 		Corruption:          RefuseCorrupt,
 	})
@@ -211,18 +216,17 @@ var (
 		MaxKeyBytes:         16 << 10,
 		MaxValueBytes:       16 << 20,
 		MaxValueDepth:       128,
-		MaxFlights:          2,
+		MaxFlights:          8,
 		FlightSaturation:    WaitBounded(2 * time.Second),
 		Stale:               ServeOnLoaderError,
 		LastWaiter:          FinishLoader,
 		MaxBatchKeys:        256,
 		MaxBatchKeyBytes:    4 << 20,
 		MaxBatchResultBytes: 128 << 20,
-		MaxTransientBytes:   512 << 20,
+		MaxTransientBytes:   1024 << 20,
 		MaxTransientWaiters: 64,
 		TransientSaturation: WaitForTransient(2 * time.Second),
 		ReadFailure:         Propagate,
-		WriteFailure:        Propagate,
 		InvalidateFailure:   Propagate,
 		Corruption:          RefuseCorrupt,
 	})
@@ -238,23 +242,22 @@ func hotDefaults() Policy {
 		MaxKeyBytes:         16 << 10,
 		MaxValueBytes:       16 << 20,
 		MaxValueDepth:       128,
-		MaxFlights:          1,
+		MaxFlights:          8,
 		FlightSaturation:    WaitBounded(250 * time.Millisecond),
 		Stale:               ServeWhileRefreshing,
 		LastWaiter:          CancelLoader,
 		MaxBatchKeys:        256,
 		MaxBatchKeyBytes:    1 << 20,
 		MaxBatchResultBytes: 64 << 20,
-		MaxTransientBytes:   256 << 20,
+		MaxTransientBytes:   1024 << 20,
 		MaxTransientWaiters: 64,
 		TransientSaturation: WaitForTransient(250 * time.Millisecond),
 		ReadFailure:         AsMiss,
-		WriteFailure:        Ignore,
 		InvalidateFailure:   Propagate,
 		Corruption:          CorruptAsMiss,
 		profile:             "Hot",
 		transientDefaulted:  true,
-		transientResolved:   256 << 20,
+		transientResolved:   1024 << 20,
 	}
 }
 
@@ -413,6 +416,84 @@ func NegativeFor(value time.Duration) Option {
 	})
 }
 
+// The options below exist so that changing one thing about a profile does not
+// mean abandoning Auto and Define for New — which is the constructor that skips
+// the activation graph's checks ([[D-104]], [[D-111]]). A deployment that wanted
+// a different TTL, or absences not cached at all, had exactly that choice.
+
+func FreshFor(fresh, stale time.Duration) Option {
+	return policyOption(func(policy *Policy) error {
+		if fresh <= 0 || stale < 0 {
+			return fmt.Errorf("%w: freshness durations are invalid", ErrInvalid)
+		}
+		policy.Freshness = Expiring(fresh, stale)
+		return nil
+	})
+}
+
+func RetainFor(value time.Duration) Option {
+	return policyOption(func(policy *Policy) error {
+		if value <= 0 {
+			return fmt.Errorf("%w: retention must be positive", ErrInvalid)
+		}
+		policy.Retention = ExpireAfter(value)
+		return nil
+	})
+}
+
+func RetainUntilEvicted() Option {
+	return policyOption(func(policy *Policy) error {
+		policy.Retention = CapacityBoundedRetention()
+		return nil
+	})
+}
+
+// The absence of a value is not cached at all. Without this, "never serve a
+// remembered absence" needed the constructor that skips the graph.
+func NoNegative() Option {
+	return policyOption(func(policy *Policy) error {
+		policy.Negative = NoNegativeCaching()
+		return nil
+	})
+}
+
+func JitterBy(value JitterPolicy) Option {
+	return policyOption(func(policy *Policy) error {
+		policy.Jitter = value
+		return nil
+	})
+}
+
+func OnCorruption(value CorruptionPolicy) Option {
+	return policyOption(func(policy *Policy) error {
+		if value != RefuseCorrupt && value != CorruptAsMiss {
+			return fmt.Errorf("%w: corruption policy must refuse or become a miss", ErrInvalid)
+		}
+		policy.Corruption = value
+		return nil
+	})
+}
+
+func OnReadFailure(value FailurePolicy) Option {
+	return policyOption(func(policy *Policy) error {
+		if value != Propagate && value != AsMiss {
+			return fmt.Errorf("%w: read failure must propagate or become a miss", ErrInvalid)
+		}
+		policy.ReadFailure = value
+		return nil
+	})
+}
+
+func OnInvalidateFailure(value FailurePolicy) Option {
+	return policyOption(func(policy *Policy) error {
+		if value != Propagate && value != Ignore {
+			return fmt.Errorf("%w: invalidate failure must propagate or be ignored", ErrInvalid)
+		}
+		policy.InvalidateFailure = value
+		return nil
+	})
+}
+
 func normalizePolicy(policy Policy) (Policy, error) {
 	if policy.MaxTransientWaiters == 0 {
 		policy.MaxTransientWaiters = defaultTransientWaiters
@@ -505,9 +586,6 @@ func overlayPolicy(target *Policy, source Policy) {
 	if source.ReadFailure != 0 {
 		target.ReadFailure = source.ReadFailure
 	}
-	if source.WriteFailure != 0 {
-		target.WriteFailure = source.WriteFailure
-	}
 	if source.InvalidateFailure != 0 {
 		target.InvalidateFailure = source.InvalidateFailure
 	}
@@ -594,9 +672,6 @@ func validatePolicy(policy Policy) error {
 	}
 	if policy.ReadFailure != Propagate && policy.ReadFailure != AsMiss {
 		return fmt.Errorf("%w: read failure must propagate or become a miss", ErrInvalid)
-	}
-	if policy.WriteFailure != Propagate && policy.WriteFailure != Ignore {
-		return fmt.Errorf("%w: write failure must propagate or be ignored", ErrInvalid)
 	}
 	if policy.InvalidateFailure != Propagate && policy.InvalidateFailure != Ignore {
 		return fmt.Errorf("%w: invalidate failure must propagate or be ignored", ErrInvalid)

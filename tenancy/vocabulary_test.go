@@ -4,10 +4,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"slices"
 	"strings"
 	"testing"
 
+	"github.com/frostgrove/vv/crud"
+	"github.com/frostgrove/vv/errs"
+	"github.com/frostgrove/vv/port"
+	"github.com/frostgrove/vv/port/porthttp"
 	"github.com/frostgrove/vv/tenancy"
 )
 
@@ -159,4 +164,61 @@ func manyTenantAuthority(t *testing.T, count int) (*tenancy.Authority, []string)
 		t.Fatal(err)
 	}
 	return authority, raws
+}
+
+// A full directory and a control plane that will not answer are operational: the
+// tenant is entitled to the work and the answer is "not now". Rendered as an
+// internal error they are indistinguishable from a panic, so an operator pages
+// on them and a client never retries.
+func TestAnOperationalRefusalRendersAsRetryableRatherThanAsABug(t *testing.T) {
+	for name, refusal := range map[string]error{
+		"a full directory": tenancy.ErrCapacity,
+		"a control plane that is up but will not answer": tenancy.ErrUnavailable,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if !errors.Is(refusal, crud.ErrUnavailable) {
+				t.Fatalf("%v wraps no retryable sentinel, so port renders it 500", refusal)
+			}
+			if kind := port.KindOf(refusal); kind != errs.KindRetryable {
+				t.Fatalf("kind = %v, want errs.KindRetryable", kind)
+			}
+			status, _, _ := porthttp.NewRenderer().Render(context.Background(), port.FaultOf(refusal))
+			if status != http.StatusServiceUnavailable {
+				t.Fatalf("status = %d, want 503", status)
+			}
+		})
+	}
+
+	// The control: a refusal of the *caller* must not have become retryable with
+	// them, or this test would pass for a directory that made everything a 503.
+	if kind := port.KindOf(tenancy.ErrNoScope); kind != errs.KindForbidden {
+		t.Fatalf("a forbidden refusal became %v", kind)
+	}
+}
+
+// A resolver's text names the tenant, the database and the credential, so it is
+// collapsed. A caller that went away names none of them, and folding it into the
+// unavailable answer puts every client disconnect on the graph that says the
+// control plane is down.
+func TestACallerGoingAwayIsNotAControlPlaneOutage(t *testing.T) {
+	for name, err := range map[string]error{
+		"cancelled": context.Canceled,
+		"deadline":  context.DeadlineExceeded,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := tenancy.Classify(err); !errors.Is(got, err) {
+				t.Fatalf("Classify(%v) = %v — the cause was dropped", err, got)
+			}
+			if errors.Is(tenancy.Classify(err), tenancy.ErrUnavailable) {
+				t.Fatal("a caller that went away was reported as the capability being unavailable")
+			}
+		})
+	}
+
+	// The control: a resolver's own text still collapses, so the redaction that
+	// this function exists for has not been traded away for the two cases above.
+	leak := fmt.Errorf("tenant acme-7f3c on db_acme_7f3c: connection refused")
+	if got := tenancy.Classify(leak); !errors.Is(got, tenancy.ErrUnavailable) || strings.Contains(got.Error(), "acme") {
+		t.Fatalf("Classify leaked the resolver's text: %v", got)
+	}
 }

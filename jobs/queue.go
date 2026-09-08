@@ -441,11 +441,7 @@ func Enqueue[P any](ctx context.Context, queue *Queue, definition DefinitionOf[P
 	if err != nil {
 		return InvocationID{}, err
 	}
-	durable, err := capturePlacementContext(ctx, queue, definition.Name(), definition.Partition(), request.policy.Trace())
-	if err != nil {
-		return InvocationID{}, err
-	}
-	placement, err := preparePlacement(ctx, queue, definition, ProducerIntent{}, false, payload, request, durable)
+	placement, err := preparePlacement(ctx, queue, definition, ProducerIntent{}, false, payload, request)
 	if err != nil {
 		return InvocationID{}, err
 	}
@@ -467,11 +463,7 @@ func EnqueueOnce[P any](ctx context.Context, queue *Queue, definition Definition
 	if err != nil {
 		return InvocationID{}, 0, err
 	}
-	durable, err := capturePlacementContext(ctx, queue, definition.Name(), definition.Partition(), request.policy.Trace())
-	if err != nil {
-		return InvocationID{}, 0, err
-	}
-	placement, err := preparePlacement(ctx, queue, definition, intent, true, payload, request, durable)
+	placement, err := preparePlacement(ctx, queue, definition, intent, true, payload, request)
 	if err != nil {
 		return InvocationID{}, 0, err
 	}
@@ -497,11 +489,7 @@ func EnqueueIn[P any](ctx context.Context, queue *Queue, stager Stager, definiti
 	if err != nil {
 		return Staged{}, err
 	}
-	durable, err := capturePlacementContext(ctx, queue, definition.Name(), definition.Partition(), request.policy.Trace())
-	if err != nil {
-		return Staged{}, err
-	}
-	placement, err := preparePlacement(ctx, queue, definition, ProducerIntent{}, false, payload, request, durable)
+	placement, err := preparePlacement(ctx, queue, definition, ProducerIntent{}, false, payload, request)
 	if err != nil {
 		return Staged{}, err
 	}
@@ -527,11 +515,7 @@ func EnqueueOnceIn[P any](ctx context.Context, queue *Queue, stager Stager, defi
 	if err != nil {
 		return Staged{}, err
 	}
-	durable, err := capturePlacementContext(ctx, queue, definition.Name(), definition.Partition(), request.policy.Trace())
-	if err != nil {
-		return Staged{}, err
-	}
-	placement, err := preparePlacement(ctx, queue, definition, intent, true, payload, request, durable)
+	placement, err := preparePlacement(ctx, queue, definition, intent, true, payload, request)
 	if err != nil {
 		return Staged{}, err
 	}
@@ -601,16 +585,19 @@ func validateEnqueueRequest[P any](ctx context.Context, queue *Queue, definition
 	return enqueueRequest{options: resolved, policy: policy}, nil
 }
 
-func preparePlacement[P any](ctx context.Context, queue *Queue, definition DefinitionOf[P], intent ProducerIntent, once bool, payload P, request enqueueRequest, captured placementContext) (Placement, error) {
+// The payload is encoded and the identifier minted before the durable context is
+// captured, because a capture that mints a record-bound token needs both: a token
+// bound only to the queue and the definition authenticates a tenant rather than
+// the row it travels in, and is replayable onto any other row of that queue.
+func preparePlacement[P any](ctx context.Context, queue *Queue, definition DefinitionOf[P], intent ProducerIntent, once bool, payload P, request enqueueRequest) (Placement, error) {
 	if err := ctx.Err(); err != nil {
 		return Placement{}, err
 	}
-	if !request.policy.valid() || !captured.partition.validFor(queue.namespace) || !captured.durable.validFor(queue.namespace, captured.partition, definition.Name(), request.policy.Trace()) {
-		return Placement{}, invalid("enqueue request or durable context")
+	if !request.policy.valid() {
+		return Placement{}, invalid("enqueue request")
 	}
 	resolved := request.options
 	policySnapshot := request.policy
-	partition := captured.partition
 	encoded, payloadDigest, err := definition.preparePayload(payload, once)
 	if err != nil {
 		return Placement{}, err
@@ -624,6 +611,15 @@ func preparePlacement[P any](ctx context.Context, queue *Queue, definition Defin
 	candidate, err := queue.nextInvocationID()
 	if err != nil {
 		return Placement{}, err
+	}
+	wireDigest := digestWirePayload(encoded)
+	captured, err := capturePlacementContext(ctx, queue, definition.Name(), definition.Partition(), policySnapshot.Trace(), candidate, wireDigest)
+	if err != nil {
+		return Placement{}, err
+	}
+	partition := captured.partition
+	if !partition.validFor(queue.namespace) || !captured.durable.validFor(queue.namespace, partition, definition.Name(), policySnapshot.Trace()) {
+		return Placement{}, invalid("durable context")
 	}
 	intentDigests, err := digestRegularIntents(queue.digests, queue.namespace, partition, definition.Name(), candidate)
 	if err != nil {
@@ -663,7 +659,7 @@ func preparePlacement[P any](ctx context.Context, queue *Queue, definition Defin
 		Mode:          mode,
 		Payload:       encoded,
 		PayloadDigest: payloadDigest,
-		WireDigest:    digestWirePayload(encoded),
+		WireDigest:    wireDigest,
 		IntentDigests: intentDigests,
 		LegacyIntent:  legacyIntent,
 		Priority:      priority,
@@ -695,8 +691,8 @@ func resolveEnqueueOptions(values []EnqueueOption) (enqueueOptions, error) {
 	return result, nil
 }
 
-func capturePlacementContext(ctx context.Context, queue *Queue, definition Name, mode PartitionMode, policy TracePolicy) (placementContext, error) {
-	if nilInterface(ctx) || queue == nil || !queue.namespace.valid() || !definition.valid() || !mode.Valid() || !policy.valid() {
+func capturePlacementContext(ctx context.Context, queue *Queue, definition Name, mode PartitionMode, policy TracePolicy, candidate InvocationID, wire WireDigest) (placementContext, error) {
+	if nilInterface(ctx) || queue == nil || !queue.namespace.valid() || !definition.valid() || !mode.Valid() || !policy.valid() || !candidate.valid() || !wire.valid() {
 		return placementContext{}, invalid("context capture")
 	}
 	if err := ctx.Err(); err != nil {
@@ -704,7 +700,7 @@ func capturePlacementContext(ctx context.Context, queue *Queue, definition Name,
 	}
 	capture := ContextCapture{provenance: IdentityProvenance{value: "framework.system"}, epoch: 1}
 	if !nilInterface(queue.contexts) {
-		request := ContextCaptureRequest{namespace: queue.namespace, definition: definition, partition: mode}
+		request := ContextCaptureRequest{namespace: queue.namespace, definition: definition, partition: mode, candidate: candidate, wire: wire}
 		var err error
 		capture, err = invokeContextProvider(queue.contexts, ctx, request)
 		if contextErr := ctx.Err(); contextErr != nil {

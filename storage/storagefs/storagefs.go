@@ -38,17 +38,25 @@ type Config struct {
 	BaseURL    string
 	SigningKey []byte
 	MaxLinkTTL time.Duration
+
+	// How long one Promote or Abort may hold a stage before another may take it
+	// over. Defaults to storage.DefaultStageClaimTTL. It bounds an interruption,
+	// not the stage: without it a process killed mid-promote wedged the StageID
+	// until the stage's own TTL, days later, with Promote and Abort both
+	// answering ErrConflict in the meantime.
+	StageClaimTTL time.Duration
 }
 
 type Backend struct {
-	root       *os.Root
-	fileMode   fs.FileMode
-	dirMode    fs.FileMode
-	syncWrites bool
-	baseURL    *url.URL
-	signingKey []byte
-	maxLinkTTL time.Duration
-	now        func() time.Time
+	root          *os.Root
+	fileMode      fs.FileMode
+	dirMode       fs.FileMode
+	syncWrites    bool
+	baseURL       *url.URL
+	signingKey    []byte
+	maxLinkTTL    time.Duration
+	stageClaimTTL time.Duration
+	now           func() time.Time
 
 	placeRemove func(string) error
 	placeSync   func(string) error
@@ -92,6 +100,14 @@ func New(config *Config) (*Backend, error) {
 		return nil, err
 	}
 
+	stageClaimTTL := config.StageClaimTTL
+	if stageClaimTTL == 0 {
+		stageClaimTTL = storage.DefaultStageClaimTTL
+	}
+	if stageClaimTTL < time.Second || stageClaimTTL > storage.MaxStageClaimTTL {
+		return nil, storage.NewError("construct", storage.KindInvalid, fmt.Errorf("stage claim TTL is invalid"))
+	}
+
 	rootName := filepath.Clean(config.Root)
 	if err := os.MkdirAll(rootName, dirMode); err != nil {
 		return nil, filesystemError("construct", err)
@@ -108,14 +124,15 @@ func New(config *Config) (*Backend, error) {
 		return nil, filesystemError("construct", err)
 	}
 	b := &Backend{
-		root:       root,
-		fileMode:   fileMode,
-		dirMode:    dirMode,
-		syncWrites: config.Sync,
-		baseURL:    baseURL,
-		signingKey: signingKey,
-		maxLinkTTL: maxLinkTTL,
-		now:        time.Now,
+		root:          root,
+		fileMode:      fileMode,
+		dirMode:       dirMode,
+		syncWrites:    config.Sync,
+		baseURL:       baseURL,
+		signingKey:    signingKey,
+		maxLinkTTL:    maxLinkTTL,
+		stageClaimTTL: stageClaimTTL,
+		now:           time.Now,
 	}
 	for _, directory := range []string{
 		privateDirectory,
@@ -167,13 +184,21 @@ func (this *Backend) Put(ctx context.Context, namespace storage.Namespace, key s
 	if err != nil {
 		return storage.Info{}, operationError("put", err)
 	}
+	// Checked after the body is on disk and immediately before the rename that
+	// publishes it, so the window between the comparison and the write is as
+	// narrow as this backend can make it.
+	if err := this.requireETag("put", objectPath(namespace, key), options.IfMatch); err != nil {
+		return storage.Info{}, err
+	}
 	if _, err := this.place(ctx, workName, objectPath(namespace, key), mode); err != nil {
 		return storage.Info{}, operationError("put", err)
 	}
 	return info, nil
 }
 
-func (this *Backend) Open(ctx context.Context, namespace storage.Namespace, key storage.Key) (io.ReadCloser, storage.Info, error) {
+// The body starts at a fixed 16 KiB offset, so a range is one Seek: no scan, and
+// no bytes read that the caller did not ask for.
+func (this *Backend) Open(ctx context.Context, namespace storage.Namespace, key storage.Key, options storage.ReadOptions) (io.ReadCloser, storage.Info, error) {
 	if err := contextError(ctx); err != nil {
 		return nil, storage.Info{}, storage.NewError("open", storage.KindCancelled, err)
 	}
@@ -185,7 +210,22 @@ func (this *Backend) Open(ctx context.Context, namespace storage.Namespace, key 
 		_ = file.Close()
 		return nil, storage.Info{}, storage.NewError("open", storage.KindCancelled, err)
 	}
-	return &objectBody{ctx: ctx, file: file, remaining: header.Size}, header.info(), nil
+	remaining := header.Size
+	if options.Offset != 0 || options.Length != nil {
+		if options.Offset > header.Size {
+			_ = file.Close()
+			return nil, storage.Info{}, storage.NewError("open", storage.KindInvalid, fmt.Errorf("read offset is past the end of the object"))
+		}
+		if _, err := file.Seek(privateHeaderSize+options.Offset, io.SeekStart); err != nil {
+			_ = file.Close()
+			return nil, storage.Info{}, filesystemError("open", err)
+		}
+		remaining = header.Size - options.Offset
+		if options.Length != nil && *options.Length < remaining {
+			remaining = *options.Length
+		}
+	}
+	return &objectBody{ctx: ctx, file: file, remaining: remaining}, header.info(), nil
 }
 
 func (this *Backend) Head(ctx context.Context, namespace storage.Namespace, key storage.Key) (storage.Info, error) {
@@ -202,11 +242,14 @@ func (this *Backend) Head(ctx context.Context, namespace storage.Namespace, key 
 	return header.info(), nil
 }
 
-func (this *Backend) Delete(ctx context.Context, namespace storage.Namespace, key storage.Key) error {
+func (this *Backend) Delete(ctx context.Context, namespace storage.Namespace, key storage.Key, options storage.DeleteOptions) error {
 	if err := contextError(ctx); err != nil {
 		return storage.NewError("delete", storage.KindCancelled, err)
 	}
 	name := objectPath(namespace, key)
+	if err := this.requireETag("delete", name, options.IfMatch); err != nil {
+		return err
+	}
 	removed := true
 	if err := this.root.Remove(name); err != nil {
 		if !errors.Is(err, fs.ErrNotExist) {
@@ -219,7 +262,29 @@ func (this *Backend) Delete(ctx context.Context, namespace storage.Namespace, ke
 			return filesystemError("delete", err)
 		}
 	}
+	if removed {
+		this.pruneEmptyAncestors(namespace, path.Dir(name))
+	}
 	return nil
+}
+
+// Every key creates one directory per slash-separated segment, and removing the
+// object leaves the whole chain behind. Nothing else reclaims it: there is no
+// List, and CleanupExpired only walks staging — so a namespace churning
+// `uploads/<uuid>/original.png` grows a directory per upload for the life of the
+// deployment, and a filesystem runs out of inodes rather than bytes.
+//
+// Best-effort and deliberately silent: ENOTEMPTY means a concurrent writer got
+// there first, which is the answer, not a failure. The object is already gone, so
+// nothing here can turn a successful delete into an error.
+func (this *Backend) pruneEmptyAncestors(namespace storage.Namespace, directory string) {
+	root := path.Join(privateDirectory, "objects", namespace.Value())
+	for directory != root && strings.HasPrefix(directory, root+"/") {
+		if err := this.root.Remove(directory); err != nil {
+			return
+		}
+		directory = path.Dir(directory)
+	}
 }
 
 func (this *Backend) Stage(ctx context.Context, namespace storage.Namespace, source io.Reader, options storage.StageOptions) (storage.Staged, error) {
@@ -298,7 +363,27 @@ func (this *Backend) Promote(ctx context.Context, namespace storage.Namespace, i
 		}
 		return storage.Info{}, storage.NewError("promote", storage.KindExpired, fmt.Errorf("stage expired"))
 	}
-	placed, err := this.placeClaim(ctx, namespace, claimedName, objectPath(namespace, key), mode)
+	destination := objectPath(namespace, key)
+	if err := this.requireETag("promote", destination, options.IfMatch); err != nil {
+		return storage.Info{}, err
+	}
+	// The destination is recorded before the rename, because the rename is what
+	// makes the object visible and a process killed just after it leaves exactly
+	// the on-disk state a process killed just before it leaves.
+	//
+	// ModifiedAt is restamped in the same write. The header was written when the
+	// stage was, which can be days earlier, so a promoted object used to report
+	// the moment it was staged while the same object through storageminio
+	// reported the moment it became visible. It means visibility on both now.
+	placedAt := this.now().UTC()
+	if err := this.stampClaim(claimedName, func(header *privateHeader) {
+		header.PlacingAt = destination
+		header.ModifiedAt = placedAt.UnixNano()
+	}); err != nil {
+		return storage.Info{}, filesystemError("promote", err)
+	}
+	header.ModifiedAt = placedAt.UnixNano()
+	placed, err := this.placeClaim(ctx, namespace, claimedName, destination, mode)
 	if placed {
 		releaseOnReturn = false
 		if _, consumeErr := this.consumeClaim(namespace, id, this.removeClaimName); consumeErr != nil {
@@ -498,10 +583,12 @@ func (this *Backend) finishCleanupDirectory(directory string, dirty bool) error 
 
 func (this *Backend) Capabilities() storage.Capabilities {
 	return storage.Capabilities{
-		CreateOnly:   true,
-		Replace:      true,
-		Staging:      true,
-		TemporaryURL: this != nil && this.baseURL != nil,
+		CreateOnly:       true,
+		Replace:          true,
+		Staging:          true,
+		TemporaryURL:     this != nil && this.baseURL != nil,
+		ConditionalWrite: true,
+		RangeRead:        true,
 	}
 }
 
@@ -702,11 +789,24 @@ func stageIDFromName(name string) (storage.StageID, bool) {
 	return id, err == nil
 }
 
+// Two crash states leave a claim behind, and the filesystem already tells them
+// apart. Stage present and claim present means the holder died *before* placing:
+// the stage is intact and taking it over is safe. Stage gone and claim present
+// means the holder placed the object and died before the last unlink: taking that
+// over would place a committed stage a second time, at a second key, so it stays
+// a conflict and the sweep reaps it. Only the first is stolen, and only once the
+// lease in the shared header has passed.
 func (this *Backend) claimStage(operation string, namespace storage.Namespace, id storage.StageID) (string, error) {
 	stagedName := stagePath(namespace, id)
 	claimedName := stageClaimPath(namespace, id)
 	err := this.root.Link(stagedName, claimedName)
 	if err == nil {
+		if err := this.stampClaim(claimedName, this.leaseEdit()); err != nil {
+			if releaseErr := this.releaseClaim(namespace, id); releaseErr != nil {
+				return "", filesystemError(operation, releaseErr)
+			}
+			return "", filesystemError(operation, err)
+		}
 		if this.syncWrites {
 			if err := this.syncDirectory(stageDirectory(namespace)); err != nil {
 				if releaseErr := this.releaseClaim(namespace, id); releaseErr != nil {
@@ -718,7 +818,7 @@ func (this *Backend) claimStage(operation string, namespace storage.Namespace, i
 		return claimedName, nil
 	}
 	if errors.Is(err, fs.ErrExist) {
-		return "", storage.NewError(operation, storage.KindConflict, err)
+		return this.takeOverClaim(operation, namespace, id, stagedName, claimedName, err)
 	}
 	if !errors.Is(err, fs.ErrNotExist) {
 		return "", filesystemError(operation, err)
@@ -731,6 +831,56 @@ func (this *Backend) claimStage(operation string, namespace storage.Namespace, i
 		return "", storage.NewError(operation, storage.KindConflict, err)
 	}
 	return "", storage.NewError(operation, storage.KindNotFound, err)
+}
+
+func (this *Backend) takeOverClaim(operation string, namespace storage.Namespace, id storage.StageID, stagedName, claimedName string, existing error) (string, error) {
+	staged, stageErr := this.privateNameExists(stagedName)
+	if stageErr != nil {
+		return "", filesystemError(operation, stageErr)
+	}
+	if !staged {
+		return "", storage.NewError(operation, storage.KindConflict, existing)
+	}
+	file, header, err := this.openPrivateFile(claimedName)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return "", storage.NewError(operation, storage.KindConflict, existing)
+		}
+		return "", filesystemError(operation, err)
+	}
+	if err := file.Close(); err != nil {
+		return "", filesystemError(operation, err)
+	}
+	// Zero means held, not free. The link is created before the lease is stamped,
+	// so a competitor that arrives in that window reads zero — and a claim written
+	// by a version that predates the field reads zero too. Treating either as an
+	// opportunity hands the stage to two promotions at once, which is the whole
+	// thing the claim exists to stop; both instead wait out the stage's own TTL,
+	// which is the behaviour that was already there.
+	if header.ClaimedUntil == 0 || this.now().Before(time.Unix(0, header.ClaimedUntil)) {
+		return "", storage.NewError(operation, storage.KindConflict, existing)
+	}
+	if header.PlacingAt != "" {
+		placed, existsErr := this.privateNameExists(header.PlacingAt)
+		if existsErr != nil {
+			return "", filesystemError(operation, existsErr)
+		}
+		if placed {
+			return "", storage.NewError(operation, storage.KindConflict, existing)
+		}
+	}
+	if err := this.stampClaim(claimedName, this.leaseEdit()); err != nil {
+		return "", filesystemError(operation, err)
+	}
+	return claimedName, nil
+}
+
+func (this *Backend) leaseEdit() func(*privateHeader) {
+	until := this.now().Add(this.stageClaimTTL).UTC().UnixNano()
+	return func(header *privateHeader) {
+		header.ClaimedUntil = until
+		header.PlacingAt = ""
+	}
 }
 
 func (this *Backend) privateNameExists(name string) (bool, error) {
@@ -862,3 +1012,28 @@ func operationError(operation string, err error) error {
 }
 
 func (this *Backend) Handler() http.Handler { return this.linkHandler() }
+
+// The comparison and the write that follows it are not one operation here — this
+// backend has no atomic compare-and-swap — so the window is the directory lock's
+// width rather than zero. What it does buy is the failure the option exists for:
+// a caller who read, decided and wrote learns that the object moved underneath
+// them instead of silently discarding the other writer.
+func (this *Backend) requireETag(operation, name string, ifMatch *string) error {
+	if ifMatch == nil {
+		return nil
+	}
+	file, header, err := this.openPrivateFile(name)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return storage.NewError(operation, storage.KindPreconditionFailed, fmt.Errorf("object does not exist"))
+		}
+		return filesystemError(operation, err)
+	}
+	if err := file.Close(); err != nil {
+		return filesystemError(operation, err)
+	}
+	if header.etag() != *ifMatch {
+		return storage.NewError(operation, storage.KindPreconditionFailed, fmt.Errorf("object ETag does not match the precondition"))
+	}
+	return nil
+}

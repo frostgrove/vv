@@ -51,7 +51,11 @@ func (this *Backend) acquireClaim(ctx context.Context, operation string, namespa
 	if err != nil {
 		return claimLease{}, err
 	}
-	expiresAt := this.now().Add(storage.MaxStageTTL)
+	// The lease bounds this operation, not the stage. Deriving it from
+	// MaxStageTTL made an interrupted promote a seven-day outage for that stage:
+	// Promote refused it as already active, Abort refused it the same way, and
+	// CleanupExpired walked past it reporting success.
+	expiresAt := this.now().Add(this.stageClaimTTL)
 
 	for attempt := 0; attempt < claimAcquireAttempts; attempt++ {
 		if err := this.requireStage(ctx, operation, stageObject); err != nil {
@@ -231,10 +235,15 @@ func (this *Backend) cleanupExpiredClaims(ctx context.Context, namespace storage
 			return stageErr
 		}
 		if !stageMissing {
+			// The stage outlived the operation that was holding it. Retiring the
+			// claim is what lets the next Promote or Abort take the stage over,
+			// and it is work this sweep did — answering {Removed:0, More:false}
+			// for it tells an operator the namespace was already clean.
 			if claim.state == claimStateActive && !this.now().Before(claim.expiresAt) {
 				if _, err := this.releaseClaim(ctx, "cleanup", claim.claimLease, claimStateRetired); err != nil {
 					return err
 				}
+				result.More = true
 			}
 			continue
 		}

@@ -55,6 +55,7 @@ through it.
 | `module.manifest.yml`, an inferred contribution kind, or where a module's constructor list comes from | [[FL-032]] |
 | command or storage telemetry spans, duration metrics or cache observers | [[FL-034]] |
 | a transactional enqueue, a staged placement, a lease, a takeover, or an effect that must not outlive a rollback | [[FL-035]] |
+| an aggregate declaration, a fact, a reader chain, an expected-version append, a stream replay, a log walk or an event store | [[FL-036]] |
 
 **A code change that alters a path must update its flow document in the same
 change.** Not afterwards, not in a follow-up. A flow that describes a path the
@@ -106,6 +107,7 @@ phase 3 landed FL-014 and before phase 5 landed FL-015.
 | [FL-033](FL-033-a-request-becomes-a-tenant-bound-statement.md) | A request becomes a tenant-bound statement, and a job becomes one again | `tenancy.Authority.Bind` / `tenancyjobs.IdentityRestorer` | [[UC-004]] [[UC-012]] |
 | [FL-034](FL-034-command-telemetry-lifecycle.md) | Command and storage telemetry lifecycle | `otel/service.go:executeCommand` / `otel/storage.go:executeStorage` | [[UC-030]] |
 | [FL-035](FL-035-a-committed-decision-becomes-a-delivered-effect.md) | A committed decision becomes a delivered effect | `jobs.Enqueue` / `jobs.EnqueueIn` / `jobspg.Driver.Place` | [[UC-031]] |
+| [FL-036](FL-036-a-decision-becomes-a-recorded-fact.md) | A decision becomes a recorded fact | `event.Define` / `event.Bind` / `event.Repo.Load` / `event.Repo.Append` | [[UC-032]] |
 
 ## By file — which flows touch this file
 
@@ -146,7 +148,7 @@ phase 3 landed FL-014 and before phase 5 landed FL-015.
 | `jobs/jobspg/jobspgfx/application.go` | FL-028 |
 | `jobs/jobspg/jobspgfx/jobspgfx.go` | FL-028 |
 | `jobs/jobspg/jobspgfx/retention.go` | FL-028 |
-| `jobs/queue.go` | FL-035 |
+| `jobs/queue.go` | FL-033, FL-035 |
 | `jobs/jobspg/driver.go` | FL-035 |
 | `jobs/jobspg/stager.go` | FL-035 |
 | `jobs/jobspg/config.go` | FL-035 |
@@ -245,6 +247,8 @@ phase 3 landed FL-014 and before phase 5 landed FL-015.
 | `tenancy/tenancyrow/row.go` | FL-033 |
 | `tenancy/tenancydb/database.go` | FL-033 |
 | `tenancy/tenancyjobs/jobs.go` | FL-033 |
+| `jobs/durable_context.go` | FL-033 |
+| `jobs/worker_delivery.go` | FL-033 |
 | `tenancy/tenancystorage/storage.go` | FL-033 |
 | `tenancy/tenancycache/cache.go` | FL-033 |
 | `crud/crudtest/recorder.go` | FL-009, FL-016 |
@@ -439,13 +443,66 @@ phase 3 landed FL-014 and before phase 5 landed FL-015.
 | `auth/access/http/accessfiber/accessfiber.go` | FL-023 |
 | `auth/access/accessjwt/rotation.go` | FL-023 |
 | `auth/access/accessjwt/accessjwt.go` | FL-023 |
+| `auth/access/accessjwt/model.go` | FL-023 |
+| `auth/access/accessjwt/migrations/00001_accessjwt.sql` | FL-023 |
 | `auth/access/accessjwt/authenticator.go` | FL-023, FL-019 |
 | `auth/access/accessjwt/revokeredis/revokeredis.go` | FL-023 |
 | `auth/access/accessjwt/revokeredis/eviction.go` | FL-023 |
 | `auth/access/accessjwt/revokeredis/revokeredisfx/revokeredisfx.go` | FL-023 |
 | `auth/access/access.secret.go` | FL-023 |
+| `auth/access/access.grants.go` | FL-023 |
+| `auth/access/grant.usecases.go` | FL-023 |
 | `utils/vvgoose/provider.go` | FL-022 |
 | `utils/vvgoose/internal/modelscan/` | FL-022 |
+| `event/doc.go` | FL-036 |
+| `event/identity.go` | FL-036 |
+| `event/text.go` | FL-036 |
+| `event/bounds.go` | FL-036 |
+| `event/backing.go` | FL-036 |
+| `event/authority.go` | FL-036 |
+| `event/marker.go` | FL-036 |
+| `event/token.go` | FL-036 |
+| `event/outcome.go` | FL-036 |
+| `event/errors.go` | FL-036 |
+| `event/store.go` | FL-036 |
+| `event/codec.go` | FL-036 |
+| `event/encodable.go` | FL-036 |
+| `event/routing.go` | FL-036 |
+| `event/chain.go` | FL-036 |
+| `event/aggregate.go` | FL-036 |
+| `event/seal.go` | FL-036 |
+| `event/fact.go` | FL-036 |
+| `event/comparison.go` | FL-036 |
+| `event/change.go` | FL-036 |
+| `event/binding.go` | FL-036 |
+| `event/repo.go` | FL-036 |
+| `event/reader.go` | FL-036 |
+| `event/eventmemory/log.go` | FL-036 |
+| `event/eventmemory/store.go` | FL-036 |
+| `event/eventmemory/append.go` | FL-036 |
+| `event/eventmemory/read.go` | FL-036 |
+| `event/eventmemory/cursor.go` | FL-036 |
+| `event/eventmemory/transaction.go` | FL-036 |
+| `event/eventmemory/doc.go` | FL-036 |
+| `event/eventtest/doc.go` | FL-036 |
+| `event/eventtest/suite.go` | FL-036 |
+| `event/eventtest/inventory.go` | FL-036 |
+| `event/eventtest/probe.go` | FL-036 |
+| `event/eventtest/report.go` | FL-036 |
+| `event/eventtest/proxies.go` | FL-036 |
+| `event/eventtest/declaration.go` | FL-036 |
+| `event/eventtest/sections_write.go` | FL-036 |
+| `event/eventtest/sections_read.go` | FL-036 |
+| `event/eventtest/sections_lifecycle.go` | FL-036 |
+| `event/eventtest/sections_transactions.go` | FL-036 |
+| `event/eventtest/sections_resumption.go` | FL-036 |
+| `event/eventtest/sections_ownership.go` | FL-036 |
+| `event/eventtest/defects.go` | FL-036 |
+| `event/eventtest/defects_write.go` | FL-036 |
+| `event/eventtest/defects_read.go` | FL-036 |
+| `event/eventtest/defects_ownership.go` | FL-036 |
+| `event/eventtest/defects_lifecycle.go` | FL-036 |
+| `event/eventtest/stores.go` | FL-036 |
 
 `crud/sqlrepo/repository.go` is in eleven of them. It is the layer everything else
 decorates, and almost no change to it is local.

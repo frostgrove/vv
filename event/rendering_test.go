@@ -1,8 +1,10 @@
 package event
 
 import (
+	"context"
 	"errors"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"unicode"
@@ -74,7 +76,7 @@ func everyRendering(t *testing.T) []rendering {
 	for _, stream := range everyStreamRendering() {
 		rendered = append(rendered, rendering{stream.what, stream.rendered})
 	}
-	return rendered
+	return append(rendered, everyRecordedTypeRendering(t)...)
 }
 
 func mustBack(t *testing.T, identity any) Backing {
@@ -91,11 +93,42 @@ func everyStreamRendering() []rendering {
 	return []rendering{
 		{"a stream", Stream{Family: "accounts.account", Key: key}.String()},
 		{"a stream whose family carries a newline", Stream{Family: "orders\n\tFAKE LOG LINE: admin logged in", Key: key}.String()},
+		{"a stream whose family closes the field it is rendered in", Stream{Family: "orders] admin logged in [stream x", Key: key}.String()},
 		{"a stream whose family is over the name cap", Stream{Family: strings.Repeat("f", MaxNameBytes+1), Key: key}.String()},
 		{"a stream whose family is not valid UTF-8", Stream{Family: "orders\xff\xfe", Key: key}.String()},
 		{"a stream whose family carries a NUL", Stream{Family: "orders\x00admin", Key: key}.String()},
 		{"a stream with no family", Stream{Key: key}.String()},
 	}
+}
+
+func recordedTypeNames() []forbiddenValue {
+	return []forbiddenValue{
+		{"a recorded type name that closes the field the stream is rendered in", "accounts.credited] admin logged in [stream x"},
+		{"a recorded type name that opens a second field", "accounts.credited[stream x"},
+		{"a recorded type name carrying a newline", "accounts.\nFAKE LOG LINE: admin logged in"},
+		{"a recorded type name over the name cap", strings.Repeat("t", MaxNameBytes+1)},
+	}
+}
+
+func refusedRecordedType(t *testing.T, wireType string) error {
+	t.Helper()
+	store := newRecordingStore(t)
+	repo, _ := bindAccounts(t, store)
+	store.history(accountsAt("acme", "A-17"), Record{Type: wireType, Revision: 1, Payload: []byte(`{}`)})
+	_, _, err := repo.Load(context.Background(), accountID{tenant: "acme", number: "A-17"})
+	if !errors.Is(err, ErrUnknownType) {
+		t.Fatalf("a history recording the type name %d bytes long answered %v, so there is no refusal here to render", len(wireType), err)
+	}
+	return err
+}
+
+func everyRecordedTypeRendering(t *testing.T) []rendering {
+	t.Helper()
+	rendered := []rendering{}
+	for _, recorded := range recordedTypeNames() {
+		rendered = append(rendered, rendering{recorded.what, refusedRecordedType(t, recorded.value).Error()})
+	}
+	return rendered
 }
 
 func TestEveryRenderingNamesAClassAndNeverAValue(t *testing.T) {
@@ -215,6 +248,71 @@ func TestEveryRenderingNamesAClassAndNeverAValue(t *testing.T) {
 			}
 			if len(rendered.rendered) > MaxNameBytes {
 				t.Fatalf("%s rendered %d bytes", rendered.what, len(rendered.rendered))
+			}
+		}
+		for _, rendered := range everyStreamRendering() {
+			if strings.Count(rendered.rendered, "[") != 1 || strings.Count(rendered.rendered, "]") != 1 {
+				t.Fatalf("%s rendered %q, which is two fields in one log line: what the renderer opened, the family closed, and everything after it was written by whoever supplied the family",
+					rendered.what, rendered.rendered)
+			}
+		}
+	})
+
+	t.Run("a recorded type name is rendered only when it passed the kernel's own rule", func(t *testing.T) {
+		known := refusedRecordedType(t, "accounts.retired").Error()
+		if !strings.Contains(known, "accounts.retired") {
+			t.Fatalf("a legal type name no declaration knows is not named in %q, so an operator cannot tell which fact the history holds and the cases below are about a name nothing renders", known)
+		}
+		for index, recorded := range everyRecordedTypeRendering(t) {
+			value := recordedTypeNames()[index].value
+			escaped := strconv.Quote(value)
+			if strings.Contains(recorded.rendered, value) || strings.Contains(recorded.rendered, escaped[1:len(escaped)-1]) {
+				t.Fatalf("%s is rendered in %q, and a refusal names the rule that was broken and never the text that broke it", recorded.what, recorded.rendered)
+			}
+		}
+	})
+
+	t.Run("no rendering carries a field the renderer did not open", func(t *testing.T) {
+		if len(fieldOpen) != 1 || len(fieldClose) != 1 {
+			t.Fatalf("a rendered field is framed with %q and %q, and both checkName's ContainsAny and the walk below read them one byte at a time", fieldOpen, fieldClose)
+		}
+		opened := 0
+		for _, rendered := range everyRendering(t) {
+			inside := false
+			for index := range len(rendered.rendered) {
+				switch rendered.rendered[index : index+1] {
+				case fieldOpen:
+					if inside {
+						t.Fatalf("%s rendered %q, where one field opens inside another, so what a log reader parses out of it was written by whoever supplied the value", rendered.what, rendered.rendered)
+					}
+					inside = true
+					opened++
+				case fieldClose:
+					if !inside {
+						t.Fatalf("%s rendered %q, which closes a field nothing opened: everything after it reads as a field of its own", rendered.what, rendered.rendered)
+					}
+					inside = false
+				}
+			}
+			if inside {
+				t.Fatalf("%s rendered %q, which opens a field it never closes", rendered.what, rendered.rendered)
+			}
+		}
+		if opened == 0 {
+			t.Fatal("no rendering opened a bracketed field at all, so the walk above proved nothing about the frame")
+		}
+	})
+
+	t.Run("the identifier rule refuses the characters a field is framed with", func(t *testing.T) {
+		framed := Stream{Family: "accounts.account", Key: "acme/A-17"}.String()
+		for _, delimiter := range []string{framed[:1], framed[len(framed)-1:]} {
+			if _, err := TryDefine[account]("accounts"+delimiter+"account", accountKey); !errors.Is(err, ErrDeclaration) {
+				t.Fatalf("a field is rendered as %q and a family carrying %q was accepted at the declaration, so the rule guards a frame the renderer no longer writes", framed, delimiter)
+			}
+			_, err := TryDeclare(Define[account]("accounts.account", accountKey), "accounts"+delimiter+"opened",
+				From(JSON[opened]()), func(this account, _ opened) account { return this })
+			if !errors.Is(err, ErrDeclaration) {
+				t.Fatalf("a field is rendered as %q and a wire type name carrying %q was accepted at the declaration, so the rule guards a frame the renderer no longer writes", framed, delimiter)
 			}
 		}
 	})

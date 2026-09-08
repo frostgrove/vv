@@ -76,8 +76,16 @@ one path production uses. The forge that would have leaked was never built.
 **Because a durable record is a reference and not an authority.** The job
 identity restorer reads back the reference and the generation the producer wrote,
 and then asks the control plane what is true now. A tenant suspended, deleted or
-restored since the work was enqueued refuses at execution. Queue write access is
-therefore not tenant impersonation, and a backlog does not undo a suspension.
+restored since the work was enqueued refuses at execution. A backlog does not undo
+a suspension.
+
+That lifecycle re-check is all this paragraph ever bought, and the sentence that
+used to stand here — "queue write access is therefore not tenant impersonation" —
+claimed more than it. It held against a *suspended* tenant and not at all against
+an *active* one: the binding was the queue and the definition, so an honest token
+lifted off one row and reattached to a row the attacker wrote verified, and the
+control plane, asked about a tenant that really is active, answered yes. What
+closes that is the record binding in [[D-119]], not this paragraph.
 
 **Why a per-authority salt rather than a signature over a shared key.** There is
 no key to share. A scope never leaves the process — it is a context value, not a

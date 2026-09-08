@@ -95,7 +95,7 @@ func (this Endpoints) SignOutAll(ctx context.Context, everywhere bool) (LogoutRe
 	return LogoutResponse{Revoked: revoked}, err
 }
 
-func (this Endpoints) ChangeSecret(ctx context.Context, body ChangeSecretRequest) (LogoutResponse, error) {
+func (this Endpoints) ChangeSecret(ctx context.Context, body ChangeSecretRequest, agent Agent) (LogoutResponse, error) {
 	principal, err := this.principal(ctx)
 	if err != nil {
 		return LogoutResponse{}, err
@@ -104,6 +104,7 @@ func (this Endpoints) ChangeSecret(ctx context.Context, body ChangeSecretRequest
 		Subject:      principal.Ref,
 		Current:      body.Current,
 		New:          body.New,
+		Agent:        agent,
 		RevokeOthers: body.RevokeOthers,
 		Keep:         principal.SessionID,
 	})

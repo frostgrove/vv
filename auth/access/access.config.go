@@ -22,6 +22,14 @@ type PasswordConfig struct {
 	MinLength int `yaml:"min_length" env:"ACCESS_PASSWORD_MIN_LENGTH" env-default:"10"`
 
 	MaxLength int `yaml:"max_length" env:"ACCESS_PASSWORD_MAX_LENGTH" env-default:"256"`
+
+	// A password change closes the subject's other sessions unless this is set.
+	// It used to be the request body's decision and default to leaving them open,
+	// so the ordinary "change my password because it may be compromised" left
+	// every session an attacker held still signed in — and no deployment could
+	// change that. The body can still ask for revocation when this is set; it
+	// cannot ask to skip it.
+	KeepOtherSessions bool `yaml:"keep_other_sessions" env:"ACCESS_PASSWORD_KEEP_OTHER_SESSIONS" env-default:"false"`
 }
 
 type LoginConfig struct {

@@ -78,6 +78,14 @@ type Principal struct {
 	Roles       []auth.Role
 	Permissions []auth.Permission
 	Profile     Profile
+
+	// The directory could not be asked, so Profile is empty because the answer is
+	// unknown rather than because the subject has none. They used to be the same
+	// value: a directory that was down produced a principal with a blank profile,
+	// and a caller rendering "no display name" could not tell that from a real
+	// one. Authorization is unaffected — roles and permissions come from the
+	// store, not the directory — which is why this is a flag and not a refusal.
+	ProfileUnresolved bool
 }
 
 func (this *Principal) Subject() string { return this.Ref.ID.String() }

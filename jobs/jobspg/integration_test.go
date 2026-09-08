@@ -188,7 +188,7 @@ func TestPostgresVerticalSlice(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	rollbackStager, err := driver.Stager(rollbackTx)
+	rollbackStager, err := driver.Stager(db, rollbackTx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -202,7 +202,7 @@ func TestPostgresVerticalSlice(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	commitStager, err := driver.Stager(commitTx)
+	commitStager, err := driver.Stager(db, commitTx)
 	if err != nil {
 		t.Fatal(err)
 	}

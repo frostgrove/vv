@@ -17,11 +17,23 @@ const MaxListDefinitions = 128
 const DefaultPurgeLimit = 100
 const MaxPurgeLimit = 1000
 
+// After is a keyset cursor: the (CreatedAt, ID) of the last row the caller saw,
+// in the same order List returns. Prefer it to Offset. An offset makes the
+// database walk and discard every row before the page, so the cost of page N
+// grows with N and a namespace with a long retention makes the last pages of the
+// operations view unusable — while a cursor reads the page and nothing else.
+// Offset is kept for the caller who has no previous row to point at.
+type ListCursor struct {
+	CreatedAt time.Time
+	ID        InvocationID
+}
+
 type ListSpec struct {
 	Definitions []Name
 	States      []InvocationState
 	Limit       int
 	Offset      int
+	After       *ListCursor
 }
 
 type Admin interface {

@@ -290,7 +290,15 @@ func (this *jwks) refresh(ctx context.Context) error {
 	this.hasAttempted = true
 	this.mu.Unlock()
 
-	go this.runFetch(context.WithoutCancel(ctx), flight)
+	// Background, not the caller's context. WithoutCancel drops the cancellation
+	// and keeps the *values*, so the shared fetch — and the degraded notice it
+	// queues — ran under whichever request happened to arrive first: its logger,
+	// its tracer, its tenant scope. Every other waiter's key set was then
+	// refreshed under a scope that had nothing to do with them, and the
+	// attribution was whoever lost the race. This is the same rule the cache
+	// keeps for shared flights ([[D-084]]); the timeout below is the framework's
+	// own JWKSFetchTimeout, so nothing is inherited at all.
+	go this.runFetch(context.Background(), flight)
 	return waitForJWKSFetch(ctx, flight)
 }
 

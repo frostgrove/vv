@@ -369,21 +369,31 @@ func (c ContextCapture) valid() bool {
 	return (c.tenant.IsZero() || c.tenant.valid()) && (c.actor.IsZero() || c.actor.valid()) && (c.token.IsZero() || c.token.valid()) && c.provenance.valid() && c.epoch.valid() && c.trace.valid()
 }
 
+// The candidate and the wire digest are what make a capture answerable about one
+// record rather than about a queue: a provider that mints a token binds them, and
+// the same two values are handed back at restoration, so a token lifted off one
+// row and reattached to another verifies against neither. They are settled before
+// the capture runs — the payload is encoded and the identifier minted first — for
+// exactly this reason.
 type ContextCaptureRequest struct {
 	namespace  Namespace
 	definition Name
 	partition  PartitionMode
+	candidate  InvocationID
+	wire       WireDigest
 }
 
 func (r ContextCaptureRequest) Namespace() Namespace     { return r.namespace }
 func (r ContextCaptureRequest) Definition() Name         { return r.definition }
 func (r ContextCaptureRequest) Partition() PartitionMode { return r.partition }
+func (r ContextCaptureRequest) Candidate() InvocationID  { return r.candidate }
+func (r ContextCaptureRequest) WireDigest() WireDigest   { return r.wire }
 func (r ContextCaptureRequest) String() string           { return "[job context capture request]" }
 func (r ContextCaptureRequest) Format(state fmt.State, _ rune) {
 	_, _ = fmt.Fprint(state, r.String())
 }
 func (r ContextCaptureRequest) valid() bool {
-	return r.namespace.valid() && r.definition.valid() && r.partition.Valid()
+	return r.namespace.valid() && r.definition.valid() && r.partition.Valid() && r.candidate.valid() && r.wire.valid()
 }
 
 type TrustedContextProvider interface {
@@ -428,14 +438,18 @@ type IdentityRestoreRequest struct {
 	namespace   Namespace
 	partition   PartitionKey
 	definition  Name
+	invocation  InvocationID
+	wire        WireDigest
 	tracePolicy TracePolicy
 	durable     DurableContext
 }
 
-func (r IdentityRestoreRequest) Namespace() Namespace    { return r.namespace }
-func (r IdentityRestoreRequest) Partition() PartitionKey { return r.partition }
-func (r IdentityRestoreRequest) Definition() Name        { return r.definition }
-func (r IdentityRestoreRequest) Scope() ContextScope     { return r.durable.scope }
+func (r IdentityRestoreRequest) Namespace() Namespace     { return r.namespace }
+func (r IdentityRestoreRequest) Partition() PartitionKey  { return r.partition }
+func (r IdentityRestoreRequest) Definition() Name         { return r.definition }
+func (r IdentityRestoreRequest) Invocation() InvocationID { return r.invocation }
+func (r IdentityRestoreRequest) WireDigest() WireDigest   { return r.wire }
+func (r IdentityRestoreRequest) Scope() ContextScope      { return r.durable.scope }
 func (r IdentityRestoreRequest) Tenant() (TenantIdentity, bool) {
 	return r.durable.Tenant()
 }
@@ -455,7 +469,7 @@ func (IdentityRestoreRequest) MarshalJSON() ([]byte, error) {
 	return nil, fmt.Errorf("%w: identity restore request cannot be serialized", ErrUnsupported)
 }
 func (r IdentityRestoreRequest) valid() bool {
-	return r.durable.validFor(r.namespace, r.partition, r.definition, r.tracePolicy)
+	return r.invocation.valid() && r.wire.valid() && r.durable.validFor(r.namespace, r.partition, r.definition, r.tracePolicy)
 }
 
 type TrustedIdentityRestorer interface {
@@ -645,8 +659,8 @@ func (c DurableContext) Actor() (ActorIdentity, bool) {
 func (c DurableContext) Token() (ProtectedIdentityToken, bool) {
 	return ProtectedIdentityToken{value: c.token.Bytes()}, !c.token.IsZero()
 }
-func (c DurableContext) IdentityRestoreRequest(namespace Namespace, partition PartitionKey, definition Name, policy TracePolicy) (IdentityRestoreRequest, error) {
-	request := IdentityRestoreRequest{namespace: namespace, partition: partition, definition: definition, tracePolicy: policy, durable: c}
+func (c DurableContext) IdentityRestoreRequest(namespace Namespace, partition PartitionKey, definition Name, invocation InvocationID, wire WireDigest, policy TracePolicy) (IdentityRestoreRequest, error) {
+	request := IdentityRestoreRequest{namespace: namespace, partition: partition, definition: definition, invocation: invocation, wire: wire, tracePolicy: policy, durable: c}
 	if !request.valid() {
 		return IdentityRestoreRequest{}, invalid("identity restore request")
 	}

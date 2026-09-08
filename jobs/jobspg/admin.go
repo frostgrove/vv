@@ -25,6 +25,7 @@ type normalizedListSpec struct {
 	states      []jobs.InvocationState
 	limit       int
 	offset      int
+	after       *jobs.ListCursor
 }
 
 type redriveRecord struct {
@@ -255,5 +256,16 @@ func normalizeListSpec(spec ListSpec) (normalizedListSpec, error) {
 		}
 		seenStates[state] = struct{}{}
 	}
-	return normalizedListSpec{definitions: definitions, states: states, limit: limit, offset: spec.Offset}, nil
+	var after *jobs.ListCursor
+	if spec.After != nil {
+		if spec.After.ID.IsZero() || spec.After.CreatedAt.IsZero() {
+			return normalizedListSpec{}, jobs.ErrInvalid
+		}
+		if spec.Offset != 0 {
+			return normalizedListSpec{}, fmt.Errorf("%w: a cursor and an offset name two different pages", jobs.ErrInvalid)
+		}
+		copied := *spec.After
+		after = &copied
+	}
+	return normalizedListSpec{definitions: definitions, states: states, limit: limit, offset: spec.Offset, after: after}, nil
 }

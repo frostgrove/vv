@@ -315,3 +315,47 @@ func TestAScopeHasNothingAnybodyCanWriteThrough(t *testing.T) {
 		t.Fatal("copying a scope changed it")
 	}
 }
+
+// Unbound exists so a durable record naming no tenant does not inherit whatever
+// the worker's base context happened to hold. It is not a way out of the pin: if
+// it cleared that too, then bind-A, Unbound, bind-B would be a supported,
+// capability-free re-target of work that has already chosen its narrowing or its
+// datasource, and ErrPinned would be advice rather than a refusal.
+func TestUnbindingIsNotAWayToRetargetBoundWork(t *testing.T) {
+	epoch, err := tenancy.NewEpoch(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	current := &tenancy.Resolution{Reference: reference(t, secretReference), Lifecycle: tenancy.Active, Epoch: epoch}
+	authority, err := tenancy.New(tenancy.Spec{Resolver: switchable{current: current}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	bound, err := authority.Bind(context.Background(), tenancy.ClassWrite)
+	if err != nil {
+		t.Fatal(err)
+	}
+	released := tenancy.Unbound(bound)
+
+	// The control, and the whole point of Unbound: the scope really is gone, so
+	// the refusal below is the pin rather than a scope that never left.
+	if _, still := tenancy.From(released); still {
+		t.Fatal("Unbound left the scope in the context, so nothing here is tested")
+	}
+	if _, err := authority.Scope(released, tenancy.ClassRead); !errors.Is(err, tenancy.ErrNoScope) {
+		t.Fatalf("err = %v, want ErrNoScope — unbound work reached a tenant", err)
+	}
+
+	current.Reference = reference(t, "globex-1a2b")
+	if _, err := authority.Bind(released, tenancy.ClassWrite); !errors.Is(err, tenancy.ErrPinned) {
+		t.Fatalf("err = %v, want ErrPinned — bind, unbind, bind re-targeted a unit of work at another tenant", err)
+	}
+
+	// And the tenant it was bound to can still be re-entered, so the pin is a pin
+	// and not a one-shot poison of the context.
+	current.Reference = reference(t, secretReference)
+	if _, err := authority.Bind(released, tenancy.ClassWrite); err != nil {
+		t.Fatalf("the tenant this work was bound to could not re-enter it: %v", err)
+	}
+}

@@ -47,7 +47,8 @@ func (this *Repo[S, ID]) Load(ctx context.Context, id ID) (S, At[S], error) {
 //
 //  1. the token's own key, against the kernel's text rules and the MaxKey
 //     retained at Bind — neither of which touches the store
-//  2. every change's stream against the token's
+//  2. every change's stream against the token's, and the aggregate it was
+//     decided on against this repository's
 //  3. each change's own carried refusal
 //  4. the store's bounds: the payload per record, the batch count, and the
 //     bytes this append would hold at once
@@ -72,7 +73,7 @@ func (this *Repo[S, ID]) Append(ctx context.Context, at At[S], changes ...Change
 		return at, Commit{stream: at.stream, last: at.version}, nil
 	}
 	for _, change := range changes {
-		if err := change.decidedFor(at.stream); err != nil {
+		if err := change.decidedFor(at.stream, this.aggregate); err != nil {
 			return at, Commit{}, err
 		}
 	}
@@ -251,11 +252,13 @@ func (this *Repo[S, ID]) checkPage(page []Envelope, stream Stream, after Version
 // A store's strings and numbers are checked before the kernel uses them for
 // anything, a rendering included, because a store is a shared database, a
 // restored dump or another service's writer. A type name that breaks the
-// identifier rule names no declared fact and can name none, so it is the same
-// refusal a legal-but-unknown name gets — and it does not travel, which is what
-// keeps a megabyte of it out of a log line.
+// declared-identifier rule names no declared fact and can name none — no
+// declaration could have produced it — so it is the same refusal a
+// legal-but-unknown name gets, and it does not travel, which is what keeps a
+// megabyte of it, a newline in it, or a bracket that would forge a second field
+// out of a log line.
 func (this *Repo[S, ID]) apply(state S, envelope Envelope) (S, error) {
-	if broken := checkText(envelope.Type, MaxNameBytes); broken != "" {
+	if broken := checkName(envelope.Type); broken != "" {
 		return state, fmt.Errorf("%w: %s recorded a type name of %d bytes that %s", ErrUnknownType, envelope.Stream, len(envelope.Type), broken)
 	}
 	fold, declared := this.aggregate.facts[envelope.Type]

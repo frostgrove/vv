@@ -2,6 +2,7 @@ package access
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"maps"
@@ -57,6 +58,16 @@ func syncPermissions(ctx context.Context, store *Store, declared []ModuleGrants)
 				Name:   cmpOr(permissionDefinition.Name, string(permissionDefinition.Code)),
 				Module: module.Module,
 			})
+			if declaredByAPeer(err) {
+				// Another replica started at the same time and declared it first.
+				// That is the same outcome this call wanted, so read theirs.
+				existing, readErr := store.PermissionByCode(ctx, permissionDefinition.Code)
+				if readErr != nil {
+					return nil, fmt.Errorf("access: declaring permission %q: %w", permissionDefinition.Code, err)
+				}
+				byCode[permissionDefinition.Code] = existing.ID
+				continue
+			}
 			if err != nil {
 				return nil, fmt.Errorf("access: declaring permission %q: %w", permissionDefinition.Code, err)
 			}
@@ -95,10 +106,26 @@ func ensureRole(ctx context.Context, store *Store, slug auth.Role) (Role, error)
 		Name:     string(slug),
 		IsSystem: true,
 	})
+	if declaredByAPeer(err) {
+		existing, readErr := store.RoleBySlug(ctx, slug)
+		if readErr != nil {
+			return Role{}, fmt.Errorf("access: seeding role %q: %w", slug, err)
+		}
+		return existing, nil
+	}
 	if err != nil {
 		return Role{}, fmt.Errorf("access: seeding role %q: %w", slug, err)
 	}
 	return saved, nil
+}
+
+// Every write here is a check-then-insert, and replicas start together. A unique
+// violation therefore means a peer declared the same thing between the read and
+// the write — which is the outcome this call wanted — rather than a failure. It
+// used to fail the OnStart hook, so a rolling deploy of two replicas could
+// refuse to start.
+func declaredByAPeer(err error) bool {
+	return err != nil && (errors.Is(err, crud.ErrConflict) || errors.Is(err, crud.ErrCreateRaced))
 }
 
 func attachAll(ctx context.Context, store *Store, role Role, want []auth.Permission, byCode map[auth.Permission]uuid.UUID) error {
@@ -119,7 +146,8 @@ func attachAll(ctx context.Context, store *Store, role Role, want []auth.Permiss
 		if _, duplicate := have[permissionID]; duplicate {
 			continue
 		}
-		if err := store.RolePermissions.SaveOnly(ctx, &RolePermission{RoleID: role.ID, PermissionID: permissionID}); err != nil {
+		err := store.RolePermissions.SaveOnly(ctx, &RolePermission{RoleID: role.ID, PermissionID: permissionID})
+		if err != nil && !declaredByAPeer(err) {
 			return fmt.Errorf("access: granting %q to %q: %w", code, role.Slug, err)
 		}
 	}

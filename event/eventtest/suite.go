@@ -88,6 +88,21 @@ type Factory struct {
 	Window time.Duration
 }
 
+// Everything a run reports beyond the section list is one of these, and they are
+// named rather than written where they are reported because this suite's own
+// tests read them back out of a run: a Run whose reporting was deleted certifies
+// a store nothing was asked of, which is the one failure this package exists to
+// prevent and the one it cannot see from inside the process it reports on.
+const (
+	buildsNoStore    = "eventtest: this factory builds no store, so there is nothing to certify"
+	answersNoStore   = "eventtest: this factory answered no store"
+	certifiedNothing = "eventtest: this run certified nothing — every section it ran was reported not certified, and a green run over a store that was tested on nothing is evidence of nothing"
+)
+
+func noVerdictFrom(section string) string {
+	return "eventtest: the " + section + " section reported no verdict at all, so the run left the section before it could reach one and nothing it would have asked was asked"
+}
+
 func Run(t *testing.T, factory Factory) {
 	verdicts := sweep(t, factory, inventory(), func(t *testing.T, given verdict) {
 		t.Log(given.line())
@@ -97,11 +112,11 @@ func Run(t *testing.T, factory Factory) {
 	})
 	for _, given := range verdicts {
 		if given.word == unreported {
-			t.Errorf("eventtest: the %s section reported no verdict at all, so the run left the section before it could reach one and nothing it would have asked was asked", given.section)
+			t.Error(noVerdictFrom(given.section))
 		}
 	}
 	if certified(verdicts) == 0 {
-		t.Error("eventtest: this run certified nothing — every section it ran was reported not certified, and a green run over a store that was tested on nothing is evidence of nothing")
+		t.Error(certifiedNothing)
 	}
 }
 
@@ -155,11 +170,11 @@ type opening struct {
 // this suite's requirement rather than the store's defect.
 func admit(t *testing.T, factory Factory, sections []section) opening {
 	if factory.New == nil {
-		t.Fatal("eventtest: this factory builds no store, so there is nothing to certify")
+		t.Fatal(buildsNoStore)
 	}
 	store := factory.New(t)
 	if store == nil {
-		t.Fatal("eventtest: this factory answered no store")
+		t.Fatal(answersNoStore)
 	}
 	capabilities := store.Capabilities()
 	if broken := missing(capabilities, factory); broken != "" {
@@ -218,12 +233,16 @@ const (
 	narrowestRunName = 4
 )
 
+func narrowKey(maxKey, needed int) string {
+	return fmt.Sprintf("eventtest: this store publishes a MaxKey of %d and this suite needs %d of it — %d for the narrowest run identity it will tell its own streams from another run's by, and %d for its own section marks and labels",
+		maxKey, needed, 2*narrowestRunName, needed-2*narrowestRunName)
+}
+
 func runIdentity(t *testing.T, maxKey, reserved int) string {
 	t.Helper()
 	width := min(identityBytes, (maxKey-reserved)/2)
 	if width < narrowestRunName {
-		t.Fatalf("eventtest: this store publishes a MaxKey of %d and this suite needs %d of it — %d for the narrowest run identity it will tell its own streams from another run's by, and %d for its own section marks and labels",
-			maxKey, 2*narrowestRunName+reserved, 2*narrowestRunName, reserved)
+		t.Fatal(narrowKey(maxKey, 2*narrowestRunName+reserved))
 	}
 	identity := make([]byte, width)
 	if _, err := rand.Read(identity); err != nil {

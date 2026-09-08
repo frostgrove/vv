@@ -14,15 +14,22 @@
 // it and where a caller branches on it. A claim is refused at once rather than
 // waited for, so two transactions taking two streams in opposite orders refuse
 // each other instead of deadlocking, and a transaction held open across a
-// network call starves every other writer of its streams. A transaction that is
-// never committed and never rolled back holds its claims and its staged records
-// for the life of the process: nothing reclaims them, and every later append to
-// those streams is refused as a conflict that will never clear.
+// network call starves every other writer of its streams. A claim names its
+// transaction weakly, so a transaction that is never committed and never rolled
+// back holds its claims and its staged records only until the runtime collects
+// it: nothing can reach it, so it can never be committed or appended to, and the
+// next append to one of its streams drops the claim and is admitted. Until then
+// those appends are conflicts. Reachability is the whole of the rule, so what
+// still names the transaction still claims: the *Tx, and a context carrying it
+// that outlives the request. The commit receipt does not — the authority names
+// this store's own name for the transaction rather than the *Tx.
 //
 // A Tx may be used from more than one goroutine, and a context may carry one
 // transaction per log: an append or a read on a transaction another goroutine
 // has just finished is refused, and a transaction of another log neither
-// shadows this store's own nor is mistaken for it.
+// shadows this store's own nor is mistaken for it. Every door looks that
+// transaction up before it takes the log's lock, because ctx.Value is the
+// caller's own code, and asks only whether it is still live inside.
 //
 // A position is assigned at commit, inside the one critical section that
 // publishes, so commit order is position order and the newest position is the

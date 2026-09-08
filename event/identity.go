@@ -19,14 +19,15 @@ type Stream struct {
 }
 
 // A family that arrived on an envelope is a store's data and not a declared
-// identifier, so it is rendered only when it passes the kernel's own text rule.
-// Otherwise this is the refusal that a forged log line, a newline or a megabyte
-// of family name would have travelled in.
+// identifier, so it is rendered only when it passes the rule a declaration is
+// held to. Otherwise this is the refusal that a forged log line, a second
+// bracketed field, a newline or a megabyte of family name would have travelled
+// in.
 func (this Stream) String() string {
-	if checkText(this.Family, MaxNameBytes) != "" {
-		return "[stream unnameable]"
+	if checkName(this.Family) != "" {
+		return fieldOpen + "stream unnameable" + fieldClose
 	}
-	return "[stream " + this.Family + "]"
+	return fieldOpen + "stream " + this.Family + fieldClose
 }
 
 const (

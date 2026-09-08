@@ -202,3 +202,33 @@ func TestATagIsAValidatedValue(t *testing.T) {
 		t.Fatalf("NewTag() = %v, %v", tag.Value(), err)
 	}
 }
+
+// TagInvalidator hands the backend a Namespace and expects it to find the
+// addresses written under it. Every field of a Namespace was unexported, and an
+// Address carries digests — so a backend outside this package had no way to
+// correlate the two, and the capability was one only a package-local backend
+// could ever advertise.
+func TestABackendCanCorrelateANamespaceWithTheAddressesUnderIt(t *testing.T) {
+	namespace, err := NamespaceOf("app", "test", "tags", Generation(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	keys := MustKeyFunc(KeyVersion(1), func(key string, _ KeyLimit) ([]byte, error) { return []byte(key), nil })
+	address, _, err := addressOf(Global[string](namespace), keys, KeyVersion(1), "key", 128)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if namespace.Digest() != address.NamespaceDigest {
+		t.Fatal("a namespace cannot be matched to the addresses written under it, so TagInvalidator is unimplementable outside this package")
+	}
+
+	// The control: a different namespace does not match, so the equality above
+	// is an identity rather than everything comparing equal.
+	other, err := NamespaceOf("app", "test", "other", Generation(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if other.Digest() == address.NamespaceDigest {
+		t.Fatal("two namespaces share a digest")
+	}
+}

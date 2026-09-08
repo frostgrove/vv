@@ -25,7 +25,7 @@ func TryDeclare[S, ID, E any](a *Aggregate[S, ID], name string, chain Chain[E], 
 	if a == nil {
 		return nil, fmt.Errorf("%w: a fact is declared on an aggregate and %q names none", ErrDeclaration, name)
 	}
-	if broken := checkText(name, MaxNameBytes); broken != "" {
+	if broken := checkName(name); broken != "" {
 		return nil, fmt.Errorf("%w: a wire type name on the aggregate %q %s", ErrDeclaration, a.family, broken)
 	}
 	if fold == nil {
@@ -56,7 +56,7 @@ func (this *Fact[S, ID, E]) Revisions() int { return len(this.chain.links) }
 // the store is reached, and Fold surfaces it rather than folding nothing.
 func (this *Fact[S, ID, E]) New(id ID, payload E) Change[S] {
 	this.aggregate.seal()
-	change := Change[S]{name: this.name, revision: len(this.chain.links), apply: this.apply}
+	change := Change[S]{origin: this.aggregate, name: this.name, revision: len(this.chain.links), apply: this.apply}
 	stream, err := this.aggregate.locate(id)
 	if err != nil {
 		change.err = err
@@ -85,7 +85,16 @@ func (this *Fact[S, ID, E]) New(id ID, payload E) Change[S] {
 // that revision's own reader and compared with the sample in the revision's own
 // type, so a codec that drops part of what it was given, one that cannot decode
 // its own output, and an upcaster that refuses a legal historical value are all
-// found before a stream contains one.
+// found before a stream contains one. What the value comparison cannot answer it
+// does not pass over: a struct with no exported field, no Equal of its own and
+// no == is settled at the wire instead, by encoding what came back and comparing
+// it with the bytes the sample encoded to — a question that needs no method and
+// so can be asked of a big.Int, which no repair the caller could make would
+// answer. Only a leaf no wire format records at all, a func, is refused
+// (ErrSample), because there both answers are silent. A value the codec
+// substituted for another — reachable only behind an interface, where the two
+// have different types — is a difference, except between two numbers holding one
+// value, which is what any wire format with a single number type produces.
 //
 // Non-aliasing: the same bytes are decoded twice, from two separate input
 // buffers, and the two answers are searched for a slice or a map they share. A
@@ -100,8 +109,14 @@ func (this *Fact[S, ID, E]) New(id ID, payload E) Change[S] {
 // converts and therefore copies: compared after one, an aliasing revision-1
 // codec behind a copying upcaster passes, and only the last revision of a chain
 // is ever under test. A sample that encodes exactly as that zero value cannot
-// disturb anything and is refused as a sample rather than reported as a pass,
-// because it proves nothing about fidelity either.
+// disturb anything and is refused as a sample rather than reported as a pass —
+// unless the reader type holds exactly one value, which is what a marker fact
+// carries and what leaves the caller no other sample to give. Then fidelity is
+// proved and the non-aliasing half is not run, because there is no second
+// payload for the codec to reuse memory between.
+//
+// Both walks are bounded and neither can answer for a value it did not reach,
+// so a sample larger than the bound is refused rather than half-compared.
 func (this *Fact[S, ID, E]) RoundTrip(byRevision ...any) ([]E, error) {
 	this.aggregate.seal()
 	if len(byRevision) != len(this.chain.links) {
@@ -118,110 +133,80 @@ func (this *Fact[S, ID, E]) RoundTrip(byRevision ...any) ([]E, error) {
 	return carried, nil
 }
 
+type roundTripping[V any] struct {
+	read     link[V]
+	written  []byte
+	zero     []byte
+	revision int
+}
+
 func (this *Fact[S, ID, E]) roundTrip(index int, sample any) (E, error) {
 	var none E
-	read := this.chain.links[index]
-	revision := index + 1
-	if !read.accepts(sample) {
-		return none, fmt.Errorf("%w: revision %d of %q reads %s and the sample is a %T", ErrSample, revision, this.name, read.typeName, sample)
+	carried := roundTripping[E]{read: this.chain.links[index], revision: index + 1}
+	if !carried.read.accepts(sample) {
+		return none, fmt.Errorf("%w: revision %d of %q reads %s and the sample is a %T", ErrSample, carried.revision, this.name, carried.read.typeName, sample)
 	}
-	written, err := read.selfEncode(sample)
+	written, err := carried.read.selfEncode(sample)
 	if err != nil {
 		return none, err
 	}
-	written = bytes.Clone(written)
-	zero, err := read.selfZero()
+	carried.written = bytes.Clone(written)
+	zero, err := carried.read.selfZero()
 	if err != nil {
 		return none, err
 	}
-	zero = bytes.Clone(zero)
-	if bytes.Equal(written, zero) {
-		return none, fmt.Errorf("%w: revision %d of %q encodes its sample exactly as its own zero value, so nothing a second read could disturb is under test", ErrSample, revision, this.name)
+	carried.zero = bytes.Clone(zero)
+	disturbs := !bytes.Equal(carried.written, carried.zero)
+	if !disturbs && !singleValued(reflect.TypeOf(sample)) {
+		return none, fmt.Errorf("%w: revision %d of %q encodes its sample exactly as its own zero value, so nothing a second read could disturb is under test", ErrSample, carried.revision, this.name)
 	}
-	own, err := read.selfDecode(bytes.Clone(written))
+	own, err := carried.read.selfDecode(bytes.Clone(carried.written))
 	if err != nil {
 		return none, err
 	}
-	reused, err := reusesItsBuffer(read, own, written, zero)
-	if err != nil {
+	if disturbs {
+		if err := this.notAliased(carried, own); err != nil {
+			return none, err
+		}
+	}
+	if err := this.readBack(carried, own, sample); err != nil {
 		return none, err
+	}
+	return carried.read.decode(carried.written)
+}
+
+func (this *Fact[S, ID, E]) notAliased(carried roundTripping[E], own any) error {
+	walk := valueWalk{budget: valueWalkNodes}
+	reused, err := reusesItsBuffer(carried, own, &walk)
+	if err != nil {
+		return err
 	}
 	if reused {
-		return none, fmt.Errorf("%w: revision %d of %q decoded into memory its codec reuses, so reading the next payload rewrote the value it had already returned", ErrPayload, revision, this.name)
+		return fmt.Errorf("%w: revision %d of %q decoded into memory its codec reuses, so reading the next payload rewrote the value it had already returned", ErrPayload, carried.revision, this.name)
 	}
-	budget := codecGraphNodes
-	if !sameValue(reflect.ValueOf(own), reflect.ValueOf(sample), &budget) {
-		return none, fmt.Errorf("%w: revision %d of %q does not read back the %s it was given: what the sample encoded to decodes to a different value, so a fact recorded through it loses what no load can recover", ErrPayload, revision, this.name, read.typeName)
-	}
-	return read.decode(written)
+	return walk.unanswered(carried.revision, this.name)
 }
 
-func reusesItsBuffer[V any](read link[V], own any, written, zero []byte) (bool, error) {
-	second, err := read.selfDecode(bytes.Clone(written))
+func (this *Fact[S, ID, E]) readBack(carried roundTripping[E], own, sample any) error {
+	walk := valueWalk{budget: valueWalkNodes}
+	if !walk.same(reflect.ValueOf(own), reflect.ValueOf(sample)) {
+		return fmt.Errorf("%w: revision %d of %q does not read back the %s it was given: what the sample encoded to decodes to a different value, so a fact recorded through it loses what no load can recover", ErrPayload, carried.revision, this.name, carried.read.typeName)
+	}
+	if err := walk.unanswered(carried.revision, this.name); err != nil {
+		return err
+	}
+	if walk.opaque == "" {
+		return nil
+	}
+	same, err := readsBackOnTheWire(carried, own)
 	if err != nil {
-		return false, err
+		return err
 	}
-	budget := codecGraphNodes
-	if sharesMemory(reflect.ValueOf(own), reflect.ValueOf(second), &budget) {
-		return true, nil
+	if same {
+		return nil
 	}
-	before, err := read.selfEncode(own)
-	if err != nil {
-		return false, err
-	}
-	before = bytes.Clone(before)
-	if _, err := read.selfDecode(zero); err != nil {
-		return false, err
-	}
-	after, err := read.selfEncode(own)
-	if err != nil {
-		return false, err
-	}
-	return !bytes.Equal(before, after), nil
+	return fmt.Errorf("%w: revision %d of %q does not read back the %s it was given: nothing can compare the %s it carries, so what came back was encoded again and the bytes are not the ones the sample encoded to, and a fact recorded through it loses what no load can recover", ErrPayload, carried.revision, this.name, carried.read.typeName, walk.opaque)
 }
-
-// Two values a codec returned for one payload, walked in step for a slice or a
-// map they hold in common. Only the exported half of a struct is walked: an
-// unexported field is the application's own business, and a decoded value
-// carrying a pointer to something a package holds forever — a time zone, an
-// interned constant — is ordinary and is not the reuse this asks about. An
-// empty slice has no address of its own to compare.
-func sharesMemory(first, second reflect.Value, budget *int) bool {
-	if *budget <= 0 || !first.IsValid() || !second.IsValid() || first.Kind() != second.Kind() {
-		return false
-	}
-	*budget--
-	switch first.Kind() {
-	case reflect.Slice, reflect.Map:
-		if first.Len() > 0 && second.Len() > 0 && first.UnsafePointer() == second.UnsafePointer() {
-			return true
-		}
-	case reflect.Pointer, reflect.Interface:
-		return !first.IsNil() && !second.IsNil() && sharesMemory(first.Elem(), second.Elem(), budget)
-	}
-	switch first.Kind() {
-	case reflect.Slice, reflect.Array:
-		for index := range min(first.Len(), second.Len()) {
-			if sharesMemory(first.Index(index), second.Index(index), budget) {
-				return true
-			}
-		}
-	case reflect.Map:
-		for _, key := range first.MapKeys() {
-			if sharesMemory(first.MapIndex(key), second.MapIndex(key), budget) {
-				return true
-			}
-		}
-	case reflect.Struct:
-		for index := range first.NumField() {
-			if first.Type().Field(index).IsExported() && sharesMemory(first.Field(index), second.Field(index), budget) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
 func applierOf[S, E any](chain Chain[E], fold func(S, E) S) func(S, int, []byte) (S, error) {
 	return func(state S, revision int, payload []byte) (S, error) {
 		if revision < 1 || revision > len(chain.links) {
@@ -233,80 +218,4 @@ func applierOf[S, E any](chain Chain[E], fold func(S, E) S) func(S, int, []byte)
 		}
 		return fold(state, value), nil
 	}
-}
-
-// The sample and what the codec read back, compared the way a recorded fact
-// makes it matter. reflect.DeepEqual is the wrong comparison here and answers
-// false for two payloads nothing is wrong with: a time.Time carries a monotonic
-// reading and a location that no encoding preserves and that its own Equal says
-// are not the difference, and an unexported field is not what was recorded. So
-// the walk asks the type's own Equal method wherever it declares one, compares
-// the exported half of a struct, treats two NaNs as one value because a codec
-// that carries them is not the failure this looks for, and runs out of budget in
-// the caller's favour — this refuses a declaration, so what it cannot answer it
-// does not accuse.
-func sameValue(first, second reflect.Value, budget *int) bool {
-	if *budget <= 0 {
-		return true
-	}
-	*budget--
-	if !first.IsValid() || !second.IsValid() || first.Kind() != second.Kind() {
-		return first.IsValid() == second.IsValid()
-	}
-	if answered, asked := equalByMethod(first, second); asked {
-		return answered
-	}
-	switch first.Kind() {
-	case reflect.Struct:
-		for index := range first.NumField() {
-			if first.Type().Field(index).IsExported() && !sameValue(first.Field(index), second.Field(index), budget) {
-				return false
-			}
-		}
-	case reflect.Slice, reflect.Array:
-		return first.Len() == second.Len() && sameElements(first, second, budget)
-	case reflect.Map:
-		return first.Len() == second.Len() && sameEntries(first, second, budget)
-	case reflect.Pointer, reflect.Interface:
-		if first.IsNil() || second.IsNil() {
-			return first.IsNil() == second.IsNil()
-		}
-		return sameValue(first.Elem(), second.Elem(), budget)
-	case reflect.Float32, reflect.Float64:
-		held, read := first.Float(), second.Float()
-		return held == read || (held != held && read != read)
-	default:
-		return !first.Comparable() || first.Equal(second)
-	}
-	return true
-}
-
-func sameElements(first, second reflect.Value, budget *int) bool {
-	for index := range first.Len() {
-		if !sameValue(first.Index(index), second.Index(index), budget) {
-			return false
-		}
-	}
-	return true
-}
-
-func sameEntries(first, second reflect.Value, budget *int) bool {
-	for _, key := range first.MapKeys() {
-		if !sameValue(first.MapIndex(key), second.MapIndex(key), budget) {
-			return false
-		}
-	}
-	return true
-}
-
-func equalByMethod(first, second reflect.Value) (bool, bool) {
-	equal := first.MethodByName("Equal")
-	if !equal.IsValid() {
-		return false, false
-	}
-	asked := equal.Type()
-	if asked.NumIn() != 1 || asked.In(0) != first.Type() || asked.NumOut() != 1 || asked.Out(0).Kind() != reflect.Bool {
-		return false, false
-	}
-	return equal.Call([]reflect.Value{second})[0].Bool(), true
 }

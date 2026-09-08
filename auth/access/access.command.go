@@ -29,7 +29,13 @@ type LoginCommand struct {
 
 type Agent struct {
 	UserAgent string
-	IP        string
+
+	// A bare address, with no port. Gin and Fiber hand one over already;
+	// net/http's RemoteAddr is "host:port" and used to be stored verbatim, so the
+	// same client produced a different Attempt.IP on each binding and anything
+	// grouping attempts by address — a lockout, a report, an alert — grouped by
+	// ephemeral port instead, which never repeats.
+	IP string
 }
 
 const MaxUserAgent = 256
@@ -54,6 +60,12 @@ type ChangePasswordCommand struct {
 	Subject SubjectRef
 	Current string
 	New     string
+
+	// The caller, for the same limiter and observer that guard sign-in. Without
+	// it the current-password check was an unlimited, unobserved oracle behind a
+	// valid session: an attacker with a stolen access token could guess the
+	// password at full speed, and nothing counted it.
+	Agent Agent
 
 	RevokeOthers bool
 	Keep         uuid.UUID

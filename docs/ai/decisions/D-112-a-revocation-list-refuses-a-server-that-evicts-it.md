@@ -91,7 +91,9 @@ eviction check is therefore also the reachability check `Ping` was written for.
 
 - `auth/access/accessjwt/revokeredis/eviction.go` — `EvictionPolicy` the type and
   the method, `Verdict`, `VerifyEvictionPolicy`, `UnknownPolicy` with
-  `OnUnknownPolicy`, and the warning `report` writes.
+  `OnUnknownPolicy`, the warning `report` writes, and `nodeEvictionPolicy` /
+  `worseEviction` — the per-master walk and the ranking that makes one evicting
+  node an evicting deployment.
 - `auth/access/accessjwt/revokeredis/revokeredis.go` — `Ping` and
   `ErrUnreachable`, which the unknown branch leans on.
 - `auth/access/accessjwt/revokeredis/revokeredisfx/revokeredisfx.go` — `Auto`,
@@ -111,6 +113,10 @@ eviction check is therefore also the reachability check `Ping` was written for.
   `TestAServerThatWillNotAnswerIsUnknownAndSaidOutLoud` drives both shapes of
   refusal a managed Redis produces — a `NOPERM` and a disabled command — and
   asserts a `WARN` was written rather than nothing.
+  `TestOneEvictingNodeMakesTheWholeClusterEvicting` is the multi-node case: a
+  cluster whose nodes disagree is refused, with the all-`noeviction` cluster as
+  its control, because a single `CONFIG GET` against one node passed while the
+  node holding a session's key evicted it.
   `TestADeploymentCanTurnAnUnknownEvictionPolicyIntoARefusal` pins the opt-in and
   that the same event is not both logged and returned.
   `TestAServerThatIsNotThereIsRefusedRatherThanCalledUnknown` is the reachability

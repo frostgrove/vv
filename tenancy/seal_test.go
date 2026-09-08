@@ -89,10 +89,10 @@ func TestOnlyAScopeThisAuthorityMintedIsSealed(t *testing.T) {
 	mine, _ := sealingAuthority(t, durableTestKey, "acme", 1)
 	_, theirs := sealingAuthority(t, durableTestKey, "acme", 1)
 
-	if _, err := sealerOf(t, mine).Seal(theirs); !errors.Is(err, ErrUntrusted) {
+	if _, err := sealerOf(t, mine).Seal(context.Background(), theirs); !errors.Is(err, ErrUntrusted) {
 		t.Fatalf("err = %v, want ErrUntrusted — a scope from another authority was sealed under this key", err)
 	}
-	if _, err := sealerOf(t, mine).Seal(Scope{}); !errors.Is(err, ErrNoScope) {
+	if _, err := sealerOf(t, mine).Seal(context.Background(), Scope{}); !errors.Is(err, ErrNoScope) {
 		t.Fatalf("err = %v, want ErrNoScope — a zero scope was sealed", err)
 	}
 }
@@ -127,7 +127,7 @@ func TestOnlyAScopeTheDurableClassAdmitsIsSealed(t *testing.T) {
 			if err != nil {
 				t.Fatalf("the read this deployment allows was refused: %v", err)
 			}
-			if _, err := sealerOf(t, authority).Seal(scope, []byte("billing")); !errors.Is(err, want) {
+			if _, err := sealerOf(t, authority).Seal(context.Background(), scope, []byte("billing")); !errors.Is(err, want) {
 				t.Fatalf("err = %v, want %v — sealing does not ask what the durable class admits", err, want)
 			}
 		})
@@ -142,7 +142,7 @@ func TestTheClaimARecordCarriesIsWhatItsMACCovers(t *testing.T) {
 	authority, scope := sealingAuthority(t, durableTestKey, "acme", 1)
 	sealer := sealerOf(t, authority)
 
-	honest, err := sealer.Seal(scope, []byte("billing"))
+	honest, err := sealer.Seal(context.Background(), scope, []byte("billing"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -196,7 +196,7 @@ func TestARecordSealedInAnotherDeploymentIsNotRead(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	token, err := sealerOf(t, staging).Seal(scope, []byte("billing"))
+	token, err := sealerOf(t, staging).Seal(context.Background(), scope, []byte("billing"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -212,7 +212,7 @@ func TestASealedRecordIsReadBackAsWhatWasSealed(t *testing.T) {
 	authority, scope := sealingAuthority(t, durableTestKey, "acme", 7)
 	sealer := sealerOf(t, authority)
 
-	token, err := sealer.Seal(scope, []byte("billing"), []byte("send-invoice"))
+	token, err := sealer.Seal(context.Background(), scope, []byte("billing"), []byte("send-invoice"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -232,7 +232,7 @@ func TestBindingFieldsCannotBeSlidPastOneAnother(t *testing.T) {
 	authority, scope := sealingAuthority(t, durableTestKey, "acme", 1)
 	sealer := sealerOf(t, authority)
 
-	honest, err := sealer.Seal(scope, []byte("billing"), []byte("send-invoice"))
+	honest, err := sealer.Seal(context.Background(), scope, []byte("billing"), []byte("send-invoice"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -255,7 +255,7 @@ func TestARecordAnotherDeploymentSealedIsNotRead(t *testing.T) {
 	mine, _ := sealingAuthority(t, durableTestKey, "acme", 1)
 	theirs, theirScope := sealingAuthority(t, []byte("a-different-durable-key-of-32-bytes!"), "acme", 1)
 
-	token, err := sealerOf(t, theirs).Seal(theirScope, []byte("billing"))
+	token, err := sealerOf(t, theirs).Seal(context.Background(), theirScope, []byte("billing"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -270,7 +270,7 @@ func TestARecordAnotherDeploymentSealedIsNotRead(t *testing.T) {
 func TestARecordTooShortToCarryAClaimIsRefused(t *testing.T) {
 	authority, scope := sealingAuthority(t, durableTestKey, "acme", 1)
 	sealer := sealerOf(t, authority)
-	honest, err := sealer.Seal(scope)
+	honest, err := sealer.Seal(context.Background(), scope)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -304,5 +304,95 @@ func TestTheDigestSeparatesTenantsAndGenerations(t *testing.T) {
 	}
 	if again := acme.Digest(); !bytes.Equal(first[:], again[:]) {
 		t.Fatal("the same scope digests differently twice, so nothing addressed by it can be found again")
+	}
+}
+
+var durableBinding = [][]byte{[]byte("billing"), []byte("send-invoice")}
+
+func rotatingAuthority(t *testing.T, current []byte, retired ...[]byte) (*Authority, Scope) {
+	t.Helper()
+	reference, err := ParseReference("acme")
+	if err != nil {
+		t.Fatal(err)
+	}
+	epoch, err := NewEpoch(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	authority, err := New(Spec{
+		Resolver:           Fixed{Reference: reference, Lifecycle: Active, Epoch: epoch},
+		DurableKey:         current,
+		RetiredDurableKeys: retired,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	scope, err := authority.Verify(context.Background(), ClassDurable)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return authority, scope
+}
+
+// A durable key cannot be rotated by restarting with a new one: the queue already
+// holds records sealed with the old key, and a process that verifies only the
+// current key refuses every one of them. Rotation is therefore two deploys, and
+// this is the middle state — the new key seals, the old one still verifies.
+func TestARetiredDurableKeyStillReadsTheRecordsItSealed(t *testing.T) {
+	before := []byte("the-key-this-deployment-started-with!")
+	after := []byte("the-key-this-deployment-rotated-to!!!")
+
+	old, oldScope := rotatingAuthority(t, before)
+	written, err := sealerOf(t, old).Seal(context.Background(), oldScope, durableBinding...)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The middle deploy: sealing with the new key, still verifying the old.
+	rotating, rotatingScope := rotatingAuthority(t, after, before)
+	if _, _, err := sealerOf(t, rotating).Unseal(written, durableBinding...); err != nil {
+		t.Fatalf("a record sealed before the rotation was refused during it: %v", err)
+	}
+
+	// And what it seals now is readable by a process that has finished rotating,
+	// which is what makes the second deploy safe.
+	fresh, err := sealerOf(t, rotating).Seal(context.Background(), rotatingScope, durableBinding...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	finished, _ := rotatingAuthority(t, after)
+	if _, _, err := sealerOf(t, finished).Unseal(fresh, durableBinding...); err != nil {
+		t.Fatalf("a record sealed during the rotation was refused after it: %v", err)
+	}
+
+	// The control, and the reason this is not just "accept anything": once the old
+	// key is gone, its records are gone too, which is what the drain is for.
+	if _, _, err := sealerOf(t, finished).Unseal(written, durableBinding...); !errors.Is(err, ErrUntrusted) {
+		t.Fatalf("err = %v, want ErrUntrusted — a retired key kept verifying after it was removed", err)
+	}
+}
+
+func TestARetiredKeyWithNothingToSealWithIsRefused(t *testing.T) {
+	reference, err := ParseReference("acme")
+	if err != nil {
+		t.Fatal(err)
+	}
+	epoch, err := NewEpoch(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolver := Fixed{Reference: reference, Lifecycle: Active, Epoch: epoch}
+	if _, err := New(Spec{
+		Resolver:           resolver,
+		RetiredDurableKeys: [][]byte{[]byte("a-retired-key-that-is-long-enough!!!")},
+	}); err == nil {
+		t.Fatal("an authority that can verify durable records but never produce one was constructed")
+	}
+	if _, err := New(Spec{
+		Resolver:           resolver,
+		DurableKey:         []byte("a-current-key-that-is-long-enough!!!"),
+		RetiredDurableKeys: [][]byte{[]byte("short")},
+	}); err == nil {
+		t.Fatal("a retired key too short to be a key was accepted")
 	}
 }

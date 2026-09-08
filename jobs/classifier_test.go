@@ -1,10 +1,12 @@
 package jobs
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/frostgrove/vv/port"
 	"log/slog"
 	"reflect"
 	"strings"
@@ -34,7 +36,7 @@ func (payload classifierPanicPayload) String() string {
 func TestHandlerFailureContainsErrorsAndErasesPanicPayloads(t *testing.T) {
 	sentinel := errors.New("handler-private-sentinel")
 	typed := &classifierTypedError{secret: "handler-private-typed"}
-	result := invokeHandlerContained(func() error {
+	result := invokeHandlerContained(context.Background(), func() error {
 		return fmt.Errorf("handler-private-wrapper: %w: %w", sentinel, typed)
 	})
 	failure, ok := result.(HandlerFailure)
@@ -48,7 +50,7 @@ func TestHandlerFailureContainsErrorsAndErasesPanicPayloads(t *testing.T) {
 	assertHandlerFailureRedacted(t, failure, "handler-private")
 
 	var typedNil *classifierTypedError
-	typedNilResult := invokeHandlerContained(func() error { return typedNil })
+	typedNilResult := invokeHandlerContained(context.Background(), func() error { return typedNil })
 	typedNilFailure, ok := typedNilResult.(HandlerFailure)
 	if !ok || typedNilFailure.Panicked() || typedNilFailure.Unwrap() == nil {
 		t.Fatalf("typed nil error = (%T, panicked=%v, unwrap=%#v)", typedNilResult, typedNilFailure.Panicked(), typedNilFailure.Unwrap())
@@ -59,7 +61,7 @@ func TestHandlerFailureContainsErrorsAndErasesPanicPayloads(t *testing.T) {
 	}
 
 	var formats atomic.Int32
-	panicked := invokeHandlerContained(func() error {
+	panicked := invokeHandlerContained(context.Background(), func() error {
 		panic(classifierPanicPayload{formats: &formats, secret: "panic-private"})
 	})
 	panicFailure, ok := panicked.(HandlerFailure)
@@ -90,7 +92,7 @@ func TestClassifierDefaultsSkipsSuccessAndRunsExactlyOnce(t *testing.T) {
 	if disposition := classifyHandlerResult(classifier, nil); disposition.Kind() != DispositionSucceeded || calls.Load() != 0 {
 		t.Fatalf("nil result = (%v, calls=%d)", disposition.Kind(), calls.Load())
 	}
-	normal := invokeHandlerContained(func() error { return ErrConflict })
+	normal := invokeHandlerContained(context.Background(), func() error { return ErrConflict })
 	defaultNormal := classifyHandlerResult(nil, normal)
 	assertClassifierDisposition(t, defaultNormal, DispositionRetry, ReasonHandlerFailure, RetryCostCharged)
 	classified := classifyHandlerResult(classifier, normal)
@@ -99,7 +101,7 @@ func TestClassifierDefaultsSkipsSuccessAndRunsExactlyOnce(t *testing.T) {
 		t.Fatalf("classifier calls = %d", calls.Load())
 	}
 
-	panicked := invokeHandlerContained(func() error { panic("panic-private") })
+	panicked := invokeHandlerContained(context.Background(), func() error { panic("panic-private") })
 	defaultPanic := classifyHandlerResult(nil, panicked)
 	assertClassifierDisposition(t, defaultPanic, DispositionRetry, ReasonPanic, RetryCostCharged)
 	var panicCalls atomic.Int32
@@ -261,4 +263,47 @@ func assertClassifierDisposition(t *testing.T, disposition Disposition, kind Dis
 	if !disposition.valid() || disposition.Kind() != kind || disposition.Reason() != reason || disposition.RetryCost() != cost {
 		t.Fatalf("disposition = (kind=%v, reason=%v, cost=%v, valid=%v)", disposition.Kind(), disposition.Reason(), disposition.RetryCost(), disposition.valid())
 	}
+}
+
+// A panic is contained and turned into a disposition, so nothing above ever sees
+// it. That used to make it invisible: the value and the stack were dropped and an
+// operator was left with "jobs: handler failed" and no way to find out what
+// failed or where.
+func TestAContainedPanicKeepsItsValueAndStackAndLogsNeitherVerbatim(t *testing.T) {
+	var formats atomic.Int32
+	var written bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&written, nil))
+
+	failed := invokeHandlerContained(port.WithLogger(context.Background(), logger), func() error {
+		panic(classifierPanicPayload{formats: &formats, secret: "panic-private"})
+	})
+	failure, ok := failed.(HandlerFailure)
+	if !ok || !failure.Panicked() {
+		t.Fatalf("failure = %#v", failed)
+	}
+
+	recovered, present := failure.Recovered()
+	if !present {
+		t.Fatal("the panic value was discarded, so nothing can say what failed")
+	}
+	if _, isPayload := recovered.(classifierPanicPayload); !isPayload {
+		t.Fatalf("recovered = %T, want the value the handler panicked with", recovered)
+	}
+	if len(failure.Stack()) == 0 || !strings.Contains(string(failure.Stack()), "invokeHandlerContained") {
+		t.Fatal("the stack was discarded, so nothing can say where it failed")
+	}
+
+	line := written.String()
+	if !strings.Contains(line, "handler panicked") || !strings.Contains(line, "classifierPanicPayload") {
+		t.Fatalf("the caller's logger was told nothing useful: %s", line)
+	}
+	// The panic payload is application data on a path that is already unwinding:
+	// its Format must not run, and its contents must not reach the line.
+	if formats.Load() != 0 {
+		t.Fatalf("the panic payload was formatted %d times", formats.Load())
+	}
+	if strings.Contains(line, "panic-private") {
+		t.Fatalf("the panic payload's contents reached the log line: %s", line)
+	}
+	assertHandlerFailureRedacted(t, failure, "panic-private")
 }

@@ -127,19 +127,53 @@ storage errors. Only bounded portable user metadata reaches `storage.Info`;
 reserved staging metadata and raw SDK headers stay inside the adapter.
 
 `TemporaryURL` uses MinIO's native pre-signed GET and the same TTL bounds as the
-common store. TTLs are whole-second durations, matching SigV4 precision; the
-reported expiry is conservative. The returned `storage.Link` is sensitive and
-redacts ordinary formatting.
+common store. TTLs are whole-second durations, matching SigV4 precision. The
+returned `storage.Link` is sensitive and redacts ordinary formatting.
+
+**A link cannot outlive the credentials that signed it.** A client using STS,
+IRSA or an instance role holds a session measured in an hour, and a presigned URL
+stops working the moment it expires — so a request for a longer TTL is refused by
+name rather than answered with a link that reports an expiry the object store
+will not honour. A client with static keys has no expiry and is unaffected.
+
+**`Delete` removes the current version only.** On a versioned bucket that writes
+a delete marker rather than erasing anything, and `Info.Version` is a handle no
+operation takes except as the target of a conditional delete. Erasure on a
+versioned bucket is the operator's lifecycle policy, not this adapter's.
+
+**A stage is refused if the default promotion could never place it.** A payload
+above `MaxCreateOnlySize` is rejected at `Stage` — by its declared size before
+the upload, and by its real size after — rather than being accepted, billed and
+held for its TTL only to fail at `Promote`.
+
+**`Config.StageClaimTTL` bounds an interruption, not the stage.** One `Stage`,
+`Promote` or `Abort` holds a claim for this long (five minutes by default);
+after that another process may take the stage over. It is deliberately measured
+in minutes while the stage's own TTL is measured in days, because a process
+killed mid-promote must not strand the stage for the stage's lifetime. A sweep
+that breaks such a claim reports `CleanupResult.More`, since the stage is
+promotable again but was not removed.
 
 ## Testing against a server
 
 The default unit/wire suite uses an injected SDK seam and performs no network
-access. A deployment claiming MinIO compatibility should additionally run the
-adapter's integration scenarios against the exact server/version it operates,
-especially concurrent conditional single PUT, multipart staging/replace and
-pre-signed GET. Include wrong-ETag and read-quorum-failure conditional PUT
-cases. Verify the incomplete-multipart lifecycle rule as part of deployment
-checks; it must target incomplete uploads, not completed claim objects.
+access, and **no integration scenarios ship with this adapter** — there is no
+suite here to point a deployment at.
+
+A deployment claiming MinIO compatibility therefore has to write its own, against
+the exact server and version it operates. The cases that matter, and the reason
+each is here:
+
+| Case | What it catches |
+|---|---|
+| Concurrent conditional single `PUT` on one key | a server whose `If-None-Match: *` is not atomic, so two creates both succeed |
+| `Put` with a wrong `IfMatch` ETag | a server that ignores `If-Match` and overwrites anyway |
+| Multipart stage, then `Promote` with `Replace` | a server whose multipart ETag format breaks the claim's ABA fencing |
+| Pre-signed `GET`, including after the signing session expires | a deployment that issues links outliving its own credentials |
+| Read-quorum failure during a conditional `PUT` | a write reported as failed that in fact landed |
+
+Verify the incomplete-multipart lifecycle rule as part of deployment checks; it
+must target incomplete uploads, not completed claim objects.
 
 ## storageminiofx — the fx wiring
 

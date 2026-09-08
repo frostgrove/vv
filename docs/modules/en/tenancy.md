@@ -120,9 +120,14 @@ lifecycle value no version of this package declares — refuses. A deployment th
 wants a suspended tenant to remain readable says so, and its writes still refuse.
 
 Admission is also checked for consistency at construction: a state admitted for
-writing or for durable work but not for reading is refused, naming the state.
-Every mutating verb resolves its narrowing predicate for the read class first, so
-such a policy would mean something other than what it says.
+**writing** but not for reading is refused, naming the state. Every mutating verb
+resolves its narrowing predicate for the read class first, so such a policy would
+mean something other than what it says.
+
+Durable work is deliberately not held to that floor. Its producer asks for
+`ClassDurable` directly and reads nothing first, so "durable work during a
+migration, no reads and no writes" is a policy a deployment may genuinely mean,
+and it is accepted.
 
 An admission that names **nothing this package has** is refused there too — a
 class or a lifecycle value that does not exist, or a class with no states at all.
@@ -258,12 +263,37 @@ constructed, and that is the point: the queue table is durable, shared and
 writable by whatever else reaches that database, so an unauthenticated reference
 in a record makes queue write access into tenant impersonation.
 
+**Rotating that key is two deploys, not a restart.** The queue already holds
+records sealed with the old key, and a process that verifies only the current one
+refuses every one of them.
+
+```go
+tenancy.Spec{
+    DurableKey:         next,           // what new records are sealed with
+    RetiredDurableKeys: [][]byte{prev}, // what old records are still verified against
+}
+```
+
+Deploy that everywhere, let the backlog drain, then deploy again without
+`RetiredDurableKeys`. Records still sealed with the retired key stop verifying at
+that second deploy, which is what the drain is for. Two authorities are not a
+workaround — the seam holds one.
+
 **The durable record is a reference, never an authority.** The producer writes the
 tenant and the generation under a MAC; the worker verifies the MAC, and then
 disbelieves the record anyway — it asks the control plane what is true *now*. A
 tenant suspended, deleted or restored since the work was enqueued does not reach
 its handler, and a record written by anything that does not hold the durable key
 reaches nothing at all.
+
+**The MAC binds one record, not one queue.** Inside it are the queue, the job, the
+invocation identifier and a digest of the payload, so a token is answerable for
+the row it travelled in. Copying an honest token onto another row — a second
+invocation of the same job, or the same invocation with the payload rewritten —
+fails verification rather than the handler. Without the last two fields it would
+not: the token would authenticate a tenant for a queue, and anything able to write
+the table could replay that tenant's work with a payload of its choosing. See
+[[D-119]].
 
 ### What the core lends a seam
 
@@ -321,6 +351,14 @@ is never handed to the generation that replaced it. There is no default and no
 last-used fallback. Eviction unlinks a binding immediately and closes its source
 only when the last borrower gives the lease back.
 
+**`MaxCached` bounds connections, not tenants.** When the map is full, the borrow
+that needs a slot closes the *idlest* binding — the one with no borrowers whose
+expiry is nearest — and takes its place. `ErrCapacity` is left for what it
+honestly means: every slot is in use right now, and closing one would cut a live
+transaction. So a deployment with 300 tenants and `MaxCached: 64` serves all 300,
+paying a reconnect for the churn, rather than serving the first 64 and refusing
+the rest for the life of the process.
+
 `MaxCached`, `TTL` and `Close` are required rather than defaulted. The first two
 because an unbounded per-tenant pool is how one tenant takes a deployment down;
 `Close` because `crud.Source` is an interface and the pools behind it do not
@@ -372,13 +410,21 @@ tenancy.ErrCapacity   tenancy.ErrUnavailable   tenancy.ErrMalformed
 
 The first seven wrap `crud.ErrForbidden`, so a transport answers 403 without
 importing this package. `ErrPinned` wraps `crud.ErrConflict`. `ErrCapacity` and
-`ErrUnavailable` deliberately wrap neither: a full pool is not an authorisation
-failure and should not page the security team.
+`ErrUnavailable` wrap `crud.ErrUnavailable` and answer **503 with a
+`Retry-After`**: a full pool is not an authorisation failure and should not page
+the security team, but it is not a bug either, and rendering it 500 tells an
+operator to go hunting and tells a client not to try again.
 
 A resolver that fails for its own reasons produces `ErrUnavailable` and nothing
 else — its message names the tenant, the database and often the credential, and
 that text does not travel. Log it in the resolver, which is your code and owns
 that channel.
+
+`context.Canceled` and `context.DeadlineExceeded` are the exception and travel
+back intact. A caller that went away names no tenant, no database and no
+credential, so there is nothing to redact — and folding it into `ErrUnavailable`
+would put every client disconnect on the graph that says the control plane is
+down.
 
 `tenancy.OutcomeFor(err)` maps any of them to one of twelve closed constants, which
 is what a dashboard or a metric label may carry.

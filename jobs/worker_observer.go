@@ -185,6 +185,8 @@ type workerEventSpec struct {
 	Binding         BindingName
 	AdmissionGroup  WorkerAdmissionGroup
 	CommandKind     DeliveryCommandKind
+	Disposition     DispositionKind
+	Reason          Reason
 	AdmissionSignal AdmissionSignal
 	Results         []WorkerDeliveryResultCount
 	Items           int
@@ -213,6 +215,8 @@ type WorkerEvent struct {
 	binding         BindingName
 	admissionGroup  WorkerAdmissionGroup
 	commandKind     DeliveryCommandKind
+	disposition     DispositionKind
+	reason          Reason
 	admissionSignal AdmissionSignal
 	results         []WorkerDeliveryResultCount
 	items           int
@@ -242,6 +246,8 @@ func newWorkerEvent(plan WorkerPlan, spec workerEventSpec) (WorkerEvent, error) 
 		binding:         spec.Binding,
 		admissionGroup:  spec.AdmissionGroup,
 		commandKind:     spec.CommandKind,
+		disposition:     spec.Disposition,
+		reason:          spec.Reason,
 		admissionSignal: spec.AdmissionSignal,
 		results:         results,
 		items:           spec.Items,
@@ -266,6 +272,16 @@ func (event WorkerEvent) AdmissionGroup() WorkerAdmissionGroup {
 func (event WorkerEvent) CommandKind() DeliveryCommandKind {
 	return event.commandKind
 }
+
+// What the delivery is being finished as, and why. Without them an apply event
+// says a command kind and nothing else, so success, a retry and a permanent
+// failure are one line to a dashboard: DeliveryCommandFinishDelivery is all
+// three. Only the two bounded enums travel — the rest of a Disposition carries a
+// PublicFailure, which is caller text and has no business in a metric label.
+// Both are zero on the operations that carry no disposition.
+func (event WorkerEvent) Disposition() DispositionKind { return event.disposition }
+func (event WorkerEvent) Reason() Reason               { return event.reason }
+
 func (event WorkerEvent) AdmissionSignal() AdmissionSignal { return event.admissionSignal }
 func (event WorkerEvent) Results() []WorkerDeliveryResultCount {
 	return append([]WorkerDeliveryResultCount(nil), event.results...)

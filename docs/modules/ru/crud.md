@@ -41,7 +41,7 @@ SQL здесь никто не выполняет — этим занимает�
 | **Транзакции** | `InTx`, `BindExecutor`, `Session` — подключение к чужой транзакции без угадывания БД |
 | **Типизированный bulk** | `Repo.InsertBatch`: магия нативного драйвера с opt-out на переносимый SQL |
 | **Диалекты** | `Postgres`, `MySQL` (и MariaDB), `SQLite` |
-| **Сигнальные ошибки** | `ErrNotFound`, `ErrConflict`, `ErrForbidden`, `ErrStaleVersion`, … |
+| **Сигнальные ошибки** | `ErrNotFound`, `ErrConflict`, `ErrForbidden`, `ErrUnavailable`, `ErrStaleVersion`, … |
 
 ---
 
@@ -540,7 +540,8 @@ db := crud.ReadWrite(primary, replica)
 
 ```go
 crud.ErrNotFound       crud.ErrConflict       crud.ErrForbidden
-crud.ErrStaleVersion   crud.ErrReadOnly       crud.ErrMissingID
+crud.ErrUnavailable    crud.ErrStaleVersion   crud.ErrReadOnly
+crud.ErrMissingID
 crud.ErrNoTxSupport    crud.ErrExecutorScope   crud.ErrNoBatchInsertSupport
 crud.ErrNoBulkInsertSupport               crud.ErrNoCreateSupport
 crud.ErrNoReplaceSupport                  crud.ErrNoUnscopedExists
@@ -549,6 +550,13 @@ crud.ErrNoReplaceSupport                  crud.ErrNoUnscopedExists
 Каждая из них переживает обёртывание в `errs.Fault`, поэтому вызывающий код,
 который написал `errors.Is(err, crud.ErrConflict)` ещё до появления подсистемы
 ошибок, сохраняет эту ветку рабочей ([[D-038]]).
+
+`ErrUnavailable` — это retryable-класс и единственный, который вызывающему стоит
+повторить: `port` рендерит всё, что её оборачивает, как **503 с `Retry-After`**, а
+не как 500, означающий «баг». Её оборачивает пакет с операционным отказом — пул
+без свободного слота, control plane, который не отвечает, — чтобы отказ был
+понятен клиенту и оператору, и ни тому, ни другому не пришлось импортировать этот
+пакет. Сегодня её пользователи — `tenancy.ErrCapacity` и `tenancy.ErrUnavailable`.
 
 ## Диалекты
 

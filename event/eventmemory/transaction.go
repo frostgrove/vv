@@ -16,10 +16,23 @@ var (
 
 type Tx struct {
 	log      *Log
+	identity txIdentity
 	finished atomic.Bool
 
 	staged []event.Envelope
 	counts map[event.Stream]int
+}
+
+// What the authority names, and deliberately not the *Tx: a claim is released
+// when nothing can reach the transaction any more, and the authority travels in
+// every commit receipt, which is a value a caller is meant to keep — an audit
+// buffer, an outbox row, two subsystems comparing receipts later. A store whose
+// transaction is a database handle names the handle, because there the locks go
+// at the commit and not at a collection. Monotone per log, so no two
+// transactions of one log are ever named alike and a name is never reused.
+type txIdentity struct {
+	log *Log
+	nth uint64
 }
 
 // The binding is keyed by the log it was begun on, so an operation that writes
@@ -42,24 +55,30 @@ func (this *Store) Begin(ctx context.Context) (*Tx, error) {
 	if this.closed.Load() {
 		return nil, event.ErrClosed
 	}
-	return &Tx{log: this.log, counts: map[event.Stream]int{}}, nil
+	return &Tx{log: this.log, identity: this.log.nameTransaction(), counts: map[event.Stream]int{}}, nil
 }
 
 func (this *Store) Transaction(ctx context.Context) (event.Authority, error) {
 	tx, err := this.ambient(ctx)
+	if err == nil {
+		err = tx.live()
+	}
 	if err != nil || tx == nil {
 		return event.Authority{}, err
 	}
-	return event.NewAuthority(this.log.backing, tx)
+	return event.NewAuthority(this.log.backing, tx.identity)
 }
 
-// A transaction of another log is nothing of this store's, so its operations
-// run on this store's own autocommit. A finished one is not: the caller holds a
-// context that reads like a transaction and is not one, and answering it with
-// autocommit is the escape the transaction rule exists to close. The two doors
-// that act on the answer resolve it inside the section that acts, so a
-// transaction another goroutine finishes in between is refused rather than
-// staged into after its records were released.
+// The two keys: this store's own transaction, and the one bound for no log at
+// all, which could have been meant for any store and is refused by every store
+// that finds no binding of its own. A transaction of another log is nothing of
+// this store's, so its operations run on this store's own autocommit.
+//
+// ctx.Value is the caller's own code — a wrapper, a decorator, a chain of them
+// — so the lookup runs under no lock of this store's. A caller whose Value
+// takes a lock would otherwise hold the log's mutex while acquiring it, and any
+// goroutine holding that lock across an append would hang every reader and
+// writer of the log for good.
 func (this *Store) ambient(ctx context.Context) (*Tx, error) {
 	tx, carried := ctx.Value(transactionKey{log: this.log}).(*Tx)
 	if !carried {
@@ -68,10 +87,21 @@ func (this *Store) ambient(ctx context.Context) (*Tx, error) {
 		}
 		return nil, nil
 	}
-	if tx.finished.Load() {
-		return nil, errFinished
-	}
 	return tx, nil
+}
+
+// A finished transaction is refused rather than run on this store's autocommit:
+// the caller holds a context that reads like a transaction and is not one, and
+// answering it with autocommit is the escape the transaction rule exists to
+// close. The check is the half of the answer that is only worth having inside
+// the section that acts on it — every door asks after it holds the log's mutex,
+// so a transaction another goroutine finishes in between is refused rather than
+// staged into after its records were released.
+func (this *Tx) live() error {
+	if this != nil && this.finished.Load() {
+		return errFinished
+	}
+	return nil
 }
 
 // Neither this nor Rollback reads the context's deadline. A transaction that
@@ -126,7 +156,7 @@ func (this *Tx) release() {
 }
 
 func (this *Tx) stage(stream event.Stream, envelopes []event.Envelope) {
-	this.log.claims[stream] = this
+	this.log.claim(stream, this)
 	this.staged = append(this.staged, envelopes...)
 	this.counts[stream] += len(envelopes)
 }

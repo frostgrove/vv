@@ -36,6 +36,13 @@ type Presented struct {
 	RotatedAt  *time.Time
 	LastUsedAt time.Time
 
+	// What the credential says its generation is, and what the session's is now.
+	// A credential from before the previous rotation matches neither digest, so
+	// without these it fell off the end of the lookup and read as an ordinary
+	// expired credential — a stolen one the thief sat on closed nothing.
+	Generation        int64
+	CurrentGeneration int64
+
 	Revoked   bool
 	ExpiresAt time.Time
 }
@@ -56,6 +63,11 @@ func Classify(presented Presented, now time.Time, window Window) Outcome {
 		return Unusable
 	case presented.Digest == presented.Current:
 		return Rotate
+	case presented.Generation > 0 && presented.Generation < presented.CurrentGeneration-1:
+		// Older than the previous rotation. It cannot match either digest, and it
+		// is a credential this session really issued — so it was kept, and that is
+		// a replay rather than something to shrug at.
+		return Replay
 	case presented.Previous == "" || presented.Digest != presented.Previous:
 		return Unusable
 	case presented.RotatedAt == nil:

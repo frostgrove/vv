@@ -894,8 +894,27 @@ func (pool *workerPool) recoverRequest() (RecoverRequest, bool, error) {
 		MaxItems:    min(pool.workers.config.claimItems, MaxReclaimBatch),
 		MaxBytes:    min(pool.workers.config.claimBytes, remainingBytes),
 		LeaseTTL:    pool.workers.config.leaseTTL,
+		Held:        pool.heldInvocations(),
 	})
 	return request, err == nil, err
+}
+
+// What this session is running right now. A backend that reclaims its own
+// incarnation's leases needs it to tell an uncertain claim from a delivery in
+// flight, because the incarnation is minted per Run and both carry it.
+func (pool *workerPool) heldInvocations() []InvocationID {
+	pool.mu.Lock()
+	defer pool.mu.Unlock()
+	held := make([]InvocationID, 0, len(pool.active))
+	for delivery := range pool.active {
+		delivery.mu.Lock()
+		id := delivery.lease.InvocationID()
+		delivery.mu.Unlock()
+		if id.valid() {
+			held = append(held, id)
+		}
+	}
+	return held
 }
 
 func (pool *workerPool) prepareRecovered(delivery RecoveredDelivery) (ClaimedDelivery, bool, bool) {
@@ -975,6 +994,8 @@ type activeWorkerDelivery struct {
 	size           int
 	mu             sync.Mutex
 	lease          LeaseRef
+	leaseSeq       uint64
+	leaseHorizon   time.Time
 	invocation     Invocation
 	closed         bool
 	lost           chan struct{}
@@ -985,11 +1006,16 @@ type activeWorkerDelivery struct {
 
 func newActiveWorkerDelivery(pool *workerPool, binding *workerRuntimeBinding, lease LeaseRef, size int) *activeWorkerDelivery {
 	handlerContext, cancel := context.WithCancelCause(pool.session.handlerContext)
+	horizon := time.Time{}
+	if now, err := pool.workers.config.clock.Now(); err == nil {
+		horizon = now.Add(pool.workers.config.leaseTTL)
+	}
 	return &activeWorkerDelivery{
 		pool:           pool,
 		binding:        binding,
 		size:           size,
 		lease:          cloneLeaseRef(lease),
+		leaseHorizon:   horizon,
 		lost:           make(chan struct{}),
 		handlerContext: handlerContext,
 		cancel:         cancel,
@@ -1260,36 +1286,55 @@ func (pool *workerPool) renewActive(ctx context.Context) bool {
 	return true
 }
 
+type pendingRenewal struct {
+	delivery *activeWorkerDelivery
+	sequence uint64
+}
+
+// Two things this must not do, and both used to cost the pool its in-flight work.
+//
+// It must not hold a delivery's lock across the driver call: that lock is what a
+// handler's Guard, Pulse and apply take, so a slow renew stalls every fenced
+// effect in the batch for the driver's latency. The lease is copied under a short
+// lock instead, and a delivery whose lock is already held is skipped — it is
+// mid-effect, and the next tick is soon enough.
+//
+// And it must not read one transport failure as "every lease in this batch is
+// gone". A renew that never reached the driver says nothing about the lease; what
+// says the lease is gone is the driver answering so for that item, or the horizon
+// from the last successful renewal passing. Anything else revokes live work
+// because of one dropped packet.
 func (pool *workerPool) renewActiveBatch(ctx context.Context, batch []*activeWorkerDelivery) bool {
-	locked := make([]*activeWorkerDelivery, 0, len(batch))
+	pending := make([]pendingRenewal, 0, len(batch))
 	leases := make([]LeaseRef, 0, len(batch))
 	for _, delivery := range batch {
-		delivery.mu.Lock()
+		if !delivery.mu.TryLock() {
+			continue
+		}
 		if delivery.closed {
 			delivery.mu.Unlock()
 			continue
 		}
-		locked = append(locked, delivery)
-		leases = append(leases, delivery.lease)
+		pending = append(pending, pendingRenewal{delivery: delivery, sequence: delivery.leaseSeq})
+		leases = append(leases, cloneLeaseRef(delivery.lease))
+		delivery.mu.Unlock()
 	}
 	if len(leases) == 0 {
 		return true
 	}
 	request, err := NewRenewRequest(leases, pool.workers.config.leaseTTL)
 	if err != nil {
-		for _, delivery := range locked {
-			delivery.closeLost(err)
-			delivery.mu.Unlock()
+		for _, item := range pending {
+			item.delivery.mu.Lock()
+			item.delivery.closeLost(err)
+			item.delivery.mu.Unlock()
 		}
 		pool.fail(err)
 		return false
 	}
 	result, call := pool.workers.callRenew(ctx, request)
-	if call.err != nil || result.Len() != len(locked) {
-		for _, delivery := range locked {
-			delivery.closeLost(call.err)
-			delivery.mu.Unlock()
-		}
+	if call.err != nil || result.Len() != len(pending) {
+		pool.expireUnrenewed(pending, call.err)
 		pool.workers.observeRenew(request, result, call)
 		if call.fatal() {
 			pool.fail(call.err)
@@ -1297,13 +1342,21 @@ func (pool *workerPool) renewActiveBatch(ctx context.Context, batch []*activeWor
 		}
 		return true
 	}
-	for index, delivery := range locked {
+	for index, item := range pending {
 		renewal := result.items[index]
+		delivery := item.delivery
+		delivery.mu.Lock()
+		if delivery.closed || delivery.leaseSeq != item.sequence {
+			delivery.mu.Unlock()
+			continue
+		}
 		if renewal.mutation != DeliveryMutationApplied {
 			delivery.cancelControl(renewal.control)
 			delivery.closeLost(nil)
 		} else {
 			delivery.lease = renewal.current
+			delivery.leaseSeq++
+			delivery.leaseHorizon = result.observedAt.Add(pool.workers.config.leaseTTL)
 			if renewal.control == DeliveryControlCancelRequested && delivery.cancel != nil {
 				delivery.cancel(ErrCancelled)
 			}
@@ -1315,6 +1368,25 @@ func (pool *workerPool) renewActiveBatch(ctx context.Context, batch []*activeWor
 	}
 	pool.workers.observeRenew(request, result, call)
 	return true
+}
+
+func (pool *workerPool) expireUnrenewed(pending []pendingRenewal, cause error) {
+	now, err := pool.workers.config.clock.Now()
+	for _, item := range pending {
+		delivery := item.delivery
+		delivery.mu.Lock()
+		if delivery.closed || delivery.leaseSeq != item.sequence {
+			delivery.mu.Unlock()
+			continue
+		}
+		// A clock that cannot be read, or a delivery with no horizon, is the
+		// conservative case: treat the lease as gone rather than keep writing
+		// under one that may already belong to somebody else.
+		if err != nil || delivery.leaseHorizon.IsZero() || !now.Before(delivery.leaseHorizon) {
+			delivery.closeLost(cause)
+		}
+		delivery.mu.Unlock()
+	}
 }
 
 func (delivery *activeWorkerDelivery) closeLost(error) {

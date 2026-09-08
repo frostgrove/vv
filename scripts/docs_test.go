@@ -525,7 +525,7 @@ func statusFixture(t *testing.T) string {
 
 func TestEverySymbolTheDocsCiteIsDeclaredWhereTheDocSaysItIs(t *testing.T) {
 	stale, checked := staleSymbolCitations(t, "..")
-	if checked == 0 {
+	if checked < 1000 {
 		t.Fatal("no citation named a file this tree holds, so nothing here was checked")
 	}
 	for _, report := range stale {
@@ -735,4 +735,418 @@ func declaredNamesByFile(t *testing.T, root string) map[string]map[string]bool {
 		t.Fatalf("cannot read the declarations out of %s: %v", root, err)
 	}
 	return declared
+}
+
+// "Exactly once" is a claim no queue and no event log in this repository can
+// make, and a reader who takes one stops writing the idempotency their consumer
+// needs. The phrase itself is not the defect — a preload resolved exactly once
+// and a span ended exactly once are ordinary sentences — so what is checked is
+// the phrase used *about delivery*, and every such use must be a prohibition.
+//
+// `docs/` ships two languages by design, so how the claim is worded is a row of
+// a table rather than a literal in the walker. A language written in this tree
+// whose counting vocabulary was never read at all fails the check: a row that
+// matches nothing is a row that permits everything, and blindness here should
+// be loud rather than green.
+//
+// A refusal is a negation *attached to the claim*, not a negation nearby. The
+// scope is the sentence up to the end of the clause the phrase sits in, the
+// sentence before it in the same paragraph, and — for a list of things a
+// document refuses — a heading that itself refuses. "Delivers it exactly once,
+// so you do not need an inbox table" is a promise with a negation in it, and a
+// window of neighbouring lines reads that as a refusal.
+//
+// Every wording carried here is a claim spelled *positively*, because that is
+// what the negation model can classify. The same promise spelled as a denial —
+// "no duplicates ever reach your handler" — is not read: its negation is the
+// claim, so the model would have to be inverted for it, and "deduplicates on
+// that key" is ordinary prose about a mechanism that appears eleven times in
+// this tree. That residual is stated in `[[FL-036]]` rather than half-checked.
+type wording struct {
+	language string
+	written  *regexp.Regexp
+	promise  *regexp.Regexp
+	weaker   *regexp.Regexp
+	about    *regexp.Regexp
+	negation *regexp.Regexp
+	refusing *regexp.Regexp
+}
+
+var deliveryWordings = []wording{
+	{
+		language: "English",
+		written:  regexp.MustCompile(`(?i)\bthe\b`),
+		promise:  regexp.MustCompile(`(?i)exactly.?once|once and only once|one time and one time only`),
+		weaker:   regexp.MustCompile(`(?i)at.least.once`),
+		about:    regexp.MustCompile(`(?i)deliver|broker|subscrib|consumer|projection|projector|handler|dispatch|inbox|outbox|at.least.once`),
+		negation: regexp.MustCompile(`(?i)\bno\b|\bnot\b|\bnever\b|\bnothing\b|\bnone\b|non-goal|\bcannot\b|\bwithout\b|n't\b`),
+		refusing: regexp.MustCompile(`(?i)non-goal|out of scope|not in scope`),
+	},
+	{
+		language: "Russian",
+		written:  regexp.MustCompile(`[А-Яа-яЁё]`),
+		promise:  regexp.MustCompile(`(?i)ровно один раз|ровно однажды|строго один раз|точно один раз|один и только один раз`),
+		weaker:   regexp.MustCompile(`(?i)не менее одного раза|хотя бы один раз|как минимум один раз`),
+		about:    regexp.MustCompile(`(?i)доставк|доставл|брокер|подписчик|потребител|проекц|обработчик|не менее одного раза|хотя бы один раз`),
+		negation: regexp.MustCompile(`(?i)(^|[^\p{L}])(не|ни|нет|никогда|ничего|без)([^\p{L}]|$)`),
+		refusing: regexp.MustCompile(`(?i)не цел|вне области|не входит`),
+	},
+}
+
+var (
+	markdownHeading = regexp.MustCompile(`^#{1,6} `)
+	markdownList    = regexp.MustCompile(`^([-*+]|\d+\.)\s`)
+)
+
+func TestNoDocPromisesExactlyOnceDelivery(t *testing.T) {
+	claims, read := deliveryClaims(t, filepath.Join("..", "docs"))
+
+	checked := 0
+	for _, spoken := range deliveryWordings {
+		if !read.written[spoken.language] {
+			continue
+		}
+		if read.counted[spoken.language] == 0 {
+			t.Errorf("%s is written in this tree and neither of its two wordings for how often a thing is delivered was read once, so the %s row matches nothing and permits everything", spoken.language, spoken.language)
+		}
+		checked += read.checked[spoken.language]
+	}
+	if checked == 0 {
+		t.Fatal("not one doc used the phrase about delivery, so nothing here was checked and a moved directory reads as a clean tree")
+	}
+	for _, claim := range claims {
+		t.Errorf("%s promises exactly-once delivery, and delivery in this repository is at least once", claim)
+	}
+}
+
+func TestAPromiseOfExactlyOnceDeliveryIsReportedAndARefusalOfOneIsNot(t *testing.T) {
+	claims, read := deliveryClaims(t, deliveryFixture(t))
+
+	promised := []string{
+		"walk.md:3", "walk.md:7", "walk.md:9", "walk.md:11", "walk.md:15",
+		"window.md:3", "window.md:7", "window.md:10",
+		"обход.md:3", "обход.md:7",
+	}
+	if len(claims) != len(promised) {
+		t.Fatalf("the fixture writes %d promises and %v came back", len(promised), claims)
+	}
+	for _, expected := range promised {
+		if !endsWithOneOf(claims, expected) {
+			t.Fatalf("the fixture's %s was not reported, so the arm that would have found it proves nothing: %v", expected, claims)
+		}
+	}
+	if endsWithOneOf(claims, "window.md:5") {
+		t.Fatalf("the fixture refuses the claim in the sentence before it and %v came back, so a page that says it does not promise this is reported anyway", claims)
+	}
+	if read.checked["English"] != 12 || read.checked["Russian"] != 3 {
+		t.Fatalf("the fixture writes twelve English uses about delivery and three Russian ones, and %d and %d were read", read.checked["English"], read.checked["Russian"])
+	}
+}
+
+func TestTheSentenceBeforeAClaimIsTheOneThePagePutsThere(t *testing.T) {
+	for written, before := range map[string]string{
+		"Delivery is never exactly-once here. The broker delivers each event exactly once.": "Delivery is never exactly-once here. ",
+		"We do not promise it.  The broker delivers each event exactly once.":               "We do not promise it.  ",
+		"No such guarantee! The broker delivers each event exactly once.":                   "No such guarantee! ",
+		"The broker delivers each event exactly once.":                                      "",
+	} {
+		paragraph := paragraphsOf(written)[0]
+		found := deliveryWordings[0].promise.FindAllStringIndex(paragraph.text, -1)
+		read := paragraph.sentenceBefore(found[len(found)-1][0])
+		if read != before {
+			t.Fatalf("the sentence before the promise in %q read as %q, and the paragraph puts %q there — a refusal written there is not seen and delivery vocabulary written there is not read", written, read, before)
+		}
+	}
+}
+
+func endsWithOneOf(claims []string, expected string) bool {
+	for _, claim := range claims {
+		if strings.HasSuffix(claim, expected) {
+			return true
+		}
+	}
+	return false
+}
+
+type reading struct {
+	written map[string]bool
+	counted map[string]int
+	checked map[string]int
+}
+
+func deliveryClaims(t *testing.T, root string) ([]string, reading) {
+	t.Helper()
+	var claims []string
+	read := reading{written: map[string]bool{}, counted: map[string]int{}, checked: map[string]int{}}
+
+	walk := func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			if path != root && skippedTree(entry.Name()) {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(entry.Name(), ".md") {
+			return nil
+		}
+		content, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		claims = append(claims, claimsIn(filepath.ToSlash(path), string(content), read)...)
+		return nil
+	}
+	if err := filepath.WalkDir(root, walk); err != nil {
+		t.Fatalf("cannot read the delivery claims out of %s: %v", root, err)
+	}
+	return claims, read
+}
+
+func claimsIn(path, content string, read reading) []string {
+	var claims []string
+	for _, spoken := range deliveryWordings {
+		if !spoken.written.MatchString(content) {
+			continue
+		}
+		read.written[spoken.language] = true
+		for _, paragraph := range paragraphsOf(content) {
+			read.counted[spoken.language] += len(spoken.weaker.FindAllStringIndex(paragraph.text, -1))
+			for _, at := range spoken.promise.FindAllStringIndex(paragraph.text, -1) {
+				read.counted[spoken.language]++
+				if !spoken.about.MatchString(paragraph.around(at[0])) {
+					continue
+				}
+				read.checked[spoken.language]++
+				if spoken.refuses(paragraph, at) {
+					continue
+				}
+				claims = append(claims, path+":"+strconv.Itoa(paragraph.lineAt(at[0])))
+			}
+		}
+	}
+	return claims
+}
+
+// A document is read a paragraph at a time and a claim is reported at a line
+// number, so every offset this walk takes is into text it rebuilt from the one
+// it was given. Two things hold over any bytes at all: nothing panics, and a
+// line a reader is sent to is a line the document has.
+func FuzzADeliveryClaimIsReportedAtALineTheDocumentHas(f *testing.F) {
+	for _, seed := range []string{
+		"The broker delivers each event exactly once.",
+		"The delivery is at least once, and never exactly-once.",
+		"## Initial non-goals\n\n- The exactly-once broker delivery.\n",
+		"| a table row | the broker delivers exactly once |\n",
+		"Проектор доставляет каждое событие ровно один раз.",
+		"доставка ровно один раз",
+		"the broker delivers exactly\nonce to the handler",
+		"the handler sees %s exactly once", "",
+		"\n\n\n", "#", "# ", "- ", "|", ".", "...the exactly once...deliver",
+		"á the broker delivers exactly once", "\xff\xfe the broker delivers exactly once",
+		strings.Repeat("the broker delivers exactly once. ", 40),
+		"the broker delivers exactly once, exactly once, exactly once",
+		"# The heading\n\nthe broker delivers exactly once",
+	} {
+		f.Add(seed)
+	}
+
+	f.Fuzz(func(t *testing.T, content string) {
+		read := reading{written: map[string]bool{}, counted: map[string]int{}, checked: map[string]int{}}
+		lines := strings.Count(content, "\n") + 1
+		for _, claim := range claimsIn("doc.md", content, read) {
+			number, err := strconv.Atoi(claim[strings.LastIndexByte(claim, ':')+1:])
+			if err != nil {
+				t.Fatalf("%q was reported as %q, and a place a person opens is a file and a line: %v", content, claim, err)
+			}
+			if number < 1 || number > lines {
+				t.Fatalf("%q has %d lines and a claim was reported at line %d, which nobody can open", content, lines, number)
+			}
+		}
+	})
+}
+
+func (this wording) refuses(paragraph block, at []int) bool {
+	return this.refusing.MatchString(paragraph.heading) || this.negation.MatchString(paragraph.attachedTo(at))
+}
+
+// A paragraph read as one text, because a wrapped sentence is one sentence and
+// a phrase split across two lines is one phrase. A list item, a table row and a
+// heading each begin a paragraph of their own: a bullet's neighbour is not its
+// context, and a heading is asked separately.
+type block struct {
+	text    string
+	starts  []int
+	numbers []int
+	heading string
+}
+
+func paragraphsOf(content string) []block {
+	var blocks []block
+	var current *block
+	heading := ""
+	flush := func() {
+		if current != nil {
+			blocks = append(blocks, *current)
+			current = nil
+		}
+	}
+	for number, line := range strings.Split(content, "\n") {
+		written := strings.TrimSpace(line)
+		if written == "" {
+			flush()
+			continue
+		}
+		if markdownHeading.MatchString(written) {
+			flush()
+			heading = written
+			continue
+		}
+		if current == nil || markdownList.MatchString(written) || strings.HasPrefix(written, "|") {
+			flush()
+			current = &block{heading: heading}
+		}
+		if current.text != "" {
+			current.text += " "
+		}
+		current.starts = append(current.starts, len(current.text))
+		current.numbers = append(current.numbers, number+1)
+		current.text += written
+	}
+	flush()
+	return blocks
+}
+
+func (this block) lineAt(offset int) int {
+	number := this.numbers[0]
+	for index, start := range this.starts {
+		if start > offset {
+			break
+		}
+		number = this.numbers[index]
+	}
+	return number
+}
+
+func (this block) around(offset int) string {
+	return this.sentenceBefore(offset) + " " + this.text[this.sentenceFrom(offset):this.sentenceTo(offset)]
+}
+
+func (this block) attachedTo(at []int) string {
+	return this.sentenceBefore(at[0]) + " " + this.text[this.sentenceFrom(at[0]):this.clauseTo(at[1])]
+}
+
+func (this block) sentenceFrom(offset int) int {
+	for index := offset; index > 0; index-- {
+		if endsASentence(this.text, index-1) {
+			return skipSpace(this.text, index)
+		}
+	}
+	return 0
+}
+
+func (this block) sentenceTo(offset int) int {
+	for index := offset; index < len(this.text); index++ {
+		if endsASentence(this.text, index) {
+			return index
+		}
+	}
+	return len(this.text)
+}
+
+func (this block) sentenceBefore(offset int) string {
+	from := this.sentenceFrom(offset)
+	if from == 0 {
+		return ""
+	}
+	ended := from - 1
+	for ended > 0 && this.text[ended] == ' ' {
+		ended--
+	}
+	return this.text[this.sentenceFrom(ended):from]
+}
+
+func (this block) clauseTo(offset int) int {
+	for index := offset; index < len(this.text); index++ {
+		if strings.IndexByte(",;:", this.text[index]) >= 0 || strings.HasPrefix(this.text[index:], "—") || endsASentence(this.text, index) {
+			return index
+		}
+	}
+	return len(this.text)
+}
+
+func endsASentence(text string, index int) bool {
+	if strings.IndexByte(".!?", text[index]) < 0 {
+		return false
+	}
+	return index+1 == len(text) || text[index+1] == ' '
+}
+
+func skipSpace(text string, index int) int {
+	for index < len(text) && text[index] == ' ' {
+		index++
+	}
+	return index
+}
+
+func deliveryFixture(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	written := map[string][]string{
+		"walk.md": {
+			"# A walk over the log",
+			"",
+			"A projector that reads to the end delivers every committed event exactly once, so you do not need an inbox table.",
+			"",
+			"# No configuration needed",
+			"",
+			"A broker delivers each event exactly once.",
+			"",
+			"Every subscriber sees each committed event exactly once.",
+			"",
+			"A projector delivers every committed event exactly once.",
+			"",
+			"Delivery is at least once, and no wording here may call it exactly-once.",
+			"",
+			"A broker delivers each event once and only once.",
+			"",
+			"Delivery is at least once, and no page here promises it once and only once.",
+			"",
+			"## Initial non-goals",
+			"",
+			"- Exactly-once broker delivery.",
+			"",
+			"A preload resolves its options exactly once.",
+		},
+		"window.md": {
+			"# The delivery window",
+			"",
+			"The broker is what carries them. Each event arrives exactly once.",
+			"",
+			"We never promise it. The broker delivers each event exactly once.",
+			"",
+			"- The projector delivers each event exactly once",
+			"- It does not order streams",
+			"",
+			"| the projector delivers each event exactly once |",
+			"| it does not order streams |",
+		},
+		"обход.md": {
+			"# Обход журнала",
+			"",
+			"Проектор доставляет каждое событие ровно один раз.",
+			"",
+			"Доставка гарантируется хотя бы один раз, и ни один текст здесь не назовёт её «ровно один раз».",
+			"",
+			"Каждый подписчик получает событие один и только один раз.",
+		},
+	}
+	for name, lines := range written {
+		if err := os.WriteFile(filepath.Join(root, name), []byte(strings.Join(lines, "\n")), 0o600); err != nil {
+			t.Fatalf("cannot write the fixture: %v", err)
+		}
+	}
+	return root
 }

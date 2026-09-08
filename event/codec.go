@@ -28,11 +28,14 @@ import (
 // rule for every extension point: the kernel recovers a panic from an extension
 // that has a stated refusal channel for the same failure and maps it to the
 // sentinel that channel already produces, and it recovers nothing else. So an
-// upcaster's panic is recovered into ErrUpcast, and a fold's, an identity
-// mapper's and a store's are not — the first two have no error channel to be a
-// second spelling of, and a store has both an error channel and an Outcome
-// vocabulary, so recovering it would be the kernel classifying a failure the
-// store did not classify.
+// upcaster's panic is recovered into ErrUpcast, and a payload type's own Equal —
+// which Fact.RoundTrip asks of a struct whose every field is unexported, and
+// there alone — into ErrSample, because a sample the comparison could not be
+// made for is what ErrSample already says. A fold's, an identity mapper's and a
+// store's are not recovered: the first two have no error channel to be a second
+// spelling of, and a store has both an error channel and an Outcome vocabulary,
+// so recovering it would be the kernel classifying a failure the store did not
+// classify.
 type Codec[V any] interface {
 	Encode(V) ([]byte, error)
 	Decode([]byte) (V, error)

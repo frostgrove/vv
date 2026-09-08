@@ -92,7 +92,8 @@ func (this tenantQueue) restoreRequest(t *testing.T) jobs.IdentityRestoreRequest
 	}
 	placement := this.sender.placed[0]
 	request, err := placement.Context().IdentityRestoreRequest(
-		this.namespace, placement.Partition(), this.definition, this.policy)
+		this.namespace, placement.Partition(), this.definition,
+		placement.Candidate(), placement.WireDigest(), this.policy)
 	if err != nil {
 		t.Fatalf("the record the producer wrote cannot be read back: %v", err)
 	}
@@ -192,7 +193,7 @@ func TestWorkThatNeedsNoTenantRestoresWithNoneBound(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	request, err := durable.IdentityRestoreRequest(namespace, key, definition, policy)
+	request, err := durable.IdentityRestoreRequest(namespace, key, definition, someInvocation(t), someWire(t, 1), policy)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -415,11 +416,12 @@ func TestAForgedDurableRecordEntersNoHandler(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	honest := sealed(t, deployment, work.namespace, work.definition, theirs)
+	invocation, wire := someInvocation(t), someWire(t, 7)
+	honest := sealed(t, deployment, work.namespace, work.definition, invocation, wire, theirs)
 	if len(honest) != generationBytes+macBytes+len(globex.Value()) {
 		t.Fatalf("a sealed record is %d bytes, so the forgeries below are shaped for a layout that no longer exists", len(honest))
 	}
-	if err := unsealed(t, deployment, work.namespace, work.definition, honest); err != nil {
+	if err := unsealed(t, deployment, work.namespace, work.definition, invocation, wire, honest); err != nil {
 		t.Fatalf("the honest record these forgeries are built from does not itself verify: %v", err)
 	}
 
@@ -431,15 +433,37 @@ func TestAForgedDurableRecordEntersNoHandler(t *testing.T) {
 		"a hand-built plaintext claim":        handBuilt(globex, epoch),
 		"an honest record with its MAC wiped": stripped(honest),
 		"a claim carrying a random MAC":       scrambled(honest),
-		"another deployment's key":            foreignRecord(t, work, globex, epoch),
+		"another deployment's key":            foreignRecord(t, work, globex, epoch, invocation, wire),
 	} {
 		t.Run(name, func(t *testing.T) {
-			request := hostileRequest(t, work, globex, token)
+			request := hostileRequest(t, work, globex, token, invocation, wire)
 			if _, err := jobs.RestoreTrustedIdentity(context.Background(), restorer(t, deployment), request); err == nil {
 				t.Fatal("a record nobody with this deployment's key wrote was executed as the tenant it named")
 			}
 		})
 	}
+}
+
+func someInvocation(t *testing.T) jobs.InvocationID {
+	t.Helper()
+	id, err := jobs.NewInvocationID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return id
+}
+
+func someWire(t *testing.T, seed byte) jobs.WireDigest {
+	t.Helper()
+	var value [32]byte
+	for index := range value {
+		value[index] = seed
+	}
+	digest, err := jobs.WireDigestFromBytes(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return digest
 }
 
 func mustReference(t *testing.T, raw string) tenancy.Reference {
@@ -456,26 +480,26 @@ const (
 	macBytes        = 32
 )
 
-func sealed(t *testing.T, authority *tenancy.Authority, namespace jobs.Namespace, definition jobs.Name, scope tenancy.Scope) []byte {
+func sealed(t *testing.T, authority *tenancy.Authority, namespace jobs.Namespace, definition jobs.Name, invocation jobs.InvocationID, wire jobs.WireDigest, scope tenancy.Scope) []byte {
 	t.Helper()
 	sealer, err := authority.Sealer()
 	if err != nil {
 		t.Fatalf("the deployment cannot seal a record at all: %v", err)
 	}
-	token, err := sealer.Seal(scope, record(namespace, definition)...)
+	token, err := sealer.Seal(context.Background(), scope, record(namespace, definition, invocation, wire)...)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return token
 }
 
-func unsealed(t *testing.T, authority *tenancy.Authority, namespace jobs.Namespace, definition jobs.Name, token []byte) error {
+func unsealed(t *testing.T, authority *tenancy.Authority, namespace jobs.Namespace, definition jobs.Name, invocation jobs.InvocationID, wire jobs.WireDigest, token []byte) error {
 	t.Helper()
 	sealer, err := authority.Sealer()
 	if err != nil {
 		t.Fatalf("the deployment cannot read a record at all: %v", err)
 	}
-	_, _, err = sealer.Unseal(token, record(namespace, definition)...)
+	_, _, err = sealer.Unseal(token, record(namespace, definition, invocation, wire)...)
 	return err
 }
 
@@ -520,17 +544,17 @@ func otherDeployment(t *testing.T, reference tenancy.Reference, epoch tenancy.Ep
 // A second deployment, with its own durable key, sealing an honest record for a
 // tenant it really knows — a record that travelled between environments rather
 // than one somebody typed.
-func foreignRecord(t *testing.T, work tenantQueue, reference tenancy.Reference, epoch tenancy.Epoch) []byte {
+func foreignRecord(t *testing.T, work tenantQueue, reference tenancy.Reference, epoch tenancy.Epoch, invocation jobs.InvocationID, wire jobs.WireDigest) []byte {
 	t.Helper()
 	other := otherDeployment(t, reference, epoch)
 	scope, err := other.Lookup(context.Background(), reference, tenancy.ClassDurable)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return sealed(t, other, work.namespace, work.definition, scope)
+	return sealed(t, other, work.namespace, work.definition, invocation, wire, scope)
 }
 
-func hostileRequest(t *testing.T, work tenantQueue, reference tenancy.Reference, token []byte) jobs.IdentityRestoreRequest {
+func hostileRequest(t *testing.T, work tenantQueue, reference tenancy.Reference, token []byte, invocation jobs.InvocationID, wire jobs.WireDigest) jobs.IdentityRestoreRequest {
 	t.Helper()
 	protected, err := jobs.NewProtectedIdentityToken(token)
 	if err != nil {
@@ -557,7 +581,7 @@ func hostileRequest(t *testing.T, work tenantQueue, reference tenancy.Reference,
 	if err != nil {
 		t.Fatal(err)
 	}
-	request, err := durable.IdentityRestoreRequest(work.namespace, key, work.definition, work.policy)
+	request, err := durable.IdentityRestoreRequest(work.namespace, key, work.definition, invocation, wire, work.policy)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -600,22 +624,93 @@ func TestADurableRecordCannotBeReplayedIntoAnotherJobOrQueue(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	token := sealed(t, deployment, honest, sending, scope)
+	invocation, wire := someInvocation(t), someWire(t, 3)
+	token := sealed(t, deployment, honest, sending, invocation, wire, scope)
 
-	if err := unsealed(t, deployment, honest, sending, token); err != nil {
+	if err := unsealed(t, deployment, honest, sending, invocation, wire, token); err != nil {
 		t.Fatalf("the control refuses too, so the assertions below prove nothing: %v", err)
 	}
 	for name, replay := range map[string]struct {
 		namespace  jobs.Namespace
 		definition jobs.Name
+		invocation jobs.InvocationID
+		wire       jobs.WireDigest
 	}{
-		"into another queue":         {namespace: elsewhere, definition: sending},
-		"into another job":           {namespace: honest, definition: refunding},
-		"into another queue and job": {namespace: elsewhere, definition: refunding},
+		"into another queue":         {namespace: elsewhere, definition: sending, invocation: invocation, wire: wire},
+		"into another job":           {namespace: honest, definition: refunding, invocation: invocation, wire: wire},
+		"into another queue and job": {namespace: elsewhere, definition: refunding, invocation: invocation, wire: wire},
+		// The two that matter most, because the queue and the job are the ones
+		// the record was written for: a second row of the same job, and the same
+		// row with the payload swapped underneath it.
+		"onto another record of the same job":       {namespace: honest, definition: sending, invocation: someInvocation(t), wire: wire},
+		"onto the same record with another payload": {namespace: honest, definition: sending, invocation: invocation, wire: someWire(t, 4)},
 	} {
 		t.Run(name, func(t *testing.T) {
-			if err := unsealed(t, deployment, replay.namespace, replay.definition, token); !errors.Is(err, tenancy.ErrUntrusted) {
+			if err := unsealed(t, deployment, replay.namespace, replay.definition, replay.invocation, replay.wire, token); !errors.Is(err, tenancy.ErrUntrusted) {
 				t.Fatalf("err = %v, want tenancy.ErrUntrusted — a record was moved to somewhere it was never written for", err)
+			}
+		})
+	}
+}
+
+// The replay this seam exists to stop, assembled the way the adversary the
+// durable key names would assemble it: not a forged MAC, but an honest token
+// lifted off a row the tenant really enqueued and reattached to a row the
+// attacker wrote — same deployment, same queue, same job, same live tenant, a
+// payload of their choosing. Nothing above covers it: every case in
+// TestAForgedDurableRecordEntersNoHandler feeds a token nobody with the key
+// wrote, and the replay table checks the queue and the job rather than the
+// record. The control is the first assertion — the honest record restores — so
+// a refusal that stopped happening for some unrelated reason fails here loudly
+// rather than passing this test for free.
+func TestAnHonestTokenReattachedToAnotherRecordEntersNoHandler(t *testing.T) {
+	epoch, err := tenancy.NewEpoch(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	acme := mustReference(t, "acme")
+	deployment, err := tenancy.New(tenancy.Spec{
+		DurableKey: durableTestKey,
+		Resolver: knownTenants{byReference: map[tenancy.Reference]tenancy.Resolution{
+			acme: {Reference: acme, Lifecycle: tenancy.Active, Epoch: epoch},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	work := tenantWork(t, deployment, "send-invoice")
+	scope, err := deployment.Lookup(context.Background(), acme, tenancy.ClassDurable)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, err := deployment.With(context.Background(), scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := jobs.Go(ctx, work.automatic, "invoice-1"); err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+	if _, err := jobs.RestoreTrustedIdentity(context.Background(), restorer(t, deployment), work.restoreRequest(t)); err != nil {
+		t.Fatalf("the tenant's own record does not restore, so the refusals below prove nothing: %v", err)
+	}
+
+	placement := work.sender.placed[0]
+	stolen, ok := placement.Context().Token()
+	if !ok {
+		t.Fatal("the record the producer wrote carries no token, so there is nothing to replay")
+	}
+	for name, forged := range map[string]struct {
+		invocation jobs.InvocationID
+		wire       jobs.WireDigest
+	}{
+		"a new row carrying the tenant's token":        {invocation: someInvocation(t), wire: placement.WireDigest()},
+		"the tenant's row with the payload swapped":    {invocation: placement.Candidate(), wire: someWire(t, 9)},
+		"a new row and an attacker-chosen payload too": {invocation: someInvocation(t), wire: someWire(t, 11)},
+	} {
+		t.Run(name, func(t *testing.T) {
+			request := hostileRequest(t, work, acme, stolen.Bytes(), forged.invocation, forged.wire)
+			if _, err := jobs.RestoreTrustedIdentity(context.Background(), restorer(t, deployment), request); err == nil {
+				t.Fatal("an honest token reattached to another record restored the tenant it was minted for")
 			}
 		})
 	}

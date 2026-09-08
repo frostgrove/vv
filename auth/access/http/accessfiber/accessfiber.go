@@ -178,7 +178,7 @@ func (this *Handler) ChangeSecret(c fiber.Ctx) error {
 	if err := c.Bind().Body(&body); err != nil {
 		return porthttp.BadRequest(err)
 	}
-	response, err := this.endpoints.ChangeSecret(c.Context(), body)
+	response, err := this.endpoints.ChangeSecret(c.Context(), body, agentOf(c))
 	if err != nil {
 		return err
 	}

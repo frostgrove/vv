@@ -214,14 +214,18 @@ func (p DurabilityProfile) valid() bool {
 	return p.ack.Valid() && p.loss.Valid() && p.failures.valid() && (p.loss == AcknowledgedLossPossible && p.failures.IsZero() || p.loss == AcknowledgedLossExcludedForDeclaredFailures && !p.failures.IsZero()) && (p.ack != AckBeforePersistence || p.loss == AcknowledgedLossPossible)
 }
 
+// OrderedPartition and ServerSideWakeup were here and no backend ever set them,
+// nothing read them, and no code path could have honoured them — while a producer
+// could require OrderedPartition and be told by satisfies() that it had an
+// ordering guarantee [[D-118]] explicitly refuses to make. A capability nothing
+// can honour is worse than an absent one, so they are gone; the delivery contract
+// is at-least-once and unordered, and that is stated rather than negotiable.
 type Capabilities struct {
-	Priority         bool
-	Debounce         bool
-	Unique           bool
-	Scheduled        bool
-	AttemptTrace     bool
-	OrderedPartition bool
-	ServerSideWakeup bool
+	Priority     bool
+	Debounce     bool
+	Unique       bool
+	Scheduled    bool
+	AttemptTrace bool
 }
 
 func (c Capabilities) String() string                 { return "[job backend capabilities]" }
@@ -231,9 +235,7 @@ func (c Capabilities) satisfies(required Capabilities) bool {
 		(!required.Debounce || c.Debounce) &&
 		(!required.Unique || c.Unique) &&
 		(!required.Scheduled || c.Scheduled) &&
-		(!required.AttemptTrace || c.AttemptTrace) &&
-		(!required.OrderedPartition || c.OrderedPartition) &&
-		(!required.ServerSideWakeup || c.ServerSideWakeup)
+		(!required.AttemptTrace || c.AttemptTrace)
 }
 
 type ProducerRequirements struct {

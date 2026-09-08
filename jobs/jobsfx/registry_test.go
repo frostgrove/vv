@@ -50,9 +50,13 @@ func TestRegistryBuildsCatalogAndFxModuleFromOneApplicationList(t *testing.T) {
 }
 
 func TestBindingWireSupportsSafeJSONAndCustomContracts(t *testing.T) {
-	safe := jobsfx.AutoFor[*registryHandler, string]().JSON("jobsfx.safe-json", 2)
-	if safe.Describe().Codec.CurrentVersion != 2 || safe.Describe().Codec.Mode != jobs.SafeCodecMode {
-		t.Fatalf("safe descriptor = %#v", safe.Describe())
+	if safeJSONRuntimeSupported {
+		safe := jobsfx.AutoFor[*registryHandler, string]().JSON("jobsfx.safe-json", 2)
+		if safe.Describe().Codec.CurrentVersion != 2 || safe.Describe().Codec.Mode != jobs.SafeCodecMode {
+			t.Fatalf("safe descriptor = %#v", safe.Describe())
+		}
+	} else {
+		assertSafeJSONRefused(t)
 	}
 	name, err := jobs.ParseName("jobsfx.custom")
 	if err != nil {
@@ -100,4 +104,22 @@ func assertPanicIs(t *testing.T, target error, operation func()) {
 		}
 	}()
 	operation()
+}
+
+// Safe JSON is refused at activation under a jsonv2 runtime ([[D-085]]), and the
+// binding spells wiring as a Must, so the refusal arrives as a panic. Asserting
+// it here rather than skipping keeps the toolchain the suite actually runs on
+// covered by something.
+func assertSafeJSONRefused(t *testing.T) {
+	t.Helper()
+	defer func() {
+		recovered := recover()
+		if recovered == nil {
+			t.Fatal("safe JSON was accepted on a runtime where it is refused")
+		}
+		if err, ok := recovered.(error); !ok || !errors.Is(err, jobs.ErrInvalid) {
+			t.Fatalf("safe JSON was refused with %v, want a jobs.ErrInvalid", recovered)
+		}
+	}()
+	jobsfx.AutoFor[*registryHandler, string]().JSON("jobsfx.safe-json", 2)
 }

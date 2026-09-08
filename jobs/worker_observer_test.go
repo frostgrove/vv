@@ -723,6 +723,8 @@ func TestWorkerEventSurfaceIsImmutableMetricSafeAndRedacted(t *testing.T) {
 		"Binding":         reflect.TypeFor[BindingName](),
 		"AdmissionGroup":  reflect.TypeFor[WorkerAdmissionGroup](),
 		"CommandKind":     reflect.TypeFor[DeliveryCommandKind](),
+		"Disposition":     reflect.TypeFor[DispositionKind](),
+		"Reason":          reflect.TypeFor[Reason](),
 		"AdmissionSignal": reflect.TypeFor[AdmissionSignal](),
 		"Results":         reflect.TypeFor[[]WorkerDeliveryResultCount](),
 		"Items":           reflect.TypeFor[int](),

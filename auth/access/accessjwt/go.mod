@@ -13,6 +13,7 @@ require (
 )
 
 require (
+	filippo.io/edwards25519 v1.2.0 // indirect
 	golang.org/x/crypto v0.55.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect
 )
@@ -20,3 +21,5 @@ require (
 // Neither access nor this module has a tag yet; the workspace and these
 // replaces are how they resolve until the first release.
 replace github.com/frostgrove/vv/auth/access => ..
+
+replace github.com/frostgrove/vv/auth/authjwt => ../../authjwt

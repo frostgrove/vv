@@ -71,8 +71,18 @@ func (r repository) listDeliveryRecords(ctx context.Context, db *sql.DB, namespa
 		}
 		conditions = append(conditions, "state IN ("+strings.Join(placeholders, ", ")+")")
 	}
-	args = append(args, spec.limit, spec.offset)
-	query := `SELECT record FROM ` + r.deliveries + ` WHERE ` + strings.Join(conditions, " AND ") + ` ORDER BY created_at DESC, id DESC LIMIT $` + fmt.Sprint(len(args)-1) + ` OFFSET $` + fmt.Sprint(len(args))
+	// A cursor reads the page and nothing else; an offset makes the database walk
+	// and discard every row before it, so the cost of page N grows with N.
+	if spec.after != nil {
+		args = append(args, spec.after.CreatedAt, invocationArgument(spec.after.ID))
+		conditions = append(conditions, fmt.Sprintf("(created_at, id) < ($%d, $%d)", len(args)-1, len(args)))
+	}
+	args = append(args, spec.limit)
+	query := `SELECT record FROM ` + r.deliveries + ` WHERE ` + strings.Join(conditions, " AND ") + ` ORDER BY created_at DESC, id DESC LIMIT $` + fmt.Sprint(len(args))
+	if spec.after == nil {
+		args = append(args, spec.offset)
+		query += ` OFFSET $` + fmt.Sprint(len(args))
+	}
 	rows, err := db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err

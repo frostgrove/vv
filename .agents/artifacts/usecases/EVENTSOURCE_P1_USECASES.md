@@ -359,6 +359,14 @@ be false through a back door. A store has no reason to hold one — it never add
 sentinel, and its classification is an `Outcome` — so this is a checkable
 prohibition rather than a burden (§INV-024, §INV-045).
 
+> **Superseded by [PLAN] S1 and S6 ([[D-122]]).** The prohibition is **not
+> checked; it is made harmless.** The refusal wrapper gates the *target* of the
+> traversal rather than the promotion of a wrap: no wrap answers for a sentinel
+> of this vocabulary, whatever a cause carries. Checking it instead cost the
+> decorator's and the upcaster's own error its `errors.Is` reachability
+> (GAP-147, GAP-159), and that error is the whole point of `ErrRefused` and
+> `ErrUpcast`.
+
 `context.Canceled` and `context.DeadlineExceeded` are **not** sentinels of this
 subsystem and are never wrapped by one: they travel as themselves (§INV-029).
 
@@ -369,6 +377,15 @@ map and §INV-045 the invariant. That is why `ErrBackend` exists and why
 `ErrUncertain` is not something a store spells. The store's own error rides along
 as the wrapped cause, so `errors.Is` reaches it while §INV-025 keeps its text from
 travelling.
+
+> **Superseded by [PLAN] S1 and S6 ([[D-122]], GAP-135).** The cause rides along
+> and **neither `errors.Is` nor `errors.As` reaches it**; `event.CauseOf` is the
+> one reader that does. `port.KindOf` falls through `errs.AsFault` into six
+> `errors.Is` branches over `crud` sentinels, so a cause that happened to carry
+> `crud.ErrUnavailable` — an ordinary driver class — would render an **uncertain
+> commit** as *retry me*, and retrying an unconfirmed append writes the same
+> decision twice. The two exceptions are `ErrRefused` and `ErrUpcast`, whose
+> cause **is** their declared wrap.
 
 **How the set grows, since it is frozen with the contract.** Adding a sentinel to an existing class
 is additive and safe: nobody matched a sentinel that did not exist. Adding a
@@ -528,6 +545,17 @@ UC-064…UC-066, round 6 adds UC-067 and round 9 adds UC-068.
   an error return would exist only to be discarded by an `init`, and it would give
   a second, unsealed way to build a table (§INV-013). A test asserts a refusal by
   recovering the panic and matching the sentinel.
+
+  > **Superseded by Q21's answer in [PLAN] and by [[D-123]].** There **is** a
+  > sibling and it is spelled `TryDefine`/`TryDeclare`, not `MustDefine`. The
+  > clause above was written against the `Define`/`MustDefine` **inversion**,
+  > which is not what shipped: the panicking name stays the short one an
+  > application writes at package level, and the `Try…` name is what the
+  > twenty-two negative cases are written against instead of twenty-two
+  > `recover()` blocks. §INV-013 survives because both calls answer the *same*
+  > value through one code path — the panicking one is three lines over the
+  > returning one and has no body of its own — so there is no second, unsealed
+  > way to build a table.
 - **Why** [[D-021]]: "the magic must fail early ... magic at the call site,
   strictness at the declaration". A reflective path that reports at request time
   is the worst of both worlds. The codec being here is what makes the one check
@@ -3781,8 +3809,12 @@ place; INV-038…INV-045 were appended one round at a time, never inserted.
   **wraps** the store's error, asserting the sentinel is unchanged, which is the
   case a type assertion fails; a bare cancellation from a store asserting the
   cancellation sentinel still matches (§INV-029); the store's own error asserted
-  reachable with `errors.Is` through every mapped sentinel while its distinctive
-  text is asserted absent from the rendered message (§INV-025); the uninjected
+  reachable **through `event.CauseOf` and by neither `errors.Is` nor
+  `errors.As`** through every mapped sentinel — superseded from "reachable with
+  `errors.Is`" by [PLAN] S1 and S6 ([[D-122]], GAP-135), because a cause carrying
+  an ordinary driver class would set the caller's transport status and an
+  uncertain commit would render as retryable — while its distinctive text is
+  asserted absent from the rendered message (§INV-025); the uninjected
   append succeeding as the control; and — §INV-019's half — the trivial store in
   `eventtest`'s own test package returning a classified failure of each kind with
   no `event`-internal access, which it can because `Outcome` and `Failure` are
@@ -4767,7 +4799,7 @@ nobody reads that refusal as covering more than it does.
 | A per-aggregate **phantom type parameter** — `Aggregate[S, ID, A]`, `Change[S, A]`, `At[S, A]`, `Repo[S, ID, A]`, `Fact[S, ID, E, A]` — so that two aggregates over one state type are two Go types | It closes §INV-020's second row at the type level and costs more than the row is worth. Every consumer declares a marker type whose only job is to be distinct (`type accountTag struct{}`), four of the five caller-seam types gain a parameter, and `A` cannot be inferred from anything at the declaration site, so `Define[Account, AccountID, accountTag]` spells all three by hand — which is §D.11's whole subject going the wrong way. It also buys nothing for the larger risk, two *instances* of one aggregate, which no type parameter reaches and which the same `ErrWrongStream` comparison already refuses. Recorded so nobody re-proposes it in phase 2 (§INV-020, GAP-80) |
 | An opaque `Cursor` struct with `event.NewCursor` | The minting call is equally available to a caller, so the unconstructibility argument becomes a sentence; the defined string type keeps §INV-019 true instead (§UC-053, Q18) |
 | `event.Since[V2](2)` and a retention floor | The one hand-typed number in the design, whose off-by-one produces a **successful** misdecode; retention is additive and brings its own refusal and tests |
-| An error-returning sibling of the declaration calls | A declaration binds Go types at compile time, so nothing dynamic can use it; the return would be discarded by an `init` and would give a second, unsealed way to build a table. The tree's `Define`/`MustDefine` convention disagrees and is Q21 |
+| An error-returning sibling of the declaration calls | ~~A declaration binds Go types at compile time, so nothing dynamic can use it; the return would be discarded by an `init` and would give a second, unsealed way to build a table. The tree's `Define`/`MustDefine` convention disagrees and is Q21.~~ **Superseded: `TryDefine`/`TryDeclare` ship** ([[D-123]]). The refused shape was the `Define`/`MustDefine` inversion; the sibling that shipped keeps the short name panicking, has no body of its own, and exists for the negative tests |
 | A store-owned codec, and `Store.Codec()` | Deferred the encodability check past `main`, made a per-request `Bind` walk the readers, and made per-revision codecs inexpressible (§D.2) |
 | A `Config()` bundle instead of `Limits()` and `Capabilities()` | Both are read on every operation; a bundle would be re-validated on every call, and the tree's bundles (`Describe`, `BackendDescription`) are *descriptions*, not values the kernel uses |
 | A versioned key rendering, on `cache.KeyCodec`'s model | A cache key may miss; a stream key may not. Bumping a key version orphans every existing stream — the precise failure §INV-005 exists to prevent, with a knob to cause it |
@@ -5375,7 +5407,7 @@ against it and `make check-deps` measures it.
 
 | Import | What for, exhaustively |
 |---|---|
-| the standard library | `context`, `errors`, `fmt`, `bytes` (`Clone`, at `Fact.New`'s freeze and at `Fold`'s pre-decode copy — the two hand-offs §INV-021 answers with a copy inside the kernel), `reflect` (the nil-identity predicate of `NewBacking`/`NewAuthority`, which restates `crud`'s unexported one because no package can reach it — §INV-016, GAP-85 — and nothing else), `testing` in `eventtest` only (Q9), `time` for the recorded instant |
+| the standard library | `context`, `errors`, `fmt`, `bytes` (`Clone`, at `Fact.New`'s freeze and at `Fold`'s pre-decode copy — the two hand-offs §INV-021 answers with a copy inside the kernel), `reflect` (the nil-identity predicate of `NewBacking`/`NewAuthority`, which restates `crud`'s unexported one because no package can reach it — §INV-016, GAP-85 — and nothing else), `strings` (`Builder`, in `Compose`'s frozen rendering), `unicode` and `unicode/utf8` (the kernel text rule, and the escape set `Compose` reads through it), `encoding/json` and `encoding` (the shipped codec and its encodability walk), `sync` and `sync/atomic` (the declaration's seal and the binding's family table), `testing` in `eventtest` only (Q9), `time` for the recorded instant — the first three added by [PLAN] S6, which found the row omitted what `Compose` and the text rule already needed |
 | `crud` | **three** symbols and no more. `crud.SameDataSource`, which is `Backing.Equal`, `Backing.Valid` and half of `Authority.Same` (§INV-016, §INV-028). And the two error classes that two of §2.3's four declared class wraps name: `crud.ErrConflict` and `crud.ErrUnavailable` (Q1). It does **not** name `crud.ExecutorFor`, `crud.Source` or anything else in the executor vocabulary — a store resolves its own executor inside its own package (Q4) |
 | `errs` | the **third** class wrap: `ErrTooLarge` carries the framework's too-large class, and the tree has no too-large sentinel, so it is an `*errs.Fault` with `errs.KindTooLarge` (Q1, §UC-017). It is named here because a wrap list of four that omits the package one of them lives in is how GAP-58's fix reintroduced GAP-58 at half scale (GAP-75) |
 
@@ -5494,7 +5526,7 @@ later rounds rewrote statuses without renumbering anything.
 | **Q18** | The cursor's type | Open, and the document takes the defined string type with its cost stated (§UC-053, §D.12). Whoever wants the opaque struct must also say what the exported minting call it costs is worth |
 | **Q19** | The family collisions `Bind` cannot see | Open. §INV-039 states the two escapes and their scope. Both have one candidate answer, which the tree already runs: a composition-root catalogue on `jobs.NewCatalog`'s model, seeing every declaration one application composes whichever store or binding each went through. It is **additive** to phase 1 and belongs in `## Debt` |
 | **Q20** | ~~The spelling of the values the kernel reads from a store~~ | **Dissolved by half.** The codec moved to the declaration, so `Store.Codec()` is gone and the question shrinks to `Limits()`, which is settled: two methods, not one `Config()` bundle, because both are values the kernel *uses* on every operation and a bundle would be re-validated on every call |
-| **Q21** | Panic-only declaration, or the tree's `Define`/`MustDefine` pair? | **New, and it is a genuine departure from a live convention.** §UC-004 ships panic-only with an argument (there is no dynamic path, so the error return exists only to be discarded by an `init`, and it would give a second, unsealed way to build a table). The tree does the opposite in eight places, and its reason is one this document did not have: **the negative tests are written against the returned error**, and phase 1's declaration checks are its largest cluster of negative cases. A `MustDefine` that is three lines over `Define` and returns the *same* value preserves §INV-013. Recorded so the owner decides rather than an implementer |
+| **Q21** | Panic-only declaration, or the tree's `Define`/`MustDefine` pair? | **Answered in [PLAN] and shipped as [[D-123]]: `Define`/`Declare` panic, `TryDefine`/`TryDeclare` return.** Neither of the two shapes this row named: the tree's own precedent is `crud/sqlrepo/blueprint.go:74:Define` / `:82:TryDefine`, which [[D-021]] already cites by line, and it keeps the short name for what an application writes at package level. The negative-test argument is what earned the sibling — twenty-two refusals asserted as a table instead of twenty-two `recover()` blocks — and §INV-013 survives because the panicking call has no body of its own |
 
 ---
 

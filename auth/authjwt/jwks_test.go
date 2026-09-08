@@ -1313,3 +1313,43 @@ func TestJWKSUsesTheSameRSAStrengthRulesAsAStaticSource(t *testing.T) {
 		})
 	}
 }
+
+type jwksSeedKey struct{}
+
+type seedWatchingTransport struct{ seen chan any }
+
+func (this seedWatchingTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	this.seen <- request.Context().Value(jwksSeedKey{})
+	return http.DefaultTransport.RoundTrip(request)
+}
+
+// The JWKS fetch is shared: many requests miss the same kid and one of them
+// starts the fetch every other one waits on. Seeding it from that request's
+// context — WithoutCancel drops the cancellation and keeps the *values* — meant
+// the shared refresh ran under whoever lost the race: their logger, their
+// tracer, their tenant scope, attributed to all the others. The cache keeps the
+// same rule for its shared flights ([[D-084]]).
+func TestTheSharedJWKSFetchDoesNotInheritAWaitersContext(t *testing.T) {
+	seen := make(chan any, 4)
+	set := &keySet{}
+	set.set(jwkOf("k1", &rsaKey.PublicKey))
+	url := set.serve(t)
+
+	// Observed on the client side: a server's r.Context() is the server's, and
+	// carries none of the client's values, so watching there proves nothing.
+	client := &http.Client{Transport: seedWatchingTransport{seen: seen}}
+	p := parser[MyClaims](t, authjwt.JWKS(url, authjwt.JWKSClient(client)))
+	waiter := context.WithValue(t.Context(), jwksSeedKey{}, "the first request that missed")
+	if _, err := p.Parse(waiter, signKid(t, "k1", rsaKey)); err != nil {
+		t.Fatalf("parsing: %v", err)
+	}
+
+	select {
+	case carried := <-seen:
+		if carried != nil {
+			t.Fatalf("the shared fetch carried a waiter's context value %q", carried)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("no fetch was made")
+	}
+}

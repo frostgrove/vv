@@ -38,6 +38,22 @@ var operationalIndexes = []operationalIndex{
 		table:   "intents",
 		columns: []string{"namespace", "invocation_id"},
 	},
+	{
+		// The admin List and Count order and count the whole namespace by
+		// (created_at DESC, id DESC), and none of the indexes above can serve
+		// that: the ready index is partial and starts with definition, the
+		// expired one is partial on a leased row. Without this, opening the
+		// operations view sorts every delivery the namespace has ever held, and
+		// it gets slower for as long as retention keeps them.
+		//
+		// Ascending, and read backwards. A btree serves the reverse order at the
+		// same cost, and the index validation above asserts every column is
+		// ascending — a DESC index would be rejected by the deployment's own
+		// schema check.
+		name:    "deliveries_recent_idx",
+		table:   "deliveries",
+		columns: []string{"namespace", "created_at", "id"},
+	},
 }
 
 func (r repository) operationalIndexStatements() []string {

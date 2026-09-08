@@ -90,6 +90,17 @@ func (this relimiting) Limits() event.Limits {
 	return limits
 }
 
+// The store that forgot a field, which is what an Unstated capability is: the
+// door refuses it rather than skipping the section it would gate, because a
+// capability nobody stated is not one nobody has.
+type sayingNothing struct{ event.Store }
+
+func (this sayingNothing) Capabilities() event.Capabilities {
+	capabilities := this.Store.Capabilities()
+	capabilities.Transactions = event.Unstated
+	return capabilities
+}
+
 type unclaiming struct{ event.Store }
 
 func (this unclaiming) Capabilities() event.Capabilities {

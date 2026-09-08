@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+
+	"github.com/redis/go-redis/v9"
 )
 
 const (
@@ -69,8 +71,38 @@ func Logger(logger *slog.Logger) Option {
 	return func(list *List) { list.logger = logger }
 }
 
+// Every node, not one. Revocations are written across the whole cluster, so a
+// verdict from a single node said nothing about the node a given session's key
+// actually lands on — and the client type this takes exists to be multi-node. A
+// cluster is now asked master by master and the worst answer wins: one evicting
+// node is an evicting deployment, because the key that node holds is the one
+// that will silently disappear.
 func (this *List) EvictionPolicy(ctx context.Context) EvictionPolicy {
-	answer, err := this.client.ConfigGet(ctx, EvictionParameter).Result()
+	cluster, ok := this.client.(interface {
+		ForEachMaster(context.Context, func(context.Context, *redis.Client) error) error
+	})
+	if !ok {
+		return this.nodeEvictionPolicy(ctx, this.client)
+	}
+
+	worst := EvictionPolicy{Verdict: Retaining, Name: RetainingPolicy}
+	seen := 0
+	err := cluster.ForEachMaster(ctx, func(nodeCtx context.Context, node *redis.Client) error {
+		seen++
+		worst = worseEviction(worst, this.nodeEvictionPolicy(nodeCtx, node))
+		return nil
+	})
+	if err != nil {
+		return EvictionPolicy{Verdict: Unknown, Reason: fmt.Errorf("asking every master for %s: %w", EvictionParameter, err)}
+	}
+	if seen == 0 {
+		return EvictionPolicy{Verdict: Unknown, Reason: fmt.Errorf("the cluster named no masters to ask for %s", EvictionParameter)}
+	}
+	return worst
+}
+
+func (this *List) nodeEvictionPolicy(ctx context.Context, client redis.Cmdable) EvictionPolicy {
+	answer, err := client.ConfigGet(ctx, EvictionParameter).Result()
 	if err != nil {
 		return EvictionPolicy{Verdict: Unknown, Reason: fmt.Errorf("asking for %s: %w", EvictionParameter, err)}
 	}
@@ -82,6 +114,24 @@ func (this *List) EvictionPolicy(ctx context.Context) EvictionPolicy {
 		return EvictionPolicy{Verdict: Retaining, Name: name}
 	}
 	return EvictionPolicy{Verdict: Evicting, Name: name}
+}
+
+// Evicting beats Unknown beats Retaining: a deployment is only retaining when
+// every node it was able to ask said so.
+func worseEviction(current, candidate EvictionPolicy) EvictionPolicy {
+	rank := func(policy EvictionPolicy) int {
+		switch policy.Verdict {
+		case Evicting:
+			return 2
+		case Unknown:
+			return 1
+		}
+		return 0
+	}
+	if rank(candidate) > rank(current) {
+		return candidate
+	}
+	return current
 }
 
 // VerifyEvictionPolicy is the start-up check, and it belongs to whoever owns the

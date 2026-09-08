@@ -34,7 +34,11 @@ func (this *scriptedSessions) Exec(ctx context.Context, query string, args ...an
 func (this *scriptedSessions) Query(ctx context.Context, query string, args ...any) (crud.Rows, error) {
 	this.mu.Lock()
 	if strings.Contains(query, "sessions") && len(this.rows) > 0 {
-		this.Recorder.Push(crudtest.Rows(this.rows[0]))
+		if row := this.rows[0]; row == nil {
+			this.Recorder.Push(crudtest.Result{})
+		} else {
+			this.Recorder.Push(crudtest.Rows(row))
+		}
 		this.rows = this.rows[1:]
 	}
 	this.mu.Unlock()
@@ -42,8 +46,12 @@ func (this *scriptedSessions) Query(ctx context.Context, query string, args ...a
 }
 
 func rowOf(id uuid.UUID, current, previous string, rotatedAt any, moment time.Time) []any {
+	return rowAtGeneration(id, current, previous, rotatedAt, moment, 1)
+}
+
+func rowAtGeneration(id uuid.UUID, current, previous string, rotatedAt any, moment time.Time, generation int64) []any {
 	return []any{
-		id.String(), "user", uuid.New().String(), current, previous,
+		id.String(), "user", uuid.New().String(), current, previous, generation,
 		"", "", moment, moment, rotatedAt, moment.Add(24 * time.Hour), nil, "",
 	}
 }
@@ -144,5 +152,168 @@ func TestARotationMovesTheLineageOnlyOnceTheReplacementExists(t *testing.T) {
 	}
 	if written := updates(control); len(written) != 1 {
 		t.Fatalf("the control rotation wrote %d times, so the absence above proves nothing", len(written))
+	}
+}
+
+type recordingRevocations struct {
+	mu      sync.Mutex
+	revoked map[uuid.UUID]time.Time
+}
+
+func (this *recordingRevocations) Revoked(context.Context, uuid.UUID) (bool, error) {
+	return false, nil
+}
+
+func (this *recordingRevocations) Revoke(_ context.Context, session uuid.UUID, until time.Time) error {
+	this.mu.Lock()
+	defer this.mu.Unlock()
+	if this.revoked == nil {
+		this.revoked = make(map[uuid.UUID]time.Time)
+	}
+	this.revoked[session] = until
+	return nil
+}
+
+// The theft response: a refresh credential that was already rotated away, past
+// the grace, means somebody else holds a copy — so the session is closed and put
+// on the deny-list rather than merely refused. Nothing tested this arm at all,
+// and deleting the whole of it left the suite green.
+func TestAReplayedRefreshCredentialClosesTheSessionAndDeniesItsAccessToken(t *testing.T) {
+	moment := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
+	session := uuid.New()
+	stolen := access.HashToken("the-credential-that-was-already-spent")
+
+	source := &scriptedSessions{Recorder: crudtest.Postgres()}
+	source.execs = []crud.Result{{RowsAffected: 1}}
+	// Rotated well past the grace, with the presented digest sitting in the
+	// previous column: this is a spent credential, not a retry of the last one.
+	source.rows = [][]any{
+		rowOf(session, access.HashToken("what the legitimate holder has now"), stolen, moment.Add(-time.Hour), moment),
+	}
+
+	config := access.Config{
+		Session: access.SessionConfig{TTL: 24 * time.Hour, IdleTTL: time.Hour},
+		Clock:   func() time.Time { return moment },
+	}
+	deps := testDeps(source, config)
+	deps.Subject = access.Subject{Type: "user"}
+	deps.Grants = access.NewGrants(deps.Store, access.MustDirectories(rotationDirectory{}))
+
+	denied := &recordingRevocations{}
+	spec := testSpec()
+	spec.Revocation = denied
+	issued, err := Strategy(spec).Build(deps)
+	if err != nil {
+		t.Fatalf("building the strategy: %v", err)
+	}
+
+	if _, err := issued.Refresher.Refresh(t.Context(), "the-credential-that-was-already-spent", access.Agent{}); err == nil {
+		t.Fatal("a spent refresh credential was accepted")
+	}
+
+	written := updates(source)
+	if len(written) != 1 {
+		t.Fatalf("the replay wrote %d times, want the one that closes the session: %v", len(written), source.SQL())
+	}
+	if !hasArgument(written[0], access.ReasonRefreshReplayed) {
+		t.Fatalf("the session was not closed for the replay: %v", written[0])
+	}
+
+	denied.mu.Lock()
+	until, listed := denied.revoked[session]
+	denied.mu.Unlock()
+	if !listed {
+		t.Fatal("the session was closed but its outstanding access token was never denied, so it keeps working for its full lifetime")
+	}
+	if until.Before(moment.Add(spec.AccessTTL)) {
+		t.Fatalf("the deny-list entry expires at %v, before the access token does at %v", until, moment.Add(spec.AccessTTL))
+	}
+}
+
+// Reuse used to be detectable exactly one rotation back: the current digest and
+// the previous one are two columns, so a credential from three rotations ago
+// matched neither, was never found, and came back as an ordinary 401 that closed
+// nothing. A thief who sat on a stolen credential was safer than one who used it
+// at once.
+func TestACredentialOlderThanThePreviousRotationIsStillAReplay(t *testing.T) {
+	moment := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
+	session := uuid.New()
+	stolen := "3." + session.String() + ".the-random-part-of-a-stolen-credential"
+
+	source := &scriptedSessions{Recorder: crudtest.Postgres()}
+	source.execs = []crud.Result{{RowsAffected: 1}}
+	source.rows = [][]any{
+		// Neither digest matches: the session has rotated twice since.
+		nil,
+		nil,
+		rowAtGeneration(session, access.HashToken("the-current-one"), access.HashToken("the-previous-one"), moment, moment, 6),
+	}
+
+	config := access.Config{
+		Session: access.SessionConfig{TTL: 24 * time.Hour, IdleTTL: time.Hour},
+		Clock:   func() time.Time { return moment },
+	}
+	deps := testDeps(source, config)
+	deps.Subject = access.Subject{Type: "user"}
+	deps.Grants = access.NewGrants(deps.Store, access.MustDirectories(rotationDirectory{}))
+
+	denied := &recordingRevocations{}
+	spec := testSpec()
+	spec.Revocation = denied
+	issued, err := Strategy(spec).Build(deps)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := issued.Refresher.Refresh(t.Context(), stolen, access.Agent{}); err == nil {
+		t.Fatal("a credential from three rotations ago was accepted")
+	}
+
+	written := updates(source)
+	if len(written) != 1 || !hasArgument(written[0], access.ReasonRefreshReplayed) {
+		t.Fatalf("the session was not closed for the replay: %v, %v", written, source.SQL())
+	}
+	denied.mu.Lock()
+	_, listed := denied.revoked[session]
+	denied.mu.Unlock()
+	if !listed {
+		t.Fatal("the session was closed but its access token was never denied")
+	}
+}
+
+// The control that keeps the lookup honest: a credential naming a session it
+// never came from must not be able to close that session. It matches no digest,
+// so all it can name is a session id — which is a v4 UUID nobody was shown.
+func TestACredentialNamingASessionItNeverCameFromClosesNothing(t *testing.T) {
+	moment := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
+	session := uuid.New()
+	forged := "1." + session.String() + ".invented"
+
+	source := &scriptedSessions{Recorder: crudtest.Postgres()}
+	source.rows = [][]any{
+		nil,
+		nil,
+		// Only one rotation ahead of what the forgery claims, so it is not
+		// superseded and there is nothing to conclude from it.
+		rowAtGeneration(session, access.HashToken("the-current-one"), access.HashToken("the-previous-one"), moment, moment, 2),
+	}
+
+	config := access.Config{
+		Session: access.SessionConfig{TTL: 24 * time.Hour, IdleTTL: time.Hour},
+		Clock:   func() time.Time { return moment },
+	}
+	deps := testDeps(source, config)
+	deps.Subject = access.Subject{Type: "user"}
+	deps.Grants = access.NewGrants(deps.Store, access.MustDirectories(rotationDirectory{}))
+	issued, err := Strategy(testSpec()).Build(deps)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := issued.Refresher.Refresh(t.Context(), forged, access.Agent{}); err == nil {
+		t.Fatal("a forged credential was accepted")
+	}
+	if written := updates(source); len(written) != 0 {
+		t.Fatalf("a forged credential closed a session: %v", written)
 	}
 }

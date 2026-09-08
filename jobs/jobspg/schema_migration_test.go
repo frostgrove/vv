@@ -100,6 +100,9 @@ func TestOperationalIndexesHaveExactFailClosedContracts(t *testing.T) {
 		{name: "deliveries_ready_idx", table: "deliveries", columns: []string{"namespace", "definition", "priority", "available_at", "id"}, predicate: "state = 1 AND lease_token IS NULL", predicateDefinition: "((state = 1) AND (lease_token IS NULL))"},
 		{name: "deliveries_expired_idx", table: "deliveries", columns: []string{"namespace", "lease_expires_at", "id"}, predicate: "lease_token IS NOT NULL", predicateDefinition: "(lease_token IS NOT NULL)"},
 		{name: "intents_invocation_idx", table: "intents", columns: []string{"namespace", "invocation_id"}},
+		// Ascending, and read backwards for the admin view's (created_at DESC,
+		// id DESC): a DESC index would fail this migration's own indoption check.
+		{name: "deliveries_recent_idx", table: "deliveries", columns: []string{"namespace", "created_at", "id"}},
 	}
 	if !slices.EqualFunc(operationalIndexes, want, func(left, right operationalIndex) bool {
 		return left.name == right.name && left.table == right.table && slices.Equal(left.columns, right.columns) && left.predicate == right.predicate && left.predicateDefinition == right.predicateDefinition

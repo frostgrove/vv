@@ -85,9 +85,18 @@ type AppendRequest struct {
 // against the fact's own count, the payload against Limits().MaxPayload — so a
 // store is trusted exactly as far as its numbers are, which is not at all.
 type Envelope struct {
-	Stream   Stream
-	Version  Version
+	Stream  Stream
+	Version Version
+
+	// The log's own order, and it means something only once the append that
+	// carries it has committed. On an envelope a read hands back inside the
+	// transaction that wrote it and has not committed it, it is unspecified: a
+	// store drawing positions from a sequence has one already and a store
+	// assigning them at commit answers zero, and both are conformant. Version is
+	// not: it is the version the append was admitted at, before the commit and
+	// after it.
 	Position Position
+
 	Type     string
 	Revision int
 
@@ -118,6 +127,18 @@ type Log interface {
 	// from in another process. Gaps in the positions are normal. A cursor minted
 	// over another backing, one this store cannot parse, and one in a format it
 	// no longer accepts are all Failure(BadCursor, ...).
+	//
+	// Unlike ReadStream, this does not read the caller's own writes: whether a
+	// read issued while a transaction of this store's backing is bound returns
+	// that transaction's uncommitted events is unspecified. A store reading
+	// through the transaction it joined returns them, a store whose global order
+	// is assigned at commit returns none, and both are conformant.
+	//
+	// No path the kernel initiates opens a transaction and then reads globally.
+	// That is not a promise that no read runs inside one: Reader.Next issues this
+	// call on whatever context the consumer hands it, and neither it nor Read
+	// refuses a context carrying a transaction. What the consumer owes in that
+	// case is written where the consumer reads it, on Reader.Cursor.
 	ReadAll(ctx context.Context, after Cursor) ([]Envelope, Cursor, error)
 }
 

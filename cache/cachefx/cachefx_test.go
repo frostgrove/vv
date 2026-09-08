@@ -412,3 +412,36 @@ type redisPool struct {
 	opened atomic.Int64
 	closed atomic.Int64
 }
+
+// Metrics and tracing both wanting to watch the cache is the ordinary case, and
+// a single binding meant the second module to provide a cache.Observer either
+// replaced the first or failed the graph — so the two could not be developed
+// independently, which is the whole point of contributing through a group.
+func TestTwoModulesCanBothWatchTheSameCache(t *testing.T) {
+	target, set := cards(t)
+	metrics, tracing := &counter{}, &counter{}
+
+	err := start(t,
+		fx.Provide(cachefx.AsSet(func() cache.Set { return set })),
+		fx.Provide(cachefx.AsProvider(func() cache.Provider { return provider(t, "redis-cache") })),
+		fx.Provide(cachefx.AsObserver(func() cache.Observer { return metrics })),
+		fx.Provide(cachefx.AsObserver(func() cache.Observer { return tracing })),
+		cachefx.Resources(cache.ResourceDeclaration{
+			Resource: "redis-cache",
+			Tenants:  []cache.ResourceTenant{cache.CacheTenant},
+		}),
+		cachefx.Auto("catalog", "test"),
+	)
+	if err != nil {
+		t.Fatalf("starting: %v", err)
+	}
+
+	if _, err := target.Lookup(context.Background(), "sku-1"); err != nil {
+		t.Fatalf("looking up: %v", err)
+	}
+
+	if metrics.events.Load() == 0 || tracing.events.Load() == 0 {
+		t.Fatalf("observers saw metrics=%d tracing=%d — one of two contributed watchers was dropped",
+			metrics.events.Load(), tracing.events.Load())
+	}
+}

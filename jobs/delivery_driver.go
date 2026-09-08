@@ -1100,12 +1100,19 @@ func latestAttemptIs(invocation Invocation, attempt Attempt) bool {
 	return invocation.attempts != nil && invocation.attempts.value == attempt
 }
 
+// Held names the invocations this session is running right now. A backend that
+// reclaims its own incarnation's leases — to pick up a claim that committed but
+// whose response was lost — cannot otherwise tell that case from a delivery in
+// flight, because the incarnation is minted per Run and every live delivery
+// carries it. Without it the reclaim tick hands the pool back its own work and
+// the dispatcher revokes it as lost.
 type RecoverRequestSpec struct {
 	Namespace   Namespace
 	Incarnation WorkerIncarnation
 	MaxItems    int
 	MaxBytes    int
 	LeaseTTL    time.Duration
+	Held        []InvocationID
 }
 
 func (RecoverRequestSpec) String() string { return "[job recover request spec]" }
@@ -1119,14 +1126,31 @@ type RecoverRequest struct {
 	maxItems    int
 	maxBytes    int
 	leaseTTL    time.Duration
+	held        map[InvocationID]struct{}
 }
 
 func NewRecoverRequest(spec RecoverRequestSpec) (RecoverRequest, error) {
 	request := RecoverRequest{namespace: spec.Namespace, incarnation: spec.Incarnation, maxItems: spec.MaxItems, maxBytes: spec.MaxBytes, leaseTTL: spec.LeaseTTL}
+	if len(spec.Held) != 0 {
+		request.held = make(map[InvocationID]struct{}, len(spec.Held))
+		for _, id := range spec.Held {
+			if !id.valid() {
+				return RecoverRequest{}, invalid("recover request held invocation")
+			}
+			request.held[id] = struct{}{}
+		}
+	}
 	if err := validateRecoverRequest(request); err != nil {
 		return RecoverRequest{}, err
 	}
 	return request, nil
+}
+
+// Whether this session is running the invocation right now. A backend must not
+// hand back a delivery for which this answers true.
+func (r RecoverRequest) Holds(id InvocationID) bool {
+	_, held := r.held[id]
+	return held
 }
 
 func (r RecoverRequest) Namespace() Namespace           { return r.namespace }

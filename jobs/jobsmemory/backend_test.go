@@ -606,3 +606,53 @@ func applyMemoryCommand(t *testing.T, backend *Backend, command jobs.DeliveryCom
 	}
 	return validated
 }
+
+// The incarnation is minted per Run, so every delivery this session is running
+// carries it. A backend that reclaims its own incarnation's leases to pick up an
+// uncertain claim therefore cannot tell that case from a delivery in flight, and
+// handed the pool back its own work on every reclaim tick — which the dispatcher
+// then revoked as lost. RecoverRequest.Held is what tells them apart.
+func TestRecoverDoesNotReclaimWhatTheSessionIsRunning(t *testing.T) {
+	fixture := newFixture(t, 4)
+	ctx := context.Background()
+	id, err := jobs.Enqueue(ctx, fixture.queue, fixture.definition, "in flight")
+	if err != nil {
+		t.Fatal(err)
+	}
+	incarnation := fixture.incarnation(9)
+	if batch := fixture.claim(t, incarnation); len(batch.Items()) != 1 {
+		t.Fatalf("claimed %d deliveries, want 1", len(batch.Items()))
+	}
+
+	recover := func(held ...jobs.InvocationID) int {
+		t.Helper()
+		request, err := jobs.NewRecoverRequest(jobs.RecoverRequestSpec{
+			Namespace: fixture.namespace, Incarnation: incarnation, MaxItems: 4,
+			MaxBytes: jobs.MaxDeliveryRecordBytes, LeaseTTL: jobs.DefaultLeaseTTL, Held: held,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		result, err := fixture.backend.Recover(ctx, request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		validated, err := jobs.ValidateRecoverResult(fixture.backend.Description(), request, result)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return len(validated.Items())
+	}
+
+	// The lease is live and the session says it is running it: nothing to recover.
+	if got := recover(id); got != 0 {
+		t.Fatalf("recovered %d deliveries the session is running right now", got)
+	}
+
+	// The control, and the case TestRenewRotatesFenceAndRecoverFindsUncertainClaim
+	// is about: the same live lease, with the session *not* claiming to hold it,
+	// is an uncertain claim and is still reclaimed.
+	if got := recover(); got != 1 {
+		t.Fatalf("recovered %d, want 1 — an uncertain claim is no longer picked up", got)
+	}
+}

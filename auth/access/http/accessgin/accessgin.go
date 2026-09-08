@@ -174,7 +174,7 @@ func (this *Handler) ChangeSecret(c *gin.Context) {
 		refuse(c, porthttp.BadRequest(err))
 		return
 	}
-	response, err := this.endpoints.ChangeSecret(c.Request.Context(), body)
+	response, err := this.endpoints.ChangeSecret(c.Request.Context(), body, agentOf(c))
 	if err != nil {
 		refuse(c, err)
 		return

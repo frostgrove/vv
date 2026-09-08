@@ -32,7 +32,7 @@ func TestRecoveryWindowIsBounded(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	ids, err := repo.recoveryIDs(context.Background(), incarnation, now, 2)
+	ids, err := repo.recoveryIDs(context.Background(), incarnation, now, 2, func(string) bool { return false })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -360,4 +360,102 @@ func testDefinition(t *testing.T) (*jobs.Definition[string], jobs.Catalog, jobs.
 		t.Fatal(err)
 	}
 	return definition, catalog, namespace
+}
+
+// Nothing here honoured Policy.Retention or Policy.IntentRetention: the entry and
+// its once-intent were written with no expiry and swept by nothing, so a queue's
+// Redis footprint grew with every job it had ever run and never shrank.
+func TestATerminalRecordAndItsIntentExpireOnTheirRetention(t *testing.T) {
+	server := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
+	repo := newRepository(client, "jobs:{test}")
+	ctx := context.Background()
+
+	live := storedEntry{
+		ID: "live", Definition: "d", State: jobs.InvocationRunning,
+		Intents: []string{"intent-live"}, Record: []byte("{}"),
+		Retention: time.Hour, IntentRetention: 30 * time.Minute,
+	}
+	if err := repo.save(ctx, nil, &live); err != nil {
+		t.Fatal(err)
+	}
+	// The control, and the one that matters most: a live delivery must never
+	// expire underneath the worker running it.
+	if ttl := client.TTL(ctx, repo.entryKey(live.ID)).Val(); ttl != -1 {
+		t.Fatalf("a running delivery expires in %v", ttl)
+	}
+	if ttl := client.TTL(ctx, repo.intentKey("intent-live")).Val(); ttl != -1 {
+		t.Fatalf("a live intent expires in %v", ttl)
+	}
+
+	done := storedEntry{
+		ID: "done", Definition: "d", State: jobs.InvocationSucceeded,
+		Intents: []string{"intent-done"}, Record: []byte("{}"),
+		Retention: time.Hour, IntentRetention: 30 * time.Minute,
+	}
+	if err := repo.save(ctx, nil, &done); err != nil {
+		t.Fatal(err)
+	}
+	if ttl := client.TTL(ctx, repo.entryKey(done.ID)).Val(); ttl <= 0 || ttl > time.Hour {
+		t.Fatalf("terminal record TTL = %v, want its retention", ttl)
+	}
+	if ttl := client.TTL(ctx, repo.intentKey("intent-done")).Val(); ttl <= 0 || ttl > 30*time.Minute {
+		t.Fatalf("terminal intent TTL = %v, want its intent retention", ttl)
+	}
+
+	// And a policy that asks for no retention keeps the old behaviour rather than
+	// picking some default nobody chose.
+	forever := storedEntry{ID: "forever", Definition: "d", State: jobs.InvocationSucceeded, Record: []byte("{}")}
+	if err := repo.save(ctx, nil, &forever); err != nil {
+		t.Fatal(err)
+	}
+	if ttl := client.TTL(ctx, repo.entryKey(forever.ID)).Val(); ttl != -1 {
+		t.Fatalf("a record with no retention expires in %v", ttl)
+	}
+}
+
+// The namespace mutation lock is a lease with a TTL, so a holder that stalls past
+// it — a slow driver call, a paused process, a long GC — has the lock taken from
+// underneath it. Both holders then read, modify and write, and one of the two
+// updates is simply gone. The revision is what makes that a refusal instead.
+func TestAStaleUpdateIsRefusedRatherThanLosingTheOneThatLanded(t *testing.T) {
+	server := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
+	repo := newRepository(client, "jobs:{test}")
+	ctx := context.Background()
+
+	created := storedEntry{ID: "one", Definition: "d", State: jobs.InvocationQueued, Record: []byte("{}"), RecordSize: 2}
+	if err := repo.save(ctx, nil, &created); err != nil {
+		t.Fatal(err)
+	}
+
+	// Two holders read the same entry.
+	first, found, err := repo.entry(ctx, "one")
+	if err != nil || !found {
+		t.Fatalf("load = %v, %v", found, err)
+	}
+	second := first
+
+	winner := first
+	winner.State = jobs.InvocationRunning
+	if err := repo.save(ctx, &first, &winner); err != nil {
+		t.Fatalf("the first update was refused: %v", err)
+	}
+
+	// The second holder is working from the entry as it was before the write above.
+	loser := second
+	loser.State = jobs.InvocationCancelled
+	if err := repo.save(ctx, &second, &loser); !errors.Is(err, jobs.ErrConflict) {
+		t.Fatalf("err = %v, want a conflict — a stale update overwrote the one that landed", err)
+	}
+
+	current, found, err := repo.entry(ctx, "one")
+	if err != nil || !found {
+		t.Fatal(err)
+	}
+	if current.State != jobs.InvocationRunning {
+		t.Fatalf("state = %v, want running — the update that landed was discarded", current.State)
+	}
 }

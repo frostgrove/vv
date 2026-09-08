@@ -106,6 +106,16 @@ out of band — or that would rather not start until it has — writes
 `OnUnknownPolicy(Refused)`, and the same event is then returned rather than
 logged.
 
+**A cluster is asked master by master, and the worst answer wins.** The
+constructor takes `redis.UniversalClient`, which exists to be more than one node;
+a single `CONFIG GET` goes to one of them and says nothing about the node a given
+session's key lands on. So a client that can enumerate its masters is walked, and
+one evicting node makes the deployment evicting — that node holds keys, and those
+keys are the ones that will silently disappear. `Unknown` from any node outranks
+`Retaining` for the same reason: a deployment is retaining only when every node it
+could ask said so. A cluster that names no masters at all is `Unknown` rather
+than a pass.
+
 **A server that is not there is refused whatever that option says.** `CONFIG`
 fails identically for an ACL and for nothing listening, and the second is not a
 policy nobody would state: it is a list that will fail every read it is asked

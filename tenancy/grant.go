@@ -134,6 +134,7 @@ func (this *Authority) Each(ctx context.Context, grant *Grant, class Class, work
 	ctx = withGrant(ctx, grant)
 
 	outcomes := make([]Member, 0, len(grant.cohort))
+	completed := 0
 	for _, reference := range grant.cohort {
 		if !grant.until.After(this.now()) {
 			return outcomes, ErrStale
@@ -141,9 +142,32 @@ func (this *Authority) Each(ctx context.Context, grant *Grant, class Class, work
 		if err := ctx.Err(); err != nil {
 			return outcomes, err
 		}
-		outcomes = append(outcomes, this.member(ctx, reference, class, work))
+		outcome := this.member(ctx, reference, class, work)
+		if outcome.Outcome == OutcomeOk {
+			completed++
+		}
+		outcomes = append(outcomes, outcome)
+	}
+	// A partial failure is the caller's to read out of the outcomes, because that
+	// is the resumability the loop above exists for. A run where nobody completed
+	// is different in kind: the usual wrapper checks the error and logs the slice,
+	// so returning nil there records a total failure as a finished run.
+	if completed == 0 {
+		return outcomes, ErrCohortFailed
 	}
 	return outcomes, nil
+}
+
+// How many members did not complete. A caller that treats any failure as a failed
+// run has to be able to say so without reimplementing the comparison.
+func Failures(outcomes []Member) int {
+	failed := 0
+	for _, outcome := range outcomes {
+		if outcome.Outcome != OutcomeOk {
+			failed++
+		}
+	}
+	return failed
 }
 
 func (this *Authority) member(ctx context.Context, reference Reference, class Class, work func(context.Context) error) Member {

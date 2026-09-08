@@ -496,3 +496,57 @@ func TestAStrategyWhoseRelationsFailAreARefusalRatherThanNoNarrowing(t *testing.
 type silentOwnership struct{ tenancyrow.Ownership[Invoice] }
 
 func (silentOwnership) NarrowsRelations() bool { return false }
+
+// An erasure job runs against a deleted tenant, which is exactly the lifecycle a
+// deployment admits for nothing else. Every other seam in this package takes a
+// Class; a repository decided read/write for the caller, so the one class such a
+// deployment is allowed to ask for was the one it could not ask for.
+func TestARepositoryCanDeclareTheClassItsWorkIs(t *testing.T) {
+	reference, err := tenancy.ParseReference(secretReference)
+	if err != nil {
+		t.Fatal(err)
+	}
+	epoch, err := tenancy.NewEpoch(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A tenant that has been deleted, and an admission that lets only durable
+	// work touch it — the shape a retention or erasure deployment configures.
+	erasure, err := tenancy.New(tenancy.Spec{
+		Resolver:  tenancy.Fixed{Reference: reference, Lifecycle: tenancy.Deleted, Epoch: epoch},
+		Admission: tenancy.Admit(tenancy.ClassDurable, tenancy.Deleted),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, err := erasure.Bind(context.Background(), tenancy.ClassDurable)
+	if err != nil {
+		t.Fatalf("the class this deployment admits could not be bound: %v", err)
+	}
+
+	// The control: the ordinary request classes are refused for this tenant, so
+	// the success below is the declaration rather than an admission that admits
+	// everything.
+	recorder := crudtest.Postgres()
+	recorder.Push(crudtest.Rows())
+	ordinary := Invoices.Bind(recorder, tenancyrow.Repository[Invoice, int64](erasure,
+		tenancyrow.Column[Invoice]("TenantID", tenancyrow.Derive, nil)))
+	if _, err := ordinary.GetAll(ctx); !errors.Is(err, tenancy.ErrInactive) {
+		t.Fatalf("err = %v, want ErrInactive — a deleted tenant was read by a request-class repository", err)
+	}
+	if len(recorder.Statements()) != 0 {
+		t.Fatalf("a refused read still reached the database: %v", recorder.SQL())
+	}
+
+	recorder.Reset()
+	recorder.Push(crudtest.Rows())
+	sweeping := Invoices.Bind(recorder, tenancyrow.RepositoryIn[Invoice, int64](erasure,
+		tenancyrow.Column[Invoice]("TenantID", tenancyrow.Derive, nil),
+		tenancyrow.Classes{Read: tenancy.ClassDurable, Write: tenancy.ClassDurable}))
+	if _, err := sweeping.GetAll(ctx); err != nil {
+		t.Fatalf("a repository that declared the durable class was still refused: %v", err)
+	}
+	if got := where(recorder); !strings.Contains(got, "tenant_id") {
+		t.Fatalf("the erasure repository read without narrowing to its tenant: %s", got)
+	}
+}

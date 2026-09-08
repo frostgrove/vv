@@ -30,7 +30,7 @@ func (this *fakeBackend) Put(ctx context.Context, namespace storage.Namespace, k
 	return this.put(ctx, namespace, key, source, options)
 }
 
-func (this *fakeBackend) Open(ctx context.Context, namespace storage.Namespace, key storage.Key) (io.ReadCloser, storage.Info, error) {
+func (this *fakeBackend) Open(ctx context.Context, namespace storage.Namespace, key storage.Key, _ storage.ReadOptions) (io.ReadCloser, storage.Info, error) {
 	this.calls++
 	if this.open == nil {
 		panic("unexpected Backend.Open")
@@ -46,7 +46,7 @@ func (this *fakeBackend) Head(ctx context.Context, namespace storage.Namespace, 
 	return this.head(ctx, namespace, key)
 }
 
-func (this *fakeBackend) Delete(ctx context.Context, namespace storage.Namespace, key storage.Key) error {
+func (this *fakeBackend) Delete(ctx context.Context, namespace storage.Namespace, key storage.Key, _ storage.DeleteOptions) error {
 	this.calls++
 	if this.delete == nil {
 		panic("unexpected Backend.Delete")

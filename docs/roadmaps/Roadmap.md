@@ -24,7 +24,7 @@ exists.
 | 12 | Jobs/cache conformance and current driver/worker completion | the in-flight implementation and green evidence | no |
 | 13 | Multitenancy: the database-per-tenant profile, RLS, operator rehearsals and the multi-extension fixture | real infrastructure and two extensions that do not exist yet | no |
 | 14 | Optional durable audit extension | a named audited resource and atomicity gate | no |
-| 15 | Optional PostgreSQL event-sourcing extension | a named aggregate; the rest of E0 has an answer | no |
+| 15 | The PostgreSQL event store | a named aggregate; the vocabulary, the in-memory store and the conformance suite are delivered | no |
 | 16 | Optional full-i18n extension | a use case beyond the current error catalogues | no |
 
 ---
@@ -320,20 +320,29 @@ exact optional-effect handling, redaction, authorization, append durability and
 isolated module graphs are release gates; there is no `auditotel` or
 `auditevent` bridge.
 
-## 15. Optional PostgreSQL event-sourcing extension
+## 15. The PostgreSQL event store
 
-No event-sourcing or outbox package exists today. The
-[current PostgreSQL event-sourcing revision](2026-09-01-postgres-event-sourcing-roadmap.md)
-defines one independently selected `eventpg` module for a PostgreSQL aggregate
-store, optimistic append and replay/upcasting, and its 2026-09-06 revision
-rebases the gates on the current tree: the service and storage chains it was
-waiting for have landed, the `otel` module and the `tenancy` package it must not
-import both exist, and the transaction plumbing it needs belongs to `crudsql`
-and `jobspg` rather than to itself.
+**The vocabulary is delivered and this item has narrowed to the store.**
+`event`, `event/eventmemory` and `event/eventtest` are in the root module: the
+declaration seam, the eight-method store contract, expected-version append, full
+replay, the bounded log walk, a complete in-memory store with transactions, and
+the conformance suite a store implementer runs against their own store
+([[D-121]], [[FL-036]], [[UC-032]]). The
+[PostgreSQL event-sourcing revision](2026-09-01-postgres-event-sourcing-roadmap.md)
+is superseded in the two E0 decisions that said none of that would be written,
+in place and with the reason.
 
-One decision blocks E0 and it is not a technical one: the aggregate, which comes
-from a consumer rather than from this repository. Everything else E0 records now
-has a recommended answer and the precedent it rests on.
+What is left is `eventpg` — one independently selected module for a PostgreSQL
+store implementing `event.Store`, with the driver its live fixtures need. It is
+blocked on one decision and it is not a technical one: the aggregate, which comes
+from a consumer rather than from this repository. That blocker is aimed at a live
+schema, which is why it did not gate the vocabulary and does gate the store.
+
+Phase 2 inherits three named debts from phase 1: no decode-side depth or size
+bound beyond the byte cap (`eventpg` must add its own), the git-diff arm of the
+zero-diff check once a tag exists — as a report, never as a `make check` arm —
+and the savepoint half of the authority rule, which is `crudsql` vocabulary the
+memory store has none of.
 
 A transaction-local outbox joins that same module only if the later E4 gate
 activates it, and it is weighed against `jobs.Stager`, which already stages

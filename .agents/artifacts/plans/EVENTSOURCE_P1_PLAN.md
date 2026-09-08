@@ -336,7 +336,7 @@ written the case overwrote every byte of every payload *and then* appended, so
 the byte the `append` spilled into the next row was immediately overwritten by
 that row's own fill, and the only comparison afterwards was against a fresh read
 rather than against a sibling of the same page — a store that packs a page into
-one buffer and sub-slices it was certified green. The thirteenth defect
+one buffer and sub-slices it was certified green. The `packedPages` defect
 (`packedPages`) is the fixture that proves it is not any more.
 **S5 correction (round 2, GAP-21):** the `[]Envelope` half as round 1 left it
 compared `batch[:len(beside)]` with a clone taken one line earlier, which
@@ -345,7 +345,7 @@ history rather than a page, so an `append` to it landed past every row the store
 would ever serve. The stream is now `max(StreamPage, MaxRead) + 1` events long,
 the case reads a **proper prefix** — the page the store publishes — clones the
 page after it, appends one envelope to the first and asserts the page the store
-still serves is unchanged. The fourteenth defect (`retainedPages`, a store that
+still serves is unchanged. The `retainedPages` defect (a store that
 cuts every page out of one array it keeps) is what that assertion reports, and
 with the assertion gone the same corruption is caught three assertions later by
 the kernel's own page check rather than at the hand-off.
@@ -545,12 +545,17 @@ type Stream struct {
 }
 
 func (this Stream) String() string   // "[stream accounts.account]" — never the key
-                                     // "[stream unnameable]" when the family fails the text rule
+                                     // "[stream unnameable]" when the family fails the declared-identifier rule
 func Compose(parts ...string) Key
 ```
 
-**`Stream.String` renders the family only when the family passed the kernel's own
-text rule** (`MaxNameBytes`, valid UTF-8, no NUL, no control character), and
+**`Stream.String` renders the family only when the family passed the
+declared-identifier rule** (`event/text.go:checkName` — `MaxNameBytes`, valid
+UTF-8, no NUL, no control character — and no `[` or `]`, because the rendering
+is one bracketed field and a name that carries a bracket closes it early and
+writes a second field after it, which is GAP-150's forged line reached by the
+route the control rule does not cover, remediation GAP-166; the wire type name
+is the other name that rule governs and crosses its own two doors, GAP-201), and
 `"[stream unnameable]"` otherwise. A kernel-minted stream carries a declared
 identifier and always passes; the reachable path is a `Stream` that arrived on an
 **`Envelope`**, which is a store's data under the trust boundary on
@@ -621,7 +626,7 @@ escaping of `/` fails both.
 |---|---|
 | `Key`, `Version`, `Position`, `Cursor` | §INV-019: a store in another package converts to and from its own columns. Defined types rather than parsed structs because a `Version` is assigned per append and a `Position` per row, so a parsed type would need minting calls whose only caller is a store — API with no reader ([REC] §2.1) |
 | `Stream` | The store seam's composite; decomposed into two columns on the way in, a composite literal on the way out |
-| `Stream.String` | §INV-025: the one rendering, and it never carries the key — nor a family that failed the kernel's text rule (GAP-150) |
+| `Stream.String` | §INV-025: the one rendering, and it never carries the key — nor a family that failed the declared-identifier rule (GAP-150, GAP-166, GAP-201) |
 | `Compose` | The application's mapper calls it. Making the correct rendering the shortest one to write is the framework's whole answer to §INV-033's unverifiable obligation |
 
 #### `event/bounds.go`
@@ -1295,16 +1300,20 @@ a store behind a decorator, in phase 2 a PostgreSQL table with its own grants. S
 the kernel trusts a store's bytes and strings **exactly as far as it trusts its
 numbers**, which is not at all:
 
-- `Envelope.Type` is checked against the kernel's identifier rule —
-  `MaxNameBytes`, valid UTF-8, no NUL, no control character — before it is used
-  for anything. A type name that fails it names no declared fact and can name
-  none, so it is `ErrUnknownType`, history class, the same answer a legal-but-
-  unknown name gets.
+- `Envelope.Type` is checked against the declared-identifier rule
+  (`event/text.go:checkName`) — `MaxNameBytes`, valid UTF-8, no NUL, no control
+  character, and no `[` or `]` — before it is used for anything, the rendering
+  beside a bracketed stream included (GAP-201). A type name that fails it names
+  no declared fact and can name none, because `Declare` holds the declared name
+  to the same rule, so it is `ErrUnknownType`, history class, the same answer a
+  legal-but-unknown name gets.
 - **`Envelope.Stream.Family` is store data under the same rule, and a rendering is
-  a use** (GAP-150). `Stream.String` reads the identifier rule before it renders
-  the family and answers `"[stream unnameable]"` when it fails, so the refusals
-  C4's page verification raises over an envelope a store built cannot carry a
-  newline or a megabyte into a log line.
+  a use** (GAP-150, GAP-166). `Stream.String` reads `checkName` — the text rule
+  plus the bracket pair the rendering itself is written inside — before it
+  renders the family, and answers `"[stream unnameable]"` when it fails, so the
+  refusals C4's page verification raises over an envelope a store built cannot
+  carry a newline, a megabyte or a second bracketed field into a log line. The
+  same rule runs at `Define`, so a family a program declared always names itself.
 - **A stored type name travels in a refusal only when it passed that rule.** It
   is data from a store, not a declared identifier, and §INV-025 does not let data
   travel: a refusal over a type name that failed the rule names the stream and
@@ -1384,7 +1393,7 @@ kind `encoding/json` refuses"*, and that is the wrong question for a fact log:
 carries no refusal, and the empty payload is recorded **durably and irreversibly**
 and replayed as the zero value with the right version and no error at any door.
 The walk asks instead *"does a value of this type survive `Encode` then `Decode`
-through this codec"*, and refuses eight shapes `discover` accepts:
+through this codec"*, and refuses nine shapes `discover` accepts:
 
 1. a type that **writes itself and declares no matching unmarshaller that
    `encoding/json` can reach** — `MarshalJSON` without `UnmarshalJSON`,
@@ -1429,12 +1438,32 @@ through this codec"*, and refuses eight shapes `discover` accepts:
    string }` — the textbook Go embedding — write themselves as the embedded
    value and nothing else: `SKU` and `Note` are written by nobody and read back
    by nobody, with `nil` at `CanEncode`, at `Encode`, at `Fact.New` and at
-   `Fold`. Tagging the embedded field does **not** undo the promotion, and
-   `reflect` will not say whether a method is declared or promoted, so the
-   question is asked of the embedded fields: one carrying the route the struct
-   writes by, and any field beside it, is the shape. A struct that declares its
-   own pair *and* embeds a marshalling type is refused too — a conservative
-   false positive that fails closed with one remedy, name the embedded field;
+   `Fold`. Tagging the embedded field does **not** undo the promotion — not
+   `json:"money"` and not `json:"-"`, which stops `encoding/json` writing the
+   embedded value as a *member* and leaves the promoted marshaller exactly where
+   it was (S2 test round 2, GAP-T36) — though the refusal now names the tag it
+   found, so the developer who wrote it is answered rather than ignored (S2 test
+   round 3, GAP-T44). Nor does **wrapping it**: promotion carries through as
+   many embeddings as it takes, so the question is asked of the whole chain and
+   not of the outermost struct alone (S2 test round 5, GAP-T46). `struct{ B }`
+   where `B` is `struct{ money; Extra string }` wrote itself as `500` and read
+   `Extra` back as `""` while `B` alone was refused — the incoherence a depth-1
+   walk has, and the shape a shared `Audit`/`Timestamps` block factored out of
+   several payloads takes. The refusal names the chain it came through: *the
+   `event.money` embedded in `lined`, so `lined.SKU` is written by nobody*.
+   Where the embedded type declares no reader on the route it writes by, or
+   declares one on the value receiver, the message says so as well, because
+   *name the embedded field* would otherwise send the developer one hop in to a
+   second refusal (S2 test round 5, GAP-T48). `reflect` will not say whether a
+   method is declared or promoted, so the question is asked of the embedded
+   fields: one carrying the route the struct writes by, and any field beside it,
+   is the shape. It is
+   asked of **both** routes — `MarshalText` promotion loses a field exactly as
+   `MarshalJSON` promotion does, and until S2 test round 3 nothing held the text
+   arm (GAP-T41). A struct that declares its own pair *and* embeds a marshalling
+   type is refused too — a conservative false positive that fails closed with
+   one remedy, name the embedded field, and written down in [[D-124]] rather
+   than left in the code (GAP-T43);
 7. a type whose **unmarshaller sits on the value receiver** (S2, round 3,
    GAP-186). `encoding/json` calls it through the addressable pointer, so the
    method runs against a copy, everything it writes is discarded and
@@ -1444,7 +1473,20 @@ through this codec"*, and refuses eight shapes `discover` accepts:
    own failure reached through a reader that is present and inert, so it carries
    a message of its own rather than *"declares no `UnmarshalJSON`"*, and the
    same question is asked of a map key;
-8. a field reached through an **embedded pointer to an unexported struct type**
+8. a struct whose **marshalling pair is promoted from an embedded pointer** (S2
+   test round 3, GAP-T42). Both of the embedded type's method sets promote
+   through a pointer embed, so the outer struct implements the unmarshaller on
+   its own *value* — which is refusal 7's signature, and the arm that answered
+   first told a developer who had declared the reader on the pointer receiver,
+   correctly, to declare it on the pointer receiver. Nothing allocates the
+   embedded pointer before `encoding/json` calls through it, so the read
+   dereferences nil and **panics**, and so does the write of a value whose
+   pointer was never set. The promotion question is therefore asked of every
+   struct that writes itself through methods, before the receiver question, and
+   this one is refused with nothing beside it too: the panic is the whole
+   failure and no field has to be hidden for it. Remedies: embed the type by
+   value — `struct{ money }` round-trips — or name the field;
+9. a field reached through an **embedded pointer to an unexported struct type**
    (S2, round 3, GAP-187). `encoding/json`'s promotion rule is asymmetric: it
    **writes** the promoted fields and cannot read one back, because `reflect`
    may not allocate a pointer it may not set. The fact is minted with `nil` at
@@ -1464,10 +1506,10 @@ array; cleared at a map key and a map value — and its visited set is keyed by
 that pair, because one type is legal at the reader type and illegal as a map
 value.
 
-All eight refusals share `ErrCodecType` and differ only in what they say, and
+All nine refusals share `ErrCodecType` and differ only in what they say, and
 each is subsumed by the arm beside it as a *verdict* — so
 `declaration_test.go`'s "a refusal names which asymmetry it found" pins the
-diagnosis by name, seventeen rows of it. Without it, deleting the
+diagnosis by name, thirty-two rows of it against forty-six refused shapes and thirty-five accepted controls. Without it, deleting the
 write-without-a-reader arm leaves every case still refused, through a message
 that sends the reader to the wrong repair.
 
@@ -1478,6 +1520,36 @@ implementation of it, the other is *what a payload may be*, which is the walk pl
 the file's 393 lines after GAP-178 and GAP-179, seven lines under the 400-line
 threshold with GAP-176's repair still owed. `event/codec.go` keeps `Codec[V]`,
 `JSON`, `jsonCodec` and the three recovering call helpers.
+
+**And those two questions are two files** (S2 test round 6, GAP-T47). The
+prediction three paragraphs of this plan carried — *the next arm the walk gains
+is the one that splits it* — came true at refusal 9 and again at GAP-T46's
+promotion chain, which took `event/encodable.go` to 422 lines against the
+400-line budget. `event/encodable.go` keeps the walk itself — `chargeJSON`,
+`jsonWalk`, `position`, `members`, the three graph budgets — at **212** lines;
+`event/routing.go` takes `encoding/json`'s routing rules restated as refusals —
+`ownMethods`, `promotedMarshaller`, `besideIt`, `writeRoute`, `readRoute`,
+`readsAs`, `writesAs`, `onTheValueReceiver`, `objectKey` and the `route`
+methods — at **256**. No exported name moved: `make api` regenerates
+`docs/api/surface.md` byte-identical across the split, and `go doc -all ./event`
+names none of the symbols in either file — they are all unexported.
+
+**`event/fact.go` split the same way, for the same reason** (S2 remediation,
+GAP-188/189/190). The three repairs took it to 403 lines. `event/fact.go` keeps
+the declaration and the proxy's outline — `Fact`, `Declare`, `TryDeclare`,
+`Fact.New`, `Fact.RoundTrip`, `roundTrip`, `roundTripping`, `notAliased`,
+`readBack`, `applierOf` — at **221** lines; `event/comparison.go` takes the two
+walks a round trip makes over an application's own decoded values — `valueWalk`,
+`valueWalkNodes`, `spend`, `unanswered`, `shares`, `same`, `sameNumber`,
+`asFloat`, `sameFields`, `sameElements`, `sameEntries`, `sameOpaque`,
+`equalByMethod`, `singleValued`, `reusesItsBuffer`, `readsBackOnTheWire` — at
+**313**. Every symbol in it is unexported, so the surface is again byte-identical
+across the split.
+
+`roundTripping` is one retained revision under test and the two encodings its
+round trip produced (S2 remediation round 7, GAP-194). `notAliased` and
+`reusesItsBuffer` each took five parameters against `architecture.md`'s ceiling
+of four, and four of the five were that one concept; both are at three now.
 
 *The argument for the smaller codec, and what it does not claim.* A job payload
 and a cache value are values a **caller** hands the framework, so their analyser
@@ -1577,11 +1649,23 @@ type Declaration interface {
 ```
 
 `Fold`'s four causes, in `Append`'s own order — (1) the identity renders an
-illegal key → `ErrKey`; (2) a change decided for another stream → `ErrWrongStream`;
+illegal key → `ErrKey`; (2) a change decided for another stream → `ErrWrongStream`,
+**or decided on another aggregate declaring this family → `ErrFamily`**;
 (3) a change's own carried refusal; (4) a decode failure at fold time →
 `ErrPayload`. Causes 1–3 run before any fold and return the input untouched;
 cause 4 fires mid-list and returns the state as of the last change applied, which
 for a reference kind **is** the argument (§UC-041, GAP-96).
+
+**Cause 2 asks two questions, because a stream is `{Family, Key}`** (remediation,
+GAP-182). Two aggregates declared over one family and one state type name each
+other's streams exactly, so a stream comparison admits the crossing and the
+receiving aggregate runs a fold it never declared. A `Change` therefore carries
+the `Declaration` it was decided on — set by `Fact.New`, an unexported field, so
+nothing a store constructs changes shape — and `decidedFor` takes the aggregate
+beside the stream at both doors that pair a change with an instance, `Fold` and
+`Append`. The sentinel is `ErrFamily`, which is `Bind`'s own answer to *one
+family, two aggregates*: `Bind` closes the route through one `*Binding`, these
+two close the route §INV-039 admits through two.
 
 **Cause 2 defers to cause 3 for a change that never reached a stream** (S2,
 GAP-173). A change whose mapper rendered an illegal key carries `ErrKey` and a
@@ -1692,22 +1776,138 @@ false accusation on the two most ordinary payload fields there are: measured, a
 that no encoding preserves and whose own `Equal` says are not the difference, and
 a populated **unexported** field is never written by `encoding/json` and was
 never going to be read back. So the comparison walks the **exported** half of a
-struct, asks a type's own `Equal(T) bool` wherever it declares one — which is how
-`time.Time`, whose every field is unexported, answers at all — treats two NaNs as
-one value, and **runs out of budget in the caller's favour**: this refuses a
-declaration, so what it cannot answer it does not accuse. A codec that writes the
-note and forgets the time is what makes the `Equal` arm load-bearing; without it a
-field walk sees nothing to compare.
+struct and treats two NaNs as one value.
+
+(6a, GAP-188) **A type's own `Equal(T) bool` is asked at exactly one position —
+a struct with no exported field — and its panic is `ErrSample`.** Asked wherever
+it is declared, which is how S2 first shipped it, it was two defects at once. It
+was called **before** the pointer arm's nil guard, so `struct{ Ref *Node }` with
+`Equal` on `*Node`'s pointer receiver — the ordinary Go idiom — invoked it
+through a nil receiver and a raw runtime panic unwound out of an exported kernel
+method. And it decided the verdict for a struct the field walk could have
+answered: a `Doc.Equal` comparing titles and not bodies passed a codec that
+dropped the body, which is the exact defect the comparison was added to catch.
+The narrowing keeps the case that made the arm load-bearing — a codec that writes
+the note and forgets the `time.Time`, whose every field is unexported and which
+therefore leaves the field walk nothing — and removes the case where an
+application's own question overrides the framework's **for a struct the field
+walk could answer**. At the one position the method is still asked, a lenient
+`Equal` still decides, and that is the trade `[[D-124]]` took deliberately: a
+type that declares one says there what its equality is, and the alternative —
+a second answer beside it — accuses a codec that normalises a `time.Time` to UTC
+of losing what it kept (6f). The call is into
+application code with no error channel, so its panic is recovered into
+`ErrSample` (the sample the comparison could not be made for) and
+`#### event/codec.go`'s panic-policy table carries the row.
+
+(6b, GAP-189) **The two value walks run on their own budget, `valueWalkNodes`
+= 65 536, and exhaustion is reported rather than resolved.** They were budgeted
+at `codecGraphNodes`, which is the **type** graph's bound: one type has any
+number of values, so a payload with more than 1 024 leaves was walked to 1 024
+and reported a pass — measured, a codec corrupting element 1 500 of 2 000 was
+accepted. Both walks now carry a `beyond` flag and `RoundTrip` answers
+`ErrSample` naming the bound and the repair (round-trip a smaller sample), which
+is the answer the type walk already gives for the same reason.
+
+(6c, GAP-190) **A marker fact round-trips.** `struct{}` is legal at declaration
+by design, and its only value encodes as its own zero value, so the
+zero-value-sample refusal made §UC-042's obligation unsatisfiable for one of the
+two shapes event sourcing has. A reader type of size zero holds exactly one
+value: for one, the non-aliasing half is skipped — there is no second payload to
+disturb anything with — and fidelity is proved. `ErrSample` stays for a sample
+that is *wrong*: the wrong count, the wrong dynamic type, and the zero value of a
+type that carries data. `singleValued` is asked of the reader type at the top and
+of every struct the fidelity walk reaches, so a type that holds one value is
+never asked for an equality it may not have: `struct{ _ [0]func() }` forbids `==`
+and is a marker fact all the same.
+
+(6d, GAP-191) **The position `Equal` is asked at has three answers in order, and
+the absence of `Equal` is not agreement.** 6a removed an application method's
+*override* of the framework's check and left its *omission*: `Equal` became the
+only answer for a struct with no exported field, so a type that declares none was
+reported as a pass having compared nothing. Measured, a codec that dropped a
+`netip.Addr` and kept the note beside it answered `nil` — and `netip.Addr`,
+`netip.Prefix`, `big.Int`, `big.Rat` and every value object that keeps its state
+privately are that shape, which makes it a `universality.md` finding: whether the
+only check that says a codec recorded what it was handed runs at all was decided
+by whether the payload happened to spell one method name. The order is the
+argument. **Its own `Equal`** first, because a type that declares one says there
+what its equality is and `time.Time`'s says a monotonic reading and a location
+are not the difference, where `==` says they are. Then **`==`**, which is what a
+comparable value object has instead of an `Equal`. Then **none**, which is
+carried out rather than resolved as agreement (6f). A type of size zero is
+excluded ahead of all three (6c).
+
+(6f, GAP-195 and GAP-196) **Where the value walk has nothing to compare, the
+wire answers; where the wire is silent too, the sample is refused.** 6d's "none"
+was `ErrSample` naming two repairs — declare `Equal` on the value receiver, or
+export the field — and that list held two classes. `netip.Addr` and
+`netip.Prefix` are comparable, so `==` answers for them; `big.Int`, `big.Rat`
+and `big.Float` hold a slice, are not comparable and declare no `Equal`, and
+**neither repair exists for a type the consumer does not own** — measured, a
+`*big.Int` payload through the kernel's own shipped codec, round-tripping
+perfectly, was refused for ever, which made §UC-042's obligation unsatisfiable
+for an accounting ledger. So the answer there is taken from the **wire**:
+`readsBackOnTheWire` encodes what came back with the revision's own codec and
+compares the bytes with the ones the sample encoded to (`ErrPayload` on a
+difference, naming the type nothing could compare). It needs no method and no
+name, which is the property a fixed method name never had. It is weaker — a
+codec that drops the same thing on the way out and on the way in re-encodes to
+the bytes it was given — so it runs **behind** the walk and only where the walk
+had nothing, and never beside a declared `Equal`: a codec that hands a
+`time.Time` back in UTC is faithful by that type's own equality and writes other
+bytes, so asking the wire there would reinstate the false accusation `Equal` is
+asked to prevent. One leaf is left that both answers are silent for: a `func`,
+the only kind `same`'s last arm reaches that Go declines to compare and no format
+records. Asking `Comparable()` and taking `false` for agreement — how that arm
+was written — passed every codec that lost one. It is `ErrSample` naming the type
+and a repair that exists: record what identifies the behaviour and choose the
+function from it when you fold. A `chan` is comparable, takes the same arm and is
+compared. `valueWalk.unanswered` therefore has three routes — exhaustion, a
+panicking `Equal`, and a `func` — and a fourth, `valueWalk.opaque`, that
+`Fact.readBack` carries out to the wire.
+
+(6e, GAP-192 and GAP-193) **Two values of different types are answered, never
+walked in step.** Both walks indexed one value by the other's shape — `NumField`
+of the decoded value against the sample, a key of the decoded map against the
+sample's — and two raw runtime panics unwound out of `Fact.RoundTrip` and out of
+`eventtest`'s conformance binary: `reflect: Field index out of range` for a
+struct read back as a wider one, and `reflect.Value.MapIndex: value of type int
+is not assignable to type string` for a map read back under another key type.
+Beside them, the arm written for *one valid value and one invalid* also caught
+*two valid values of different kinds* and answered agreement, so a `map[string]any`
+read back as the string `"dropped"`, and `[3]int` read back as `[3]string`, were
+both fidelity proved. Two values only reach that position with different
+`reflect.Type` when they are behind an **interface**, which the shipped codec
+refuses at declaration while telling the caller to declare a codec of their own —
+so it is the path the kernel itself points down and `Codec[V]` is the extension
+point that admits it. The answer is now taken from the types: for fidelity a
+difference (`ErrPayload`), for aliasing not shared memory. The single exception
+is a named arm rather than a branch two answers share — **two numbers holding one
+value**, because no wire format this admits has an integer distinct from a float,
+so an `int64` behind an `any` read back as a `float64` of the same value passes
+and one of a different value does not. **The exception ends where the float ends**
+(S2 test round 9, GAP-T54): `asFloat` answers a second value beside the number,
+whether that float holds the integer exactly, and a number it does not — a
+snowflake id, a satoshi balance, anything above 2^53 — is a difference like any
+other rather than one value in two representations. The clause was in the code
+from the start and asserted by nothing until round 10 put an `int64` and a
+`uint64` past the boundary on the substitution table, with `1 << 52` read back as
+that float beside them so the boundary is not bought by refusing every large
+number.
 
 `RoundTrip` lives on `*Fact` rather than in `eventtest` because the algorithm is
 the kernel's and needs the erased per-revision readers; `eventtest.RoundTrip` is
 the `*testing.T` wrapper that reports it, and its row on the module page says
-which of the two properties it proved — **fidelity** for every sample, and
+which of the two properties it proved — **fidelity** for every sample it could
+compare or re-encode, refusing rather than passing the one it could do neither
+for, and
 **non-aliasing** only where the sample carried data, only through a slice or a
-map the two answers share or a re-encoding the zero value disturbed, and only
-over the exported half of what the codec returned — so a store author reading a
-green run knows what it did not test. `Revisions()` is §INV-010's falsification
-reader. `Name()` is what a refusal names (§INV-025).
+map the two answers share or a re-encoding the zero value disturbed, only over
+the exported half of what the codec returned, and only within the 65 536 values
+the walks visit — so a store author reading a green run knows what it did not
+test. `Revisions()` is §INV-010's falsification reader. `Name()` is what a
+refusal names (§INV-025).
 
 `New` returns **one** value so a slice literal of changes stays writable; a
 failure — a non-finite float, a marshaller that errors, a payload over the
@@ -2103,13 +2303,37 @@ bound fails the control rather than passing the case.
 **Degradation.** A transaction holds its streams for its own lifetime, so a
 caller that keeps one open across a network call starves every other writer of
 those streams with immediate conflicts. **A transaction that is never committed
-and never rolled back holds them for the life of the process**: `release` is the
-only writer that drops a claim, there is no timeout and no reclamation, so an
-abandoned `*Tx` — a panicked goroutine, a forgotten `defer`, an early `return` —
-leaves one aggregate refusing every write with a conflict class that reads
-retryable and will never clear (GAP-7). `doc.go` states it where a consumer
-reads it. `eventmemory` is not a production store and `Persistence: Unsupported`
-says so; a store that waits instead is equally conformant. `Close` is idempotent, returns nil every time, refuses nothing, and
+and never rolled back holds them until the runtime collects it** (GAP-7): a
+claim names its transaction *weakly*, so an abandoned `*Tx` — a panicked
+goroutine, a forgotten `defer`, an early `return` — holds nothing once nothing
+can reach it. Nothing can reach it means nothing can commit it or append to it,
+so its staged records will never be published and the first append to one of its
+streams after the collection drops the claim and is admitted. Until the
+collection those appends are conflicts, which makes an abandoned transaction a
+stall of unpredictable length rather than a stream that refuses every write for
+the rest of the process. The timing is the only non-determinism and it is
+one-way: a claim is never *taken* by a collection, only released.
+
+**Reachability is the whole of that rule, so what still names the transaction
+still claims** (GAP-20): the `*Tx` itself, and a context carrying it that
+outlives the request — both of which can still be appended to, so the claim is
+doing its job. The one value that would otherwise pin an abandoned transaction
+*without* being able to use it is the receipt: `event.Repo.Append` puts an
+`event.Authority` in every non-empty `Commit`, and a caller is meant to keep it —
+an audit buffer, an outbox row, two subsystems comparing receipts later
+(§UC-030). So the authority names `txIdentity`, this store's own name for the
+transaction — the log and a per-log monotone ordinal, comparable, never reused —
+rather than the `*Tx`. A store whose transaction is a database handle names the
+handle and loses nothing, because there the locks go at the commit and not at a
+collection. This is also the limit of round 3's claim that the weak claim stops
+an abandoned transaction's *staged payloads* being pinned: the log does not pin
+them, and after this neither does a receipt, but a context that outlives the
+request still does. `doc.go` and `docs/modules/{en,ru}/eventmemory.md` state it
+where a consumer reads it, and
+`TestAStreamIsClaimedOnlyWhileSomethingCanStillCommitIt` carries the
+retained-receipt case beside the abandoned one and the still-held one. `eventmemory` is not a production store and
+`Persistence: Unsupported` says so; a store that waits instead is equally
+conformant. `Close` is idempotent, returns nil every time, refuses nothing, and
 neither commits nor rolls back staged work (§INV-032). It also touches no log
 state at all: the log is the composition root's and is shared with every other
 store over it, so a close is one store value's and a sibling keeps serving
@@ -2117,8 +2341,8 @@ store over it, so a close is one store value's and a sibling keeps serving
 
 #### What S3 had to decide because the contract above did not say it
 
-Nine answers the shape needed and only the implementation could supply — six
-written before the code and three the S3 review forced. None contradicts a row
+Ten answers the shape needed and only the implementation could supply — six
+written before the code and four the S3 review forced. None contradicts a row
 above; each fills a hole that would otherwise have been decided by whoever hit it
 first.
 
@@ -2130,8 +2354,9 @@ first.
 | Does `Commit` or `Rollback` read the context's deadline? | **No.** A transaction that refused to finish because its request was cancelled would hold its claims for the life of the process and starve every other writer of those streams, and there is no window here for a cancellation to be uncertain about. The five operating methods do read it, and a bare cancellation travels as itself (§UC-057's first window) |
 | Is `Rollback` of a finished `*Tx` an error, as `Commit`'s is? | **Yes**, and it is the same one — `database/sql`'s shape, which `defer tx.Rollback()` beside an explicit commit already ignores. Both errors stay **unexported**: each method has exactly one, so *non-nil* carries the whole of it and the package keeps its eight exported symbols |
 | Where is the re-validation at commit, given that a conflict may not be reported from one? | The claim is the mechanism and the commit is where it is **checked**: every staged record must still land at the version it was admitted at, densely, on a stream nobody else advanced. It cannot fire while the claim holds, and it is what makes a future edit to the claim logic loud instead of a silently renumbered history |
-| What position does a staged envelope read back at, inside its own transaction? | **Zero**, because a position is assigned at commit and one assigned earlier would have to be reassigned or reissued. `ReadAll` is position-ordered and therefore never returns a staged envelope, to its own transaction or anyone else's |
-| May a `*Tx` be used from more than one goroutine? (GAP-2) | **Yes**, and the store is what makes it safe: the two doors that act on the bound transaction resolve it **inside the section that acts**, under the log's own mutex, so a transaction another goroutine commits or rolls back in between is refused with the same `Failure(Refused, errFinished)` an already-finished one gets. Resolving it before the lock was a check-then-act: `Commit` released the staged maps in the window and the next `stage` panicked on a nil map, which `event/store.go` does not recover and which takes the process. An `errgroup` appending to two aggregates in one transaction, and a watchdog rolling one back on a deadline, are both ordinary. `Transaction(ctx)` reads the same flag without the lock, because it acts on nothing and a transaction may finish the instant after any answer |
+| What position does a staged envelope read back at, inside its own transaction, and what does `ReadAll` answer there? (GAP-14) | **This store's answer to a question the kernel now settles as the store's**, not the answer. `event/store.go` states that `Envelope.Position` on an uncommitted envelope is unspecified and that `Log.ReadAll` inside a bound transaction may or may not return that transaction's uncommitted events — a store reading through the transaction it joined returns them, one whose global order is assigned at commit does not, and both are conformant. `eventmemory` answers **zero** and **no staged envelope to anyone**, because a position is assigned at commit and one assigned earlier would have to be reassigned or reissued. `eventpg` is free to answer the other way and must not be made to add a second connection to avoid it. No path the kernel *initiates* opens a transaction and then reads globally, which is not the same as no read running inside one (GAP-21): `Reader.Next` issues the read on whatever context the consumer hands it and neither it nor `Read` refuses a context carrying a transaction. Refusing there was rejected — a `Reader` holds a `Log`, which has no `Transaction` method, and `ReadOnly` deliberately has no `Next` to walk past, so the kernel cannot ask the question without a per-page store call and a widened seam. The consumer's half of the rule — a cursor from such a walk must not be persisted — is therefore written on `Reader.Cursor`, the value the consumer holds, and in `docs/modules/{en,ru}/event.md`. `eventtest`'s `global paging` and `resumption` certify neither answer — recorded at `sections_read.go:globalPagingSection` |
+| May a `*Tx` be used from more than one goroutine? (GAP-2, narrowed by GAP-13) | **Yes**, and the store is what makes it safe — but only **half** of the answer belongs inside the section that acts. The **lookup** (`ambient`, `ctx.Value`) runs *before* the log's mutex, because a context is an interface the caller implements and running foreign code under the one lock every reader and writer contends for head-of-line blocks the whole log and AB-BA deadlocks it against a caller whose `Value` takes a lock of its own. The **liveness check** (`Tx.live`, `finished.Load`) runs *inside* it, at all three doors, so a transaction another goroutine commits or rolls back in between is refused with the same `Failure(Refused, errFinished)` an already-finished one gets. Resolving it before the lock was a check-then-act: `Commit` released the staged maps in the window and the next `stage` panicked on a nil map, which `event/store.go` does not recover and which takes the process. An `errgroup` appending to two aggregates in one transaction, and a watchdog rolling one back on a deadline, are both ordinary. `Transaction(ctx)` reads the same flag without the lock, because it acts on nothing and a transaction may finish the instant after any answer |
+| What does the authority this store answers **name**, given that a claim is released by reachability? (GAP-20) | `txIdentity` — the log and a per-log monotone ordinal — and not the `*Tx`. `event.NewAuthority` asks for a value that is comparable, stable for the transaction's life and distinct from every other live transaction's; it does not ask for the transaction object, and here it may not have it. The authority travels in every non-empty `Commit` and out of `Repo.Authority`, and keeping a receipt is what §UC-030 tells a caller to do, so an authority that named the `*Tx` would turn every retained receipt into the brick GAP-7 removed. The identity is minted under the log's mutex at `Begin`, so no two transactions of one log are named alike and a name is never reused; the conformance suite's `transactions` section is what catches a name that repeats |
 | What does `Transaction` answer on a **closed** store? (GAP-3) | The same as an open one. It writes and reads nothing, and what the context carries did not change when the store was closed, so reporting closure — or reporting *nothing bound* while the caller's own transaction is right there — would be a fourth answer to a question the contract says has three. The refusal comes from the `Load` or `Append` that follows. `event/store.go`'s sentence said *the second* and is corrected; C10 row 4 and row 5 disagreed with each other and now do not |
 
 `New` also refuses a spec whose `StreamPage` or `MaxRead` at this log's
@@ -2305,10 +2530,12 @@ and `certified` does not count (GAP-7). `cachetest`'s
 1697, 1715, 1721`, counted) is the shape §UC-044 refuses and is deliberately not
 copied: `grep -c "t.Skip" event/eventtest/*.go` over the **suite's own files** is
 0. The one occurrence in the package is
-`suite_test.go`'s `t.SkipNow()` inside a **factory hook**, which is how
-`TestASectionThatNeverReturnedIsNotReportedPassed` drives a section out through
-`runtime.Goexit` — the same door `t.Fatal` leaves by, and the only one of the two
-a watching test can observe without the failure propagating to itself.
+`t.SkipNow()` inside a **factory hook**, which is how
+`TestTheVerdictOfASectionThatNeverReturnedIsNotPassed` drives a section out
+through `runtime.Goexit` — the same door `t.Fatal` leaves by, and the only one of
+the two a watching test can observe without the failure propagating to itself.
+That `Run` then **reports** that row is a second thing and is watched one process
+out, by `TestTheRunReportsWhatItFound` (test review round 1, GAP-1).
 
 #### The section inventory, in code, and the test that it was honoured
 
@@ -2318,8 +2545,8 @@ So a suite shipped with twelve of the twenty sections written passes every
 lines and looks complete. The four anti-vacuity rules do not close it: a missing
 hook is not a missing section, "every section was skipped" catches only the
 all-skipped case, and `defects.go`'s inventory proves the existence of the
-sections **a defect names** — which excludes `concurrency`, `refusal classes` and
-`lifecycle`, three of the sections the carried gaps are proved in.
+sections **a defect names** — which after test-review round 1 is all twenty, and
+before it excluded nine.
 
 So the sections are an inventory on `defects.go`'s model: one slice, built by an
 unexported function so nothing is package-level and mutable (§INV-013), iterated
@@ -2468,7 +2695,8 @@ travels as the **bare** sentinel and a `Failure` renders no cause text, so a
 store's message — which names the key and the version — reaches neither the
 caller nor a log line; the walk's hop budget bounds **visits rather than depth**,
 so a branching `errors.Join` chain cannot hang the request goroutine;
-`Stream.String` refuses to render a family that failed the kernel's text rule;
+`Stream.String` refuses to render a family that failed the declared-identifier
+rule;
 and `AppendRequest` carries §D.14's three clauses, of which `Expected: 0` means
 *never appended to* and never *any*.
 
@@ -2819,8 +3047,8 @@ store at all** — declare, mint a change, fold, round-trip. The kernel runs wit
 zero extensions registered, which is `microkernel.md`'s own requirement and
 §UC-041's use case.
 
-**Files** `event/codec.go`, `encodable.go`, `chain.go`, `aggregate.go`, `fact.go`,
-`change.go`, `seal.go`; `event/testdata/crossings/` (build-failure fixtures, three
+**Files** `event/codec.go`, `encodable.go`, `routing.go`, `chain.go`, `aggregate.go`,
+`fact.go`, `comparison.go`, `change.go`, `seal.go`; `event/testdata/crossings/` (build-failure fixtures, three
 packages: `control`, `change`, `identity`). `encodable.go` is round 2's split of
 `codec.go` and holds the walk — *what a payload may be* — with no exported symbol
 of its own.
@@ -3006,8 +3234,10 @@ restored:
 - **GAP-187 `[critical]` — an embedded pointer to an unexported struct type
   encoded cleanly and could never be decoded.** `members.collect` carries the
   blocking field down the promotion and refuses where a **name is rendered**
-  through it (`#### event/codec.go`, refusal 8), which keeps the embedded value
-  spelling and a type embedding a pointer to itself legal — both round-trip. The
+  through it (`#### event/codec.go`, refusal 9 — it was refusal 8 until the
+  embedded-pointer promotion of GAP-T42 was inserted before it), which keeps the
+  embedded value spelling and a type embedding a pointer to itself legal — both
+  round-trip. The
   suite's `pointed` fixture moves from the accepted table to the refused one and
   is replaced there by `struct{ *Stream }`, an embedded pointer to an **exported**
   struct.
@@ -3284,7 +3514,11 @@ Nothing was written to `event/testdata/fuzz`. The section is **twelve** tests, *
 targets and **62** subtests; the seven source files are **1 110** lines, the longest
 `event/encodable.go` at **379** (was 290) with refusals 6, 7 and 8, still under the 400-line
 threshold but no longer with a section's worth of room — the next arm the walk gains is the one
-that splits it. The exported surface is the same 22.
+that splits it. The exported surface is the same 22. *(That is the count as this section
+closed. Test rounds 3 to 5 took `event/encodable.go` to **422** with refusal 9 and the
+promotion chain, and the prediction came true: it is now **eight** source files, the walk at
+**212** in `event/encodable.go` and the routing rules at **256** in `event/routing.go`
+— S2 test round 6, GAP-T47. The exported surface is still the same 22.)*
 
 **Checkpoint S2 — phase 5's name list as it stood after phase 4's round 2, superseded by the twelve above**
 
@@ -3635,8 +3869,10 @@ the binding is one unkeyed context key   → "the first store answered that noth
 again, and ambient walks past a foreign    own was bound while its own transaction was",
 *Tx                                        and "the first log kept [ours] after the
                                            transaction it was appended in was rolled back"
-Append resolves the ambient transaction  → panic: assignment to entry in nil map,
-before it takes the lock                   eventmemory.(*Tx).stage → (*Store).Append
+Append checks the transaction's liveness → panic: assignment to entry in nil map,
+before it takes the lock (GAP-13 moved      eventmemory.(*Tx).stage → (*Store).Append
+the ctx.Value lookup back out; only this
+half belongs inside the section)
 Transaction answers the invalid          → "a closed store named a different transaction
 authority on a closed store                than it named while open"
 ReadAll does not consult the ambient     → "reading the log through a context carrying a
@@ -4013,7 +4249,7 @@ test "$(go test -list '^(TestAFreshStreamLoadsAsZero|TestAStreamWithHistoryFolds
 ### S5 — `event/eventtest`: the conformance suite and its self-falsification  `[x]`
 
 **Delivers** the exported suite, its twenty sections, its three fixture stores and
-its eighteen self-falsification defects, plus the three runnable proxies. This is the
+its twenty-nine self-falsification defects, plus the three runnable proxies. This is the
 section that makes every earlier claim evidence rather than prose, and it is the
 artefact phase 2's `eventpg` runs **verbatim**.
 
@@ -4026,18 +4262,24 @@ decorators a section builds around the store under test), `sections_write.go`,
 `sections_read.go`, `sections_resumption.go` (round 3's split: `resumption` and
 the three helpers only it uses, because the round-3 clause took
 `sections_read.go` to 421 lines), `sections_lifecycle.go`, `sections_ownership.go`,
-`sections_transactions.go`, `defects.go`, `proxies.go`, `report.go`;
+`sections_transactions.go`, `defects.go` (the inventory), `defects_write.go`,
+`defects_read.go`, `defects_ownership.go`, `defects_lifecycle.go` (test review
+round 1's split: the twenty-five decorators, in four files named for the section
+file that owns the section each breaks, because the nine GAP-2 added took one
+file to 470 lines), `proxies.go`, `report.go`;
 `event/eventtest/export_test.go` (`package eventtest`, the seam the suite's own
-tests reach the inventories and the verdicts by);
+tests reach the inventories, the verdicts and what a run reports by);
 `event/eventtest/inventory_test.go` (the inventory assertion and its
 shortened-inventory control);
-`event/eventtest/fixtures_test.go`, `wrappers_test.go` (round 3: the five store
+`event/eventtest/fixtures_test.go`, `wrappers_test.go` (round 3: the store
 shapes the constancy clauses are falsified with, each internally consistent and
 each breaking nothing a section reads), `suite_test.go`, `defects_test.go`,
-`proxies_test.go`, `fuzz_test.go` (round 3: the one property of the three proxies
-that is universally quantified over caller data) — the fixture stores and the
-self-checks, in the suite's **own test package**, a third package, which is
-§INV-019's compile-time proof; `event/eventmemory/conformance_test.go`.
+`run_test.go` (test review round 1: what `Run` and the door report, watched one
+process out), `proxies_test.go`, `fuzz_test.go` (round 3: the one property of the
+three proxies that is universally quantified over caller data) — the fixture
+stores and the self-checks, in the suite's **own test package**, a third package,
+which is §INV-019's compile-time proof;
+`event/eventmemory/conformance_test.go`.
 
 **Five file-level changes to the list above, made while writing it and recorded
 here rather than left as a difference.** (1) `declaration.go` and `stores.go` are
@@ -4086,7 +4328,8 @@ and the admission in `suite.go` (224). No behaviour and no symbol changed.
 case), C3 (`cancellation` asserts both halves in both windows), C4 (the `bounds`
 case, the illegal-product store, the over-long-page defect, and the two mis-paging
 defects with the at-the-bound control), C7 (the one-byte `append` case), C8 (one
-inventory in `defects.go`, eighteen defects after round 3, a test computes the coverage),
+inventory in `defects.go`, twenty-nine defects after test review round 1, and a test
+computes both its size and its coverage of the twenty sections),
 C9 (the policed half), C10.2, C10.4.
 
 **Round 3 added three clauses the suite had none for, each with its own defect row
@@ -4131,29 +4374,49 @@ INV-029, INV-030, INV-032, INV-033, INV-034, INV-035, INV-036, INV-038, INV-039,
 INV-040, INV-041, INV-042 (`payload ownership`'s inbound half), INV-043, INV-044,
 INV-045.
 
-**Anti-vacuity, five rules and they are the section's point.** A claimed
+**Anti-vacuity, six rules and they are the section's point.** A claimed
 capability whose hook is missing **fails**. A run in which every claimed section
 was skipped **fails**. An `Unstated` capability is refused at both doors. Every
-section carries a control that a refuse-everything store fails. And — the rule
-the other four do not reach, because `go test -list` cannot see a subtest —
-**every one of the twenty inventory sections is reported exactly once with one of
-the three words**, asserted by `TestEverySectionInTheInventoryWasReported` with a
-one-section-shorter run as its control.
+section **reaches the store**, which a refuse-everything store is what proves —
+and test-review round 1 corrected what that rule was claimed to prove: a section
+whose every assertion has been deleted still fails there, because every section
+opens with a load, so the measure is liveness and not control (GAP-4). What
+proves a section carries a **control** is the fifth rule, which round 1 added:
+**every one of the twenty sections is named by at least one row of the defect
+inventory**, and each of those rows is a store that answers every call
+successfully and wrongly — computed by `TestEverySectionIsNamedByADefectThatBreaksIt`,
+whose own control is one run per section over an inventory with that section's
+rows taken out. And — the rule the others do not reach, because `go test -list`
+cannot see a subtest — **every one of the twenty inventory sections is reported
+exactly once with one of the three words**, asserted by
+`TestEverySectionInTheInventoryWasReported` with a one-section-shorter run as its
+control.
+
+**And what the run itself reports is watched, one process out.** `Run`'s three
+answers past the section list — a failed section, a section that never returned,
+and a run that certified nothing — and the door's four refusals are all `t.Error`
+or `t.Fatal` on the `*testing.T` the caller handed in, which no test that stays
+green can observe: a failure anywhere under a `T` fails the `T` that started it.
+So `TestTheRunReportsWhatItFound` re-runs this same test binary as a child, one
+case per store shape, and reads the child's exit status and what it said
+(GAP-1, GAP-3). Deleting any one of those seven reports turns exactly one case
+red.
 
 **Degradation** a store that cannot produce an outcome answers `false` from
 `Fail` and the section is reported **not certified** — never passed.
 
-**Phase 4 and phase 5 are executed and green.** Fourteen files of suite and six of
+**Phase 4 and phase 5 are executed and green.** Nineteen files of suite and nine of
 test, plus `event/eventmemory/conformance_test.go`. The twenty sections are
-written, all fifteen defects are detected, and the two stores that exist run the
+written, all twenty-nine defects are detected, and the two stores that exist run the
 whole of it: `eventmemory` reports eighteen *passed* and the two *not certified*
 rows §UC-044 predicts of it by name — `durability`, because it declares
 `Persistence: Unsupported`, and `store failure classification`, because it has no
 commit window and its `Fail` hook therefore answers **false** for `Unconfirmed`.
 
-**Twenty tests and one fuzz target ship with it** — ten as written, four that
-round 1 of the implementation review added, four more from round 2 and four from
-round 3, each with a control that was run; three of them are the checkpoint's:
+**Twenty-five tests and one fuzz target ship with it** — ten as written, four
+that round 1 of the implementation review added, four more from round 2, four
+from round 3 and three from round 1 of the **test** review, each with a control
+that was run; three of them are the checkpoint's:
 
 | Test | Pins | Its control |
 |---|---|---|
@@ -4161,23 +4424,26 @@ round 3, each with a control that was run; three of them are the checkpoint's:
 | `TestTheSuiteStillDetectsEveryDefectItWasBuiltToDetect` | C8: every defect in `defects.go` fails the section named for it; no two defects share a name; every section a defect names exists | the same store **without** the defect is asserted to **pass** that same section, so a failure is the defect's and not the fixture's |
 | `TestEverySectionInTheInventoryWasReported` | every one of the twenty is reported exactly once with one of the three words — the rule `go test -list` cannot reach, because a section is a subtest | a run over an inventory one section shorter must **fail** the same assertion, so it proves the sections exist rather than that a list was iterated |
 | `TestATrivialStoreNeedsNoInternalAccess` | §INV-019's compile-time half: a complete store built in a third package out of the exported vocabulary alone, run through `Run` | the demonstration below |
-| `TestARunThatCertifiedNothingFails` | anti-vacuity rule 2: three gated sections against a store that claims none of them certify nothing, and that is what `Run` fails on | the whole inventory over the same store certifies fifteen, so the count is a measurement and not a zero |
-| `TestEverySectionFailsAgainstAStoreThatRefusesEverything` | anti-vacuity rule 4, **computed rather than remembered**: all twenty sections are reported *failed* against a store that is honest about its bounds and its capabilities and refuses every operation | a section that passes there is a section carrying no control, and the run names it |
+| `TestAGatedSectionIsReportedNotCertified` (renamed from `TestARunThatCertifiedNothingFails` in test review round 1, GAP-6) | anti-vacuity rule 2's **precondition**: three gated sections against a store that claims none of them are each reported in the third word and none of them counts toward the certifications a run is refused for having none of. That a run of nothing else *fails* is `Run`'s, and is `TestTheRunReportsWhatItFound`'s | the whole inventory over the same store certifies fifteen, so the count is a measurement and not a zero |
+| `TestEverySectionFailsAgainstAStoreThatRefusesEverything` | anti-vacuity rule 4, **computed rather than remembered**: all twenty sections are reported *failed* against a store that is honest about its bounds and its capabilities and refuses every operation. What that measures is **liveness** — every section reaches the store — and test review round 1 corrected the claim that it measured control (GAP-4) | a section that passes there never reached the store at all, and the run names it |
 | `TestAnApplicationRunsTheThreeProxiesOverItsOwnDeclaration` and `TestTheProxiesCompareSomethingThatCanDiffer` | `RoundTrip`, `Keys` and `Families` over a declaration of an application's own | the collision `Keys` looks for is asserted to **be** there under a concatenating mapper, and `Compose` is asserted to render it differently — without which the proxy compares two things that can never differ |
-| `TestAClaimedCapabilityWithAMissingHookIsRefused` | anti-vacuity rules 1 and 3 at the door: a claimed capability with no hook, and an `Unstated` one, are both refused before a section runs | the store that claims both and supplies both hooks is admitted |
-| `TestATransactionCapableStoreSatisfiesTheContract` | the staging fixture — the base the eleven decorator defects wrap, and the `transactions` control — passes nineteen of twenty | `durability` is its one *not certified*, so it is not passing by claiming nothing |
+| `TestAClaimWithNoHookAndACapabilityNobodyStatedAreBothNamed` (renamed in test review round 1, GAP-6) | the **rule** anti-vacuity 1 and 3 are: `missing` names a claimed capability with no hook and one nobody stated. That the **door** then refuses the run is `TestTheRunReportsWhatItFound`'s two admission cases, which drive these same three shapes through `Run` | the store that claims both and supplies both hooks is admitted |
+| `TestATransactionCapableStoreSatisfiesTheContract` | the staging fixture — the base the twenty-five decorator defects wrap, and the `transactions` control — passes nineteen of twenty | `durability` is its one *not certified*, so it is not passing by claiming nothing |
 | `TestEachProxyReportsTheThingItExistsToFind` (GAP-8) | the branch each of the three proxies exists for, driven: a colliding key pair, an identity that renders no key, one identity, no aggregate, a fact whose sample does not survive its codec, no fact, two declarations naming one family, a nil declaration, no declarations | the three cases beside it that must report **nothing** — the same fact with a sample that does survive, three identities `Compose` separates, two declarations of two families |
-| `TestASectionThatNeverReturnedIsNotReportedPassed` (GAP-7) | the zero value of a verdict is not *passed*: a factory hook that leaves the subtest through `runtime.Goexit` leaves the row the runner initialised, and that row must not be the one word that means the store is correct | putting `passed` back at `iota` turns it red, and `Run` reports the row rather than silently counting it toward the certifications an empty run is refused for |
+| `TestTheVerdictOfASectionThatNeverReturnedIsNotPassed` (GAP-7, renamed in test review round 1, GAP-6) | the zero value of a verdict is not *passed*: a factory hook that leaves the subtest through `runtime.Goexit` leaves the row the runner initialised, and that row must not be the one word that means the store is correct | putting `passed` back at `iota` turns it red, and `Run` reports the row rather than silently counting it toward the certifications an empty run is refused for |
 | `TestEveryStoreCallASectionMakesCarriesADeadline` (GAP-6) | the four doors that take a context, watched through a decorator over the staging fixture: 548 store calls in a whole run and none of them without a deadline | one section put back on `context.Background()` reports 2 of 548, so the count is a measurement |
 | `TestASectionWalksItsOwnTailOfALogSomebodyElseFilled` (GAP-3) | a store whose log already holds 6 000 events this run did not write — more than the 1 024 pages at the fixture's `MaxRead` of five that the walk used to give up after — still reaches a real verdict in every section, and certifies the same number as the same store with an empty log | the pre-change walk (from `""`, bounded at 1 024 pages) reports `global order`, `conservation`, `global paging` and `resumption` **failed**, naming the suite's own budget as the store's defect |
 | `TestEverySectionIsCertifiedAtTheNarrowestLimitsAStoreMayPublish` (GAP-17) | every count a section writes is derived from what the store publishes: the whole suite over the staging fixture at `MaxBatch` 1, `StreamPage` 1, `MaxRead` 1 and `MaxKey` 40 reports **no section failed** | the same store at the fixture's ordinary numbers certifies the same count, so the run is comparing two measurements; and the pre-change literals put it back — `widest := widestNarrowing` reports `stream paging` failed, a fixed 16-byte identity reports `stream identity`, `resumption`, `lifecycle` and `transactions` failed, which is GAP-17's own table reproduced |
 | `TestASectionReachesAVerdictOverALogSomebodyElseIsStillWritingTo` (GAP-18) | a store whose log grows by one foreign event on **every** `ReadAll`: no section is *failed* and the run certifies what the quiet store certifies, because what a section walks is bounded by what it wrote and the factory answers where the log ended | with `walkLog` unbounded again, `global order`, `conservation`, `global paging` and `resumption` report *"reading the log answered context deadline exceeded"*; with `Factory.Tail` removed, the same four report the refusal that names the hook |
-| `TestAStoreThatMintsTheRecordedInstantWhenAnEventIsReadIsNotCertified` (GAP-24) | the subtler of the two stores that lose the instant: one with no column at all, filling the field as it scans the row, so one event answers a different instant to every reader. The store that answers the **zero** time is the defect inventory's sixteenth row | the same store recording its own instants is asserted **passed** for `dense versions`; and removing `probe.instants` reports both the defect and this test's store *passed*, which is the whole clause in one mutation |
-| `TestAStoreWhoseCapabilitiesOrBackingChangeUnderOneValueIsNotCertified` (GAP-26) | the two halves of the constancy clause with no defect row: a store claiming transactions on one call and not on the next, and one naming a fresh backing on every call. Both are internally consistent and pass every other section | the same store answering one value throughout is *passed*; neutralising `probe.unchanged`'s second reading reports all three — these two and the seventeenth defect — *passed* |
+| `TestAStoreThatMintsTheRecordedInstantWhenAnEventIsReadIsNotCertified` (GAP-24) | the subtler of the two stores that lose the instant: one with no column at all, filling the field as it scans the row, so one event answers a different instant to every reader. The store that answers the **zero** time is the defect inventory's `unrecorded` row | the same store recording its own instants is asserted **passed** for `dense versions`; and removing `probe.instants` reports both the defect and this test's store *passed*, which is the whole clause in one mutation |
+| `TestAStoreWhoseCapabilitiesOrBackingChangeUnderOneValueIsNotCertified` (GAP-26) | the two halves of the constancy clause with no defect row: a store claiming transactions on one call and not on the next, and one naming a fresh backing on every call. Both are internally consistent and pass every other section | the same store answering one value throughout is *passed*; neutralising `probe.unchanged`'s second reading reports all three — these two and the `drifting` defect — *passed* |
 | `TestAFactoryWhoseLaterStoresPublishSomethingElseIsRefused` (GAP-28) | the **factory's** obligation rather than a store's, and the half `probe.store` did not check: a second store publishing a wider page, and one claiming fewer capabilities. Neither store is internally wrong, so only a comparison between two of one factory's values can see it | the same factory building one kind throughout is *passed*; removing the `Capabilities()` comparison reports the second *passed* |
 | `TestACursorAStoreCannotParseIsRefusedRatherThanReadFromTheBeginning` (GAP-25) | the store's own cursor parser, which no cursor the suite can mint reaches: a store that starts its walk at the beginning of the log for a checkpoint it could not parse is *failed*, and a factory answering no such cursor is **not certified** — the third word rather than silence | the same store refusing what it cannot parse is *passed*; removing `probe.unparsableCursor` reports the defect *passed* and the missing-hook run *passed* rather than *not certified* |
+| `TestTheRunReportsWhatItFound` (test review round 1, GAP-1 and GAP-3) | the one exported function a store's package calls, and the only thing `eventpg` can call: nine store shapes driven through `Run` in a child of this same test binary, and the parent reads the exit status and what was said. A failed section, a section that never returned, a run that certified nothing, a claimed capability with no hook, a capability nobody stated, a factory that builds no store, one that answers no store, and a `MaxKey` with no room for the suite's own names | the first row is the control — a store that satisfies the contract leaves the child green and says nothing about certifying nothing. Deleting each of the seven reports in turn turns exactly one case red, and the message names it |
+| `TestTheDefectInventoryIsTheSizeItSaysItIs` (test review round 1, GAP-5) | the inventory's own size, because it is the only mutation harness this suite has and a row dropped in a refactor takes a section's control with it | the same assertion over an inventory one row shorter must fail it |
+| `TestEverySectionIsNamedByADefectThatBreaksIt` (test review round 1, GAP-2) | anti-vacuity rule 5: every one of the twenty sections is named by at least one defect, so no section's assertions can be deleted with the tree staying green | one run of the same assertion per section, over an inventory with that section's rows taken out — twenty controls, computed rather than remembered |
 | `FuzzKeysReportsACollisionExactlyWhenTwoIdentitiesRenderOneKey` (round 3) | the one property of the three proxies that is universally quantified over caller data, as an **equivalence**: `Keys` answers an error exactly when the two identities do not render two distinct legal keys. A proxy silent on a collision certifies an application that has one history for two instances; one that reports a collision that is not there refuses a correct mapper | both arms were driven by mutation — deleting the duplicate-key branch turns the seeds red on the first, widening it to "any second identity" turns them red on the second. 45 s of `-fuzz`, 1.78 M execs, no failure |
-| `TestAStoreThatKeepsWhatItWroteIsCertifiedForDurability` (GAP-20) | the one section no in-tree store could demonstrate: a fixture claiming `Persistence: Supported` whose second value over one backing reads what the first wrote is asserted **passed**, and the fifteenth defect — the same store answering a second value with nothing in it — **failed** | widening the balance check to admit zero reports the defect *passed*, so the section's own assertion is what the pass rests on; coverage of `durabilitySection` moves 35.0 % → **85.0 %** |
+| `TestAStoreThatKeepsWhatItWroteIsCertifiedForDurability` (GAP-20) | the one section no in-tree store could demonstrate: a fixture claiming `Persistence: Supported` whose second value over one backing reads what the first wrote is asserted **passed**, and the persistence defect — the same store answering a second value with nothing in it — **failed** | widening the balance check to admit zero reports the defect *passed*, so the section's own assertion is what the pass rests on; coverage of `durabilitySection` moves 35.0 % → **85.0 %** |
 
 **Two clauses of the `Covers` list above are asserted in sections whose D.9 row
 does not name them**, because the section that owns the data is the one that can
@@ -4193,7 +4459,7 @@ present it to.
 [SPEC]'s wording is deliberate: the trivial store and the admit-everything store
 are one type with one rule dropped, exactly as §UC-045 describes them, and the
 leaky-rollback store is a second, transaction-capable type — but its **correct**
-instantiation is a fourth value, because the ten decorator defects need a base
+instantiation is a fourth value, because the decorator defects need a base
 that is not broken and the `transactions` section needs a control that is not the
 defect. A fifth fixture, the refuse-everything store, exists for anti-vacuity
 rule 4 and is not a defect: it fails every section on purpose.
@@ -4223,6 +4489,15 @@ claim about page shape without minting a cursor nobody minted. (2) `resumption`'
 so on a store with none it is reported through the third word — the section runs
 and the run says which half was not certified.
 
+**One question neither `global paging` nor `resumption` certifies, and it is
+recorded rather than left silent (GAP-14).** Neither section walks the log inside
+a bound transaction, so what a global read answers there is not certified by
+anything here. `event.Log.ReadAll` leaves it to the store — a store reading
+through the transaction it joined returns its own uncommitted events, one whose
+global order is assigned at commit returns none, and both pass this suite. It is
+a thing a store is **allowed** to do, not one that was certified, and
+`sections_read.go:globalPagingSection` says so where the sections are written.
+
 **Verified by mutation, and each was restored and its sha256 compared
 afterwards.** `Envelope.RecordedAt` unexported: `event/eventtest_test` fails to
 compile at `fixtures_test.go:268` — §INV-019's compile-time proof demonstrated
@@ -4233,9 +4508,13 @@ red with *the suite no longer detects a store that publishes a stream page
 shorter than the page it returns: its bounds section was reported "passed"* —
 which is the whole chain in one line, from a kernel branch to the defect
 inventory to the section that names it. Beyond those two, the defect inventory
-**is** a fifteen-mutation suite that runs on every `make unit`, and
-`TestEverySectionFailsAgainstAStoreThatRefusesEverything` is a twentieth of one:
-between them every section is asserted to fail against something.
+**is** a twenty-nine-mutation suite that runs on every `make unit`, and after
+test-review round 1 every one of the twenty sections is named by a row of it:
+gutting any section — replacing its whole body with one `Load` — turns
+`TestTheSuiteStillDetectsEveryDefectItWasBuiltToDetect` red with a message that
+names the defect and the section. All twenty were driven that way and restored.
+`TestEverySectionFailsAgainstAStoreThatRefusesEverything` sits beside it and
+proves something weaker and still worth having: every section reaches the store.
 
 **Round 1 of the implementation review closed nine findings, and each of the six
 that changed behaviour was verified by putting the defect back and watching the
@@ -4244,7 +4523,7 @@ rebuilt clean.
 
 | Finding | What changed | The mutation, and what it reported |
 |---|---|---|
-| GAP-1 `[high]` | `payload ownership`'s C7 case rewritten as `probe.spilled`; thirteenth defect `packedPages` | remove the `spilled` call: *"the suite no longer detects a store that hands out sub-slices of one fresh page buffer without cutting their capacity: its payload ownership section was reported `passed`"* |
+| GAP-1 `[high]` | `payload ownership`'s C7 case rewritten as `probe.spilled`; the `packedPages` defect | remove the `spilled` call: *"the suite no longer detects a store that hands out sub-slices of one fresh page buffer without cutting their capacity: its payload ownership section was reported `passed`"* |
 | GAP-2 `[high]` | `Factory.New`'s and `Factory.Begin`'s doc rewritten to what the code does; `foreignCursor` and `durability` say why they build a store mid-section | doc-only; the three sections it misled are named above |
 | GAP-3 `[high]` | the two bare `1024`s gone: `drain` ends on a short page and refuses an over-long one, `walkLog` ends on an empty page and refuses a page beside its own cursor, and every walking section mints its start cursor with `probe.tail` before it writes; the run identity widened 4 bytes → 16 | put the bounded from-`""` walk back: four sections *failed* on the 6 000-event fixture with *"a walk over this store did not reach the end of the log in 1024 pages"* |
 | GAP-4 `[medium]` | `injectedAtRead` reads through the value the append door writes through, so the `wrapping` iteration exercises `wrapping.ReadAll` | make `wrapping.ReadAll` drop the classification: *"[outcome bad cursor] injected at the read door through a decorator that wraps the store's own error answered event: the store failed where the kernel maps that classification to event: this cursor was not minted over this backing"* |
@@ -4262,8 +4541,8 @@ rebuilt clean.
 | GAP-17 `[critical]` | every count the suite writes is derived from `Limits()`, which is read once at the door and carried on the probe: `stream paging` narrows to `1, 2, min(StreamPage, 4)` and writes one more event than the widest; `payload ownership` writes `max(StreamPage, MaxRead) + 1`; `spread` and `dense versions` split their decisions at `MaxBatch` through `probe.batched`; the run identity is as wide as `MaxKey` leaves room for after the suite's reserve, and a `MaxKey` too small for even the narrowest is **fatal at the door** with the suite's own requirement in the message; `probe.store` refuses a later store publishing other numbers | `widest := widestNarrowing` → `stream paging` *failed* on the narrow store; a fixed 16-byte identity → `stream identity`, `resumption`, `lifecycle`, `transactions` *failed* with *"the identity does not render a legal stream key"*, which is GAP-17's own measured table |
 | GAP-18 `[high]` | `Factory.Tail` answers the end of the log and `Factory.Window` sets the section's deadline; every log walk is bounded by what the run itself wrote (`walking{from, held, want}`), so a walk ends at its own last event rather than at an empty page that a second writer never leaves; the fallback that reads to the end names `Factory.Tail` in its refusal; `monotone visibility` takes a tail instead of draining the log through a reader | `walkLog` unbounded → four sections *"reading the log answered context deadline exceeded"* over the growing-log fixture; `Factory.Tail` removed from the same fixture → the same four with the refusal that names the hook |
 | GAP-19 `[medium]` | `eventtest.Tx` carries the four rules the sections assert; `event/store.go` states that all eight `Store` methods are safe for concurrent use | doc-only, and both sentences describe assertions that already run (`staged`'s double commit, `probe.begin`'s cleanup, `concurrency`'s eight goroutines) |
-| GAP-20 `[medium]` | `persistentFactory` is the first in-tree store to claim `Persistence: Supported`, and the fifteenth defect is the same store answering a second value with nothing in it | widening the balance check to admit zero reports that defect *passed*; `durabilitySection` coverage 35.0 % → **85.0 %** |
-| GAP-21 `[medium]` | the `[]Envelope` case reads a **proper prefix** — the page a store publishes, of a stream one longer — clones the page after it, appends an envelope to the first, and compares the page the store still serves; the fourteenth defect `retainedPages` is a store that cuts every page out of one array it keeps | with the assertion removed the corruption is caught three assertions later by the kernel's own page check (*"answered a page that does not begin at the version it was read from"*), so the defect stays detected and stops being detected **at the hand-off** — recorded rather than overstated |
+| GAP-20 `[medium]` | `persistentFactory` is the first in-tree store to claim `Persistence: Supported`, and the persistence defect is the same store answering a second value with nothing in it | widening the balance check to admit zero reports that defect *passed*; `durabilitySection` coverage 35.0 % → **85.0 %** |
+| GAP-21 `[medium]` | the `[]Envelope` case reads a **proper prefix** — the page a store publishes, of a stream one longer — clones the page after it, appends an envelope to the first, and compares the page the store still serves; the `retainedPages` defect is a store that cuts every page out of one array it keeps | with the assertion removed the corruption is caught three assertions later by the kernel's own page check (*"answered a page that does not begin at the version it was read from"*), so the defect stays detected and stops being detected **at the hand-off** — recorded rather than overstated |
 | GAP-22 `[low]` | the parameter breach is closed instead of recounted: `wroteWhatItSaid` takes a `fixture` value (7 → 2) and `from` a `walking` value (5 → 3) | `go/ast` over the package: **0** functions of more than four parameters, where the table had said one and the tree had two |
 | GAP-23 `[low]` | S5's note says what `git` can and cannot establish for an untracked file, and what does hold `repo.go` | none — a record, not a behaviour |
 
@@ -4274,8 +4553,8 @@ sha256 compared afterwards.**
 
 | Finding | What changed | The mutation, and what it reported |
 |---|---|---|
-| GAP-24 `[high]` | `probe.instants`, in `dense versions`: every envelope this run appended carries a non-zero `RecordedAt` and the read after answers the same one. The **sixteenth** defect is a decorator that blanks it; `TestAStoreThatMintsTheRecordedInstantWhenAnEventIsReadIsNotCertified` is the store that mints it at read time | `this.instants(...)` removed: *"the suite no longer detects a store that answers every envelope with no recorded instant at all: its dense versions section was reported passed"*, and beside it *"a store that mints the recorded instant at read time was reported passed for dense versions"* |
-| GAP-25 `[medium]` | `Factory.Unparsable`, the hook only the store can answer, and `probe.unparsableCursor` in `resumption` — *not certified* when it is absent. The **eighteenth** defect is a store whose parser ignores its own error and starts at the beginning of the log; it is store-shaped rather than a decorator, because a decorator that forwards cannot tell a cursor it cannot parse from a foreign one without knowing the store's cursor format | `this.unparsableCursor(...)` removed: the defect was reported *passed*, and the factory answering no such cursor was reported *passed* rather than *not certified* |
+| GAP-24 `[high]` | `probe.instants`, in `dense versions`: every envelope this run appended carries a non-zero `RecordedAt` and the read after answers the same one. The `unrecorded` defect is a decorator that blanks it; `TestAStoreThatMintsTheRecordedInstantWhenAnEventIsReadIsNotCertified` is the store that mints it at read time | `this.instants(...)` removed: *"the suite no longer detects a store that answers every envelope with no recorded instant at all: its dense versions section was reported passed"*, and beside it *"a store that mints the recorded instant at read time was reported passed for dense versions"* |
+| GAP-25 `[medium]` | `Factory.Unparsable`, the hook only the store can answer, and `probe.unparsableCursor` in `resumption` — *not certified* when it is absent. The lenient-cursor defect is a store whose parser ignores its own error and starts at the beginning of the log; it is store-shaped rather than a decorator, because a decorator that forwards cannot tell a cursor it cannot parse from a foreign one without knowing the store's cursor format | `this.unparsableCursor(...)` removed: the defect was reported *passed*, and the factory answering no such cursor was reported *passed* rather than *not certified* |
 | GAP-26 `[medium]` | `probe.unchanged`, in `binding`: all three published answers read twice on one store value with a store operation between, the backing through `Equal`. The **seventeenth** defect widens the page it publishes on every call; the capabilities and backing halves are `TestAStoreWhoseCapabilitiesOrBackingChangeUnderOneValueIsNotCertified` | `unchanged` made to compare the first reading with itself: the defect and both stores beside it *passed*, three assertions in one mutation |
 | GAP-28 `[low]` | `probe.store` compares `Capabilities()` as it compares `Limits()`, and the plan's § Contracts sentence says which halves are checked | the comparison removed: *"a factory whose second store claims fewer capabilities than the store it was admitted on was reported passed for binding"* — which is also the first control either half of that comparison has had |
 | GAP-29 `[low]` | the § Architecture metrics numbers recounted rather than remembered | none — a record |
@@ -4286,6 +4565,34 @@ carried, because the fixture it names is one this round extended:
 `stagingTx.done` is an `atomic.Bool` and its transition is a `CompareAndSwap`
 inside the lock that publishes, so the two unsynchronised reads are gone. Its
 second half (`persistentFactory`'s captured `shared`) stays in `## Debt`.
+
+**Round 1 of the test review closed six findings — three `[critical]`, three
+`[high]` — and every one of them was demonstrated by mutation: the assertion was
+put back or taken out, the failure was read, and the tree was restored.**
+
+| Finding | What changed | The mutation, and what it reported |
+|---|---|---|
+| GAP-1 `[critical]` | `Run`'s three reports and the door's four are named values, and `run_test.go` drives each of the nine store shapes through `Run` in a **child of this same test binary**, reading the exit status and what was said. Nothing in-process can watch a `t.Error` without taking it | delete the per-section `t.Error`: *"a run over a store that fails one section left the test it was handed green, where a store like this must leave it failed"*. Delete the `unreported` loop: the same for the hook that leaves the run. Delete the `certified()==0` branch: *"a run over a store that refuses every operation never reported \"…this run certified nothing…\""* |
+| GAP-2 `[critical]` | nine defects added, one per section no row named — `truncatedKeys`, `lastWriteWins`, `cachedStreams`, `partialLog`, `ownPlace`, `withheldTails`, `uncertainWhenCancelled`, `closesOnce`, `unclassifying` — and two more for clauses inside a guarded section that the section's own row reached first: `renamedInTheLog` (§INV-034's set equality) and a second `transactions` row (`contended`'s conflict). Twenty-nine rows, all twenty sections named, computed by a test | every one of the twenty sections gutted in turn — the whole body replaced with one `Load` — turns `TestTheSuiteStillDetectsEveryDefectItWasBuiltToDetect` red, naming the defect and the section. The four finer mutations the reviewer ran are red too: `winners != 1` → `< 0` reports *"…reads the stream itself to decide the version it admits an append at: its concurrency section was reported passed"*; deleting `conservation`'s set-equality tail reports the renamed-key row; deleting `contended`'s and `aftermath`'s conflict assertions reports the second `transactions` row |
+| GAP-3 `[critical]` | the door's four refusals — `New == nil`, `New` answering nil, `missing`, and the `MaxKey` with no room — are driven through `Run` by four of `run_test.go`'s cases, which read the message and assert that **no section was reported** | each fatal deleted in turn turns exactly one case red; the `missing` one reports both *"never reported \"…claims Transactions and this factory supplies no Factory.Begin…\""* and *"reported a verdict for a section, where it must be refused at the door"* — which is the nil-`Begin` panic M11 described |
+| GAP-4 `[high]` | the refuse-everything control says what it proves — every section reaches the store — in its own comment, in the § Anti-vacuity paragraph and in the test table. The control it was mistaken for is GAP-2's inventory | none needed: M4 is the demonstration, and it is now red |
+| GAP-5 `[high]` | `TestTheDefectInventoryIsTheSizeItSaysItIs` pins the count with a one-row-shorter control, and `TestEverySectionIsNamedByADefectThatBreaksIt` computes the coverage with one control per section. `factoriesFor`'s prose-name `switch` became a map, which is GAP-10 of the implementation review closed in the same edit | dropping any row turns the size test red; taking every row of one section out turns the coverage test red naming that section |
+| GAP-6 `[high]` | `TestARunThatCertifiedNothingFails` → `TestAGatedSectionIsReportedNotCertified`, `TestASectionThatNeverReturnedIsNotReportedPassed` → `TestTheVerdictOfASectionThatNeverReturnedIsNotPassed`, `TestAClaimedCapabilityWithAMissingHookIsRefused` → `TestAClaimWithNoHookAndACapabilityNobodyStatedAreBothNamed`. Each names what it asserts and points at the test that watches the rule | none — a naming change; the rules they were named for are GAP-1's and GAP-3's cases |
+
+**Two clauses M1 and M13 name are the kernel's, and no store defect can guard
+them.** `cancellation`'s second window drives the suite's **own** `unconfirming`
+decorator, and `refusal classes`' five-row policy table drives its **own**
+`policing` one: the value that produces the failure is the suite's, so no store
+under test can break either clause and no row of the inventory can be written for
+it. Both are live rather than dead — `case Unconfirmed: return this.cause` in
+`event/errors.go` turns `cancellation` red with *"an append cancelled after it
+was issued answered context canceled, and uncertainty outranks a cancellation"* —
+and both restate a kernel obligation that `event`'s own suite already pins
+(`TestAContextCauseNeverTravelsThroughARefusal`,
+`TestADeclaredWrapIsReachableByErrorsAsAndACauseIsNot`,
+`TestAnOutcomeOutsideTheVocabularyNormalises`, all of which the same mutation
+turns red). They are kept as the store-facing restatement a store author reads,
+and recorded here as the two clauses the defect inventory does not reach.
 
 **The residue named rather than closed.** `go tool cover -func` puts
 `proxies.go`'s three exported wrappers at 66.7 %: the uncovered statement in each
@@ -4303,7 +4610,7 @@ go build ./... && go vet ./event/... && test -z "$(gofmt -l event)" && go test -
 **Checkpoint S5 — phase 5 (tests)**
 
 ```
-test "$(go test -list '^(TestTheMemoryStoreSatisfiesTheContract)$' ./event/eventmemory/ | grep -c '^Test')" = 1 && go test -race -count=1 -v -run '^(TestTheMemoryStoreSatisfiesTheContract)$' ./event/eventmemory/ && test "$(go test -list '^(TestTheSuiteStillDetectsEveryDefectItWasBuiltToDetect|TestEverySectionInTheInventoryWasReported|TestATrivialStoreNeedsNoInternalAccess|TestARunThatCertifiedNothingFails)$' ./event/eventtest/ | grep -c '^Test')" = 4 && go test -race -count=1 -v -run '^(TestTheSuiteStillDetectsEveryDefectItWasBuiltToDetect|TestEverySectionInTheInventoryWasReported|TestATrivialStoreNeedsNoInternalAccess|TestARunThatCertifiedNothingFails)$' ./event/eventtest/ && go test -race -count=1 ./event/...
+test "$(go test -list '^(TestTheMemoryStoreSatisfiesTheContract)$' ./event/eventmemory/ | grep -c '^Test')" = 1 && go test -race -count=1 -v -run '^(TestTheMemoryStoreSatisfiesTheContract)$' ./event/eventmemory/ && test "$(go test -list '^(TestTheSuiteStillDetectsEveryDefectItWasBuiltToDetect|TestEverySectionInTheInventoryWasReported|TestATrivialStoreNeedsNoInternalAccess|TestTheRunReportsWhatItFound)$' ./event/eventtest/ | grep -c '^Test')" = 4 && go test -race -count=1 -v -run '^(TestTheSuiteStillDetectsEveryDefectItWasBuiltToDetect|TestEverySectionInTheInventoryWasReported|TestATrivialStoreNeedsNoInternalAccess|TestTheRunReportsWhatItFound)$' ./event/eventtest/ && go test -race -count=1 ./event/...
 ```
 
 The `-v` output of the first `-run` is the section list, and it is the evidence:
@@ -4360,19 +4667,22 @@ $ go test -race -count=1 -v -run 'TestTheSuiteStillDetectsEveryDefectItWasBuiltT
 --- PASS: TestATrivialStoreNeedsNoInternalAccess (0.01s)
 ok  	github.com/frostgrove/vv/event/eventtest	1.032s
 
-$ go test -race -count=1 -v ./event/eventtest/       # every top-level test, after round 3
---- PASS: TestTheSuiteStillDetectsEveryDefectItWasBuiltToDetect (0.01s)
+$ go test -race -count=1 -v ./event/eventtest/       # every top-level test, after test review round 1
+--- PASS: TestTheSuiteStillDetectsEveryDefectItWasBuiltToDetect (0.02s)
+--- PASS: TestTheDefectInventoryIsTheSizeItSaysItIs (0.00s)
+--- PASS: TestEverySectionIsNamedByADefectThatBreaksIt (0.00s)
 --- PASS: TestEverySectionInTheInventoryWasReported (0.02s)
 --- PASS: TestAnApplicationRunsTheThreeProxiesOverItsOwnDeclaration (0.00s)
 --- PASS: TestTheProxiesCompareSomethingThatCanDiffer (0.00s)
 --- PASS: TestEachProxyReportsTheThingItExistsToFind (0.00s)
+--- PASS: TestTheRunReportsWhatItFound (1.07s)
 --- PASS: TestATrivialStoreNeedsNoInternalAccess (0.01s)
 --- PASS: TestATransactionCapableStoreSatisfiesTheContract (0.01s)
---- PASS: TestARunThatCertifiedNothingFails (0.01s)
---- PASS: TestASectionThatNeverReturnedIsNotReportedPassed (0.00s)
---- PASS: TestAClaimedCapabilityWithAMissingHookIsRefused (0.00s)
+--- PASS: TestAGatedSectionIsReportedNotCertified (0.01s)
+--- PASS: TestTheVerdictOfASectionThatNeverReturnedIsNotPassed (0.00s)
+--- PASS: TestAClaimWithNoHookAndACapabilityNobodyStatedAreBothNamed (0.00s)
 --- PASS: TestEveryStoreCallASectionMakesCarriesADeadline (0.01s)
---- PASS: TestASectionWalksItsOwnTailOfALogSomebodyElseFilled (0.33s)
+--- PASS: TestASectionWalksItsOwnTailOfALogSomebodyElseFilled (0.34s)
 --- PASS: TestEverySectionIsCertifiedAtTheNarrowestLimitsAStoreMayPublish (0.02s)
 --- PASS: TestASectionReachesAVerdictOverALogSomebodyElseIsStillWritingTo (0.02s)
 --- PASS: TestAStoreThatKeepsWhatItWroteIsCertifiedForDurability (0.00s)
@@ -4382,7 +4692,7 @@ $ go test -race -count=1 -v ./event/eventtest/       # every top-level test, aft
 --- PASS: TestACursorAStoreCannotParseIsRefusedRatherThanReadFromTheBeginning (0.00s)
 --- PASS: TestEverySectionFailsAgainstAStoreThatRefusesEverything (0.00s)
 --- PASS: FuzzKeysReportsACollisionExactlyWhenTwoIdentitiesRenderOneKey (0.00s)
-ok  	github.com/frostgrove/vv/event/eventtest	1.446s
+ok  	github.com/frostgrove/vv/event/eventtest	2.538s
 
 $ go test -race -count=1 -v -run 'TestATransactionCapableStoreSatisfiesTheContract' ./event/eventtest/
 19 passed, 1 not certified (durability) — unchanged after round 3's three new clauses
@@ -4390,13 +4700,10 @@ $ go test -race -count=1 -v -run 'TestATransactionCapableStoreSatisfiesTheContra
 $ go test -run '^$' -fuzz FuzzKeys -fuzztime 45s ./event/eventtest/
 elapsed: 45s, execs: 1 779 459 (84 210/sec), new interesting: 61 — PASS
 
-$ go test -race -count=1 ./event/...                 # twice, no flake
-ok  	github.com/frostgrove/vv/event	1.273s
-ok  	github.com/frostgrove/vv/event/eventmemory	1.052s
-ok  	github.com/frostgrove/vv/event/eventtest	1.436s
-ok  	github.com/frostgrove/vv/event	1.280s
-ok  	github.com/frostgrove/vv/event/eventmemory	1.053s
-ok  	github.com/frostgrove/vv/event/eventtest	1.437s
+$ go test -race -count=2 ./event/...                 # twice in one run, no flake
+ok  	github.com/frostgrove/vv/event	1.499s
+ok  	github.com/frostgrove/vv/event/eventmemory	1.092s
+ok  	github.com/frostgrove/vv/event/eventtest	4.083s
 
 $ gofmt -l .           # silent
 $ make unit            # every module, no FAIL
@@ -4409,7 +4716,7 @@ check-workspace: ok
 
 ---
 
-### S6 — structural checks, documentation and the five ADRs  `[ ]`
+### S6 — structural checks, documentation and the five ADRs  `[x]`
 
 **Delivers** the checks `go test` cannot perform, the docs in the same change as
 the code (a stale doc is a defect here, not untidiness), and the five decisions.
@@ -4432,7 +4739,13 @@ the code (a stale doc is a defect here, not untidiness), and the five decisions.
   a `prefix` parameter, and each extension's file keeps its own prefix constant.
   This is **not** the table over extensions `## Risks and refusals` refuses: that
   refusal is about one test iterating a list of subsystems, and this is two
-  independent tests sharing three functions.
+  independent tests sharing what they walk. **Round 1 grew it** from three
+  helpers to the whole walk — `listedIn`, `firstPartyDependenciesIn`,
+  `modulesUnder`, `publishedModules`, `packagesUnder`, `coversEveryDirectory`,
+  `noBaseSubsystemDependsOn`, `startsNothing`, `initialiserCalls` — because the
+  two copies had already diverged in what they forbid, which is contract change
+  8 below. Each extension file keeps its own test names and its own argument
+  about what its packages may cost.
 - `scripts/tenancy_test.go` — the three helpers removed, its two test **names
   unchanged**. They are cited by `docs/ai/decisions/D-116…:115,119`,
   `docs/ai/flows/FL-033…:214`, `docs/modules/{en,ru}/tenancy.md:46` and the
@@ -4454,7 +4767,15 @@ the code (a stale doc is a defect here, not untidiness), and the five decisions.
   structural check that goes red on a comment gets loosened on its first run,
   which is R6 again. `scripts/docs_test.go:5-6,427,691` already carries the
   `go/ast`, `go/parser` and `token.NewFileSet` plumbing to build it from.
-- `scripts/docs_test.go` — the `exactly.?once` arm (C10.6).
+- `scripts/docs_test.go` — the `exactly.?once` arm (C10.6). Round 1 turned it
+  into a wording table over the two languages `docs/` ships and a refusal rule
+  attached to the claim rather than a window; contract change 7.
+- A new `event/sources_test.go` — what the three checks below read. Round 1 made
+  it a `go/types` type-check behind one shared file set, one shared source
+  importer and a memoised package; contract change 6. `sourcesIn` lives here
+  rather than in a file named for one of the checks, and the three deliberately
+  broken sources move to `event/fixtures_test.go`, which is what keeps every one
+  of these files inside the 400-line budget.
 - A new `event/mutablestate_test.go` — the AST check of §INV-013's table, which
   targets **mutation** rather than kind, so the twenty-four sentinels and the
   `*Aggregate`/`*Fact` idiom pass and an assignment, index-assignment, `delete`,
@@ -4494,7 +4815,7 @@ the code (a stale doc is a defect here, not untidiness), and the five decisions.
   translations, with rows in `docs/modules/Index.md`.
 - `docs/roadmaps/2026-09-01-postgres-event-sourcing-roadmap.md` — E0 decisions 1
   and 3 marked superseded **in place**.
-- `docs/roadmaps/Roadmap.md` — §15 and its summary row 27.
+- `docs/roadmaps/Roadmap.md` — §15 and its summary row 15.
 - `docs/api/surface.md` — regenerated by `make api`; the `event/…` sections
   become the phase-1 baseline **a person reads the diff of**, which is the whole
   of what `CLAUDE.md` asks of that file.
@@ -4550,7 +4871,7 @@ this plan's own addition and Q2's answer moves to **D-121…D-125**):
 |---|---|---|
 | **D-121** | The event vocabulary is a root package, and its second implementation is what earns it | [ES]'s E0 decision 3 is **its own condition being met** — "a second store would reopen it" — and E0 decision 1's aggregate blocker is aimed at a live schema, which phase 1 writes none of. Also: that §INV-019's proof is the third-package fixture, that a surface baseline is a report and never a gate (`CLAUDE.md`), and what the git arm would add after the first tag if a person wants it; and why **`ReadOnly` is the one wrapper in this repository with no `Next()`**, so a [[D-061]] review closes rather than reopens it |
 | **D-122** | A store classifies its own failure in a closed vocabulary, and the kernel maps it through `errors.As` | `jobs/queue.go:808:normalizeSenderError` reads its classification with `err.(rejectedPlacement)`, so a decorator wrapping with `%w` turns a conflict into an ambiguity. `event` uses `errors.As`; write down that this is where the rule was learned. Also: why the vocabulary is its own enum and not the sentinel set; why `Support` is a tri-state when both existing capability structs are `bool`s; and **the refusal wrapper's two traversals** — `errors.Is` reaches the sentinel and the declared wrap, `errors.As` the declared wrap only, and **neither reaches the cause**, which `event.CauseOf` is for (GAP-135: `port.KindOf` falls through `errs.AsFault` to six `errors.Is` branches over `crud` sentinels, so a cause-reaching `Is` renders an uncertain commit 503) — with the measurement that forced it (`cache/errors.go`'s shape declares no `Unwrap` and no `As`, so `port.KindOf`'s `errs.AsFault` cannot see a class wrap through it) and the two exceptions, `ErrRefused` and `ErrUpcast`, whose cause **is** their wrap. **And that the kernel uses a bounded `errors.As` of its own** (`findAs`, GAP-158): a store's chain is a foreign chain, and the stdlib walk over one has no budget and no `recover`, so a cyclic `Unwrap` wedged the request goroutine on the first statement of every store error. The same ADR carries why no wrap answers for a target inside this vocabulary (GAP-147, GAP-159) — the partition is enforced on the target of the traversal, not by refusing or dropping a cause, because dropping it took the application's own error down with it |
-| **D-123** | The declaration panics, and `Try…` is what returns the error | `crud/sqlrepo/blueprint.go:74:Define` / `:82:TryDefine`, which [[D-021]] already cites by line. The sibling exists for the **negative tests** — ten triggers, otherwise ten `recover()` blocks — and §INV-013 survives because both calls return the same value through one code path |
+| **D-123** | The declaration panics, and `Try…` is what returns the error | `crud/sqlrepo/blueprint.go:74:Define` / `:82:TryDefine`, which [[D-021]] already cites by line. The sibling exists for the **negative tests** — twenty-two triggers, otherwise twenty-two `recover()` blocks — and §INV-013 survives because both calls return the same value through one code path |
 | **D-124** | `event.JSON` is deliberately smaller than the codecs beside it | The 20 shared unexported functions and the three-directory build-tag pair; the trust boundary **derived** — the byte cap and the field checks on `event/store.go`, not the provenance of the log — and, stated in the same paragraph, **what the decode path does not bound**: no `MaxDecodedBytes`, no `MaxPayloadDepth`, so phase 2 knows what `eventpg` inherits; **what the codec is as a *party*** — C1's aliasing clause and C9's concurrency clause; and the trigger for extracting a shared analyser, so the conversation resumes rather than restarts |
 | **D-125** | A composed key is a wire format, and phase 1 freezes its rendering | `Compose`'s escape-and-join, byte for byte, with the length-prefix misreading of `cache/address.go:NamespaceOf` recorded so it is not proposed again (that prefix is hashed, never rendered). What reopening it costs: §INV-005 makes the rendering part of every stream ever written, so changing it orphans every aggregate — every one reads as version 0, silently, which is §D.1's own named failure. A store's key column and a migration are the only ways back |
 
@@ -4584,6 +4905,301 @@ Expected: green except the two pre-existing `vvdb` pool failures
 `TestDbpgxOpensAPoolFromTheSameConfig`), which are verified failing with this
 change set stashed and are recorded in `## Debt`.
 
+**Contract changes S6 made while writing it**, each here before the code:
+
+1. **`TestNoRefusalRendersAnIdentityAPayloadAKeyOrACursor` loses its "stored type
+   name" arm.** [SPEC] §INV-025 permits a refusal to name *"the family, the wire
+   type name, the revision"*, and `event/repo.go:apply` renders a recorded type
+   name only after `checkName` has passed it — an unbounded, control-carrying or
+   bracket-carrying one is refused one branch earlier and does not travel. The arm as written
+   would have gone red on S4's own accepted code, which is R6. The check keeps
+   the five classes the test's own name and §INV-011 state: identity, payload,
+   key, cursor, and the two numbers (version, position).
+2. **`TestMerelyImportingTheEventExtensionStartsNothing`'s `*ast.GoStmt` arm asks
+   only the packages a program links.** `event/eventtest/sections_write.go:273`
+   starts eight concurrent writers, which is the property the `concurrency`
+   section certifies, so a blanket arm was red on its first run. The predicate is
+   **derived rather than a name**: a package that imports `testing` cannot be in
+   a production binary. The `init` arm is unconditional over all three packages,
+   and the test fails if every package under `event/` turned out to import
+   `testing`, so the arm cannot become vacuous.
+3. **`TestNoDocPromisesExactlyOnceDelivery` is scoped and windowed rather than a
+   bare grep.** `docs/` already holds forty occurrences of the phrase, eight
+   of them about delivery and all eight prohibitions ([[D-118]], [[FL-035]],
+   [[UC-031]], the ES roadmap's non-goals); the rest are "resolved exactly once",
+   "asked exactly once", "the span ends exactly once". So the check reads only
+   occurrences whose window mentions delivery and requires a negation in that
+   window — the line, its two neighbours and the section heading above it, which
+   is what a non-goals list needs. Nothing is exempted by name, and the fixture
+   control asserts one promise reported and two refusals not.
+4. **`## Debt`'s GAP-T11 (second half) and GAP-T12 are closed here**, because
+   both name S6 as owner: `event/store_test.go` now asserts `Store` **embeds**
+   `Log` from the AST rather than only answering its four methods (proved by
+   spelling them inline and watching it go red), and
+   `event/refusal_test.go:namesDeclaredInErrorsFile` became
+   `namesDeclaredInThePackage`, walking every non-test file, with the gate arm's
+   message no longer claiming a behavioural observation it did not make.
+5. **The `[SPEC]` bullet is executed for the contradictions and deliberately not
+   for the additions.** Five spots in
+   `.agents/artifacts/usecases/EVENTSOURCE_P1_USECASES.md` said the **opposite**
+   of what shipped, and each now carries a superseding block naming what replaced
+   it and why: §2.3's *"the store's own error rides along as the wrapped cause,
+   so `errors.Is` reaches it"*; §2.3's *"checkable prohibition"* paragraph;
+   §INV-045's *Falsified by* clause asserting the cause reachable with
+   `errors.Is`; §D.15's standard-library row, which omitted `strings`, `unicode`,
+   `unicode/utf8`, `encoding/json`, `encoding`, `sync` and `sync/atomic`; and
+   §UC-004's *"there is no error-returning sibling"* with §D.12's row against it
+   and Q21, all three superseded by [[D-123]].
+   **Not done, and named rather than dropped:** the bullet's other two paragraphs
+   ask for the *additions* rounds 3–6 forced to be copied back into [SPEC]
+   (§UC-017, §UC-022, §UC-030, §UC-048, §UC-053, §D.1, §D.2, §D.9, §D.13, §D.14,
+   §INV-018, §INV-021, §INV-024, §INV-031, §UC-057). Those additions are carried
+   in full by this plan's `## Contracts` and `## Carried gaps`, which is the
+   authority a reader is sent to, and duplicating them into the blind
+   specification would create two texts that can disagree. What a reader of
+   [SPEC] alone could be *misled* by is a contradiction, and that is the set that
+   was fixed. `[low][deferred]`, recorded in `## Debt`.
+
+**Contract changes round 1's implementation review forced**, each here before
+the code. All four `[high][immediate]` findings and all four
+`[medium]`/`[low][immediate]` ones are closed; the four `[deferred]` ones are in
+`## Debt` below, and one criterion is rejected in writing in the GAPS file.
+
+6. **The three `event/` structural checks resolve types instead of matching
+   names** (GAP-1, GAP-3, GAP-7). A new `event/sources_test.go` type-checks a
+   directory with `go/types` and the standard library's **source importer** —
+   stdlib, so no dependency — behind one shared file set, one shared importer
+   and a memoised result, which is what keeps the package's own suite at 4.9 s
+   against 1.4 s before. `sourcesIn` moves there, out of a file named for a
+   different check (GAP-10), and `event/store_test.go` and `event/refusal_test.go`
+   stop walking the directory themselves.
+   - **§INV-011** is now decided from the argument's **type**. Four types are
+     named — `Key`, `Cursor`, `Version`, `Position` — and everything else falls
+     out: a value whose type reaches one of them, or reaches a byte slice,
+     renders it. A type that declares its own `String` or `Error` decides its own
+     rendering, which is what lets `Stream` through and is the control the first
+     subtest requires be present. A message is derived rather than listed: any
+     call returning an error that takes a `string`. `%[n]v` and `%*d` are refused
+     rather than mis-indexed. Six of the seven escapes the review demonstrated —
+     `stream.Key.String()`, `string(stream.Key)`, `%v` on an envelope, a bare
+     `[]byte`, a value passed through a helper, a `Version` field — are now the
+     fixture, and each is asserted reported. **The scope grew**: the packages a
+     program *links* rather than the kernel alone, so `event/eventmemory`'s 120
+     messages are read too, with `event/eventtest` out because it imports
+     `testing` — derived, not exempted by name, and written down in `[[FL-036]]`.
+   - **§INV-013** takes the kind from the type, so `make(map[string]int)`,
+     `new(sync.Pool)` and `new(int64)` are findings where the two syntactic
+     shapes read before were not. A name written through a function's parameter
+     is reported *where it is declared*, which is the arm the review asked for
+     and needs no second walk. The vacuity floor is per package as well as total:
+     a directory that declares nothing at package level fails.
+   - **§INV-007/§INV-027** matches transaction control case-blind over methods
+     **and** free functions, so `tx.commit()` and `commit(tx)` are one finding;
+     an `Append` is the store's only when its receiver also answers
+     `ReadStream`, so a builder with an `Append` of its own cannot turn the check
+     red and get it loosened; and direct recursion around a store append is a
+     third arm. Mutual recursion is stated as not seen.
+7. **`TestNoDocPromisesExactlyOnceDelivery` reads a table, not a literal**
+   (GAP-2). The wording is a row per language — English and Russian, the two
+   `docs/` ships — carrying the promise, the weaker claim, the delivery
+   vocabulary, the negation and the refusing heading. A refusal is a negation
+   **attached to the claim**: the sentence up to the end of the clause the phrase
+   sits in, the sentence before it in the same paragraph, or a `non-goal` /
+   `out of scope` heading. "Delivers it exactly once, so you do not need an
+   inbox table" is now reported, and so is a promise under a `What this is not`
+   heading. Markdown is read a paragraph at a time — a list item, a table row
+   and a heading each start one — so a phrase wrapped across two lines is one
+   phrase. The blindness arm is **the counting vocabulary rather than the
+   delivery-scoped count**: a language written in the tree that contributed zero
+   occurrences of either wording fails, because a row that matches nothing
+   permits everything. The literal criterion (zero *checked* occurrences) is
+   rejected with the measurement in the GAPS file — the `ru` tree has no
+   delivery-scoped occurrence at all, so it would be permanently red.
+8. **The three graph checks reach a nested module** (GAP-5, GAP-6, GAP-9).
+   `scripts/extensions_test.go` grows the walking both extensions share:
+   `listedIn`, `firstPartyDependenciesIn`, `modulesUnder`, `publishedModules`,
+   `packagesUnder`, `coversEveryDirectory`, `noBaseSubsystemDependsOn`,
+   `startsNothing`. The two extension files keep their **test names** — five
+   documents cite them — and their bodies are one line each into the shared
+   walker, so the divergence the review found (the event walk had silently
+   dropped tenancy's environment/global arm) cannot recur.
+   - `go list` stops at a nested `go.mod`, so every module under the extension is
+     listed in its own directory and `coversEveryDirectory` fails when a
+     directory holding source was listed by nobody. That is the floor, and it is
+     self-maintaining where a module count is not.
+   - `TestNoBaseSubsystemDependsOn…` now walks **every published module**, not
+     the root alone: a satellite importing an extension makes it non-optional for
+     that satellite's consumers, and 88 packages across 32 modules were invisible
+     to it before. `test` and `_examples` are excluded, which is the pair
+     `scripts/common.sh:satellites` already names.
+   - The environment/global arm is **fail-closed** and general: a package-level
+     initialiser that calls anything is reported unless it is `errors.New`,
+     `fmt.Errorf` or `reflect.TypeFor`. A deny list of the two spellings somebody
+     thought of is what it replaced; a conversion is not a call.
+   - The `seams` map becomes a set and `costOf` and its unreachable branch are
+     gone, with the sentence that says what a non-empty value would have meant;
+     the `named` `bool` no longer shares its name with a `[]string`.
+9. **`[[FL-036]]` names every file under `event/` and so does the reverse
+   index** (GAP-4). Fourteen rows were missing — `event/doc.go`, both other
+   `doc.go`s, `declaration.go`, the six `sections_*.go` and the four
+   `defects_*.go`, about 2 700 lines with no flow row — and
+   `comm -23 <(find event …) <(grep … Index.md)` now returns empty. A new
+   paragraph in `[[FL-036]]` states the rule (every non-test `.go` file, `doc.go`
+   included) and a new section states **what the four structural checks reach and
+   what they do not**. `[[D-121]]`'s *Where it lives* and *Proven by* say which
+   package classes each check reaches. Making it enforceable is **rejected for
+   this section** and recorded as repo-wide debt: about a hundred files across
+   twelve other subsystems have no reverse-index row either, so the check would
+   either be red repo-wide or scoped to `event/`, which is fitting a rule to one
+   example.
+
+**Checkpoint S6 — re-executed 2026-09-07 after the round 1 review, green.**
+
+```
+$ test "$(go test -list '^(TestNoBaseSubsystemDependsOnTheEventExtension|TestNoEventPackageCostsMoreThanTheSeamItNames|TestMerelyImportingTheEventExtensionStartsNothing|TestNoDocPromisesExactlyOnceDelivery|TestEveryTestNameTheDocsCiteExists|TestEverySymbolTheDocsCiteIsDeclaredWhereTheDocSaysItIs)$' ./scripts/ | grep -c '^Test')" = 6 && echo "LIST-SCRIPTS OK"
+LIST-SCRIPTS OK
+
+$ test "$(go test -list '^(TestNoPackageLevelStateIsEverMutated|TestNoRefusalRendersAnIdentityAPayloadAKeyOrACursor|TestTheKernelNeverIssuesTransactionControlAndNeverRetries)$' ./event/ | grep -c '^Test')" = 3 && echo "LIST-EVENT OK"
+LIST-EVENT OK
+
+$ go test -count=1 ./scripts/... && make check && make unit && make vet && test -z "$(gofmt -l .)" && make api && git --no-pager diff --stat docs/api/surface.md
+ok  	github.com/frostgrove/vv/scripts	5.292s
+... (check-deps external-package census elided)
+check-deps: ok
+check-tiers: ok
+check-utils: ok
+check-triplets: ok
+check-todo: ok
+check-replaces: ok
+check-tidy: ok
+check-otel-schema: ok
+check-workspace: ok
+... (make unit: every module ok, 0 FAIL anywhere)
+... (make vet: every module, no diagnostics)
+... (gofmt -l . : silent)
+api: docs/api/surface.md regenerated — read the diff
+ docs/api/surface.md | 98 +++++++++++++++++++++++++++++++++++++++++++++++++++--
+ 1 file changed, 96 insertions(+), 2 deletions(-)
+
+$ gofmt -l .
+$ go build ./...
+$ go vet ./event/...
+$ go test -race ./event/...
+ok  	github.com/frostgrove/vv/event	4.854s
+ok  	github.com/frostgrove/vv/event/eventmemory	1.047s
+ok  	github.com/frostgrove/vv/event/eventtest	2.523s
+```
+
+The surface diff is **unchanged at 96 insertions and 2 deletions**: every file
+this round touched is a `_test.go`, a Markdown page or a shell array element, so
+the phase-1 baseline a person reads is the same one S6 produced.
+
+`event`'s own suite went from 1.365 s to 4.854 s under `-race`. That is what
+type resolution costs, and it buys the six §INV-011 escapes, the three §INV-013
+spellings and the two §INV-027 ones that a name match let through. One shared
+file set, one shared importer and a memoised package take it back down from
+19.977 s.
+
+**`make integration`, twice in a row after this round, both green:**
+
+```
+ok  	github.com/frostgrove/vv/test/bridge	1.005s
+ok  	github.com/frostgrove/vv/test/codegen	2.924s
+ok  	github.com/frostgrove/vv/test/dsn	1.012s
+ok  	github.com/frostgrove/vv/test/integration	19.316s
+ok  	github.com/frostgrove/vv/test/portmount	1.063s
+ok  	github.com/frostgrove/vv/test/versionstore	1.005s
+```
+
+**Anti-vacuity, demonstrated rather than claimed.** Each structural check was
+broken against the real tree, watched go red, and restored. The first block is
+S6's original set; the second is what round 1's rewrites made detectable that
+was not before.
+
+| Broken | Reported |
+|---|---|
+| a `for attempt := 0; attempt < 3; attempt++` around `this.store.Append` in `event/repo.go` | `repo.go:98:7 in Append: the store's Append is called inside a loop, and re-appending a decision the stream has moved past writes a stale decision at a fresh version` |
+| a free `commit(ctx)` called from `event/repo.go` | `repo.go:96:2 in Append: commit is called, and the transaction belongs to the caller from the first statement to the last` |
+| `var seen = make(map[string]int)` and `var tally = new(int64)` in `event/errors.go`, written through a parameter | `errors.go:21:5: seen is a map, which every copy of it writes through …` and `errors.go:23:5: tally is a pointer, and every holder of it writes through the value behind it …` |
+| `string(key)` and `[]byte(key)` added to `Repo.checkKey`'s refusal | two lines: `repo.go:169:75 in checkKey: a Key is rendered into a refusal …` and `:88` |
+| `var identifier = regexp.MustCompile(…)` and `var home = os.Getenv(…)` in `event/text.go` | `text.go:10:18 calls regexp.MustCompile to build a package-level value …` and `text.go:12:12 calls os.Getenv …` |
+| `_ "…/event"` and `_ "…/tenancy"` imported from **`jobs/jobsfx`, a satellite module** | `jobs/jobsfx imports …/event — the extension is no longer optional` and the same for `tenancy` |
+| a throwaway `event/eventtmp` **module** with an `init`, an `os.Getenv` initialiser and a goroutine | before it is added to `go.work`: `cannot list [./...] in ../event/eventtmp` — which is itself the right answer, because a module outside the workspace escapes `make unit`. Added to `go.work`: `the extension has 4 packages and 2 of them say what they cost`, `…/eventtmp … says nothing about what it costs`, and all three of `init`, `os.Getenv` and the goroutine |
+| a promise of exactly-once delivery added to `docs/modules/en/event.md`, **under its `## What this is not` heading and with a trailing "so you do not need an inbox table"** | `../docs/modules/en/event.md:235 promises exactly-once delivery` |
+| the same promise added to `docs/modules/ru/event.md` in Russian | `../docs/modules/ru/event.md:239 promises exactly-once delivery` |
+| `Store` spelling `Log`'s four methods inline instead of embedding | `store_test.go:237: Store embeds [] where the contract makes it a Log …` |
+| an import of `jobs` added to `event/eventmemory` | three lines naming `crud/query`, `port` and `jobs` |
+
+**Phase 5 — the tests for this section, 2026-09-07.** S6's deliverables *are*
+its checks, so phase 5 is what makes each of them falsifiable in the suite
+rather than only by hand, and it closes the four named blind spots round 2 left
+open. Ten test-shaped changes, each with the mutation that proves it:
+
+| What was added | What it closes | Broken to prove it |
+|---|---|---|
+| `event/refusalmessages_test.go` follows a `string` local back to its single assignment (`localText`, `textFlow`) | **GAP-13** — one intermediate local defeated §INV-011 | `detail := string(stream.Key)` and a `fmt.Sprintf` over a `Key` and a `Version` written into a real `event/probe.go`: four lines reported, `probe.go:23:19 in probeRendersALocal: a Key is rendered into a refusal…` |
+| `event/mutablestate_test.go` gains `writtenThroughItsOwnMethod` and `interfacesHolding` | **GAP-14** — a value mutated through its own pointer receiver, and an interface holder | `var probeKept probeLedger` with `func (*probeLedger) add()`, `var probeAny any = map[string]int{}` and a `sync.Map` in the real kernel: all three reported, and the `error` sentinels and `reflect.Type` tokens stayed silent |
+| `event/transactioncontrol_test.go` reads a control name in **value** position (`controlBound`, `calleesOf`) | **GAP-16** — `finish := tx.Commit; finish()` passed | the same probe file: `probe.go:37:12 in probeCommitsThroughABoundMethod: Commit is bound as a value…` |
+| `scripts/extensions_test.go:costsNoMoreThanItNames` — the cost walk is now shared, each extension keeping its table and its three sentences | **GAP-15** — the third body was never shared and the two copies had diverged over nested modules | a throwaway `tenancy/tenancytmp` module added to `go.work`: `the extension has 7 packages and 5 of them say what they cost` — the tenancy walk now reaches a nested module, which is the criterion |
+| `scripts/docs_test.go` carries `once and only once` and «один и только один раз», with two fixture lines | **GAP-18** (partly) — one English phrasing | the phrasing removed from the table: the fixture's `walk.md:15` and `обход.md:7` stop being reported. The de-duplication half is **refused** in writing: `no duplicates ever reach your handler` carries its own negation and `deduplicates on that key` is ordinary prose this tree writes eleven times, so the row would go red on correct pages. Written into [[FL-036]] rather than half-checked |
+| `event/formatverbs_test.go` — the verb reader in `fmt`'s own order, a table test and a differential fuzz target | a **real defect** the property test found: `%+[2]s`, `%-*d`, `%.*f` and `%6.*f` were read verb by verb, so an argument index behind a flag mis-mapped every judgement after it | the shipped reader restored: four table rows red and two fuzz seeds red — `"%w: %.*f" renders more arguments than the 2 this reader mapped` |
+| `scripts/extensionwalk_test.go` — the three shared walks driven over a written tree | the three graph checks had **no** in-suite falsification; a deleted arm went unnoticed | the `init` arm dropped from `startsBeforeMain`, `crossingsInto` made to return nothing, `uncoveredDirectories` made to return nothing: one test red each |
+| `event/sources_test.go:TestTheStructuralChecksReadOneTypedPackageFromManyGoroutines` | the three analysers share one memoised typed package and nothing said they were pure over it | one map write added to `renderedValues`: `WARNING: DATA RACE … renderedValues` |
+| `FuzzADeliveryClaimIsReportedAtALineTheDocumentHas` | the markdown walk rebuilds paragraphs and reports byte offsets as line numbers, over two alphabets | `lineAt` made to return `number + 1000`: four seeds red. 45 s campaign, 1.85 M execs, clean |
+| `startsSomething` split into `startsBeforeMain` and `startsAGoroutine`; `reachedIdentity`'s `whole` flag split into `carriedIdentity` / `identityOfAPart` | **GAP-17** — two boolean flag parameters | — (a refactor; the arms above are what prove the behaviour survived) |
+
+`event/renderedtypes_test.go` and `event/formatverbs_test.go` are new files
+rather than growth in place: `refusalmessages_test.go` reached 415 lines with the
+dataflow arm, and the two halves it sheds — which types render an identity, and
+which verb renders which argument — are each a question of their own.
+`scripts/extensions_test.go` reached 472 and split the same way, into what the
+three graph checks **ask the toolchain** (`scripts/extensionlisting_test.go`) and
+the **prohibitions** they hold over the answers. Every file this section owns is
+back inside the 400-line budget: 342, 197, 242, 216, 104, 182, 281, 272, 213,
+112 and 51. `scripts/docs_test.go` is the one exception and was already over
+before this section (GAP-21).
+
+Section checkpoint re-executed after phase 5: `go test -race -count=1
+./event/...` and `go test -count=1 ./scripts/...` green, `make check` nine arms
+green, `make unit` 95 ok and 0 FAIL, `go vet ./...` silent, `gofmt -l .` silent,
+`make api` leaving the surface diff at **96 insertions and 2 deletions** —
+unchanged, because every file phase 5 touched is a `_test.go` or a Markdown page.
+
+**Phase 6 — the test review's findings, 2026-09-08**
+(`.agents/artifacts/gaps/EVENTSOURCE_P1_S6_TEST_GAPS.md`). Phase 5 made each
+check falsifiable; round 1 of the test review found four places where the
+falsification stopped short of the thing that decides. All three
+`[high][immediate]` findings and both `[medium][immediate]` ones are closed;
+GAP-T5 and GAP-T7 are `[deferred]` and are in `## Debt` below.
+
+| What was added | What it closes | Broken to prove it |
+|---|---|---|
+| `costsNoMoreThanItNames` splits into `costOverruns`, which returns complaints and takes the tree it walks as a parameter; `packagesUnder`, `firstPartyDependenciesIn`, `extensionModules` and `modulesUnder` take it too. `TestAPackageCostingMoreThanItsRowSaysIsReportedAndOneCostingExactlyItIsNot` drives it over a written module tree, read against a table that understates what the extension costs and again against one that states it exactly | **GAP-T1** — the fourth graph walk was the one with no falsification, and five mutations of it were invisible to the whole suite | all five, one at a time: the walk gutted, the `uncharged` arm deleted, the `overreach` arm neutered, the `core` arm neutered, and `firstPartyDependenciesIn` returning an empty map. Each is red on the new test and on nothing else |
+| `TestTheChecksWalkEveryPackageTheExtensionHoldsAndLinkAllButTheSuite` compares the walked set against a second, recursive reading of the tree, and pins the linked set as the walked set less `eventtest`. `linkedDirectories` reads the `testing` predicate off the package's **import list** instead of its raw bytes | **GAP-T2** — three counting floors were all satisfied by the kernel alone, so a narrowing shipped a real `event/eventmemory` violation green | `extensionDirectories` returning `[".", ".", "."]`, alone and with `var probeShared = map[string]int{}` planted in `event/eventmemory/log.go`; the predicate made unmatchable; the predicate returned to a byte scan. All four red. The comment carrying the quoted word `"testing"` in `event/store.go` is now green, which is what the `< 2` floor only half-caught |
+| `block.sentenceBefore` backs over the space run to the terminator before the sentence it was given, so it returns the previous sentence instead of the empty string. `TestTheSentenceBeforeAClaimIsTheOneThePagePutsThere` asserts it directly; `deliveryFixture` gains `window.md`, whose line 3 carries the delivery vocabulary only in the sentence before and whose line 5 carries the refusal only there | **GAP-T3** — half the documented refusal window did not exist, with a demonstrated false negative and a demonstrated false positive | `sentenceBefore` → `return ""`: `window.md:3` stops being reported, `window.md:5` starts, and the probe test names the sentence it read |
+| `window.md`'s two-item list and its two table rows, whose promise and whose negation are in different items | **GAP-T4** — the paragraph splitter's list-and-table arm decided verdicts and no test moved when it was deleted | the arm reduced to `if current == nil` loses `window.md:7` and `window.md:10`; `markdownList` alone loses `:7`; the `|` prefix alone loses `:10` |
+| The four identity names become `identitiesARefusalMayNotRender`, which `identityNamed` reads, and `TestEveryIdentityTheChecksNameIsOneTheVocabularyDeclaresAndEveryOneItDeclaresIsNamed` asks the kernel's own scope about them in both directions, with `Outcome` and `Support` written down as the two identity-shaped types that are not identities | **GAP-T6** — the list was proved against a copy of itself in the fixture, so renaming `event.Cursor` would have left both subtests green | `Cursor` renamed to `Resume` everywhere but the list: red on both arms at once. `type Sequence uint64` added to the vocabulary: red naming `Sequence`. An exemption left behind its type: red naming it |
+
+**One `docs/` page changed as a consequence.** The refusal window, once it
+existed, read two more occurrences in the real tree.
+`docs/ai/decisions/D-118…:88` is a genuine delivery paragraph whose refusal sits
+in the preceding sentence and is correctly silent — which is the best evidence
+the window works. `docs/ai/usecases/modules/codegen/Codegen.md:748` wrote *"Every
+requested type must be found exactly once"* one sentence after the word
+"consumer", and now reads *"Every requested name must match exactly one
+declaration"*, which is what it meant. The page was fixed rather than exempted:
+no wording row was dropped and no name was excused, which is [REC] R6 answered in
+the direction R6 asks for.
+
+`scripts/extensionlisting_test.go` also sheds `listed` and
+`firstPartyDependencies`, dead since round 1's rewrite. Line budgets after this
+phase: `event/sources_test.go` 259, `event/renderedtypes_test.go` 150,
+`event/fixtures_test.go` 296, `scripts/extensions_test.go` 281,
+`scripts/extensionwalk_test.go` 181, `scripts/extensionlisting_test.go` 203 — all
+under 400. `scripts/docs_test.go` grows from 1 112 to 1 152 and is the stated
+pre-existing exception (GAP-21); splitting it is a 370-line move that would land
+the new file over budget too, so it stays where the breach is already recorded.
+
 ---
 
 ## Coverage matrix
@@ -4591,6 +5207,15 @@ change set stashed and are recorded in `## Debt`.
 Every UC and INV in [SPEC], and every carried gap. The **section** column names
 where it is delivered; the **checkpoint** column names the one whose output
 proves it.
+
+A row whose **Proved by** is a *conformance section* in lower case — `binding`,
+`conservation`, `lifecycle` — names a `t.Run` subtest of `eventtest`, and after
+test review round 1 each of the twenty is itself named by at least one row of the
+defect inventory (§ Anti-vacuity, rule 5). That is what makes citing a section as
+proof mean something: gutting it turns
+`TestTheSuiteStillDetectsEveryDefectItWasBuiltToDetect` red. Before that round,
+nine of the twenty could be emptied with the whole tree staying green, and the
+rows citing them were proved by nothing.
 
 ### Use cases
 
@@ -4675,19 +5300,19 @@ proves it.
 | INV-004 folds and upcasters are pure | S2 | S2 | `TestAFoldIsPureOverTheStateItIsGiven`, `TestAChangeRetainsNoApplicationValue`, `TestAReferenceKindStateFoldsWithoutAliasing` |
 | INV-005 wire identity declared; the key's rendering frozen | S1 (the frozen rendering, byte for byte) + S2 (the declared identifiers) | S1 | `TestComposeRendersTheFrozenKey`, `FuzzComposeRendersAKeyThatIsLegalAndReversible`, `TestADeclaration` |
 | INV-006 no partially rehydrated state from `Load` | S4 | S4 | `TestALoadThatFailsMidStreamReturnsNothing`, `TestEveryHistoryClassRefusalIsRaisedByTheThingItNames`, `FuzzALoadFoldsAStoredStreamOrRefusesItWhole` |
-| INV-007 a conflict is never retried by the framework | S4 (a recording store) + S6 (the AST walk) | S6 | `TestOneLoadAndOneAppendMakeExactlyTheStoreCallsTheContractNames`, `TestTheKernelNeverIssuesTransactionControlAndNeverRetries` |
+| INV-007 a conflict is never retried by the framework | S4 (a recording store) + S6 (the AST walk) | S6 | `TestOneLoadAndOneAppendMakeExactlyTheStoreCallsTheContractNames`, `TestTheKernelNeverIssuesTransactionControlAndNeverRetries` (phase 5: its bound-method arm, and `TestTheStructuralChecksReadOneTypedPackageFromManyGoroutines` for the walk's purity) |
 | INV-008 full replay is the only authority | S4 | S4 | `TestAStreamWithHistoryFoldsToItsCurrentState` |
 | INV-009 dense versions, sparse positions, no clock ordering | S3 + S5 | S5 | `TestVersionsAreDenseAndPositionsAscendWhateverTheClockSays`, `TestManyWritersLeaveOneDenseHistoryAndAMonotoneLog`, `dense versions`, `global order` |
 | INV-010 a revision is derived, never typed | S2 (`Revisions()`) | S2 | `TestADeclaration` |
-| INV-011 no identity, payload, version, position, key or cursor becomes a default field | S1 (message table) + S6 (source check) | S6 | `TestEveryRenderingNamesAClassAndNeverAValue`, `TestNoRefusalRendersAnIdentityAPayloadAKeyOrACursor` |
+| INV-011 no identity, payload, version, position, key or cursor becomes a default field | S1 (message table) + S6 (source check) | S6 | `TestEveryRenderingNamesAClassAndNeverAValue`, `TestNoRefusalRendersAnIdentityAPayloadAKeyOrACursor` (phase 5: its local-dataflow arm), `TestAFormatThatShiftsItsOwnArgumentsIsRefusedRatherThanReadWrongly`, `FuzzAFormatIsMappedVerbByVerbOrRefusedWhole` |
 | INV-012 event history is not a CRUD collection | S1 (method inventory) | S1 | `TestTheStoreSeamHasEightMethodsAndNoneMutatesOrQueries` |
-| INV-013 no package-level mutable state, no constructor starts anything | S3 (obeyed) + S6 (the AST checks) | S6 | `TestAStoreIsBuiltPerRequestOverALogThatOutlivesIt`, `TestNoPackageLevelStateIsEverMutated`, `TestMerelyImportingTheEventExtensionStartsNothing` |
+| INV-013 no package-level mutable state, no constructor starts anything | S3 (obeyed) + S6 (the AST checks) | S6 | `TestAStoreIsBuiltPerRequestOverALogThatOutlivesIt`, `TestNoPackageLevelStateIsEverMutated` (phase 5: its pointer-receiver and interface-holder arms), `TestMerelyImportingTheEventExtensionStartsNothing`, `TestALifecycleAPackageStartsForItselfIsReportedAndTheIdiomIsNot` |
 | INV-014 no start-up migrates, creates or discovers | S3 (by construction) | S3 | `TestTwoStoreValuesOverOneLog`, `TestAStoreIsBuiltPerRequestOverALogThatOutlivesIt` |
 | INV-015 an at-token is minted, never manufactured | S4 + `testdata/crossings` | S4 | `TestAForgedTokenIsRefusedBeforeAnyStatement`, `TestTheCrossingsThatMustNotCompile` |
 | INV-016 store identity is the backing; `Equal`, never `==` | S1 | S1 | `TestABackingAndAnAuthorityAreComparedAndNeverIdentical` |
 | INV-017 a fold cannot fail; only an upcaster may refuse | S2 + S4 | S4 | `TestAnUpcasterMayRefuseAndAFoldMayNot`, `TestACodecPanicBecomesThatMethodsOwnRefusal`, `TestAFoldPanicUnwindsOutOfLoad`, `TestAPanickingCodecBecomesTheRefusalItsErrorWouldHaveBeen` |
 | INV-018 the store never sees a Go type; who applies which bound (C4) | S1 (the seam's values carry bytes and no Go type) + S4 (the verification) | S4 | `TestTheSeamsValuesAreDefinedTypesWithTheDeclaredFields`, `TestAnOverLongPageIsRefused`, `TestAMisPagedStreamIsRefusedBeforeItIsFolded` |
-| INV-019 a second store costs zero diffs to `event/` | S4 (the caller half) + S5 (**the proof**) + S6 (the regenerated baseline, a report and not a gate) | S5 | `TestATrivialStoreNeedsNoInternalAccess` |
+| INV-019 a second store costs zero diffs to `event/` | S4 (the caller half) + S5 (**the proof**) + S6 (the regenerated baseline, a report and not a gate) | S5 | `TestATrivialStoreNeedsNoInternalAccess`, `TestAnImportOfTheExtensionFromOutsideItIsReportedAndOneInsideItIsNot`, `TestADirectoryHoldingSourceThatNoPackageListedIsReported` |
 | INV-020 one aggregate's value is not usable with another, and the scope | S2 (compile) + S4 (runtime) | S4 | `TestTheCrossingsThatMustNotCompile`, `TestFoldRefusesAnotherInstance`, `TestAppendRefusesInItsStatedOrder` |
 | INV-021 nothing held and nothing handed out share mutable memory | S1 (clauses) + S2 (1, 2, 8) + S3 (4, 7, committed and staged alike) + S5 (3, 6 and `payload ownership`) | S5 | `TestAChangeRetainsNoApplicationValue`, `FuzzADecidedFactIsFrozenAgainstItsCallersBuffer`, `TestAPageIsTheCallersIncludingItsCapacity`, `TestAPageOfStagedRecordsIsTheCallersToo`, `TestNothingACallerHandsToAnAppendIsRetainedOrRewritten`, `FuzzAPayloadIsHandedBackByteForByteAndBelongsToWhoeverReadsIt`, `payload ownership` |
 | INV-022 every bound declared, reachable, unescapable; two doors | S3 (the resident ceiling counted in envelopes, where a store derives its page and the kernel checks it again) + S4 | S4 | `TestTheResidentPageIsTheCeilingCountedInEnvelopes`, `TestBothDoorsCheckTheStore`, `TestAStoreWhoseProductExceedsTheResidentCeilingIsRefused`, `TestAnAppendWhoseActualBytesExceedTheResidentCeilingIsRefused` |
@@ -4695,7 +5320,7 @@ proves it.
 | INV-024 the refusal vocabulary is a partition | S1 | S1 | `TestTheRefusalVocabularyIsAPartition`, `TestADeclaredWrapIsReachableByErrorsAsAndACauseIsNot` |
 | INV-025 a refusal names identifiers, never data | S1 | S1 | `TestEveryRenderingNamesAClassAndNeverAValue` |
 | INV-026 a conflict carries no version | S1 + S5 | S5 | `TestEveryRenderingNamesAClassAndNeverAValue`, `refusal classes` |
-| INV-027 the framework never opens, commits or rolls back a transaction | S1 (the seam declares none) + S4 (a recording store) + S6 (the AST walk) | S6 | `TestTheStoreSeamHasEightMethodsAndNoneMutatesOrQueries`, `TestOneLoadAndOneAppendMakeExactlyTheStoreCallsTheContractNames`, `TestTheKernelNeverIssuesTransactionControlAndNeverRetries` |
+| INV-027 the framework never opens, commits or rolls back a transaction | S1 (the seam declares none) + S4 (a recording store) + S6 (the AST walk) | S6 | `TestTheStoreSeamHasEightMethodsAndNoneMutatesOrQueries`, `TestOneLoadAndOneAppendMakeExactlyTheStoreCallsTheContractNames`, `TestTheKernelNeverIssuesTransactionControlAndNeverRetries` (phase 5: `finish := tx.Commit` and a commit handed off as a value) |
 | INV-028 an authority **is** its transaction's identity | S1 + S3 (two live transactions on one store are not `Same`) + S4 | S4 | `TestABackingAndAnAuthorityAreComparedAndNeverIdentical`, `TestASecondAppendInOneTransactionIsAdmitted`, `TestRepoAuthorityIsTheComparisonTwoSubsystemsUse` |
 | INV-029 cancellation identity preserved, uncertainty outranks it (C3) | S1 + S5 (`cancellation`) | S5 | `TestAContextCauseNeverTravelsThroughARefusal`, `cancellation` |
 | INV-030 every question is answered by the exact outer value | S1 (all required) + S5 (decorated runs) | S5 | `refusal classes`, `store failure classification` |
@@ -4704,7 +5329,7 @@ proves it.
 | INV-033 a stream is (family, key) byte-exact; injectivity is the application's | S1 (`Compose`'s own two properties, and the rendering they hold over) + S2 + S3 (the store keys its history by both halves) + S5 (`stream identity`) | S5 | `FuzzComposeRendersAKeyThatIsLegalAndReversible`, `TestComposeRendersTheFrozenKey`, `TestADeclaration`, `TestTwoFamiliesSharingOneKeyAreTwoStreams`, `stream identity` |
 | INV-034 the two reads describe one set | S5 (`conservation`) | S5 | `conservation` |
 | INV-035 a returned resume point is safe to persist | S3 + S5 (`resumption`) | S5 | `TestACursorIsTheBackingsAndResumesThroughAnyStoreValueOverIt`, `FuzzACursorEitherResumesInsideTheLogOrIsRefused`, `resumption` |
-| INV-036 a walk tiles; delivery is at least once | S5 + S6 (the doc arm) | S6 | `global paging`, `TestNoDocPromisesExactlyOnceDelivery` |
+| INV-036 a walk tiles; delivery is at least once | S5 + S6 (the doc arm) | S6 | `global paging`, `TestNoDocPromisesExactlyOnceDelivery`, `TestAPromiseOfExactlyOnceDeliveryIsReportedAndARefusalOfOneIsNot`, `FuzzADeliveryClaimIsReportedAtALineTheDocumentHas` |
 | INV-037 **WITHDRAWN** — resolves to INV-040 | S4 | S4 | — |
 | INV-038 what is safe to copy and to share, plus C9's row | S1 (table, and the inert rows under `-race`) + S5 (`concurrency`) | S5 | `TestTheKernelsValuesAnswerTheSameFromManyGoroutines`, `concurrency` |
 | INV-039 one family names one aggregate, forever | S4 (`Bind`) + S5 (`binding`) | S5 | `binding` |
@@ -4803,10 +5428,10 @@ mutable state.
 | `event/errors.go` | 25 — 24 sentinels + `CauseOf` (GAP-135) | 2 (`crud`, `errs`) | 0 | 320 |
 | `event/store.go` | 11 | 0 | 0 | 180 |
 | `event/codec.go` | 2 | 0 | 0 | 260 → **103 actual** |
-| `event/encodable.go` | 0 | 0 | 0 | — → **290 actual** (round 2's split of `codec.go`) |
+| `event/encodable.go` · `event/routing.go` | 0 | 0 | 0 | — → **212 / 256 actual**. Round 2's split of `codec.go` was 290; refusals 6-9 and GAP-T46's promotion chain took the single file to **422**, over the threshold, so the walk kept `encodable.go` and `encoding/json`'s routing rules restated as refusals moved to `routing.go` (S2 test round 6, GAP-T47) |
 | `event/chain.go` | 3 | 0 | 1 (a `Codec`) | 220 → **106 actual** |
 | `event/aggregate.go` | 4 | 0 | 0 | 260 → **112 actual** |
-| `event/fact.go` | 3 | 0 | 0 | 280 → **312 actual** — over the estimate by the two value walks `RoundTrip`'s two properties are now asked with, and 88 under the threshold |
+| `event/fact.go` · `event/comparison.go` | 3 | 0 | 0 | 280 → **205 / 280 actual**. The two value walks `RoundTrip`'s two properties are asked with took the single file to **403**, over the threshold, so `fact.go` kept the declaration and the proxy's outline and the walks moved to `comparison.go` (S2 remediation, GAP-188/189/190); round 7's three answers at the opaque-struct position and the type-difference arm (GAP-191/192/193) added 64 lines to `comparison.go`, still under the budget |
 | `event/change.go` | 1 | 0 | 0 | 90 → **44 actual** |
 | `event/seal.go` | 0 | 0 | 0 | 60 → **54 actual** |
 | `event/token.go` | 2 + 8 methods | 0 | 0 | 110 → **47 actual** |
@@ -4820,21 +5445,30 @@ mutable state.
 | `event/eventmemory/read.go` | 0 | 1 | 0 | 170 → **84 actual** |
 | `event/eventmemory/transaction.go` | 2 | 1 | 0 | 230 → **143 actual** |
 | `event/eventmemory/cursor.go` | 0 | 1 | 0 | 90 → **42 actual** |
-| `event/eventtest/suite.go` | 3 | 1 | 0 | 300 → **233 actual** after round 2's split; `Factory` carries **7** fields after round 3's `Unparsable`, at `architecture.md`'s per-class threshold and not over it |
+| `event/eventtest/suite.go` | 3 | 1 | 0 | 300 → **252 actual** after round 2's split and test review round 1's naming of what a run reports; `Factory` carries **7** fields after round 3's `Unparsable`, at `architecture.md`'s per-class threshold and not over it |
 | `event/eventtest/probe.go` | 0 | 1 | 0 | — → **292 actual** (round 2's split of `suite.go`, plus round 3's constancy reading) |
 | `event/eventtest/inventory.go` | 0 | 1 | 0 | 120 → **74 actual** |
 | `event/eventtest/sections_*.go` (6 files after round 3) | 0 | 1 | 0 | ≤ 380 each → **364 / 354 / 306 / 251 / 238 / 127 actual**, recounted with `wc -l`. Round 3's cursor clause took `sections_read.go` to 421, over the 400 threshold, so `resumption` and the three helpers only it uses moved to `sections_resumption.go` |
-| `event/eventtest/defects.go` | 0 | 1 | 0 | 360 → **335 actual** (18 defects after round 3) |
+| `event/eventtest/defects.go` | 0 | 1 | 0 | 360 → **112 actual** — the inventory alone: 29 rows after test review round 1, whose nine new decorators took the single file to 470 and forced the split below |
+| `event/eventtest/defects_write.go` · `defects_read.go` · `defects_ownership.go` · `defects_lifecycle.go` | 0 | 1 | 0 | — → **146 / 144 / 139 / 83 actual** (test review round 1's split: the 25 decorators, in four files named for the `sections_*.go` file that owns the section each breaks) |
 | `event/eventtest/proxies.go` | 3 | 1 | 0 | 150 → **92 actual** |
 | `event/eventtest/report.go` | 0 | 1 | 0 | 90 → **66 actual** |
 | `event/eventtest/declaration.go` · `stores.go` | 0 | 1 | 0 | — → **103 / 116 actual** (the two files S5 added) |
 
-**No file breaches 400 lines**, and one had to be split to keep that true:
+**No file breaches 400 lines**, and three had to be split to keep that true:
 round 2's work took `event/eventtest/suite.go` to **473**, so the probe and every
-call it makes on a store moved to `probe.go` and the two are 224 and 259.
+call it makes on a store moved to `probe.go` and the two are 224 and 259; test
+review round 1's nine defects would have taken `defects.go` to **470**, so the
+decorators moved out of the inventory into four files named for the section file
+each one's section lives in, and the five are 112, 146, 144, 139 and 83.
 `sections_read.go` at **399** is one line under and is the next to split.
-`event/encodable.go` is the largest shipped in the kernel
-at **290**, and S4's five files came in at 559 against an estimate of 840. `codec.go` reached **393** once GAP-178's promoted-name walk and
+`event/encodable.go` reached **422** across test rounds 3 to 5 — refusal 9 and
+GAP-T46's promotion chain — and was the third split: the walk stays in
+`encodable.go` at **212** and `encoding/json`'s routing rules restated as
+refusals are `event/routing.go` at **256**, which is the boundary this plan
+already named as the file's two subjects. The largest shipped in the kernel is
+now `event/errors.go` at **369**. S4's five files came in at 559 against an
+estimate of 840. `codec.go` reached **393** once GAP-178's promoted-name walk and
 GAP-179's map-key route were in it — seven lines under the threshold with
 GAP-176's repair still owed — and the walk moved into a file named for the
 question it answers, which is *what a payload may be* rather than *what the codec
@@ -5053,6 +5687,97 @@ which group E was never exercised.
 Deferred, never dropped. Everything still open in [GAPS], everything [SPEC] §8
 and §9 hand forward, and what this plan's own reconciliation found.
 
+**From S6's round 1 implementation review** (`.agents/artifacts/gaps/EVENTSOURCE_P1_S6_GAPS.md`).
+GAP-1 through GAP-7 and GAP-9 are closed in the code above; GAP-8 and GAP-10
+were closed as a side effect of the rewrites, and their entries in that file say
+so. What is left:
+
+- **The reverse index in `docs/ai/flows/Index.md` is incomplete for the rest of
+  the repository** (GAP-4's fourth criterion, rejected for S6 and recorded here
+  instead). `event/` is now exhaustive and `comm -23` over it returns empty. The
+  measurement that made an enforceable check the wrong move *in this section*:
+  383 rows against 510 non-test source files, and even the narrower rule —
+  *every file in a directory the index already mentions* — leaves 108 files
+  unrowed across eleven other top-level trees, `crud`, `cache`, `jobs`, `auth`,
+  `port`, `storage`, `tenancy`, `otel`, `utils`, `internal` and `test`. A check scoped to `event/` would be a rule
+  fitted to one example; a repo-wide one is a repo-wide documentation task with
+  no owner in this plan. `[medium][deferred]`
+- **`GAPS.md` at the repository root is moved, not deleted** (GAP-12). It was the
+  2026-09-06 six-module naive-contracts audit, untracked, 2 281 lines, and it
+  predates this section. It now lives at
+  `.agents/artifacts/audit/NAIVE_CONTRACTS_AUDIT.md`, which is where this
+  workflow's gap and audit reports go. Whether its findings are still open is a
+  question for whoever produced it. `[low][deferred]`
+- **The Russian half of `TestNoDocPromisesExactlyOnceDelivery` rests on two
+  occurrences** (GAP-2, the part of criterion 2 that was rejected). The blindness
+  arm fires when a language written in the tree contributed zero occurrences of
+  either counting wording, and `ru` contributes exactly two — `ровно один раз`
+  in `docs/modules/ru/vvcfg.md` and `не менее одного раза` in
+  `docs/modules/ru/event.md`. Reword both and the check goes red with a message
+  that says why, which is the intended failure and still a surprising one. The
+  stable fix is a Russian delivery prohibition written where the English one is;
+  the fixture already proves the Russian arm fires. `[low][deferred]`
+
+**From S6's round 2 implementation review, closed by S6's phase 5** — GAP-13,
+GAP-14, GAP-15, GAP-16 and GAP-17 are closed in the tests above, each with the
+mutation quoted in S6's phase-5 table. GAP-18 is closed **in part**, and what is
+left of it is stated rather than carried silently:
+
+- **The delivery-promise table reads a promise spelled positively and not one
+  spelled as a denial** (GAP-18's second half). `once and only once` and
+  «один и только один раз» are in the table and asserted in the fixture. `no
+  duplicates ever reach your handler` is not, and cannot be under the negation
+  model: its negation *is* the claim. `deduplicat` is refused outright as a
+  promise cell — it appears eleven times in `docs/` as ordinary prose about a
+  mechanism, twice within delivery vocabulary, so the row would report correct
+  pages on its first run. Written into [[FL-036]]'s *What the four structural
+  checks reach* so the next author reads it there. `[low][deferred]`
+
+What is still open from that round and untouched here: GAP-19 (three
+`event/testdata/crossings` files with no reverse-index row, which is the same
+repo-wide task as GAP-4), GAP-20, GAP-21, GAP-22 and GAP-23 — prose, metrics and
+citation hygiene, all `[low][deferred]`.
+
+**From S6's phase-6 test review** (`EVENTSOURCE_P1_S6_TEST_GAPS.md`). GAP-T1,
+GAP-T2, GAP-T3, GAP-T4 and GAP-T6 are closed in the tests above, each with its
+mutation. These two were deferred with their reasons:
+
+- **§INV-011's two disclosed one-hop escapes are live in the real tree, and no
+  test pins the residual** (GAP-T5). A key routed through a one-field struct
+  local, and a key routed through a helper taking the whole request, both reach a
+  refusal message in `event/eventmemory/append.go` with `go test ./event/` green.
+  The escape is disclosed — `event/refusalmessages_test.go:33-35` and `[[FL-036]]`
+  both name it — which is why it is not `[high]`; what is missing is a case in
+  `renderingFixture` asserting the boundary in whichever direction is chosen, so
+  a future narrowing of `localText` is visible too. The second shape, a helper
+  taking the request value and rendering a part of it, is the ordinary shape a
+  driver refusal is written in and is what `eventpg` will write, so the fixture
+  pair and the arm that decides it belong to the section that writes that store.
+  Owner: **phase 2**. `[medium][deferred]`
+- **`check-utils` has no test, and the function S6 edited fails open** (GAP-T7).
+  The `event` element of `scripts/checks.sh:SUBSYSTEMS` works — `utils/vvflag`
+  importing `event` gives `check-utils` exit 1 naming `crud, event` — but nothing
+  in `scripts/checks_test.go` asserts it, so removing the element is green
+  everywhere. Separately and pre-existing: `check_utils` takes its status from
+  the `while` loop rather than from the `go list` inside the same substitution, so
+  a `utils/` tree that does not build prints `check-utils: ok`. Every subsystem
+  import from the root `utils` package is an import cycle and therefore takes
+  exactly that path. Both halves are one `scripts/checks_test.go` case on the
+  model of the `check-deps` cases plus a one-line status fix, and neither blocks
+  phase 2. Owner: **phase 2**. `[medium][deferred]`
+
+**From S6:**
+
+- **[SPEC] carries the contradictions this plan resolved and not the additions.**
+  S6 wrote a superseding block into the five places
+  `.agents/artifacts/usecases/EVENTSOURCE_P1_USECASES.md` states the opposite of
+  what shipped (S6's contract change 5). The additions rounds 3–6 forced live in
+  this plan's `## Contracts` alone, so a reader who opens [SPEC] and stops there
+  gets a correct but thinner account of §UC-017, §UC-022, §UC-030, §UC-048,
+  §UC-053, §D.1, §D.2, §D.9, §D.13, §D.14, §INV-018, §INV-021, §INV-024,
+  §INV-031 and §UC-057. Closing it means folding the plan's contract text back
+  into the blind specification, which is a merge and not a copy. `[low][deferred]`
+
 **From [GAPS] `## Deferred` — the one still open** (GAP-26, GAP-66, GAP-77,
 GAP-78, GAP-91, GAP-98 and GAP-99 were closed rather than carried, verified in
 their dispositions tables; **GAP-41 and GAP-53 are decided in S2 and S4 above and
@@ -5115,24 +5840,27 @@ section nobody will look again:
   widening a visible diff. Owner: **S5**, with the defect fixtures.
   `[low][deferred]`
 - **GAP-T11 — three small edges.** A family of exactly `MaxNameBytes` is never
-  driven, so `checkText`'s `>` could become `>=` at `Stream.String`'s call site
+  driven, so `checkText`'s `>` could become `>=` under `checkName` at
+  `Stream.String`'s call site
   undetected (**S4**, which owns the text rule's doors); and the `Log` relation
-  is asserted by nothing — `Store` spelling `Log`'s four methods inline instead
-  of embedding survives, because the `NumMethod` check catches it first only when
-  the count also changes (**S6**, with the structural checks; `var _ Log = (Store)(nil)`
-  in a compile position, or an `ast` check that `Store` embeds `Log`). The third
+  is asserted by nothing — **closed in S6**: `exportedInterfaces` now records
+  embedded names as well as methods, and
+  `TestTheStoreSeamHasEightMethodsAndNoneMutatesOrQueries` gained the subtest
+  *"a store is a log by embedding one"*, proved by spelling the four inline and
+  watching it go red. The third
   edge — `Compose` at an arity other than three — was closed by round 7's golden
   table, which composes one, two and three parts and pins the `Compose()` /
   `Compose("")` pair. `[low][deferred]`
 - **GAP-T12 — the two `go/ast` checks read the source text of an unexported
-  function and one file name.** `namesDeclaredInErrorsFile` reads only
-  `errors.go`, so an `Err*` sentinel declared elsewhere in the package is
-  invisible to the partition table; and `namesListedInTheGate` reads the
-  identifiers inside the function literally named `vocabulary`, so a
-  behaviourally identical refactor is reported as a drift that did not happen.
-  Owner: **S6**, whose doc-and-surface pass is where the walk widens to every
-  non-test file and the gate check's message stops claiming a behavioural
-  observation it did not make. `[low][deferred]`
+  function and one file name.** **Closed in S6, both halves.**
+  `namesDeclaredInErrorsFile` is now `namesDeclaredInThePackage` and walks every
+  non-test file of `event/`, so an `Err*` sentinel declared beside the code that
+  raises it is paired by the partition table rather than invisible to it; and
+  `namesListedInTheGate` carries a comment saying it reads the source of
+  `vocabulary` rather than what it answers, with the failure message rewritten to
+  *"a sentinel is declared or gated somewhere this pairing does not read"* — a
+  statement about the reading rather than a behavioural claim the reading cannot
+  support. What the function **answers** is compared separately, by calling it. `[low][deferred]`
 
 **From S5's implementation review (round 1), the findings it graded `[deferred]`:**
 
@@ -5161,11 +5889,12 @@ section nobody will look again:
   from the tested one — a coverage residue rather than a hole. Closing it is a
   second `unconfirming` value, or a note on the assertion saying which arm is
   redundant. `[low][deferred]`
-- **GAP-16 — three small duplications and two dead struct fields.**
-  (a) `defects_test.go`'s `factoriesFor` dispatches the two store-shaped defects on
-  their **prose names**, where the `defect` row could carry what builds its store;
-  it fails loudly (`t.Fatalf`) when a name stops matching, so it cannot silently
-  drift. (b) `report.go`'s `certified` and `export_test.go`'s `Certified` are two
+- **GAP-16 — two small duplications and two dead struct fields.**
+  (a) is **closed** by test review round 1 (GAP-10 there): `factoriesFor`'s
+  `switch` over prose names is a map from name to the factory pair, so a
+  nineteenth store-shaped defect needs a map entry and no new branch, and the
+  `t.Fatalf` that catches a row with no builder is driven for every row.
+  (b) `report.go`'s `certified` and `export_test.go`'s `Certified` are two
   bodies for one question. (c) `suite.go`'s `missing` table gives the `Persistence`
   and `MonotoneVisibility` rows a `hook` of `""` and an `absent` of `false`, so the
   `Supported && absent` branch is unreachable for them and the table's shape says
@@ -5207,6 +5936,57 @@ section nobody will look again:
   written from `New` with nothing around it. The first half is closed:
   `stagingTx.done` is an `atomic.Bool` whose transition is a `CompareAndSwap`
   inside the lock that publishes. `[low][deferred]`
+
+**From S5's test review (round 1), the findings it graded `[deferred]`, plus the
+one whose timing this round argues down:**
+
+- **GAP-7 — the verdict table `eventmemory` publishes is asserted by nothing.**
+  Both conformance tests are a bare `eventtest.Run`, so the eighteen *passed* and
+  the two *not certified* rows §UC-044 predicts of that store by name are read by
+  a person out of `-v` output rather than by an assertion. The reviewer graded it
+  `[medium][immediate]`; this round argues the timing down to `[deferred]`,
+  because both ways of closing it now are worse than the hole. Asserting the
+  words needs `Run` to answer its verdicts — a **public contract change** in a
+  phase whose contract is otherwise frozen, and the right place to decide that is
+  the one where phase 2 first runs the suite. The alternative, parsing the
+  child's `-v` output from `eventmemory`, makes a second package depend on
+  `verdict.line()`'s rendering, which is the "matched by substring" the finding's
+  own close criteria refuse. What the hole costs today is bounded: the twenty
+  verdicts are asserted for the staging fixture by
+  `TestEverySectionInTheInventoryWasReported`, and the two words `eventmemory`
+  answers are decided by `needsPersistence` and by its `Fail` hook, both of which
+  are driven. Close it in phase 2, when `eventpg` publishes a table of its own and
+  the shape is worth designing once. `[medium][deferred]`
+- **GAP-8 — the recorded-instant defect is never exercised at the global read
+  door.** `unrecorded.ReadAll` is the one 0.0 %-coverage function in the package:
+  `probe.instants` reads only through `drain`, so a store whose `ReadStream`
+  select list keeps `recorded_at` and whose `ReadAll` drops it is certified. One
+  assertion inside an existing section, and it must be closed before `eventpg`,
+  whose two read paths are two SQL statements. `[medium][deferred]`
+- **GAP-9's residue — three of the five declared `Factory` failure paths are now
+  driven** by `TestTheRunReportsWhatItFound` (`New == nil`, `New` answering nil,
+  and the `MaxKey` with no room). What is left is `probe.store()` answering nil
+  mid-section, `chosen`'s "names no section" fatal — which is `export_test.go`'s
+  and on nothing's surface — and **`Factory.Window` at a non-default value**,
+  which is the one that matters: it exists so a store a network away is not
+  reported failed for a wait, phase 2 is that store, and no test proves the field
+  is read. `[medium][deferred]`
+- **GAP-11 — `fixtures_test.go` is 865 lines**, more than twice
+  `architecture.md`'s threshold, and holds seven responsibilities; and
+  `sliceFactory`, `stagingFactory`, `lenientFactory` and `persistentFactory` take
+  a boolean that changes what the function means. Test-only, no shipped contract
+  turns on it, and it is the file GAP-2's work would have churned again.
+  `[medium][deferred]`
+- **GAP-12 — the fixture's cursor minter is a wall clock**, so two `newHeld()`
+  calls landing on one nanosecond make a "foreign" cursor native and `resumption`
+  accuses the store of the fixture's clock. Measured at 0 collisions in 2 000 000
+  consecutive pairs on this host; a coarser timer makes it live.
+  `restrictions.md` §3 wants a counter or `crypto/rand`. `[low][deferred]`
+- **GAP-13 — §INV-019's negative half is a manual act.** The positive half runs on
+  every `go test`; that unexporting `Envelope.RecordedAt` breaks the build is a
+  recorded human demonstration where `event/testdata/crossings` +
+  `TestTheCrossingsThatMustNotCompile` is the repository's own automated pattern
+  for exactly that. `[low][deferred]`
 
 **From this plan's own reconciliation with the tree:**
 
@@ -5320,7 +6100,16 @@ with their reasons:
   encodes a known defect as expected; the newline, over-cap, invalid-UTF-8, NUL
   and empty cases are all in `TestEveryRenderingNamesAClassAndNeverAValue`, so the
   bracket case is one row to add once S6 picks `%q` or the wider rule.
-  `[low][deferred]`
+  `[low][deferred]` — **CLOSED by the remediation pass, with the wider rule and
+  not `%q`.** `event/text.go:checkName` is the text rule plus `fieldOpen` and
+  `fieldClose`, and it runs at all four doors the two declared identifiers cross:
+  `TryDefine` and `Stream.String` for the family, `TryDeclare` and `Repo.apply`
+  for the wire type name (GAP-201). `%q` was refused because it annotates the
+  closing bracket rather than removing it, and a log reader that keys on the
+  field's own delimiter is still told there are two fields. The bracket row is in
+  `everyStreamRendering()` beside the newline one, and the subtest now also
+  asserts every stream rendering holds exactly one `[` and one `]`, which is the
+  property rather than the golden string.
 - **GAP-168 — GAP-154 re-measured at 27.8 %.** The finding is GAP-154's and the
   answer is GAP-154's row above; what round 3 adds is the reason it should be
   settled **while** S6 writes the ADRs rather than before them — the right cut is
@@ -5477,7 +6266,15 @@ will look again:
   (§UC-041) has no `Binding` and therefore no such check, and the two doors must
   not answer differently. The shape needed is a wiring mistake rather than an
   ordinary call, and in S2 nothing is written. Owner: **S4**, with `ErrFamily`.
-  `[medium][deferred]`
+  `[medium][deferred]` — **CLOSED by the remediation pass, with `ErrFamily` at
+  both doors.** `Change` carries the `Declaration` it was decided on (an
+  unexported field set by `Fact.New`, so no value a store constructs changes
+  shape and the `eventpg` zero-diff obligation is untouched), and
+  `Change.decidedFor(stream, on Declaration)` compares it beside the stream for
+  `Fold` and for `Append`. The `apply`-lookup alternative was not taken: it would
+  silently run the *receiving* aggregate's fold over the minting aggregate's
+  bytes, which is a second answer to a question `Bind` already answers with a
+  refusal. The contract is above, § the `Fold` block.
 - **GAP-183 — `reusesItsBuffer`'s second arm accuses a non-deterministic codec of
   aliasing.** Round 2's repair made the *first* arm exact — two answers compared
   for a shared slice or map, which does not re-encode anything — and kept the
@@ -5573,11 +6370,14 @@ GAP-T29 were closed in the section and are not carried. These five were graded
   the current link; four of C9's five callbacks are driven and the upcaster is
   the fifth. Owner: **S5**, where C9 is checkpointed with the conformance suite's
   own concurrency section. `[low][deferred]`
-- **GAP-T33 — a marker fact is on the accepted table and can never pass
-  `Fact.RoundTrip`.** The test half of GAP-190, and it moves with whatever that
-  decides: once a `struct{}` payload has an answer, one case drives the accepted
-  shape through the second door and asserts it. Owner: **S5**, with GAP-190 and
-  the `*testing.T` wrapper. `[low][deferred]`
+- ~~**GAP-T33 — a marker fact is on the accepted table and can never pass
+  `Fact.RoundTrip`.**~~ **Closed with GAP-190 in the S2 remediation**, not in S5:
+  a reader type of size zero holds exactly one value, so the non-aliasing half is
+  skipped for it and fidelity is proved.
+  `TestACodecThatDecodesIntoAReusedBufferIsCaught/a fact whose whole content is
+  that it happened round trips` drives the accepted `struct{}` shape through the
+  second door, with a payload-carrying fact given its own zero value as its
+  control.
 
 **From the S3 implementation review, round 1** (GAP-1 to GAP-12 of
 `EVENTSOURCE_P1_S3_GAPS.md`): GAP-1 to GAP-7, GAP-9 and GAP-10 were closed in the

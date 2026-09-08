@@ -4,6 +4,19 @@ import "context"
 
 type scopeKey struct{}
 
+// The pin is separate from the scope because it has to outlive it. Unbound
+// removes the scope, and if that also removed the refusal then bind-A,
+// unbind, bind-B would be a supported way to re-target a unit of work that has
+// already chosen its narrowing or its datasource — the exact move With exists to
+// refuse. What a context was first bound to is therefore recorded once and never
+// cleared.
+type pinKey struct{}
+
+type pin struct {
+	reference Reference
+	epoch     Epoch
+}
+
 func (this *Authority) Bind(ctx context.Context, class Class) (context.Context, error) {
 	scope, err := this.Verify(ctx, class)
 	if err != nil {
@@ -25,10 +38,16 @@ func (this *Authority) With(ctx context.Context, scope Scope) (context.Context, 
 	if err != nil {
 		return nil, err
 	}
-	if current, ok := From(ctx); ok && (current.reference != accepted.reference || current.epoch != accepted.epoch) {
+	if current, ok := pinnedTo(ctx); ok && (current.reference != accepted.reference || current.epoch != accepted.epoch) {
 		return nil, ErrPinned
 	}
-	return context.WithValue(ctx, scopeKey{}, accepted), nil
+	bound := context.WithValue(ctx, scopeKey{}, accepted)
+	return context.WithValue(bound, pinKey{}, pin{reference: accepted.reference, epoch: accepted.epoch}), nil
+}
+
+func pinnedTo(ctx context.Context) (pin, bool) {
+	held, ok := ctx.Value(pinKey{}).(pin)
+	return held, ok && !held.reference.IsZero()
 }
 
 // Carried work is pinned by default: the lifecycle and generation the scope was
@@ -81,6 +100,11 @@ func (this *Authority) current(ctx context.Context, scope Scope, class Class) (S
 // write scope, while every tenant-scoped path around it fails closed. A context
 // value cannot be removed, so the key is set to a scope no authority minted and
 // From reports it absent.
+//
+// What it does not remove is the pin. Clearing both would make it a public,
+// capability-free way to re-target bound work: bind to one tenant, unbind, bind
+// to another. The context comes back unbound, and still refuses any tenant but
+// the one it was bound to.
 func Unbound(ctx context.Context) context.Context {
 	if _, bound := From(ctx); !bound {
 		return ctx

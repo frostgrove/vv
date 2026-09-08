@@ -29,7 +29,9 @@ func (d *Driver) Place(ctx context.Context, placement jobs.Placement) (jobs.Plac
 			if !ok {
 				return jobs.PlacementResult{}, jobs.RejectPlacement(jobs.ErrUnsupported)
 			}
-			stager, err := d.Stager(tx)
+			// The ambient path: New already refused a Source that is not this
+			// driver's own database, so there is nothing left to compare here.
+			stager, err := d.stager(tx)
 			if err != nil {
 				return jobs.PlacementResult{}, err
 			}

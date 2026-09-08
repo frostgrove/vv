@@ -179,6 +179,23 @@ draft и публикует копию, поэтому сохранённая и
 функцию, и именно это позволяет четырём транспортам разделять все решения выше
 неё.
 
+**`func(name) string` не может сообщить о дубликате, поэтому `Authenticate` не в
+силах обеспечить [[D-099]].** `http.Header.Get` возвращает первый из двух
+заголовков `Authorization` и ничего не говорит о втором, так что запрос с двумя
+credential доходит до authenticator как один, и отказ по кардинальности не
+срабатывает. Там, где это важно, используйте `AuthenticateValues`:
+
+```go
+ctx, err := guard.AuthenticateValues(r.Context(), func(name string) []string {
+	return r.Header.Values(name)
+})
+```
+
+Все поставляемые биндинги — `authnet`, `authgin`, `authfiber`, `authgrpc` — уже
+вызывают списочную форму, так что деплой, монтирующий middleware, отказ
+получает. Потерять его может только ручная обвязка — поэтому здесь показана
+именно списочная форма.
+
 `auth.Header("X-Auth")` переносит тот же parser в другой заголовок; значение всё
 ещё имеет форму `X-Auth: Bearer token`. Для голого `X-Api-Key: secret`
 используйте [`apikey.Header`](apikey.md). Пустое имя заголовка, nil lookup,

@@ -72,7 +72,11 @@ because the record that carried the work is a reference and not an authority.
    `jobs.ProtectedIdentityToken`. The token itself is built by the core —
    `tenancy/seal.go:Seal`, the generation, a MAC and the reference — so the queue
    this adapter knows about contributes only the fields the MAC is bound to, and
-   the key never leaves the authority. That key is `Spec.DurableKey`, which the
+   the key never leaves the authority. Those fields are the queue, the definition,
+   the invocation identifier and the payload's wire digest, which is why
+   `jobs/queue.go:preparePlacement` encodes the payload and mints the identifier
+   before it calls this: a token bound only to the queue and the definition is a
+   valid token for every record on that queue ([[D-119]]). That key is `Spec.DurableKey`, which the
    producer and the worker share and the per-process scope salt cannot be, because
    the worker is a different process started later. Without it `Authority.Sealer`
    refuses and the seam is never constructed: the queue table is writable by
@@ -91,7 +95,11 @@ because the record that carried the work is a reference and not an authority.
    tenants refuse here. `jobs.RestoreTrustedIdentity`
    (`jobs/durable_context.go:RestoreTrustedIdentity`) then checks that the
    partition the restorer returned re-digests to the one the record travelled
-   with, so a token naming another tenant does not match its own record.
+   with, so a token naming another tenant does not match its own record. The
+   invocation identifier and wire digest the request carries come from
+   `jobs/worker_delivery.go` — `Invocation.ID()` and `RestoredDelivery.WireDigest()`
+   — and a record whose payload does not re-derive that digest is already refused
+   by `jobs/delivery_record.go` before this runs.
 
 ## Object namespaces and cache partitions
 
@@ -138,6 +146,7 @@ because the record that carried the work is a reference and not an authority.
 | a lifecycle the class does not admit | `Authority.mint` / `accept` | `ErrInactive`, no statement |
 | a generation that moved, when `Spec.Revalidate` is set | `Authority.current` | `ErrStale`, no statement |
 | a durable record nobody with the deployment's key wrote | `Sealer.Unseal` | the handler is not entered, and the control plane is not asked |
+| an honest token reattached to another record of the same queue and job | `Sealer.Unseal` | the handler is not entered, and the control plane is not asked ([[D-119]]) |
 | cross-tenant work outside the classes the grant named | `Authority.permittedByGrant` | `ErrGrantRequired` |
 | the resolver cannot answer | `tenancy/errors.go:Classify` | `ErrUnavailable` — never the resolver's own text |
 | a second tenant bound inside bound work | `Authority.With` | `ErrPinned` |
@@ -168,7 +177,9 @@ another — `tenancyrow` alone reaches `security`, `auth` and `errs`.
 | `tenancy/grant.go` | `Purpose`, `Grant`, `Member`, `Accept`, `Each` |
 | `tenancy/tenancyrow/row.go` | `Ownership`, `Column`, `Through`, `Policy`, `Repository` |
 | `tenancy/tenancydb/database.go` | `Sources`, `DirectorySpec`, `Directory`, `Lease` |
-| `tenancy/tenancyjobs/jobs.go` | `ContextProvider`, `IdentityRestorer`, and what the token is bound to |
+| `tenancy/tenancyjobs/jobs.go` | `ContextProvider`, `IdentityRestorer`, and `record` — what the token is bound to |
+| `jobs/queue.go` | `preparePlacement`, `capturePlacementContext` — the payload and identifier settled before the capture |
+| `jobs/durable_context.go` | `ContextCaptureRequest`, `IdentityRestoreRequest` — the two carriers of the record's identity |
 | `tenancy/tenancystorage/storage.go` | `Namespace`, `Store` |
 | `tenancy/tenancycache/cache.go` | `Key`, `Keyed`, `Partition`, `Partitioned` |
 | `crud/decorators/security/security.go` | the gate the row strategy returns — every verb, already obligated by [[D-030]] |
@@ -187,11 +198,18 @@ another — `tenancyrow` alone reaches `security`, `auth` and `errs`.
 - `TestATenantSeesEveryRowItOwns` — same file, the control that the narrowing narrows to the right thing rather than to nothing.
 - `TestARowOwnedThroughARelationIsNarrowedByThatRelation` — same file.
 - `TestWorkEnqueuedBeforeASuspensionDoesNotRunAfterIt` — `tenancy/tenancyjobs/durable_test.go`.
-- `TestAForgedDurableRecordEntersNoHandler` — same file, three records nobody with the key wrote.
+- `TestAForgedDurableRecordEntersNoHandler` — same file, four records nobody with the key wrote.
+- `TestAnHonestTokenReattachedToAnotherRecordEntersNoHandler` — same file, the replay a key alone does not stop ([[D-119]]).
+- `TestADurableRecordCannotBeReplayedIntoAnotherJobOrQueue` — same file, including onto another record of the same job.
 - `TestAnObjectNamespaceIsInjectiveAndNoTenantsIsAPrefixOfAnothers` — `tenancy/tenancystorage/storage_test.go`, 500 tenants.
 - `TestARestoredGenerationReadsNoneOfThePreviousOnesObjects` — same file.
 - `TestARestoredGenerationReadsNoneOfThePreviousOnesValues` — `tenancy/tenancycache/cache_test.go`.
+- `TestOneTenantsCachedValueIsNotReadByAnother` — same file, through a real `cache.Cache` over `cachememory` rather than by comparing two partitions, so `Partitioned` itself is walked.
+- `TestARestoredGenerationDoesNotReadThePreviousOnesCachedValue` — same file, the same through the cache.
 - `TestEvictionWaitsForTheLastBorrower` — `tenancy/tenancydb/database_test.go`.
+- `TestANewcomerClosesTheIdlestBindingRatherThanBeingRefused` — same file, `MaxCached` as a connection budget rather than a tenant ceiling.
+- `TestAnOperationalRefusalRendersAsRetryableRatherThanAsABug` — `tenancy/vocabulary_test.go`, 503 rather than 500.
+- `TestACallerGoingAwayIsNotAControlPlaneOutage` — same file, with the redaction kept as its control.
 - `TestOneCohortMemberFailingLeavesTheRestResumable` — `tenancy/grant_test.go`.
 - `TestNoTenancyPackageCostsMoreThanTheSeamItNames` — `scripts/tenancy_test.go`, the layout above measured rather than asserted.
 - `TestATenantOwnedRepositoryIsolatesTwoTenantsOnOneTable` — `test/integration/tenancy_test.go`, live PostgreSQL.

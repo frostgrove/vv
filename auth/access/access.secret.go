@@ -29,6 +29,32 @@ type Hasher interface {
 	Verify(password, encoded string) (bool, error)
 }
 
+// An optional capability on a Hasher: whether a stored hash was derived with
+// weaker parameters than the ones in force now. Without it, raising the cost
+// factor protected only accounts created after the change — every existing
+// password kept verifying against its old, cheaper hash forever, and nothing
+// could tell that had happened.
+type Rehasher interface {
+	NeedsRehash(encoded string) bool
+}
+
+// Walks decorators, because a Hasher reached through a wrapper has lost every
+// method its own interface does not name ([[D-061]]). A decorator that wants the
+// capability to remain visible gives itself a Next.
+func RehasherOf(hasher Hasher) (Rehasher, bool) {
+	for current := hasher; current != nil; {
+		if rehasher, ok := current.(Rehasher); ok {
+			return rehasher, true
+		}
+		next, ok := current.(interface{ Next() Hasher })
+		if !ok {
+			return nil, false
+		}
+		current = next.Next()
+	}
+	return nil, false
+}
+
 type Argon2Hasher struct {
 	Time    uint32
 	Memory  uint32
@@ -173,4 +199,31 @@ func NewToken() (string, error) {
 func HashToken(token string) string {
 	sum := sha256.Sum256([]byte(token))
 	return fmt.Sprintf("%x", sum)
+}
+
+// True when the stored hash names weaker parameters than this hasher would use
+// now, or is not an argon2id hash this package would produce at all. A hash it
+// cannot read is left alone: rewriting one on a guess would destroy a credential
+// that some other Hasher in the chain understands.
+func (this *Argon2Hasher) NeedsRehash(encoded string) bool {
+	memory, time, threads, ok := argon2Parameters(encoded)
+	if !ok {
+		return false
+	}
+	return memory < this.Memory || time < this.Time || threads < this.Threads
+}
+
+func argon2Parameters(encoded string) (memory, time uint32, threads uint8, ok bool) {
+	parts := strings.Split(encoded, "$")
+	if len(parts) != 6 || parts[1] != "argon2id" {
+		return 0, 0, 0, false
+	}
+	var version int
+	if _, err := fmt.Sscanf(parts[2], "v=%d", &version); err != nil {
+		return 0, 0, 0, false
+	}
+	if _, err := fmt.Sscanf(parts[3], "m=%d,t=%d,p=%d", &memory, &time, &threads); err != nil {
+		return 0, 0, 0, false
+	}
+	return memory, time, threads, true
 }

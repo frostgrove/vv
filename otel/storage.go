@@ -61,9 +61,9 @@ func (d *storeDecorator) Put(ctx context.Context, key storage.Key, source io.Rea
 	})
 }
 
-func (d *storeDecorator) Open(ctx context.Context, key storage.Key) (io.ReadCloser, storage.Info, error) {
+func (d *storeDecorator) Open(ctx context.Context, key storage.Key, options storage.ReadOptions) (io.ReadCloser, storage.Info, error) {
 	if d.tel == nil || d.tel.traceDisabled(true) || nilInterface(d.tel.tracer) {
-		return d.inner.Open(ctx, key)
+		return d.inner.Open(ctx, key, options)
 	}
 
 	c, span, started := safeStart(
@@ -77,11 +77,11 @@ func (d *storeDecorator) Open(ctx context.Context, key storage.Key) (io.ReadClos
 		),
 	)
 	if !started {
-		return d.inner.Open(ctx, key)
+		return d.inner.Open(ctx, key, options)
 	}
 	if d.resourceName != "" && !safeSetAttributes(span, AttrResourceName.String(d.resourceName)) {
 		safeEnd(span)
-		return d.inner.Open(ctx, key)
+		return d.inner.Open(ctx, key, options)
 	}
 
 	returned := false
@@ -96,7 +96,7 @@ func (d *storeDecorator) Open(ctx context.Context, key storage.Key) (io.ReadClos
 		}
 	}()
 
-	body, info, err := d.inner.Open(c, key)
+	body, info, err := d.inner.Open(c, key, options)
 	returned = true
 
 	if err == nil {
@@ -121,9 +121,9 @@ func (d *storeDecorator) Head(ctx context.Context, key storage.Key) (storage.Inf
 	})
 }
 
-func (d *storeDecorator) Delete(ctx context.Context, key storage.Key) error {
+func (d *storeDecorator) Delete(ctx context.Context, key storage.Key, options storage.DeleteOptions) error {
 	_, err := executeStorage(ctx, d.tel, d.resourceName, OpStorageDelete, func(c context.Context) (struct{}, error) {
-		return struct{}{}, d.inner.Delete(c, key)
+		return struct{}{}, d.inner.Delete(c, key, options)
 	})
 	return err
 }

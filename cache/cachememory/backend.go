@@ -515,15 +515,25 @@ func (backend *Backend) Close() error {
 	return nil
 }
 
+// How many entries one write may sweep. The sweep runs under the single mutex
+// every read also takes, so an unbounded one made the cost of a Put grow with the
+// number of entries the cache holds — at a hundred thousand entries a write
+// stalled every reader for a millisecond, and the more the cache was worth
+// having, the worse it got.
+//
+// Bounding it costs nothing in correctness. Reads test expiry themselves and
+// never serve an expired entry, and eviction walks the same least-recently-used
+// end this does, so an entry that outlives the budget is invisible and is
+// reclaimed under the pressure that would have needed the room.
+const purgeStepBudget = 64
+
 func (backend *Backend) purgeExpiredLocked(ctx context.Context, now time.Time) ([]Event, error) {
 	events := make([]Event, 0)
-	index := 0
-	for item := backend.lru; item != nil; index++ {
-		if index%64 == 0 {
-			if err := ctx.Err(); err != nil {
-				return events, err
-			}
-		}
+	if err := ctx.Err(); err != nil {
+		return events, err
+	}
+	item := backend.lru
+	for steps := 0; item != nil && steps < purgeStepBudget; steps++ {
 		newer := item.newer
 		if expired(item, now) {
 			events = append(events, backend.removeLocked(item, ExpiredReason))

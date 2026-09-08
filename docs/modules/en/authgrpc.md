@@ -54,7 +54,7 @@ articles := Articles.Bind(db, security.Gate(policy))
 ```go
 srv := grpc.NewServer(
 	grpc.ChainUnaryInterceptor(crudgrpc.Errors(), authgrpc.Unary(guard)),
-	grpc.ChainStreamInterceptor(authgrpc.Stream(guard)),
+	grpc.ChainStreamInterceptor(crudgrpc.StreamErrors(), authgrpc.Stream(guard)),
 )
 crudgrpc.New(articles).Register(srv, "Article")
 ```
@@ -106,7 +106,18 @@ a shared service they would be the same one.
 
 **A stream is authenticated once, when it opens.** A credential that expires
 mid-stream is not noticed — an interceptor runs before the first message and
-never again. A long-lived stream that must re-check does it in its own loop.
+never again.
+
+A long-lived stream that must re-check calls the **`Authenticator` directly** in
+its own loop. It must not call the guard again on `stream.Context()`: that
+context already carries this guard's marker, so the second call sees a
+consecutive repeat of the latest guard and returns immediately without
+re-checking anything ([[D-076]]). The re-check would be a permanent no-op.
+
+**`crudgrpc.StreamErrors()` comes first in the chain.** Without it an
+authentication refusal leaves the interceptor as an ordinary Go error and the
+wire answer is `Unknown` rather than `Unauthenticated` — the client cannot tell
+a rejected credential from a server bug.
 
 **Guard composition is the same for Unary and Stream.** Consecutive A -> A
 authenticates once; A -> B runs both and exposes B's principal. A -> B -> A is

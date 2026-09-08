@@ -14,6 +14,34 @@ import (
 type GrantsService struct {
 	store       *Store
 	directories Directories
+
+	// The identifier-folding rule each registered subject declared. It is here
+	// because the password paths reach a subject through this service and
+	// nowhere else, and an identifier written without folding is one that no
+	// sign-in can ever look up.
+	normalizers map[SubjectType]func(string) string
+}
+
+func (this *GrantsService) registerNormalizer(subject Subject) {
+	if this == nil || subject.Normalize == nil {
+		return
+	}
+	if this.normalizers == nil {
+		this.normalizers = make(map[SubjectType]func(string) string, 1)
+	}
+	this.normalizers[subject.Type] = subject.Normalize
+}
+
+// The identifier as it must be stored and looked up. A subject that declared no
+// rule folds nothing, which is the same answer Subject.Identifier gives.
+func (this *GrantsService) normalize(subjectType SubjectType, raw string) string {
+	if this == nil {
+		return raw
+	}
+	if fold, ok := this.normalizers[subjectType]; ok && fold != nil {
+		return fold(raw)
+	}
+	return raw
 }
 
 func NewGrants(store *Store, directories Directories) *GrantsService {
@@ -71,8 +99,12 @@ func (this *GrantsService) For(ctx context.Context, ref SubjectRef) (*Principal,
 	}
 
 	if directory, ok := this.directories[ref.Type]; ok {
-		if profile, err := directory.Describe(ctx, ref.ID); err == nil {
+		profile, err := directory.Describe(ctx, ref.ID)
+		switch {
+		case err == nil:
 			principal.Profile = profile
+		default:
+			principal.ProfileUnresolved = true
 		}
 	}
 	return principal, nil

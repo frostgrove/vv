@@ -1532,3 +1532,464 @@ asserted: an eight-method `Store` in a third package builds with no change to `e
 two-live-transactions case and the value case waits for S5's `transactions` section, exactly as
 PLAN.md `## Debt` records. Writing the value case now would either encode the defect as expected or
 fail the gate for a finding whose declared remedy is two sections away.
+
+---
+
+## Round 4 dispositions — remediation pass, 2026-09-08
+
+Cluster `aggregate-crossing-and-log-injection` of `EVENTSOURCE_P1_REMEDIATION.md` § 11. One finding
+from this file.
+
+| Gap | Severity | Disposition |
+|---|---|---|
+| GAP-166 | `[low][deferred]` | **closed by the wider rule, not by `%q`** — `event/text.go:checkFamily` is the kernel text rule plus `[` and `]`, and it runs at both doors a family crosses: `TryDefine` and `Stream.String` |
+
+**Reproduced first, from `/tmp/vvprobe` through the exported API:**
+
+```
+injection:       [stream orders] admin logged in [stream x]     ← two fields in one line
+control newline: [stream unnameable]
+control plain:   [stream orders]
+```
+
+**After:**
+
+```
+injection:       [stream unnameable]
+control newline: [stream unnameable]
+control plain:   [stream orders]
+```
+
+**Why the wider rule and not `%q`.** Quoting annotates the closing bracket rather than removing it:
+`[stream "orders] admin logged in [stream x"]` still closes the field the renderer opened, and a
+log reader — or a grok pattern — that keys on that delimiter is still told there are two fields.
+The rule the finding's own close criterion asks for ("the reason a bracket is acceptable is written
+on the function") is instead the reason it is not, written on `checkFamily`.
+
+**The rule is at the declaration too, and deliberately.** A family carrying a bracket is now
+`ErrDeclaration` at `Define`/`TryDefine`, so the only family that can ever render as
+`[stream unnameable]` is one that arrived on an `Envelope` — store data, declared by nobody this
+program can see. Refusing it where it is declared is the direction `econv` asks for; refusing it at
+the rendering alone would leave a legitimately declared family silently unnameable in every log
+line. The rule is **not** in `checkText`: a key crosses that predicate too, and `Compose("a[1]")`
+is a caller's identity domain, not a rendering.
+
+**Left behind, and each was watched fail with the fix reverted:**
+
+| Test | Reverted | Answer |
+|---|---|---|
+| `TestEveryRenderingNamesAClassAndNeverAValue/a family a store supplied is rendered only when it passed the kernel's own rule` | `Stream.String` back to `checkText` | `a stream whose family closes the field it is rendered in rendered "[stream orders] admin logged in [stream x]" rather than a classification` |
+| the same subtest's one-field property, with the golden-string loop removed so it cannot be the one that fires | `Stream.String` back to `checkText` | `… rendered "[stream orders] admin logged in [stream x]", which is two fields in one log line` |
+| `TestEveryMalformedDeclarationPanicsAndTryDefineReturnsIt` | `TryDefine` back to `checkText` | `a family carrying a bracket … was accepted, so a malformed declaration survives to be discovered at load or append time` |
+
+The property assertion is the durable half: every rendering in `everyStreamRendering()` must hold
+exactly one `[` and one `]`, so a later renderer that opens a second field fails without anybody
+adding a row for it.
+
+**Docs updated in the same change:** `docs/modules/en/event.md` and `docs/modules/ru/event.md` gain
+*One family names one aggregate* / *Одно семейство именует один агрегат*, which state the family
+rule and the bracket in it; `[[FL-036]]`'s declaration step, its `event/text.go` row and its test
+table; `PLAN.md`'s `Stream.String` contract block, its exported-symbol row, its store-data
+paragraph and the `## Debt` entry.
+
+---
+
+## Round 5 — econv-implementation-reviewer (clean context, re-audit of the round-4 remediation cluster) — 2026-09-08
+
+Scope: **GAP-166** (`Stream.String` and the bracket route) and every file the round-4
+disposition touched for it — `event/identity.go`, `event/text.go`, `event/aggregate.go`,
+`event/rendering_test.go`, `event/declaration_test.go`. Nothing was inherited from the
+disposition note: the defect was re-derived by constructing the input the original finding
+named, and each repair was reverted in place, the suite run, and the file restored.
+
+The tree was left byte-identical to how it was found. `md5sum` before the mutations and after
+the restore: `event/identity.go` `f95198de6e880da5eeadbc158e7cacb6`, `event/aggregate.go`
+`c9610ad1a3033239c267a221dc8daf27`, `event/change.go` `16fe2a4be211940732c77d53ec850198`.
+The two throwaway probes (`event/zzaudit_probe_test.go`, `eventpgprobe/`) were deleted;
+`git status --porcelain | grep -c "zzaudit\|eventpgprobe"` = **0**.
+
+### Gate, run here
+
+`gofmt -l .` silent (exit 0, whole repository) · `go vet ./event/...` exit 0 ·
+`go test -race -count=2 ./event/...` green, no flake — `event` 6.081 s, `eventmemory` 1.489 s,
+`eventtest` 4.004 s. Re-run a second time with identical results.
+
+### Metrics — counted, not eyeballed
+
+| Metric | Command | Value |
+|---|---|---|
+| `event/identity.go` | `wc -l` | 85 |
+| `event/text.go` | `wc -l` | 63 |
+| `event/aggregate.go` | `wc -l` | 113 |
+| `Stream.String` | lines 26–31 | 6 |
+| `checkFamily` | lines 51–59 | 9 |
+| `TryDefine` | lines 36–44 | 9 |
+| parameters, every function above | count | <= 2 |
+| nesting depth, every function above | count | 1 |
+| callers of `checkFamily` | `rg -n "checkFamily" event/*.go \| grep -v _test` | **2** — `aggregate.go:37`, `identity.go:27` |
+| kernel imports of a concrete store | `grep -rn "eventmemory\|eventpg\|eventtest" event/*.go \| grep -v _test.go \| wc -l` | **0** |
+
+### GAP-166 — closed, verified by mutation and not by the note
+
+The finding's own input, run here:
+`Stream{Family: "orders] admin logged in [stream x", Key: "acme%2Fevil/A-17"}.String()`
+now renders `"[stream unnameable]"`, and `everyStreamRendering()` carries it as
+*a stream whose family closes the field it is rendered in* (`event/rendering_test.go:94`).
+
+Both arms were reverted in place and both went red:
+
+| Reverted | Test that fired |
+|---|---|
+| `identity.go:27` back to `checkText(this.Family, MaxNameBytes)` | `TestEveryRenderingNamesAClassAndNeverAValue/a family a store supplied is rendered only when it passed the kernel's own rule` — *a stream whose family closes the field it is rendered in rendered `"[stream orders] admin logged in [stream x]"` rather than a classification* |
+| `aggregate.go:37` back to `checkText(family, MaxNameBytes)` | `TestEveryMalformedDeclarationPanicsAndTryDefineReturnsIt` — *a family carrying a bracket, which is what a rendered stream is written inside was accepted* |
+
+The declaration arm is genuinely pinned, in **both** spellings — `declaration_test.go:971`
+(`"accounts[account"`) and `:972` (`"accounts]account"`) — and the durable half of the rendering
+arm is the property loop at `rendering_test.go:221-226`, which asserts exactly one `[` and one `]`
+per rendering rather than the golden phrase. The control that keeps it from passing vacuously is
+`rendering_test.go:209-212`: a declared family **must** be named in its own rendering, so a
+`Stream.String` that returned `"[stream unnameable]"` unconditionally fails.
+
+Docs verified present, not assumed: `docs/modules/en/event.md:249` and `docs/modules/ru/event.md:254`
+carry the family rule including the bracket; `docs/ai/flows/FL-036…:25-26` and its
+`event/text.go` row at `:256` name `checkFamily`.
+
+### GAP-201 [medium][immediate] The bracket rule was applied to one of the two store-supplied strings the kernel renders, and `Envelope.Type` still forges a bracketed field in the same line
+
+- **Where:** `event/repo.go:264` (`fmt.Errorf("%w: %q on %s", ErrUnknownType, envelope.Type, envelope.Stream)`),
+  `event/repo.go:259` (the type name is held to `checkText`, not to `checkFamily`),
+  `event/text.go:44-50` (the comment that justifies a family-only rule),
+  `event/text.go:56` (`strings.ContainsAny(value, "[]")`) against `event/identity.go:30`
+  (`"[stream " + this.Family + "]"`), `event/rendering_test.go:221` (the bracket property is
+  asserted over `everyStreamRendering()` and not over `everyRendering(t)`).
+- **What:** measured here, through the real path (`Repo.apply` on an envelope a store returned,
+  driven by the `recordingStore` fixture):
+
+  ```
+  Envelope{Stream: {accounts.account, acme/A-17}, Type: "accounts.credited] admin logged in [stream x"}
+    -> event: the recorded type names no declared fact: "accounts.credited] admin logged in [stream x" on [stream accounts.account]
+       open brackets = 2   close brackets = 2
+  ```
+
+  This is byte for byte the defect GAP-166 named — a store-supplied string closes the bracketed
+  field the renderer opened and writes a second one inside one line — reached through the other
+  store-supplied string the kernel renders. `%q` does not help: Go's quoting escapes quotes and
+  non-printables and leaves `[` and `]` alone, which is the same reason the round-4 disposition
+  itself rejected `%q` for the family. `event/bounds.go:11` says `MaxNameBytes` governs
+  *"a family and a wire type name"*, and the rule over those two bytes has now diverged between
+  them with nothing saying why. `event/text.go:45` states the premise the family-only rule rests
+  on — *"A family is the only identifier the kernel renders unquoted, and it renders inside a
+  bracketed field of its own"* — and the premise is doing work that quoting does not do.
+  Separately, the delimiter the guard protects (`"[]"`, `text.go:56`) and the delimiter the
+  renderer writes (`"[stream " … "]"`, `identity.go:30`) are two independent literals in two
+  files with no test tying them: change the frame and the guard silently protects nothing, which
+  is `architecture.md`'s single-format-place clause exactly.
+- **Why this severity:** medium. The store-supplied wire type name is content §INV-025 explicitly
+  permits, and no newline survives `checkText`, so the residual is a forged *field* inside one
+  line and not a forged line — the same narrowing the original GAP-166 argued. It is not `low`
+  because the round-4 fix chose a mechanism ("no bracket in text the kernel renders into its own
+  bracketed line") and then applied it to one of the two inputs that mechanism exists for, and
+  because the guard is now coupled to a frame it does not read. Concrete scenario: `eventpg`
+  reads a shared ledger table another service writes; a row with
+  `type = 'x] [stream billing.invoice'` makes `Load` refuse with `ErrUnknownType`, the consumer
+  logs `err.Error()`, and an operator's `\[stream ([^\]]*)\]` pattern attributes the refusal to a
+  stream that was never read.
+- **Why this timing:** immediate. Phase 2 is the first store that supplies a `Type` the framework
+  did not write, so the rule for *what the kernel may render into its own bracketed line* must
+  have one answer before there are two stores producing the input. It also changes nothing on the
+  store seam, so closing it now costs one predicate and one test row; closing it after `eventpg`
+  ships means two answers to one question in a rendering §INV-025 names.
+- **Close criteria:**
+  - [ ] The bracket rule reaches every store-supplied string the kernel renders into a refusal,
+        not the family alone — `event/repo.go:259` holds `envelope.Type` to the same predicate as
+        the family, or `event/repo.go:264` stops rendering the type name; and `event/text.go:45`'s
+        "the only identifier the kernel renders unquoted" is either true afterwards or restated.
+  - [ ] `TestEveryRenderingNamesAClassAndNeverAValue` asserts the one-field property over
+        `everyRendering(t)` and not only over `everyStreamRendering()`, and `everyRendering(t)`
+        carries a refusal built from an `Envelope` whose `Type` holds `] … [`. Watched fail with
+        the new predicate reverted, with the existing family case as its control.
+  - [ ] The frame the guard protects and the frame the renderer writes are one place, or one test
+        asserts they agree (a rendering built from `Stream{}.String()`'s own frame characters is
+        refused by the family rule), so a later change to either fails rather than silently
+        un-guards the other.
+  - [ ] `event/bounds.go:11`'s *"a family and a wire type name"* still describes one rule over the
+        two, or says which of the two carries the extra clause and why.
+- **Status:** **closed** by round 6's remediation pass — see the dispositions below.
+
+---
+
+## Round 6 dispositions — remediation pass, 2026-09-08
+
+Cluster `aggregate-crossing-and-log-injection` of `EVENTSOURCE_P1_REMEDIATION.md` § 11, re-opened by
+round 5. One finding from this file.
+
+| Gap | Severity | Disposition |
+|---|---|---|
+| GAP-201 | `[medium][immediate]` | **closed by widening the rule to both declared identifiers, not by dropping the rendering** — `event/text.go:checkFamily` is now `checkName` and governs the family *and* the wire type name at all four doors the two cross |
+
+**Reproduced first, through the real path** — a throwaway in-package probe drove `Repo.Load` over
+`recordingStore` with the finding's own envelope, and asked `TryDeclare` the same question:
+
+```
+rendered: event: the recorded type names no declared fact: "accounts.credited] admin logged in [stream x" on [stream accounts.account]
+open=2 close=2
+declare with bracket: accepted, err=<nil>
+```
+
+**After:**
+
+```
+rendered: event: the recorded type names no declared fact: [stream accounts.account] recorded a type name of 44 bytes that contains a bracket
+open=1 close=1
+declare with bracket: refused, err=event: the declaration is malformed: a wire type name on the aggregate "probe.family" contains a bracket
+```
+
+**Why widen the rule rather than stop rendering the type name.** The second close criterion offers
+both. Dropping `%q` from `event/repo.go:264` removes the operator's only clue about *which* fact a
+history holds that this declaration cannot read — the refusal would then say `[stream …]` and a byte
+count for every unreadable row alike, and `TestNoRefusalRendersAnIdentityAPayloadAKeyOrACursor`'s
+control at PLAN.md:4777 exists precisely because §INV-025 permits naming the wire type name. Widening
+keeps that and removes the forgery. It also removes the divergence the finding names: `MaxNameBytes`
+governs *"a family and a wire type name"* and now one predicate governs both, so `event/bounds.go:11`
+is true as written and needed no edit (fourth criterion).
+
+**Both doors, for both names.** A rule at the envelope alone would let a program declare
+`orders]evil` and then find its own history unloadable, which is the asymmetry the round-4 fix had
+already refused for the family. `checkName` therefore runs at `TryDefine`, `Stream.String`,
+`TryDeclare` and `Repo.apply`. The consequence a caller can see is that a wire type name carrying
+`[` or `]` — `fmt.Sprintf("%T", Order[int]{})` is the realistic way to produce one — is now
+`ErrDeclaration` at `Declare` rather than a stream nothing can load; that is the direction `econv`
+asks for, and both module pages state it.
+
+**The frame is one place** (third criterion): `event/text.go` declares `fieldOpen` and `fieldClose`,
+`Stream.String` builds its rendering out of them, and `checkName` refuses them. A test derives the
+delimiters from a live rendering as well, so a renderer that starts writing a different frame fails
+rather than silently un-guarding the guard.
+
+**Left behind, and each was watched fail with the fix reverted:**
+
+| Test | Reverted | Answer |
+|---|---|---|
+| `TestEveryRenderingNamesAClassAndNeverAValue/a recorded type name is rendered only when it passed the kernel's own rule` | `repo.go` back to `checkText(envelope.Type, MaxNameBytes)` | `a recorded type name that closes the field the stream is rendered in is rendered in "…: \"accounts.credited] admin logged in [stream x\" on [stream accounts.account]", and a refusal names the rule that was broken and never the text that broke it` |
+| `TestEveryRenderingNamesAClassAndNeverAValue/no rendering carries a field the renderer did not open` | the same | `… which closes a field nothing opened: everything after it reads as a field of its own` |
+| `TestEveryHistoryClassRefusalIsRaisedByTheThingItNames` | the same | `a wire type name that closes the field the stream beside it is rendered in rendered the store's own data in "…"` |
+| `TestEveryMalformedDeclarationPanicsAndTryDefineReturnsIt` | `fact.go` back to `checkText(name, MaxNameBytes)` | `a wire type name carrying a bracket, which is what a rendered field is written inside was accepted, so a malformed declaration survives to be discovered at load or append time` |
+| `TestEveryRenderingNamesAClassAndNeverAValue/the identifier rule refuses the characters a field is framed with` | the same | `a field is rendered as "[stream accounts.account]" and a wire type name carrying "[" was accepted at the declaration` |
+| the same subtest | `Stream.String` rewritten to frame with `<` and `>` while `checkName` keeps `[]` | `a field is rendered as "<stream accounts.account>" and a family carrying "<" was accepted at the declaration, so the rule guards a frame the renderer no longer writes` |
+| `TestEveryRenderingNamesAClassAndNeverAValue/a family a store supplied is rendered only when it passed the kernel's own rule` | `identity.go` back to `checkText` | `a stream whose family closes the field it is rendered in rendered "[stream orders] admin logged in [stream x]" rather than a classification` (round 4's arm, still pinned) |
+
+**Neither new assertion can pass vacuously, and each has its control.**
+`refusedRecordedType(t, "accounts.retired")` — a legal type name no declaration knows — **must** be
+named in its own refusal, so a `Repo.apply` that stopped rendering the type name altogether fails the
+control rather than passing the four forged rows: measured, deleting the `%q` verb answers *"a legal
+type name no declaration knows is not named in … so an operator cannot tell which fact the history
+holds and the cases below are about a name nothing renders"*. The field walk counts the fields it
+inspected and fails at zero; over `everyRendering(t)` it walks **541** of them today.
+
+**Docs updated in the same change:** `docs/modules/en/event.md` and `docs/modules/ru/event.md` — the
+section is now *A declared identifier: the family and the wire type name* / *Объявленный
+идентификатор: семейство и имя типа на проводе*, stating one rule over two names and two doors each,
+with *One family names one aggregate* keeping the aggregate half; `[[FL-036]]`'s declaration steps 1
+and 3, its `apply` paragraph and its `event/text.go` row; `PLAN.md`'s `Stream.String` contract block,
+its exported-symbol row, the `Envelope.Type` and `Envelope.Stream.Family` trust-boundary bullets, S6's
+contract clause 1, and the `## Debt` entry for GAP-166.
+
+### Gate, run here
+
+`gofmt -l .` silent · `go build ./...` ok · `go vet ./event/...` ok ·
+`go test -race -count=2 ./event/...` green (`event` 6.107 s, `eventmemory` 1.492 s,
+`eventtest` 4.027 s) · `make unit` exit 0 · `make check` exit 0, all nine checks ok.
+`make api` produces no line for any symbol this change added: `checkName`, `fieldOpen` and
+`fieldClose` are unexported and the store seam is untouched, so `event/eventpg`'s zero-diff
+obligation is unaffected — a store still constructs `Envelope{Type: …}` from any string it likes and
+the kernel, not the constructor, is what refuses one it cannot have declared.
+
+---
+
+## Round 7 — econv-implementation-reviewer (clean context, re-audit of the round-6 remediation cluster) — 2026-09-08
+
+Scope: the log-injection half of cluster `aggregate-crossing-and-log-injection` — **GAP-166** and
+the **GAP-201** it re-opened — and every file round 6 touched for them: `event/identity.go`,
+`event/text.go`, `event/aggregate.go`, `event/fact.go`, `event/repo.go`, `event/rendering_test.go`.
+Nothing was inherited from the disposition note. Each defect was re-derived by constructing the
+input the finding named and running it **from outside package `event`**, and each repair was
+reverted in place, the suite run, and the file restored from a byte-level backup.
+
+The tree was left byte-identical to how it was found. `md5sum` before the mutations and after the
+restore: `event/aggregate.go` `dc59c1e5efb6c86e886c91964f4e2097`, `event/change.go`
+`16fe2a4be211940732c77d53ec850198`, `event/identity.go` `bbb6de6fb878df80dd7cceb124b5a530`,
+`event/text.go` `e1c18b5c5c91b6afb53576755814cfb1`, `event/fact.go`
+`d400976d4395769889aa2085227a4876`, `event/repo.go` `f360915020180a2279242f952b83e05a`,
+`event/rendering_test.go` `896fb50889996694c59889939d0508a8`. Three throwaway probe packages were
+deleted; `git status --porcelain | grep -c zzaudit` = **0**.
+
+### Gate, run here
+
+`gofmt -l .` silent (exit 0, whole repository) · `go vet ./event/...` exit 0 ·
+`go test -race -count=2 ./event/...` green, no flake — `event` 6.030 s / 6.064 s,
+`eventmemory` 1.488 s / 1.499 s, `eventtest` 4.009 s / 4.031 s across two independent invocations.
+
+### Metrics — counted, not eyeballed
+
+| Metric | Command | Value |
+|---|---|---|
+| `event/identity.go` | `wc -l` | 85 |
+| `event/text.go` | `wc -l` | 74 |
+| `event/repo.go` | `wc -l` | 272 |
+| `event/fact.go` | `wc -l` | 221 |
+| `Stream.String` | `awk '/func \(this Stream\) String/,/^}/' \| wc -l` | 6 |
+| `checkName` | `awk '/^func checkName/,/^}/' \| wc -l` | 9 |
+| `Repo.apply` | `awk '/Repo\[S, ID\]\) apply/,/^}/' \| wc -l` | 13 |
+| parameters, all four above | count | 0 / 1 / 1 / 2 |
+| nesting depth, all four above | count | 1 / 1 / 1 / 1 |
+| callers of `checkName` | `rg -n checkName event/*.go \| grep -v _test` | **4** — `aggregate.go:37`, `identity.go:27`, `fact.go:28`, `repo.go:261` |
+| kernel imports of a concrete store | `grep -rn "eventmemory\|eventpg\|eventtest" event/*.go \| grep -v _test.go \| wc -l` | **0** |
+| global mutable state under `event/*.go` | `grep -n "^var " event/*.go \| grep -v _test` | 3 blocks, all `errors.New` sentinels |
+| stale `checkFamily` references outside the artifacts | `grep -rn checkFamily --include=*.md --include=*.go .` | **0** |
+
+### Microkernel — derived here, not inherited
+
+An external package (module-internal, outside `package event`) was written that implements the whole
+eight-method `event.Store` — `var _ event.Store = (*store)(nil)` compiled — and constructs from
+exported API alone every value the contract makes a store produce:
+`Capabilities{Transactions: event.Supported, …}`, `Limits{…}`, `event.NewBacking(identity)`,
+`event.NewAuthority(backing, tx)`, `event.Stream{Family, Key}` **including a family carrying `]` and
+`[`**, `event.Compose(...)`, `event.Envelope{Stream, Version, Position, Type, Revision, Payload,
+RecordedAt}` **including a `Type` carrying `]` and `[`**, `event.Record{…}`, reading
+`AppendRequest{Stream, Expected, Records}`, `event.Cursor`, and `event.Failure(outcome, err)` over
+all seven exported outcomes. `go run` on it succeeded and drove `Repo.Load` end to end. The round-6
+rule is enforced at *use*, never at construction, so nothing a store builds changed shape.
+**`event/eventpg` is still writable with zero diffs under `event/`. Microkernel passes.**
+
+### GAP-166 and GAP-201 — closed, verified by construction and by mutation
+
+Measured from outside the package, through the real path:
+
+```
+Stream{Family: "orders] admin logged in [stream x", Key: "acme/A-17"}.String()
+  -> "[stream unnameable]"                      open=1 close=1
+Stream{Family: "accounts.account", Key: "acme/A-17"}.String()
+  -> "[stream accounts.account]"                (control: a declared family still names itself)
+
+Repo.Load over a store returning Envelope{Type: "accounts.credited] admin logged in [stream x"}
+  -> event: the recorded type names no declared fact: [stream accounts.account] recorded a type
+     name of 44 bytes that contains a bracket    open=1 close=1  errors.Is(ErrUnknownType)=true
+Repo.Load over Envelope{Type: "accounts.retired"}
+  -> event: the recorded type names no declared fact: "accounts.retired" on
+     [stream accounts.account]                   (control: a legal unknown name is still named)
+
+TryDefine("orders]evil")            -> event: the declaration is malformed: the stream family
+                                       contains a bracket
+TryDeclare(a, "orders.placed[v1]")  -> event: the declaration is malformed: a wire type name on
+                                       the aggregate "orders.order" contains a bracket
+```
+
+Every arm was reverted in place and every one went red:
+
+| Reverted | Test that fired |
+|---|---|
+| `identity.go:27` back to `checkText(this.Family, MaxNameBytes)` | `TestEveryRenderingNamesAClassAndNeverAValue/a family a store supplied is rendered only when it passed the kernel's own rule` — *a stream whose family closes the field it is rendered in rendered `"[stream orders] admin logged in [stream x]"` rather than a classification* |
+| `repo.go:261` back to `checkText(envelope.Type, MaxNameBytes)` | the same test's *a recorded type name …* subtest, its *no rendering carries a field the renderer did not open* subtest, **and** `TestEveryHistoryClassRefusalIsRaisedByTheThingItNames` — three independent assertions, one revert |
+| `fact.go:28` back to `checkText(name, MaxNameBytes)` | `TestEveryMalformedDeclarationPanicsAndTryDefineReturnsIt` *(declaration_test.go:1009)* and `…/the identifier rule refuses the characters a field is framed with` |
+| `aggregate.go:37` back to `checkText(family, MaxNameBytes)` | `TestEveryMalformedDeclarationPanicsAndTryDefineReturnsIt` *(declaration_test.go:976)* and the same frame subtest |
+| `Stream.String` reframed with `<`/`>` while `checkName` keeps `[]` | *a field is rendered as `"<stream accounts.account>"` and a family carrying `"<"` was accepted at the declaration, so the rule guards a frame the renderer no longer writes* — the frame and the guard are genuinely one place |
+
+Nothing was widened. `Repo.apply` runs `checkName` **before** the fact-table lookup, so the `%q` at
+`repo.go:266` can only ever render a name that already passed the rule; `strconv.Quote` escapes
+non-printables into `\x`/`\u`/`\U` + hex digits, none of which is `[` or `]`, so the quoted route
+cannot manufacture a frame either. The controls are real: `rendering_test.go:241-243` requires a
+declared family to be named in its own rendering (so an unconditional `[stream unnameable]` fails),
+and `rendering_test.go:262-265` requires a legal-but-unknown type name to be named (so dropping the
+`%q` verb fails rather than silently passing the four forged rows). `rendering_test.go:276-278`
+fails if `fieldOpen`/`fieldClose` stop being one byte each, which is what the byte-wise walk and
+`strings.ContainsAny` both assume.
+
+Docs verified present, not assumed: `docs/modules/en/event.md:248-262` and
+`docs/modules/ru/event.md:253-267` carry *A declared identifier: the family and the wire type name*
+with the bracket clause and both doors; `docs/ai/flows/FL-036…:25`, `:35`, `:88` and its
+`event/text.go` row at `:258` name `checkName`; `eventtest.Families`, which
+`docs/modules/en/event.md:272` names, exists at `event/eventtest/proxies.go:69`.
+
+### GAP-205 [low][deferred] The bracket rule reaches the two identifiers a store supplies and not the two the kernel renders from a program, and `everyRendering(t)` is a curated list rather than the package's renderings — so the field walk cannot see either
+
+- **Where:** `event/fact.go:26` (`fmt.Errorf("%w: a fact is declared on an aggregate and %q names none", ErrDeclaration, name)` — `name` is rendered **before** `checkName` runs at `:28`), `event/fact.go:147` (`… reads %s …`, where `carried.read.typeName` is `reflect.TypeFor[V]().String()` from `event/codec.go:66`), against `event/rendering_test.go:43-80` (`everyRendering(t)`) and `event/rendering_test.go:275-304` (the field walk).
+- **What:** measured here through the exported API:
+
+  ```
+  TryDeclare[state, string, box[int]](nil, "orders.placed] admin logged in [stream x", …)
+    -> event: the declaration is malformed: a fact is declared on an aggregate and
+       "orders.placed] admin logged in [stream x" names none
+       — a "]" that closes a field nothing opened, then a "[" that opens one nothing closes
+
+  Fact[…, box[int]].RoundTrip("not a box")
+    -> event: this sample cannot prove what a round trip claims for it: crud: bad request:
+       revision 1 of "orders.placed" reads main.box[int] and the sample is a string
+       — "[int]" is a bracketed field the renderer never opened
+  ```
+
+  Both are renderings of the mechanism round 6 chose — *no text the kernel renders into its own
+  bracketed line may carry the frame characters* — reached by the two inputs that mechanism was not
+  applied to. The first is a wire type name rendered at the one door that precedes `checkName`; the
+  second is a Go type name the kernel derives itself, and a generic reader type is the ordinary way
+  to produce one. Neither is caught by the `no rendering carries a field the renderer did not open`
+  walk, because that walk runs over `everyRendering(t)` — a hand-written list of 24 sentinels, 512
+  enumerated `Outcome`/`Support` values, the door refusals, seven stream renderings and four recorded
+  type names — and not over the package's renderings. Round 6's disposition cites *"the field walk
+  counts the fields it inspected and fails at zero; over `everyRendering(t)` it walks 541 of them
+  today"* as evidence for the mechanism; 541 is the size of that list, not of the package's `fmt.Errorf`
+  set, which is **83** call sites under `event/*.go` excluding tests.
+- **Why this severity:** low. Both strings are program-authored — a wire name the program passed with
+  a nil aggregate (a wiring bug that panics at init in the `Declare` spelling) and a Go type the
+  program declared — so neither is reachable by a store, a request or any party outside the binary.
+  `main.box[int]` is balanced, so it adds a spurious field rather than splitting the line. It is the
+  same narrowing GAP-166 was: a forged *field*, not a forged line.
+- **Why this timing:** deferred. Nothing on the store seam and nothing phase 2 depends on; `eventpg`
+  supplies neither string. It is one predicate move plus two rows in `everyRendering(t)`, and S6
+  already owns §INV-011's source check over the same file.
+- **Close criteria:**
+  - [ ] `event/fact.go:26` either renders the name only after `checkName` has passed it, or stops
+        rendering it — and `event/fact.go:147`'s `typeName` is held to the same rule or rendered
+        without the frame characters.
+  - [ ] `everyRendering(t)` carries a refusal built from `TryDeclare(nil, "…] … […", …)` and one
+        from `Fact.RoundTrip` over a generic reader type, so the existing field walk reaches both.
+        Watched fail with the new predicate reverted, with the family case as its control.
+  - [ ] Either `everyRendering(t)` is derived from the package's renderings rather than listed, or
+        the list states in one line which renderings it deliberately omits and why.
+- **Status:** open
+
+### GAP-206 [low][deferred] `[stream unnameable]` is a legal family, so the refusal rendering and a family literally named `unnameable` are one string
+
+- **Where:** `event/identity.go:27-31` against `event/text.go:51-59`.
+- **What:** `checkName("unnameable")` returns `""`, so `Stream{Family: "unnameable"}.String()` renders
+  `"[stream unnameable]"` — byte for byte what `Stream{Family: "orders\n\tFAKE"}.String()` renders.
+  Measured here; `TryDefine[account]("unnameable", …)` is also accepted, so the collision is reachable
+  from a declaration as well as from an envelope.
+- **Why this severity:** low. An operator alerting on `[stream unnameable]` — the only signal that a
+  store handed the kernel a family no declaration could have produced — cannot distinguish it from a
+  stream of an aggregate whose author chose that family, and a store that wants the alert suppressed
+  can supply exactly that family. No fold, no append and no read changes: the refusal is unaffected,
+  only its rendering is ambiguous. The rest of the rendering vocabulary is explicitly held to the
+  opposite rule by `TestEveryRenderingNamesAClassAndNeverAValue/a rendering says which kind of thing
+  it is and which one of them`, which compares kinds against kinds and does not ask this question.
+- **Why this timing:** deferred. It changes one string and one test row, blocks nothing in phase 2,
+  and the store seam is untouched. The clean fix is a refusal phrase the success path cannot produce
+  — the success path is `fieldOpen + "stream " + family + fieldClose`, so anything without the space
+  after `stream` is unreachable from it.
+- **Close criteria:**
+  - [ ] The unnameable rendering is a string `fieldOpen + "stream " + <any legal family> + fieldClose`
+        cannot equal, or the reason the collision is acceptable is written beside the reason a bracket
+        is not.
+  - [ ] `TestEveryRenderingNamesAClassAndNeverAValue` asserts that no legal family renders the same
+        string as an illegal one, with `Stream{Family: "accounts.account"}` as its control.
+- **Status:** open
+
+### Round 7 verdict
+
+**GAP-166 and GAP-201 are genuinely closed**, verified by constructing the inputs the findings named
+from outside the package and by reverting all five arms of the repair and watching six distinct
+tests fire. The fix introduced no new accept, no new nil path and no weakened assertion: the rule
+was widened rather than relaxed, the frame is one place and a test proves it, and the two controls
+that keep the new assertions from passing vacuously were each driven red by deleting the thing they
+control. Zero open `[critical][immediate]` or `[high][immediate]` from this file. The two findings
+above are both `[low][deferred]` and are the next two narrowings of the same mechanism, not holes
+in it.

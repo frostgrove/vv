@@ -83,16 +83,39 @@ func (this *Deps) revoke(ctx context.Context, reason string, options ...crud.Opt
 		ids = append(ids, session.ID)
 	}
 
+	// Chunked against the dialect's bind budget. One IN list naming every live
+	// session meant a subject with enough of them could not be signed out at all:
+	// the statement was refused, and the paths that need it most — a password
+	// change, a compromise — are exactly the ones a long-lived account reaches.
+	// Two binds are already spent on the update's own SET values.
 	now := this.Now()
-	count, err := this.Store.Sessions.UpdateAll(ctx, SessionUpdate{
-		RevokedAt:     crud.Set(now),
-		RevokedReason: &reason,
-	},
-		crud.Where(crud.InAny("ID", ids)),
-		specs.As(Session_.RevokedAt.IsNull()),
-	)
-	if err != nil {
-		return revoked{}, err
+	total := int64(0)
+	for _, batch := range chunked(ids, max(1, crud.BindLimit(this.Store.source.Dialect())-revokeFixedBinds)) {
+		count, err := this.Store.Sessions.UpdateAll(ctx, SessionUpdate{
+			RevokedAt:     crud.Set(now),
+			RevokedReason: &reason,
+		},
+			crud.Where(crud.InAny("ID", batch)),
+			specs.As(Session_.RevokedAt.IsNull()),
+		)
+		if err != nil {
+			return revoked{}, err
+		}
+		total += count
 	}
-	return revoked{sessions: found, count: count}, nil
+	return revoked{sessions: found, count: total}, nil
+}
+
+// RevokedAt and RevokedReason, which every chunk carries.
+const revokeFixedBinds = 2
+
+func chunked[T any](values []T, size int) [][]T {
+	if size <= 0 || len(values) <= size {
+		return [][]T{values}
+	}
+	out := make([][]T, 0, (len(values)+size-1)/size)
+	for start := 0; start < len(values); start += size {
+		out = append(out, values[start:min(start+size, len(values))])
+	}
+	return out
 }

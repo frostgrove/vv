@@ -134,6 +134,24 @@ is why a surface registered through [[D-100]]'s registrar also fails closed on i
 own — its outer check asks `auth.Require`, and a request carrying no principal is
 refused — while a hand-written `Mount` still has nothing equivalent.
 
+### What a route is, and the host
+
+The comparison is on a method and a path. It has no notion of a host, and a
+net/http pattern may carry one: `admin.example.com/reports` answers only on that
+host, `/reports` answers everywhere, and they are two different routes.
+
+`authnet` therefore records the host as part of the path rather than stripping
+it. Stripping made the two one route, so a declaration written for the bare path
+silently covered the host-scoped endpoint as well — an endpoint nobody had
+declared inheriting another host's access, which is the exact failure this gate
+exists to make impossible. Keeping the host means a host-scoped route matches no
+bare declaration and the start-up gate refuses it until it is declared with its
+host, using `authhttp.AtRoot`.
+
+Pinned by `TestAHostScopedRouteDoesNotInheritABarePathsDeclaration` in
+`auth/http/authnet/binding_test.go` — parked there, with its control, because
+Gin and Fiber have no equivalent pattern.
+
 ## What it forbids
 
 - Do not move the comparison to request time, and do not add a second per-request

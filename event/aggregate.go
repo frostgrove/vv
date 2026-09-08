@@ -34,7 +34,7 @@ func Define[S any, ID any](family string, key func(ID) Key) *Aggregate[S, ID] {
 }
 
 func TryDefine[S any, ID any](family string, key func(ID) Key) (*Aggregate[S, ID], error) {
-	if broken := checkText(family, MaxNameBytes); broken != "" {
+	if broken := checkName(family); broken != "" {
 		return nil, fmt.Errorf("%w: the stream family %s", ErrDeclaration, broken)
 	}
 	if key == nil {
@@ -59,14 +59,15 @@ func (this *Aggregate[S, ID]) Key(id ID) (Key, error) {
 // every reference kind it reaches, and a state type that is one has no other
 // way to work. Take the result and do not use the argument again.
 //
-// The four causes run in Append's own order, and the first three are checks
-// over the whole list before any fold runs, so they return the state untouched:
-// the identity renders an illegal key, a change was decided for another stream,
-// a change carries its own refusal from Fact.New. The fourth is per change and
-// can only fire after earlier folds have already advanced the value, so it
-// returns the state as of the last change applied — which for a reference kind
-// is the argument. On any error the returned state is not usable and a reload
-// is the authority.
+// The four causes run in Append's own order and the first three return the
+// state untouched. The first is one check before the list is looked at: the
+// identity renders an illegal key. The next two are passes over the whole list
+// before any fold runs: a change was decided for another stream or on another
+// aggregate declaring this family, and a change carries its own refusal from
+// Fact.New. The fourth is per change and can only fire after earlier folds have
+// already advanced the value, so it returns the state as of the last change
+// applied — which for a reference kind is the argument. On any error the
+// returned state is not usable and a reload is the authority.
 func (this *Aggregate[S, ID]) Fold(id ID, state S, changes ...Change[S]) (S, error) {
 	this.seal()
 	stream, err := this.locate(id)
@@ -74,7 +75,7 @@ func (this *Aggregate[S, ID]) Fold(id ID, state S, changes ...Change[S]) (S, err
 		return state, err
 	}
 	for _, change := range changes {
-		if err := change.decidedFor(stream); err != nil {
+		if err := change.decidedFor(stream, this); err != nil {
 			return state, err
 		}
 	}

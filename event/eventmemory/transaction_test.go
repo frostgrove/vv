@@ -2,6 +2,7 @@ package eventmemory_test
 
 import (
 	"context"
+	"runtime"
 	"slices"
 	"sync"
 	"testing"
@@ -82,8 +83,12 @@ func TestAReadInsideATransactionSeesItsOwnStagedAppends(t *testing.T) {
 	appendTo(t, inside, store, stream, 1, "staged")
 
 	t.Run("the transaction reads the committed events and then its own", func(t *testing.T) {
-		if got := payloadsOf(readStream(t, inside, store, stream, 0)); len(got) != 2 || got[0] != "committed" || got[1] != "staged" {
+		held := readStream(t, inside, store, stream, 0)
+		if got := payloadsOf(held); len(got) != 2 || got[0] != "committed" || got[1] != "staged" {
 			t.Fatalf("a read inside the transaction returned %v, so an operation that appends and reloads cannot see its own writes", got)
+		}
+		if got := positionsOf(held); got[1] != 0 || got[0] == 0 {
+			t.Fatalf("the staged event reads back at position %d beside the committed one at %d, and this store's answer to the position the kernel leaves unspecified before a commit is zero", got[1], got[0])
 		}
 	})
 
@@ -300,6 +305,85 @@ func TestARolledBackAppendBurnsItsPositions(t *testing.T) {
 	})
 }
 
+// The transaction is begun, staged into, and left behind here rather than in the
+// caller's frame: nothing it returns names the *Tx or the context that carries
+// it, so from the return on there is no route to it and it can never be
+// committed. The authority is what event.Repo.Append puts in every non-empty
+// commit receipt, so retaining it is what an audit buffer or an outbox row does.
+func abandon(t *testing.T, ctx context.Context, store *eventmemory.Store, stream event.Stream) event.Authority {
+	t.Helper()
+	inside, _ := begin(t, ctx, store)
+	appendTo(t, inside, store, stream, 0, "staged and never finished")
+	authority, err := store.Transaction(inside)
+	if err != nil {
+		t.Fatalf("naming the transaction bound in its own context answered %v", err)
+	}
+	return authority
+}
+
+const collections = 8
+
+func TestAStreamIsClaimedOnlyWhileSomethingCanStillCommitIt(t *testing.T) {
+	ctx := context.Background()
+	stream := streamOf("orders.order", "acme/A-17")
+
+	t.Run("a transaction the caller still holds keeps its claim across a collection", func(t *testing.T) {
+		_, store := openStore(t)
+		inside, tx := begin(t, ctx, store)
+		appendTo(t, inside, store, stream, 0, "staged and still reachable")
+		for range collections {
+			runtime.GC()
+		}
+		refusal := store.Append(ctx, event.AppendRequest{Stream: stream, Expected: 0, Records: records("outside")})
+		classifiedAs(t, refusal, event.Conflict, "appending to a stream a live transaction has claimed")
+		if err := tx.Rollback(ctx); err != nil {
+			t.Fatalf("rolling back answered %v", err)
+		}
+		runtime.KeepAlive(tx)
+	})
+
+	t.Run("a transaction nobody can reach any more claims nothing", func(t *testing.T) {
+		_, store := openStore(t)
+		abandon(t, ctx, store, stream)
+
+		admitted := appendUntilAdmitted(ctx, store, stream)
+		if admitted != nil {
+			t.Fatalf("appending to a stream claimed by a transaction nobody can reach any more answered %v after %d collections, so one aggregate refuses every write for the rest of the process with a conflict that will never clear",
+				admitted, collections)
+		}
+		if got := payloadsOf(drainStream(t, ctx, store, stream)); len(got) != 1 || got[0] != "after" {
+			t.Fatalf("the stream holds %v, so records nobody could commit were published by dropping the claim", got)
+		}
+	})
+
+	t.Run("the commit receipt of an abandoned transaction is not a route back to it", func(t *testing.T) {
+		_, store := openStore(t)
+		receipt := abandon(t, ctx, store, stream)
+
+		admitted := appendUntilAdmitted(ctx, store, stream)
+		if !receipt.Valid() {
+			t.Fatalf("the retained authority stopped being valid, so this ran without holding the value the caller holds")
+		}
+		runtime.KeepAlive(receipt)
+		if admitted != nil {
+			t.Fatalf("appending to a stream claimed by an abandoned transaction whose commit receipt the caller still holds answered %v after %d collections, so keeping the receipt every append hands back — an audit buffer, an outbox row — bricks that aggregate for the life of the process",
+				admitted, collections)
+		}
+	})
+}
+
+func appendUntilAdmitted(ctx context.Context, store *eventmemory.Store, stream event.Stream) error {
+	var admitted error
+	for range collections {
+		runtime.GC()
+		admitted = store.Append(ctx, event.AppendRequest{Stream: stream, Expected: 0, Records: records("after")})
+		if admitted == nil {
+			return nil
+		}
+	}
+	return admitted
+}
+
 func TestTwoLogsCarryTheirOwnTransactionsInOneContext(t *testing.T) {
 	ctx := context.Background()
 	_, here := openStore(t)
@@ -460,6 +544,8 @@ func TestTransactionAnswersWhatTheContextCarriesAfterTheStoreIsClosed(t *testing
 	}
 }
 
+const foreignCursor = event.Cursor("some other log:3")
+
 func TestATransactionThisStoreCannotUseIsRefusedAtEveryDoor(t *testing.T) {
 	ctx := context.Background()
 	_, store := openStore(t)
@@ -485,6 +571,9 @@ func TestATransactionThisStoreCannotUseIsRefusedAtEveryDoor(t *testing.T) {
 			_, _, err = store.ReadAll(carried.ctx, "")
 			classifiedAs(t, err, event.Refused, "reading the log through a context carrying "+carried.what)
 
+			_, _, err = store.ReadAll(carried.ctx, foreignCursor)
+			classifiedAs(t, err, event.Refused, "reading the log from an unreadable cursor through a context carrying "+carried.what)
+
 			err = store.Append(carried.ctx, event.AppendRequest{Stream: stream, Expected: 1, Records: records("refused")})
 			classifiedAs(t, err, event.Refused, "appending through a context carrying "+carried.what)
 		})
@@ -498,6 +587,8 @@ func TestATransactionThisStoreCannotUseIsRefusedAtEveryDoor(t *testing.T) {
 		if page, _ := readAll(t, live, store, ""); len(page) != 1 {
 			t.Fatalf("a log read inside a live transaction returned %d envelopes", len(page))
 		}
+		_, _, err := store.ReadAll(live, foreignCursor)
+		classifiedAs(t, err, event.BadCursor, "reading the log from that same cursor inside a live transaction")
 		appendTo(t, live, store, stream, 1, "admitted")
 		if err := second.Rollback(ctx); err != nil {
 			t.Fatalf("rolling back answered %v", err)

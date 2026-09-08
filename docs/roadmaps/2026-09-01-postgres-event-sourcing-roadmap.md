@@ -1,9 +1,17 @@
 # PostgreSQL event sourcing roadmap — 2026-09-01
 
-**Status:** proposal, not a delivery commitment. Nothing is implemented: no
-`event`, `eventpg` or event-store package exists in the tree, and E0 has not been
-accepted. Activation still requires the gates in this document and the live
-product roadmap.
+**Status:** proposal, not a delivery commitment, for **`eventpg`**. The
+PostgreSQL store is not implemented and E0's first decision — the aggregate —
+still gates it. Activation of everything below E1 still requires the gates in
+this document and the live product roadmap.
+
+**Superseded in part, 2026-09-07.** The root packages `event`,
+`event/eventmemory` and `event/eventtest` are implemented and green: the
+vocabulary, the store seam, a complete in-memory store and the conformance suite
+a store runs against itself. E0 decisions 1 and 3 are superseded by [[D-121]]
+below and the entries in the baseline table that assert no `event` package
+exists are stale for the root half. Read [[FL-036]] and
+[docs/modules/en/event.md](../modules/en/event.md) for what actually shipped.
 
 **Revised 2026-09-06** against the tree at `1e67ad9` and the tenancy work beside
 it in the working copy. Five of the assumptions this document was written on had
@@ -63,13 +71,13 @@ roadmap:
 
 | Area | Current state | Consequence |
 |---|---|---|
-| Event sourcing | No `event`, `eventpg` or event-store package/module exists | Every name below is provisional until E0 accepts it |
+| Event sourcing | **Superseded 2026-09-07.** `event`, `event/eventmemory` and `event/eventtest` exist in the root module ([[D-121]], [[FL-036]]); no `eventpg` module exists | The `eventpg` names below are still provisional until E0's aggregate decision is made. The vocabulary is not: it is frozen at the phase-1 baseline in `docs/api/surface.md` |
 | Root dependency graph | The root module has no third-party requirement, and `make check-deps` lists `-test -tags=integration` too | PostgreSQL lives in the event module — and so does anything only its live fixtures import |
 | Module boundary | A module boundary is a third-party dependency boundary, not an optionality boundary ([[D-116]]) | `eventpg` is a module because its fixtures require a driver, exactly as `jobs/jobspg` does — not because it is optional |
 | CRUD composition | `crud.Middleware`, `crud.Chain`, `crud.Base.Next` and typed optional effects exist; `ExistsUnscopedOf` is exact-outer ([[D-115]]) | Reuse the chain for read models; do not create an event-specific CRUD chain |
 | Service composition | `port.ServiceMiddleware` and `port.ChainService` exist: first listed is outermost, nil middleware is skipped, and a nil base or a middleware that returns nil collapses the chain to nil. Restore is discovered by `port.RestorableOf` | An event service decorator is now expressible. It is still not justified: the fixed method set cannot carry a named aggregate command |
 | Storage composition | `storage.Middleware` and `storage.Chain` exist with the same order and nil rules; the root store forwards `Capabilities` from its backend | Event code may use root storage vocabulary after an actual use case; it never imports a storage satellite |
-| Event operation seam | No second implementation or accepted dependency-neutral event contract exists | Do not add a root `event` contract, generic `EventStore` or event middleware chain in the first slice |
+| Event operation seam | **Superseded 2026-09-07.** `event.Store` is the dependency-neutral contract and `eventmemory` is the second implementation the old row was waiting for; `eventtest` is what a third one is held to | `eventpg` implements `event.Store` rather than inventing a surface. There is still no event middleware chain and no generic `EventStore` beside it |
 | OpenTelemetry | The `otel` module exists (`vvotel.Service`, `vvotel.Store`, `vvotel.Cache`), and the [OTel roadmap](2026-08-31-opentelemetry-roadmap.md) defers event and messaging spans | First event release has no `eventotel` package and no OTel dependency; an application still gets command spans |
 | Tenancy | Delivered as a root-module package with one adapter per seam ([[D-116]], [[D-117]]); a scope is minted and cannot be manufactured, and a unit of work is pinned to a tenant *and* a generation | Event tenancy is application composition over `tenancy.Authority` and `tenancydb.Directory`. There is no `tenancy.Service` to sit in a chain |
 | Audit | No audit package exists | Any event/audit mapping stays application-owned, and neither module imports the other |
@@ -555,9 +563,9 @@ Decisions E0 records, with what today's tree already implies:
 
 | # | Decision | What the current tree suggests |
 |---|---|---|
-| 1 | The aggregate, and the consumer requirement that justifies event sourcing over CRUD plus audit | Open. Until a named aggregate exists, E1 does not start |
+| 1 | The aggregate, and the consumer requirement that justifies event sourcing over CRUD plus audit | **Superseded in part by [[D-121]] (2026-09-07).** It still gates E1 — no schema is written without a named aggregate. It does **not** gate the vocabulary, which is a library contract rather than a live schema: the blocker was aimed at what a wrong aggregate costs in a migration, and phase 1 wrote none |
 | 2 | Module path and layout | `github.com/frostgrove/vv/eventpg`, one package, files by concern — the module because of the driver its fixtures need ([[D-116]]) |
-| 3 | Whether a root `event` vocabulary package is created | No. One consumer does not justify a base package; a second store would reopen it |
+| 3 | Whether a root `event` vocabulary package is created | **Superseded by [[D-121]] (2026-09-07): yes, and it is written.** This row's own condition was met — `eventmemory` is the second store, shipped beside the seam rather than promised after it, and `eventtest` is what holds a third to the same contract |
 | 4 | Driver decision and dependency allow-list | Production over `database/sql` plus `crudsql` if it costs nothing, driver in the fixtures — the `jobspg` shape |
 | 5 | Direct API versus a base-seam adapter | Direct. Both chains now exist, and neither carries a named aggregate command |
 | 6 | Transaction ownership and the binding that proves it | Caller-owned transaction passed explicitly; an eventpg-owned equivalent of `jobs.TransactionContext` |
@@ -673,7 +681,9 @@ No step creates a bridge or combination package.
 
 - A generic database-neutral event store.
 - EventStoreDB, Kafka, NATS, MongoDB or filesystem backends.
-- A root event contract before a second implementation justifies it.
+- A root event contract before a second implementation justifies it. **Met, not
+  abandoned:** the second implementation shipped in the same phase as the
+  contract, which is what the clause asked for ([[D-121]]).
 - Pairwise or combination packages of any kind.
 - Automatic aggregate/reflection registration or arbitrary metadata maps.
 - Raw event-history CRUD/search for ordinary clients.

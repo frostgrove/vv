@@ -17,7 +17,58 @@ type TxStager struct {
 
 var _ jobs.Stager = (*TxStager)(nil)
 
-func (d *Driver) Stager(tx *sql.Tx) (*TxStager, error) {
+// The transaction has to be provably this driver's database, or the outbox is not
+// an outbox: the invocation row and the rows the caller wrote commit
+// independently, which is the failure [[D-118]] and UC-031 exist to refuse. It
+// cannot be read off a *sql.Tx, so the caller hands over the *sql.DB it began on
+// and the driver compares it.
+//
+// StageIn is the form with nothing to compare, and is the one to reach for.
+func (d *Driver) Stager(db *sql.DB, tx *sql.Tx) (*TxStager, error) {
+	if db == nil {
+		return nil, fmt.Errorf("jobspg: %w: the database the transaction began on is required", jobs.ErrInvalid)
+	}
+	if db != d.db {
+		return nil, fmt.Errorf("jobspg: %w: the transaction belongs to another database, so a placement in it is not an outbox", jobs.ErrUnsupported)
+	}
+	return d.stager(tx)
+}
+
+// Begins the transaction itself, so there is no second database to rule out. The
+// stager is valid only inside the callback; the transaction commits when it
+// returns nil and rolls back on any error or panic, taking the placement with it.
+func (d *Driver) StageIn(ctx context.Context, effect func(*TxStager) error) error {
+	if err := d.requireReady(); err != nil {
+		return err
+	}
+	if ctx == nil || effect == nil {
+		return fmt.Errorf("jobspg: %w: staging inputs are required", jobs.ErrInvalid)
+	}
+	tx, err := d.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+	stager, err := d.stager(tx)
+	if err != nil {
+		return err
+	}
+	if err := effect(stager); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	committed = true
+	return nil
+}
+
+func (d *Driver) stager(tx *sql.Tx) (*TxStager, error) {
 	if err := d.requireReady(); err != nil {
 		return nil, err
 	}

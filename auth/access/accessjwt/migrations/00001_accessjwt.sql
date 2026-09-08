@@ -17,11 +17,18 @@
 ALTER TABLE "sessions" ADD COLUMN IF NOT EXISTS "previous_token_hash" TEXT NOT NULL DEFAULT '';
 ALTER TABLE "sessions" ADD COLUMN IF NOT EXISTS "rotated_at" TIMESTAMPTZ;
 
+-- How many times this session has rotated. Every refresh credential it issues
+-- carries this number, so a credential older than the previous digest is still
+-- recognisable as a replay rather than falling off the end of a two-column
+-- lookup and reading as an ordinary expired credential.
+ALTER TABLE "sessions" ADD COLUMN IF NOT EXISTS "generation" BIGINT NOT NULL DEFAULT 0;
+
 -- A rotation looks the previous digest up as readily as the current one.
 CREATE INDEX IF NOT EXISTS "ix_sessions_previous_token_hash"
     ON "sessions" ("previous_token_hash") WHERE "previous_token_hash" <> '';
 
 -- +goose Down
 DROP INDEX IF EXISTS "ix_sessions_previous_token_hash";
+ALTER TABLE "sessions" DROP COLUMN IF EXISTS "generation";
 ALTER TABLE "sessions" DROP COLUMN IF EXISTS "rotated_at";
 ALTER TABLE "sessions" DROP COLUMN IF EXISTS "previous_token_hash";

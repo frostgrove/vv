@@ -1,7 +1,7 @@
 # FL-023 — A sign-in becomes a session
 
 **Entry point:** `auth/access/access.runtime.go:New` and `auth/access/access.runtime.go:Mount`
-**Implements:** [[UC-023]] · **Governed by:** [[D-066]] [[D-067]] [[D-068]] [[D-070]] [[D-072]] [[D-075]] [[D-033]] [[D-058]] [[D-088]] [[D-089]] [[D-097]] [[D-098]] [[D-099]]
+**Implements:** [[UC-023]] · **Governed by:** [[D-066]] [[D-067]] [[D-068]] [[D-070]] [[D-072]] [[D-075]] [[D-033]] [[D-058]] [[D-088]] [[D-089]] [[D-097]] [[D-098]] [[D-099]] [[D-120]]
 
 ## Wiring, once
 
@@ -60,7 +60,17 @@
    nothing was found, against `DummyHash`, so an unknown identifier costs what a
    known one does. `Deps.recordAttempt` tells the limiter and the observer how it
    went, after the transaction rather than inside it; a limiter that cannot write
-   is logged and does not refuse a caller who had the right password.
+   is logged and does not refuse a caller who had the right password. The same
+   pair guards `ChangePasswordUseCase.Execute`, keyed on the subject rather than
+   on a caller-supplied identifier and fed the address from
+   `ChangePasswordCommand.Agent`: verifying a current password is a password
+   oracle behind a valid session, and only `errWrongCurrentPassword` — never
+   another failure inside the transaction — is recorded as an attempt.
+   `LoginUseCase.rehashIfWeaker` runs inside the same transaction once the
+   password verified: `RehasherOf` walks the hasher chain for a
+   `Rehasher` ([[D-061]]), and a hash weaker than the parameters in force now is
+   re-derived while the plaintext exists. The write is best effort — a caller who
+   signed in correctly is not refused because the upgrade failed.
 5. **`Directory.Active`** — checked *after* the password: checking first tells
    somebody with a wrong password that the address is real and disabled.
 6. **`SessionIssuer.Issue`** — `auth/access/access.strategy.go:opaqueIssuer` or
@@ -134,8 +144,12 @@ to say ([[D-075]]).
    under its own identifier after a reset rewrote the other ([[D-067]]).
    `uq_credentials_password_subject` is the same rule in the schema, for the
    concurrent enrolment the lock cannot see.
-5. **the session, after the commit** — opening it inside would let a failure
-   with nothing to do with signing in roll it back.
+5. **the session, inside the sign-up transaction** — `usecase.signup.go:60`
+   calls `issuer.Issue` within the `OwnedTx` opened at line 36, so a failure to
+   issue rolls the account and the credential back with it. A sign-up that
+   answers an error has created nothing, which is the property that matters here:
+   an account that exists but could not be signed into is worse than no account.
+   Pinned by `TestSignUpDiscardsResponseAndRollsBackOnIssuerOrCommitFailure`.
 
 ## Arranging what a sign-up grants
 
@@ -157,7 +171,13 @@ band ([[D-070]]).
 5. **`Runtime.SetPassword`** — `auth/access/access.runtime.go` — what a seed or
    an administration screen calls to make a provisioned account able to sign in.
    A method rather than a field: it needs the resolver, which does not exist
-   until the last `Mount`.
+   until the last `Mount`. `SetPasswordUseCase.Execute` spends
+   `PermCredentialWrite`; `Unguarded()` is the seed and CLI shape, written at the
+   wiring rather than inferred from a context with no principal. The identifier
+   it writes goes through `GrantsService.normalize`, the same folding a sign-in
+   looks up with — `Mount` registers each subject's `Normalize` on the candidate
+   grants for exactly that, because a credential written unfolded is one no
+   sign-in can find.
 
 ## Verifying a request
 
@@ -167,7 +187,10 @@ band ([[D-070]]).
 2. **`SessionAuthenticator.Authenticate`** — `auth/access/access.authenticator.go`
    — digest lookup, `Session.Live`, the subject-type check that `For` installed,
    `Directory.Active`, then `GrantsService.For`. Roles and permissions come from
-   rows, never from the credential.
+   rows, never from the credential — which is why a `Directory.Describe` that
+   fails does not refuse the request: it sets `Principal.ProfileUnresolved` and
+   leaves `Profile` empty, so a caller can tell "nobody could be asked" from "the
+   subject has none".
 3. **`touch`** — at most once per `TouchInterval`, and its failure is logged and
    swallowed: a request that authenticated must not fail on a bookkeeping write.
 4. **one clock** — `Config.Now` is what `NewAuthenticator` stores and what
@@ -186,31 +209,40 @@ band ([[D-070]]).
 2. **`Endpoints.Refresh`** — mounted only for a strategy that rotates.
 3. **`core.find`** — `auth/access/accessjwt/accessjwt.go` — the digest as the
    current credential, then as the previous one.
-4. **`Classify`** — `auth/access/accessjwt/rotation.go` — pure, no database.
-   `Rotate`, `RotateAgain` inside the grace window, `Replay` after it, `Unusable`
-   otherwise — and `Unusable` also for a session left untouched longer than
+4. **`core.findSuperseded`** — same file — only when neither digest matched. A
+   credential is `<generation>.<session id>.<random>` (`mintCredential`), so
+   `credentialPrefix` names the row to read and the row's `generation` says how
+   far it has moved since. Two rotations or more ahead is a credential this
+   session really issued and somebody kept; anything nearer would have matched a
+   digest, so it is a refusal. A credential minted before the prefix existed
+   answers generation 0 here and falls back to the two-digest lookup ([[D-120]]).
+5. **`Classify`** — `auth/access/accessjwt/rotation.go` — pure, no database.
+   `Rotate`, `RotateAgain` inside the grace window, `Replay` after it — and
+   `Replay` for a `Presented.Generation` below `CurrentGeneration - 1`, which is
+   the arm the two digests could not reach — `Unusable`
+   otherwise, and `Unusable` also for a session left untouched longer than
    `SessionConfig.IdleTTL`, which is the deadline the opaque path applies through
    `Session.Live`. The `Window` it takes carries both durations, and `Presented`
    carries the row's `last_used_at`, so one strategy cannot disagree with the
    other about when a session is over ([[D-088]]).
-5. **`core.rotate`** — mints the replacement, loads the grants and signs the
+6. **`core.rotate`** — mints the replacement, loads the grants and signs the
    access token *first*, then compare-and-swaps on `(id, token_hash, revoked_at
    IS NULL)`. Nothing that can fail sits between the swap and the answer, so a
    signing or grants failure leaves the presented credential spendable
    ([[D-098]]).
-6. **the lost swap** — `core.reread` — a swap that changed no row is a race, not
+7. **the lost swap** — `core.reread` — a swap that changed no row is a race, not
    a verdict: the row is read again by id and the *presented* digest is
    classified against what is there now. `Rotate` or `RotateAgain` means another
    refresh won, and this one swaps again from the winner's digest, so both
    callers leave with a usable credential; anything else is the refusal it always
    was. Bounded by `rotationAttempts`. A read-then-write with no swap at all
    would issue two lineages from one session.
-7. **`core.answer`** — mints the access token with
+8. **`core.answer`** — mints the access token with
    `exp = min(now + AccessTTL, session.ExpiresAt)`. `expires_at` is absolute and
    no rotation moves it, so a refresh a second before it ends buys a second, not
    another `AccessTTL` ([[D-088]]). It carries `aud` unless the deployment waived
    it ([[D-097]]).
-8. **`core.close`** — on a replay the whole lineage goes, and the revocation list
+9. **`core.close`** — on a replay the whole lineage goes, and the revocation list
    is written if one is configured.
 
 ## Closing a session
@@ -266,25 +298,32 @@ builds, including the one behind `Runtime.SetPassword`.
 | `auth/access/access.endpoints.go` | the seven transport-neutral operations |
 | `auth/access/access.authenticator.go` | a session row becomes a principal |
 | `auth/access/access.protection.go` | the attempt limiter and observer seams, the in-process limiter, the Argon2 bulkhead |
-| `auth/access/access.secret.go` | the hasher, the PHC grammar and its bounds, the session token and its digest |
+| `auth/access/access.secret.go` | the hasher, the PHC grammar and its bounds, `Rehasher` and `RehasherOf`, the session token and its digest |
 | `auth/access/access.config.go` | the two session deadlines, the password bounds and the identifier ceiling, and `Config.Now` — the module's one clock |
 | `auth/access/access.deps.go` | what a use case is built from, and `Deps.Now`, which is `Config.Now` and holds nothing of its own |
 | `auth/access/usecase.*.go` | the use cases |
+| `auth/access/access.grants.go` | `GrantsService.For`, `ProfileUnresolved`, and the per-subject identifier folding the password paths reach through |
+| `auth/access/grant.usecases.go` | `GrantService`, the permission each method spends, and `NewUnguardedGrantService` |
 | `auth/access/http/accesshttp/accesshttp.go` | the route table and the endpoint names |
 | `auth/access/http/accesshttp/delivery.go` | the three deliveries, what silence takes, and what a rotation is not allowed to move |
 | `auth/access/http/accesshttp/cookies.go` | the cookie policy, the names and paths, and the split between body and cookie |
 | `auth/access/http/access{net,gin,fiber}/` | decode, read the delivery, call, write, set the cookies |
 | `auth/http/authhttp/cookie.go` | the guard's other end of a cookie-borne access token |
-| `auth/access/accessjwt/rotation.go` | `Classify`, the pure half of rotation |
-| `auth/access/accessjwt/accessjwt.go` | issuing, the audience, the answer-then-swap order, the re-read after a lost swap, the replay response |
+| `auth/access/accessjwt/rotation.go` | `Classify`, the pure half of rotation, including the generation arm |
+| `auth/access/accessjwt/accessjwt.go` | issuing, the audience, the answer-then-swap order, the re-read after a lost swap, the replay response, and `mintCredential` / `credentialPrefix` / `findSuperseded` |
+| `auth/access/accessjwt/model.go` | the session row, including the `Generation` the credential prefix is compared against |
+| `auth/access/accessjwt/migrations/00001_accessjwt.sql` | the sessions table this strategy reads, and the `generation` column added to it |
 | `auth/access/accessjwt/revokeredis/revokeredis.go` | the deny-list: one key per revoked session, `Revoked`, `Revoke`, `Ping` |
-| `auth/access/accessjwt/revokeredis/eviction.go` | what the list asks its own server before it is trusted, and the three answers ([[D-112]]) |
+| `auth/access/accessjwt/revokeredis/eviction.go` | what the list asks every master before it is trusted, and the three answers ([[D-112]]) |
 | `auth/access/accessjwt/revokeredis/revokeredisfx/revokeredisfx.go` | that question as a start hook, and the list built from the graph's client |
 
 ## Tests that walk this flow
 
 - `auth/access/access_runtime_test.go` — the mount refusals and their control,
   and that an enrolment refuses before it writes anything.
+- `TestSignUpDiscardsResponseAndRollsBackOnIssuerOrCommitFailure` in
+  `auth/access/access.signup_serialization_test.go` — the session is issued
+  inside the sign-up transaction, so a failure there leaves no account behind.
 - `auth/access/access.defaults_test.go` — the default role is whatever the table
   says, an absent binding grants nothing, a sign-up reads it before it creates,
   and the seed writes are idempotent with their controls.
@@ -297,7 +336,11 @@ builds, including the one behind `Runtime.SetPassword`.
 - `auth/access/accessjwt/rotation_race_test.go` — the refresh that loses the
   compare-and-swap leaves with a usable credential rather than a 401, and a
   rotation that cannot mint its answer writes nothing, with the successful
-  rotation as its control.
+  rotation as its control. `TestAReplayedRefreshCredentialClosesTheSessionAndDeniesItsAccessToken`
+  is the one-rotation-back theft response;
+  `TestACredentialOlderThanThePreviousRotationIsStillAReplay` is the same
+  response for a credential older than either digest, and
+  `TestACredentialNamingASessionItNeverCameFromClosesNothing` is its control.
 - `auth/access/accessjwt/audience_test.go` — a token is refused by a service it
   was not minted for, silence takes the issuer, the waiver is explicit, and a
   key-provider outage or a cancelled request is not an authentication refusal.

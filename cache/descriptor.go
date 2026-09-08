@@ -84,12 +84,18 @@ type PolicyDescription struct {
 	MaxTransientBytes      int64
 	MaxTransientWaiters    int
 	ReservedTransientBytes int64
-	TransientSaturation    TransientSaturationMode
-	TransientWait          time.Duration
-	ReadFailure            FailurePolicy
-	WriteFailure           FailurePolicy
-	InvalidateFailure      FailurePolicy
-	Corruption             CorruptionPolicy
+
+	// How many read-through resolves the transient budget admits at once. It
+	// follows from MaxTransientBytes and the per-operation charge, which follows
+	// from MaxValueBytes — so it is easy to configure a cache that admits two
+	// concurrent readers without noticing. This is here so the ceiling can be
+	// read at start-up rather than discovered as ErrSaturated under load.
+	ConcurrentResolves  int
+	TransientSaturation TransientSaturationMode
+	TransientWait       time.Duration
+	ReadFailure         FailurePolicy
+	InvalidateFailure   FailurePolicy
+	Corruption          CorruptionPolicy
 }
 
 type Descriptor struct {
@@ -174,8 +180,12 @@ func scopeModeOf[K any](scope Scope[K]) ScopeMode {
 
 func describePolicy(policy Policy) PolicyDescription {
 	reserved := int64(0)
+	concurrent := 0
 	if plan, err := transientPlanFor(policy); err == nil {
 		reserved = plan.reserved
+		if plan.resolve > 0 {
+			concurrent = int((policy.MaxTransientBytes - plan.reserved) / plan.resolve)
+		}
 	}
 	if policy.disabled {
 		return PolicyDescription{
@@ -192,10 +202,10 @@ func describePolicy(policy Policy) PolicyDescription {
 			MaxTransientBytes:      policy.MaxTransientBytes,
 			MaxTransientWaiters:    policy.MaxTransientWaiters,
 			ReservedTransientBytes: reserved,
+			ConcurrentResolves:     concurrent,
 			TransientSaturation:    policy.TransientSaturation.mode,
 			TransientWait:          policy.TransientSaturation.timeout,
 			ReadFailure:            policy.ReadFailure,
-			WriteFailure:           policy.WriteFailure,
 			InvalidateFailure:      policy.InvalidateFailure,
 			Corruption:             policy.Corruption,
 		}
@@ -239,10 +249,10 @@ func describePolicy(policy Policy) PolicyDescription {
 		MaxTransientBytes:      policy.MaxTransientBytes,
 		MaxTransientWaiters:    policy.MaxTransientWaiters,
 		ReservedTransientBytes: reserved,
+		ConcurrentResolves:     concurrent,
 		TransientSaturation:    policy.TransientSaturation.mode,
 		TransientWait:          policy.TransientSaturation.timeout,
 		ReadFailure:            policy.ReadFailure,
-		WriteFailure:           policy.WriteFailure,
 		InvalidateFailure:      policy.InvalidateFailure,
 		Corruption:             policy.Corruption,
 	}

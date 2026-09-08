@@ -32,9 +32,9 @@ regenerated file, migration metadata and a consumer-gate review.
 ### 2. Storage Seam (`storage.Store`)
 9 observed operations emitting INTERNAL spans:
 - `Put(ctx, key, reader, opts)` -> `vv.storage put`
-- `Open(ctx, key)` -> `vv.storage open` (span ends when stream is returned)
+- `Open(ctx, key, opts)` -> `vv.storage open` (span ends when stream is returned)
 - `Head(ctx, key)` -> `vv.storage head`
-- `Delete(ctx, key)` -> `vv.storage delete`
+- `Delete(ctx, key, opts)` -> `vv.storage delete`
 - `Stage(ctx, reader, opts)` -> `vv.storage stage`
 - `Promote(ctx, stageID, key, opts)` -> `vv.storage promote`
 - `Abort(ctx, stageID)` -> `vv.storage abort`

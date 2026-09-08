@@ -7,6 +7,9 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"os"
 	"path"
 	"path/filepath"
@@ -42,7 +45,7 @@ func TestPutOpenHeadDeleteRoundTripOnePrivateFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	body, opened, err := store.Open(t.Context(), key)
+	body, opened, err := store.Open(t.Context(), key, storage.ReadOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,10 +76,10 @@ func TestPutOpenHeadDeleteRoundTripOnePrivateFile(t *testing.T) {
 		t.Fatalf("private object mode = %o, want %o", stat.Mode().Perm(), DefaultFileMode)
 	}
 
-	if err := store.Delete(t.Context(), key); err != nil {
+	if err := store.Delete(t.Context(), key, storage.DeleteOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.Delete(t.Context(), key); err != nil {
+	if err := store.Delete(t.Context(), key, storage.DeleteOptions{}); err != nil {
 		t.Fatalf("Delete of an absent object must be idempotent: %v", err)
 	}
 	if _, err := store.Head(t.Context(), key); !errors.Is(err, storage.ErrNotFound) {
@@ -104,7 +107,7 @@ func TestAbsentMetadataRemainsNilAcrossEveryReadBoundary(t *testing.T) {
 	if headInfo.Metadata != nil {
 		t.Fatalf("Head metadata = %#v, want nil", headInfo.Metadata)
 	}
-	body, openInfo, err := store.Open(t.Context(), key)
+	body, openInfo, err := store.Open(t.Context(), key, storage.ReadOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -167,7 +170,7 @@ func TestPrefixKeysCoexist(t *testing.T) {
 		"pictures/avatar":   "nested object",
 		"pictures/avatar/x": "deep object",
 	} {
-		body, _, err := store.Open(t.Context(), mustKey(t, key))
+		body, _, err := store.Open(t.Context(), mustKey(t, key), storage.ReadOptions{})
 		if err != nil {
 			t.Fatalf("Open(%q): %v", key, err)
 		}
@@ -198,7 +201,7 @@ func TestPhysicalNamesAreInjectiveUnderCaseFolding(t *testing.T) {
 		}
 	}
 	for key, want := range map[storage.Key]string{firstKey: "first", secondKey: "second"} {
-		body, _, err := store.Open(t.Context(), key)
+		body, _, err := store.Open(t.Context(), key, storage.ReadOptions{})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -296,7 +299,7 @@ func TestCreateOnlyHasExactlyOneWinner(t *testing.T) {
 		t.Fatalf("successful writers = %d, want 1", successes)
 	}
 	winner := <-values
-	body, _, err := store.Open(t.Context(), key)
+	body, _, err := store.Open(t.Context(), key, storage.ReadOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -345,7 +348,7 @@ func TestReplaceNeverMixesMetadataAndBytes(t *testing.T) {
 			return
 		default:
 		}
-		body, info, err := store.Open(t.Context(), key)
+		body, info, err := store.Open(t.Context(), key, storage.ReadOptions{})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -607,7 +610,7 @@ func TestStagePromoteAbortExpiryAndBoundedCleanup(t *testing.T) {
 	if second.Removed != 1 || second.More {
 		t.Fatalf("second cleanup = %#v, want one final removal", second)
 	}
-	body, _, err := store.Open(t.Context(), finalKey)
+	body, _, err := store.Open(t.Context(), finalKey, storage.ReadOptions{})
 	if err != nil {
 		t.Fatalf("cleanup touched a promoted object: %v", err)
 	}
@@ -776,7 +779,7 @@ func TestPromoteReplaceUsesTheStagedBytesAndConsumesTheStage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	body, opened, err := store.Open(t.Context(), key)
+	body, opened, err := store.Open(t.Context(), key, storage.ReadOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -834,7 +837,7 @@ func TestPromoteNeverRestoresAStageAfterFinalPlacementBecomesVisible(t *testing.
 	}
 	backend.claimRemove = nil
 	backend.placeSync = nil
-	body, _, err := store.Open(t.Context(), finalKey)
+	body, _, err := store.Open(t.Context(), finalKey, storage.ReadOptions{})
 	if err != nil {
 		t.Fatalf("visible placement disappeared after sync failure: %v", err)
 	}
@@ -990,7 +993,7 @@ func TestOpenBodyObservesCancellation(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	body, _, err := store.Open(ctx, key)
+	body, _, err := store.Open(ctx, key, storage.ReadOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1008,7 +1011,7 @@ func TestOpenBodyReadAndCloseErrorsAreTypedAndRedacted(t *testing.T) {
 	if _, err := store.Put(t.Context(), key, strings.NewReader("content"), storage.PutOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	body, _, err := store.Open(t.Context(), key)
+	body, _, err := store.Open(t.Context(), key, storage.ReadOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1223,4 +1226,327 @@ func (this *failingReadCloser) Read(buffer []byte) (int, error) {
 func (this *failingReadCloser) Close() error {
 	this.closed.Store(true)
 	return nil
+}
+
+// A process killed between claiming a stage and placing it left a StageID that
+// Promote and Abort both refused until the stage's own TTL — days, by default.
+// The stage is intact in that state, so the next operation may take it over once
+// the holder's lease has passed.
+func TestAnInterruptedPromoteDoesNotWedgeTheStageUntilItsTTL(t *testing.T) {
+	backend, store, _ := newTestStore(t, Config{StageClaimTTL: time.Minute})
+	clock := time.Now()
+	backend.now = func() time.Time { return clock }
+	staged, err := store.Stage(t.Context(), strings.NewReader("interrupted"), storage.StageOptions{ExpiresIn: 48 * time.Hour})
+	if err != nil {
+		t.Fatal(err)
+	}
+	namespace := mustNamespace(t, "documents")
+
+	// What a killed promote leaves behind: the claim taken, the stage untouched.
+	if _, err := backend.claimStage("promote", namespace, staged.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	// The control: while the lease is live the stage is genuinely busy, and a
+	// second operation must not walk into a promote that is still running.
+	if err := store.Abort(t.Context(), staged.ID); !errors.Is(err, storage.ErrConflict) {
+		t.Fatalf("Abort against a live claim = %v, want ErrConflict", err)
+	}
+
+	clock = clock.Add(2 * time.Minute)
+	final := mustKey(t, "recovered/object")
+	if _, err := store.Promote(t.Context(), staged.ID, final, storage.PromoteOptions{}); err != nil {
+		t.Fatalf("a stage whose holder died was still unpromotable after its lease passed: %v", err)
+	}
+	body, _, err := store.Open(t.Context(), final, storage.ReadOptions{})
+	if err != nil {
+		t.Fatalf("the recovered promote placed nothing: %v", err)
+	}
+	content, readErr := io.ReadAll(body)
+	_ = body.Close()
+	if readErr != nil || string(content) != "interrupted" {
+		t.Fatalf("recovered object = %q, %v", content, readErr)
+	}
+}
+
+// The other crash state looks the same from the StageID and must not be taken
+// over: the object was already placed and only the last unlink is missing, so a
+// takeover would place a committed stage at a second key. The stage file is gone
+// in that state, which is what tells the two apart.
+func TestACommittedStageIsNotTakenOverWhenItsClaimOutlivesItsLease(t *testing.T) {
+	backend, store, _ := newTestStore(t, Config{Sync: true, StageClaimTTL: time.Minute})
+	clock := time.Now()
+	backend.now = func() time.Time { return clock }
+	staged, err := store.Stage(t.Context(), strings.NewReader("committed"), storage.StageOptions{ExpiresIn: 48 * time.Hour})
+	if err != nil {
+		t.Fatal(err)
+	}
+	backend.claimRemove = func(name string) error {
+		if strings.HasSuffix(name, ".stage") {
+			return fs.ErrPermission
+		}
+		return backend.root.Remove(name)
+	}
+	backend.placeSync = func(string) error { return errors.New("directory sync failed") }
+	first := mustKey(t, "committed/first")
+	if _, err := store.Promote(t.Context(), staged.ID, first, storage.PromoteOptions{}); !errors.Is(err, storage.ErrForbidden) {
+		t.Fatalf("post-placement cleanup error = %v, want ErrForbidden", err)
+	}
+	backend.claimRemove = nil
+	backend.placeSync = nil
+
+	// Long past the lease, which is exactly when the previous test takes over.
+	clock = clock.Add(time.Hour)
+	if _, err := store.Promote(t.Context(), staged.ID, mustKey(t, "committed/second"), storage.PromoteOptions{}); !errors.Is(err, storage.ErrConflict) {
+		t.Fatalf("a committed stage was placed a second time once its claim's lease passed: %v", err)
+	}
+	body, _, err := store.Open(t.Context(), first, storage.ReadOptions{})
+	if err != nil {
+		t.Fatalf("the committed placement disappeared: %v", err)
+	}
+	_ = body.Close()
+}
+
+// Without a precondition, two callers who read, decided and wrote lose one of the
+// two decisions with no error on either side: CreateOnly guards only the first
+// write of a key and Replace guards nothing at all.
+func TestAConditionalWriteRefusesAClobberInsteadOfLosingIt(t *testing.T) {
+	_, store, _ := newTestStore(t, Config{})
+	key := mustKey(t, "ledger/balance")
+	first, err := store.Put(t.Context(), key, strings.NewReader("100"), storage.PutOptions{Mode: storage.CreateOnly})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.ETag == "" {
+		t.Fatal("the backend returned no ETag, so there is no token to make a write conditional on")
+	}
+
+	// The control: the writer holding the current token gets through, so the
+	// refusal below is the comparison rather than preconditions never working.
+	second, err := store.Put(t.Context(), key, strings.NewReader("120"), storage.PutOptions{
+		Mode: storage.Replace, IfMatch: storage.IfMatch(first.ETag),
+	})
+	if err != nil {
+		t.Fatalf("a writer holding the current ETag was refused: %v", err)
+	}
+	if second.ETag == first.ETag {
+		t.Fatal("the ETag did not change across a write, so it cannot detect one")
+	}
+
+	// The second caller read 100, decided 130, and is now writing against a token
+	// that has moved. Before this option that write simply won.
+	_, err = store.Put(t.Context(), key, strings.NewReader("130"), storage.PutOptions{
+		Mode: storage.Replace, IfMatch: storage.IfMatch(first.ETag),
+	})
+	if !errors.Is(err, storage.ErrPreconditionFailed) {
+		t.Fatalf("err = %v, want ErrPreconditionFailed — a stale writer silently discarded the other's write", err)
+	}
+	body, _, err := store.Open(t.Context(), key, storage.ReadOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	content, readErr := io.ReadAll(body)
+	_ = body.Close()
+	if readErr != nil || string(content) != "120" {
+		t.Fatalf("object = %q, %v — the refused write landed anyway", content, readErr)
+	}
+
+	if err := store.Delete(t.Context(), key, storage.DeleteOptions{IfMatch: storage.IfMatch(first.ETag)}); !errors.Is(err, storage.ErrPreconditionFailed) {
+		t.Fatalf("conditional delete = %v, want ErrPreconditionFailed", err)
+	}
+	if err := store.Delete(t.Context(), key, storage.DeleteOptions{IfMatch: storage.IfMatch(second.ETag)}); err != nil {
+		t.Fatalf("a delete holding the current ETag was refused: %v", err)
+	}
+}
+
+// Every key creates one directory per segment and Delete removed only the object
+// file, so nothing ever reclaimed the chain: no List, and CleanupExpired walks
+// only staging. A namespace churning uploads/<uuid>/original.png grew a directory
+// per upload for the life of the deployment.
+func TestDeletingAnObjectReclaimsTheDirectoriesItsKeyCreated(t *testing.T) {
+	_, store, root := newTestStore(t, Config{})
+	namespaceRoot := filepath.Join(root, privateDirectory, "objects", "documents")
+
+	// A single-segment key so the namespace directory exists; it belongs to the
+	// namespace rather than to any key and is deliberately never pruned.
+	flat := mustKey(t, "marker.txt")
+	if _, err := store.Put(t.Context(), flat, strings.NewReader("x"), storage.PutOptions{Mode: storage.CreateOnly}); err != nil {
+		t.Fatal(err)
+	}
+	before := countDirectories(t, namespaceRoot)
+	key := mustKey(t, "uploads/2026/09/original.png")
+	if _, err := store.Put(t.Context(), key, strings.NewReader("bytes"), storage.PutOptions{Mode: storage.CreateOnly}); err != nil {
+		t.Fatal(err)
+	}
+	if countDirectories(t, namespaceRoot) <= before {
+		t.Fatal("the key created no directories, so this test proves nothing")
+	}
+
+	// A sibling under the same prefix: its ancestors are shared and must survive.
+	sibling := mustKey(t, "uploads/2026/09/thumbnail.png")
+	if _, err := store.Put(t.Context(), sibling, strings.NewReader("bytes"), storage.PutOptions{Mode: storage.CreateOnly}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Delete(t.Context(), key, storage.DeleteOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Head(t.Context(), sibling); err != nil {
+		t.Fatalf("pruning took a directory a live object needed: %v", err)
+	}
+
+	if err := store.Delete(t.Context(), sibling, storage.DeleteOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if got := countDirectories(t, namespaceRoot); got != before {
+		t.Fatalf("directories = %d, want %d — the key's chain outlived every object under it", got, before)
+	}
+}
+
+func countDirectories(t *testing.T, root string) int {
+	t.Helper()
+	count := 0
+	err := filepath.WalkDir(root, func(_ string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			if errors.Is(err, fs.ErrNotExist) {
+				return nil
+			}
+			return err
+		}
+		if entry.IsDir() {
+			count++
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return count
+}
+
+// The header is written when the stage is, which can be days before the promote.
+// Reporting that as the object's ModifiedAt made a promoted object claim it was
+// last modified when it was uploaded, while the same object through storageminio
+// reported when it became visible — one contract, two answers.
+func TestAPromotedObjectIsModifiedWhenItBecomesVisible(t *testing.T) {
+	backend, store, _ := newTestStore(t, Config{})
+	clock := time.Now().UTC().Truncate(time.Second)
+	backend.now = func() time.Time { return clock }
+
+	staged, err := store.Stage(t.Context(), strings.NewReader("bytes"), storage.StageOptions{ExpiresIn: 48 * time.Hour})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stagedAt := clock
+
+	clock = clock.Add(30 * time.Hour)
+	promoted, err := store.Promote(t.Context(), staged.ID, mustKey(t, "reports/final.pdf"), storage.PromoteOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if promoted.ModifiedAt.Equal(stagedAt) {
+		t.Fatal("the promoted object reports the moment it was staged")
+	}
+	if !promoted.ModifiedAt.Equal(clock) {
+		t.Fatalf("ModifiedAt = %v, want %v — the moment the object became visible", promoted.ModifiedAt, clock)
+	}
+
+	// And what a later reader sees agrees with what Promote answered, so the
+	// header on disk carries it rather than only the return value.
+	head, err := store.Head(t.Context(), mustKey(t, "reports/final.pdf"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !head.ModifiedAt.Equal(promoted.ModifiedAt) || head.ETag != promoted.ETag {
+		t.Fatalf("Head = %v/%s, Promote = %v/%s", head.ModifiedAt, head.ETag, promoted.ModifiedAt, promoted.ETag)
+	}
+}
+
+// Without a range a caller who needs the last megabyte of a multi-gigabyte object
+// has to transfer all of it, and a resumable download has no expressible form.
+// The body starts at a fixed offset here, so the range is one Seek.
+func TestARangedReadTransfersOnlyTheBytesAskedFor(t *testing.T) {
+	_, store, _ := newTestStore(t, Config{})
+	key := mustKey(t, "media/clip.bin")
+	payload := "0123456789abcdef"
+	if _, err := store.Put(t.Context(), key, strings.NewReader(payload), storage.PutOptions{Mode: storage.CreateOnly}); err != nil {
+		t.Fatal(err)
+	}
+	length := int64(4)
+	for name, spec := range map[string]struct {
+		options storage.ReadOptions
+		want    string
+	}{
+		"a window":        {options: storage.ReadOptions{Offset: 4, Length: &length}, want: "4567"},
+		"an open end":     {options: storage.ReadOptions{Offset: 12}, want: "cdef"},
+		"the whole thing": {options: storage.ReadOptions{}, want: payload},
+	} {
+		t.Run(name, func(t *testing.T) {
+			body, _, err := store.Open(t.Context(), key, spec.options)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, readErr := io.ReadAll(body)
+			_ = body.Close()
+			if readErr != nil {
+				t.Fatal(readErr)
+			}
+			if string(got) != spec.want {
+				t.Fatalf("read %q, want %q", got, spec.want)
+			}
+		})
+	}
+
+	if _, _, err := store.Open(t.Context(), key, storage.ReadOptions{Offset: int64(len(payload)) + 1}); !errors.Is(err, storage.ErrInvalid) {
+		t.Fatal("an offset past the end of the object was accepted")
+	}
+}
+
+// The handler advertised no range support and then answered every Range request
+// with the whole object, so a resuming download was told it had resumed and sent
+// the file again from the top.
+func TestTheLinkHandlerAnswersARangeRatherThanTheWholeObject(t *testing.T) {
+	backend, store, _ := newTestStore(t, Config{
+		BaseURL: "https://files.test/d", SigningKey: []byte("a-signing-key-of-at-least-32-bytes!!"),
+	})
+	key := mustKey(t, "media/clip.bin")
+	payload := "0123456789abcdef"
+	if _, err := store.Put(t.Context(), key, strings.NewReader(payload), storage.PutOptions{Mode: storage.CreateOnly}); err != nil {
+		t.Fatal(err)
+	}
+	link, err := store.TemporaryURL(t.Context(), key, storage.TemporaryURLOptions{ExpiresIn: time.Minute})
+	if err != nil {
+		t.Fatal(err)
+	}
+	target, err := url.Parse(link.URL())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	request := httptest.NewRequest(http.MethodGet, link.URL(), nil)
+	request.Host = target.Host
+	request.Header.Set("Range", "bytes=4-7")
+	recorder := httptest.NewRecorder()
+	backend.Handler().ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusPartialContent {
+		t.Fatalf("status = %d, want 206", recorder.Code)
+	}
+	if got := recorder.Body.String(); got != "4567" {
+		t.Fatalf("body = %q, want %q — the handler answered the whole object", got, "4567")
+	}
+	if got := recorder.Header().Get("Content-Range"); got != "bytes 4-7/16" {
+		t.Fatalf("Content-Range = %q", got)
+	}
+	if got := recorder.Header().Get("Content-Length"); got != "4" {
+		t.Fatalf("Content-Length = %q", got)
+	}
+
+	// The control: no Range still means the whole object, at 200.
+	plain := httptest.NewRecorder()
+	unranged := httptest.NewRequest(http.MethodGet, link.URL(), nil)
+	unranged.Host = target.Host
+	backend.Handler().ServeHTTP(plain, unranged)
+	if plain.Code != http.StatusOK || plain.Body.String() != payload {
+		t.Fatalf("unranged = %d/%q", plain.Code, plain.Body.String())
+	}
 }

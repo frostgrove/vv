@@ -31,6 +31,12 @@ var (
 
 	ErrConflict = errors.New("conflict")
 
+	// The retryable class, and the only one a caller is meant to try again. It is
+	// here for the same reason ErrForbidden and ErrConflict are: a package that
+	// refuses for an operational reason has somewhere to wrap so the refusal
+	// renders as 503 rather than as the 500 that means "a bug".
+	ErrUnavailable = errors.New("unavailable")
+
 	ErrCreateRaced = fmt.Errorf("crud: assigned-key create lost its race: %w", ErrConflict)
 
 	ErrStaleVersion = fmt.Errorf("crud: the row was changed by someone else: %w", ErrConflict)

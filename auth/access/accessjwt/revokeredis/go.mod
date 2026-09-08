@@ -13,6 +13,7 @@ require (
 )
 
 require (
+	filippo.io/edwards25519 v1.2.0 // indirect
 	github.com/cespare/xxhash/v2 v2.2.0 // indirect
 	github.com/dgryski/go-rendezvous v0.0.0-20200823014737-9f7001d12a5f // indirect
 	github.com/frostgrove/vv v0.0.0-20260829170205-3b943f2e18f1 // indirect
@@ -29,3 +30,5 @@ require (
 replace github.com/frostgrove/vv/auth/access/accessjwt => ..
 
 replace github.com/frostgrove/vv/auth/access => ../..
+
+replace github.com/frostgrove/vv/auth/authjwt => ../../../authjwt

@@ -357,22 +357,43 @@ func (this *cacheCore[K, V]) batchGetBackend(ctx context.Context, addresses []Ad
 		return nil, failure("lookup many", contextErr)
 	}
 	defer cancel()
+	// This loop answers "which of these are already cached", and the caller
+	// reloads whatever it does not find. A failure on one address is therefore a
+	// miss on that address, not on the batch: throwing away the entries already
+	// read turned one flaky key into a full-batch reload from the origin, which
+	// is the opposite of what a cache is for.
+	//
+	// It is not the partial answer D-095 refuses. That rule is about what
+	// ResolveMany returns to its caller, which is still complete — the keys
+	// dropped here are loaded rather than reported absent.
 	encoded := make(map[Address][]byte, len(addresses))
 	var total int64
 	for _, address := range addresses {
 		value, found, err := backendGet(this.backend, backendCtx, address, ReadLimit{MaxBytes: limit.MaxItemBytes})
 		if err != nil {
-			return this.batchReadFailure(ctx, addresses, err)
+			if failed, batchErr := this.batchAddressFailure(ctx, address, err); !failed {
+				continue
+			} else if batchErr != nil {
+				return this.batchReadFailure(ctx, addresses, err)
+			}
 		}
 		if !found {
 			if len(value) != 0 {
+				if failed, _ := this.batchAddressFailure(ctx, address, ErrCorrupt); !failed {
+					continue
+				}
 				return this.batchReadFailure(ctx, addresses, ErrCorrupt)
 			}
 			continue
 		}
 		if len(value) == 0 || len(value) > limit.MaxItemBytes {
+			if failed, _ := this.batchAddressFailure(ctx, address, ErrCorrupt); !failed {
+				continue
+			}
 			return this.batchReadFailure(ctx, addresses, ErrCorrupt)
 		}
+		// The total budget is genuinely a property of the batch, so it still
+		// fails the batch.
 		if int64(len(value)) > limit.MaxTotalBytes-total {
 			return this.batchReadFailure(ctx, addresses, ErrTooLarge)
 		}
@@ -380,6 +401,24 @@ func (this *cacheCore[K, V]) batchGetBackend(ctx context.Context, addresses []Ad
 		encoded[address] = value
 	}
 	return encoded, nil
+}
+
+// Whether one address's failure ends the batch. Under the policies that turn a
+// failure into an absence it does not: the address is dropped and the caller
+// loads it. Under the propagating policies it does, and the caller is told.
+func (this *cacheCore[K, V]) batchAddressFailure(ctx context.Context, address Address, err error) (bool, error) {
+	if ctx.Err() != nil {
+		return true, ctx.Err()
+	}
+	if errors.Is(err, ErrCorrupt) {
+		this.observe(ctx, Event{Operation: LookupManyOperation, Outcome: ErrorOutcome, Reason: CorruptReason, Items: 1})
+		return this.policy.Corruption != CorruptAsMiss, err
+	}
+	if errors.Is(err, ErrTooLarge) {
+		return true, err
+	}
+	this.observe(ctx, Event{Operation: LookupManyOperation, Outcome: ErrorOutcome, Reason: BackendReason, Items: 1})
+	return this.policy.ReadFailure != AsMiss, err
 }
 
 func validateBatchResponse(addresses []Address, encoded map[Address][]byte, limit BatchReadLimit) error {

@@ -266,6 +266,35 @@ func TestFoldRefusesAnotherInstance(t *testing.T) {
 		}
 	})
 
+	t.Run("two aggregates over one family are told apart by the declaration", func(t *testing.T) {
+		first := declareAccounts(t)
+		second := Define[account]("accounts.account", accountKey)
+		Declare(second, "accounts.credited",
+			Then(From(JSON[creditedV1]()), JSON[creditedV2](), toCreditedV2),
+			func(this account, event creditedV2) account { this.Balance -= event.Minor; return this })
+		crossing := first.credited.New(acme, creditedV2{Minor: 250, Reason: "deposit"})
+
+		key, err := second.Key(acme)
+		if err != nil {
+			t.Fatalf("the second aggregate does not render the identity both were declared over: %v", err)
+		}
+		if crossing.Stream() != (Stream{Family: second.Family(), Key: key}) {
+			t.Fatalf("the change names %v where the second aggregate names the family %q and the key %q, so the two declarations no longer share a stream and the case below refuses a crossing the stream comparison already caught",
+				crossing.Stream(), second.Family(), key)
+		}
+
+		if _, err := first.aggregate.Fold(acme, account{}, crossing); err != nil {
+			t.Fatalf("the control fold through the aggregate that minted the change was refused: %v", err)
+		}
+		state, err := second.Fold(acme, account{Balance: 7}, crossing)
+		if !errors.Is(err, ErrFamily) || errors.Is(err, ErrWrongStream) {
+			t.Fatalf("a change minted on another aggregate of this family folded with %v; one family names one aggregate, and the two are told apart at Bind by the same sentinel", err)
+		}
+		if state.Balance != 7 {
+			t.Fatalf("the fold advanced the state to %d, so the fold that ran is the one the minting aggregate declared and not this aggregate's own", state.Balance)
+		}
+	})
+
 	t.Run("two aggregates over one state type are told apart by the family", func(t *testing.T) {
 		accounts := declareAccounts(t)
 		savings := Define[account]("savings.account", accountKey)

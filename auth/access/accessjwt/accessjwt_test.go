@@ -174,7 +174,7 @@ func (rotationDirectory) Touch(_ context.Context, _ uuid.UUID) error { return ni
 func sessionRow(lastUsed, expires time.Time) []any {
 	return []any{
 		uuid.New().String(), "user", uuid.New().String(),
-		access.HashToken("the-refresh-credential"), "",
+		access.HashToken("the-refresh-credential"), "", int64(1),
 		"", "", lastUsed, lastUsed, nil, expires, nil, "",
 	}
 }

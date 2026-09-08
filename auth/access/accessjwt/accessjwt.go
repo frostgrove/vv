@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/frostgrove/vv/auth"
@@ -117,14 +119,23 @@ func (this *strategy) Build(dependencies access.StrategyDeps) (access.Issued, er
 	return issued, nil
 }
 
+// Every session is attempted. Stopping at the first failure left the tail of the
+// batch un-revoked — a logout-all that hit one blip revoked the sessions before
+// it and none after, while reporting a single error that named neither set. The
+// joined error names exactly the sessions that were not revoked.
 func (this *core) SessionsRevoked(ctx context.Context, sessions []uuid.UUID) error {
 	until := this.now().Add(this.spec.AccessTTL)
+	var failures []error
 	for _, session := range sessions {
+		if err := ctx.Err(); err != nil {
+			failures = append(failures, err)
+			break
+		}
 		if err := this.spec.Revocation.Revoke(ctx, session, until); err != nil {
-			return err
+			failures = append(failures, fmt.Errorf("session %s: %w", session, err))
 		}
 	}
-	return nil
+	return errors.Join(failures...)
 }
 
 type core struct {
@@ -186,13 +197,13 @@ func checkLifetimes(settings Spec, lifetimes access.SessionConfig, window Window
 func (this *core) now() time.Time { return this.deps.Config.Now() }
 
 func (this *core) Issue(ctx context.Context, subject access.SubjectRef, agent access.Agent) (access.AuthResponse, error) {
-	refresh, err := access.NewToken()
-	if err != nil {
-		return access.AuthResponse{}, err
-	}
 	sessionID, err := uuid.NewRandom()
 	if err != nil {
 		return access.AuthResponse{}, fmt.Errorf("accessjwt: reading entropy for a session id: %w", err)
+	}
+	refresh, err := mintCredential(1, sessionID)
+	if err != nil {
+		return access.AuthResponse{}, err
 	}
 
 	now := this.now()
@@ -202,6 +213,7 @@ func (this *core) Issue(ctx context.Context, subject access.SubjectRef, agent ac
 		SubjectType: string(subject.Type),
 		SubjectID:   subject.ID,
 		TokenHash:   access.HashToken(refresh),
+		Generation:  1,
 		UserAgent:   agent.UserAgent,
 		IP:          agent.IP,
 		LastUsedAt:  now,
@@ -268,12 +280,22 @@ func (this *core) Refresh(ctx context.Context, credential string, agent access.A
 		return access.AuthResponse{}, err
 	}
 	if session == nil {
+		// Neither digest matched. A credential that names its session and a
+		// generation the session has already moved past is one this session
+		// really issued and somebody kept — the case the two-column lookup
+		// could not see.
+		session, err = this.findSuperseded(ctx, credential)
+		if err != nil {
+			return access.AuthResponse{}, err
+		}
+	}
+	if session == nil {
 		return access.AuthResponse{}, refused()
 	}
 
-	switch Classify(presentedOf(*session, digest), now, this.window) {
+	switch Classify(presentedOf(*session, digest, generationOf(credential)), now, this.window) {
 	case Rotate, RotateAgain:
-		return this.rotate(ctx, *session, digest, now)
+		return this.rotate(ctx, *session, digest, generationOf(credential), now)
 	case Replay:
 		if err := this.close(ctx, session.ID, now, access.ReasonRefreshReplayed); err != nil {
 			return access.AuthResponse{}, err
@@ -305,16 +327,91 @@ func (this *core) find(ctx context.Context, digest string) (*rotatingSession, er
 	return &session, nil
 }
 
-func presentedOf(session rotatingSession, digest string) Presented {
-	return Presented{
-		Digest:     digest,
-		Current:    session.TokenHash,
-		Previous:   session.PreviousTokenHash,
-		RotatedAt:  session.RotatedAt,
-		LastUsedAt: session.LastUsedAt,
-		Revoked:    session.RevokedAt != nil,
-		ExpiresAt:  session.ExpiresAt,
+// Only ever answers a session whose generation has genuinely moved past the one
+// the credential names. A credential naming the current or previous generation
+// would have matched a digest, so reaching here with one means it did not — and
+// that is a refusal, not a replay.
+func (this *core) findSuperseded(ctx context.Context, credential string) (*rotatingSession, error) {
+	generation, id, ok := credentialPrefix(credential)
+	if !ok {
+		return nil, nil
 	}
+	session, err := this.sessions.GetByID(ctx, id)
+	if errors.Is(err, crud.ErrNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if session.Generation <= generation+1 {
+		return nil, nil
+	}
+	return &session, nil
+}
+
+func presentedOf(session rotatingSession, digest string, generation int64) Presented {
+	return Presented{
+		Digest:            digest,
+		Current:           session.TokenHash,
+		Previous:          session.PreviousTokenHash,
+		Generation:        generation,
+		CurrentGeneration: session.Generation,
+		RotatedAt:         session.RotatedAt,
+		LastUsedAt:        session.LastUsedAt,
+		Revoked:           session.RevokedAt != nil,
+		ExpiresAt:         session.ExpiresAt,
+	}
+}
+
+// A refresh credential names the session it belongs to and the generation that
+// minted it, ahead of the random part that actually authenticates it. Reuse used
+// to be detectable exactly one rotation back — the current digest and the
+// previous one are two columns — so a credential from three rotations ago matched
+// neither, was never found, and came back as an ordinary 401 that closed nothing.
+// A thief who sat on a stolen credential was therefore safer than one who used it
+// immediately.
+//
+// Neither prefix is a secret and neither is trusted to authenticate anything. The
+// digest still is: a credential naming a session it did not come from matches no
+// stored digest and is refused, and the only thing the prefixes buy is knowing
+// *which* session to look at when both digests have moved on. Forging one to
+// close somebody else's session needs their session id, which is a v4 UUID they
+// were never shown.
+//
+// Credentials issued before this existed carry no prefix, answer generation 0 and
+// no session, and fall back to the two-digest lookup — so a deployment upgrades
+// without signing everyone out.
+func mintCredential(generation int64, session uuid.UUID) (string, error) {
+	random, err := access.NewToken()
+	if err != nil {
+		return "", err
+	}
+	return strconv.FormatInt(generation, 10) + "." + session.String() + "." + random, nil
+}
+
+func credentialPrefix(credential string) (generation int64, session uuid.UUID, ok bool) {
+	first, rest, found := strings.Cut(credential, ".")
+	if !found {
+		return 0, uuid.Nil, false
+	}
+	second, _, found := strings.Cut(rest, ".")
+	if !found {
+		return 0, uuid.Nil, false
+	}
+	generation, err := strconv.ParseInt(first, 10, 64)
+	if err != nil || generation < 1 {
+		return 0, uuid.Nil, false
+	}
+	session, err = uuid.Parse(second)
+	if err != nil {
+		return 0, uuid.Nil, false
+	}
+	return generation, session, true
+}
+
+func generationOf(credential string) int64 {
+	generation, _, _ := credentialPrefix(credential)
+	return generation
 }
 
 const rotationAttempts = 3
@@ -323,6 +420,7 @@ func (this *core) rotate(
 	ctx context.Context,
 	session rotatingSession,
 	presented string,
+	generation int64,
 	now time.Time,
 ) (access.AuthResponse, error) {
 	subject := access.SubjectRef{Type: access.SubjectType(session.SubjectType), ID: session.SubjectID}
@@ -339,7 +437,7 @@ func (this *core) rotate(
 		return access.AuthResponse{}, refused()
 	}
 
-	next, err := access.NewToken()
+	next, err := mintCredential(session.Generation+1, session.ID)
 	if err != nil {
 		return access.AuthResponse{}, err
 	}
@@ -362,7 +460,7 @@ func (this *core) rotate(
 		if attempt+1 == rotationAttempts {
 			return access.AuthResponse{}, refused()
 		}
-		fresh, err := this.reread(ctx, session.ID, presented, now)
+		fresh, err := this.reread(ctx, session.ID, presented, generation, now)
 		if err != nil {
 			return access.AuthResponse{}, err
 		}
@@ -390,6 +488,7 @@ func (this *core) reread(
 	ctx context.Context,
 	id uuid.UUID,
 	presented string,
+	generation int64,
 	now time.Time,
 ) (*rotatingSession, error) {
 	session, err := this.sessions.GetByID(ctx, id)
@@ -399,7 +498,7 @@ func (this *core) reread(
 	if err != nil {
 		return nil, err
 	}
-	switch Classify(presentedOf(session, presented), now, this.window) {
+	switch Classify(presentedOf(session, presented, generation), now, this.window) {
 	case Rotate, RotateAgain:
 		return &session, nil
 	default:

@@ -1,6 +1,7 @@
 package tenancy
 
 import (
+	"context"
 	"errors"
 	"fmt"
 
@@ -26,9 +27,17 @@ var (
 
 	ErrPinned = fmt.Errorf("tenancy: a unit of work is already bound to another tenant: %w", crud.ErrConflict)
 
-	ErrCapacity = errors.New("tenancy: the tenant capability budget is exhausted")
+	// Operational rather than a refusal of the caller: the tenant is entitled to
+	// this, and the answer is "not now". Both wrap the retryable sentinel so they
+	// render as 503 with a Retry-After rather than as the 500 that tells an
+	// operator hunting for a bug.
+	ErrCapacity = fmt.Errorf("tenancy: the tenant capability budget is exhausted: %w", crud.ErrUnavailable)
 
-	ErrUnavailable = errors.New("tenancy: the tenant capability is unavailable")
+	ErrUnavailable = fmt.Errorf("tenancy: the tenant capability is unavailable: %w", crud.ErrUnavailable)
+
+	// A run-level answer rather than a member's, so it is not in the outcome
+	// vocabulary: every member is already recorded in the slice returned beside it.
+	ErrCohortFailed = errors.New("tenancy: no member of the cohort completed")
 )
 
 var refusals = [...]error{
@@ -48,6 +57,13 @@ var refusals = [...]error{
 func Classify(err error) error {
 	if err == nil {
 		return nil
+	}
+	// A caller that went away names nothing about the tenant, the database or the
+	// credential, so there is nothing to redact and it travels intact. Folding it
+	// into ErrUnavailable would put every client disconnect on the graph that says
+	// the control plane is down, and would take the deadline with it.
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return err
 	}
 	for _, refusal := range refusals {
 		if errors.Is(err, refusal) {

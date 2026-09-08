@@ -745,7 +745,7 @@ renames atomically and syncs the directory; failure removes the candidate.
 **Shape:** misuse
 **Setup:** A consumer writes `-types User,Artcle` while adopting a foreign package; `User` exists and `Artcle` is a typo.
 **What the consumer does:** They expect generation to refuse and name `Artcle`, rather than ship `User`'s DTO and metamodel while silently omitting the other model.
-**What must happen:** Every requested type must be found exactly once and reported in the generator's completion line; unknown or duplicate names must be an error before output is written.
+**What must happen:** Every requested name must match exactly one declaration and be reported in the generator's completion line; unknown or duplicate names must be an error before output is written.
 **Today:** ❌ wrong or unhandled
 **Evidence:** `internal/codegen/codegen.go:549-553` turns the list into a set; `load` simply ignores declarations absent from that set at `:201-208`; the only final validation is that *some* model was found at `:129-131`. The tests cover a package with no models (`internal/codegen/codegen_test.go:514-528`), not one valid requested type plus one unknown name.
 **Blast radius:** silent wrong answer

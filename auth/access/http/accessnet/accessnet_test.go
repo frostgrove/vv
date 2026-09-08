@@ -160,3 +160,27 @@ func TestACookieBorneWriteFromAnotherSiteIsRefusedByThisTransport(t *testing.T) 
 			recorder.Code)
 	}
 }
+
+// Agent.IP is a bare address, and every binding must produce one. net/http's
+// RemoteAddr is "host:port", so keeping it verbatim made each attempt from one
+// client a different address — and anything grouping attempts by address, a
+// lockout or an alert, grouped by an ephemeral port that never repeats.
+func TestThisTransportReportsABareClientAddress(t *testing.T) {
+	request := httptest.NewRequest(http.MethodPost, "/api/auth/login", nil)
+	request.RemoteAddr = "203.0.113.7:54321"
+	if got := agentOf(request).IP; got != "203.0.113.7" {
+		t.Fatalf("IP = %q, want the address without its port", got)
+	}
+
+	request.RemoteAddr = "[2001:db8::1]:443"
+	if got := agentOf(request).IP; got != "2001:db8::1" {
+		t.Fatalf("IPv6 IP = %q", got)
+	}
+
+	// The control: an address that will not split is passed through rather than
+	// dropped, because a value of the wrong shape is still better than none.
+	request.RemoteAddr = "a-unix-socket"
+	if got := agentOf(request).IP; got != "a-unix-socket" {
+		t.Fatalf("unsplittable address = %q", got)
+	}
+}

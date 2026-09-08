@@ -9,7 +9,8 @@ import (
 )
 
 // A staged envelope carries no position, because a position is assigned at
-// commit and one assigned earlier would have to be reassigned or reissued.
+// commit and one assigned earlier would have to be reassigned or reissued —
+// this store's answer to what event.Envelope.Position means before a commit.
 func (this *Store) ReadStream(ctx context.Context, stream event.Stream, after event.Version) ([]event.Envelope, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -17,12 +18,15 @@ func (this *Store) ReadStream(ctx context.Context, stream event.Stream, after ev
 	if this.closed.Load() {
 		return nil, event.Failure(event.Closed, nil)
 	}
+	tx, err := this.ambient(ctx)
+	if err != nil {
+		return nil, event.Failure(event.Refused, err)
+	}
 
 	this.log.mutex.Lock()
 	defer this.log.mutex.Unlock()
 
-	tx, err := this.ambient(ctx)
-	if err != nil {
+	if err := tx.live(); err != nil {
 		return nil, event.Failure(event.Refused, err)
 	}
 	committed := this.log.streams[stream]
@@ -45,9 +49,17 @@ func (this *Store) ReadStream(ctx context.Context, stream event.Stream, after ev
 }
 
 // Position-ordered, so it returns no staged envelope to anyone, its own
-// transaction included. The bound transaction is still consulted: a caller who
-// drives the store past the kernel's own check is answered the same way at both
-// read doors, rather than refused at one and handed a page at the other.
+// transaction included — this store's answer to a question event.Log.ReadAll
+// leaves to the store. The bound transaction is still consulted, and by the same
+// two halves as the other two doors: a caller who drives the store past the
+// kernel's own check is answered the same way at every door, rather than refused
+// at one and handed a page at the other.
+//
+// The cursor is parsed above the lock and its refusal reported below it. The
+// parse reads nothing of the log but the fingerprint it was born with, and a
+// caller replaying a corrupt checkpoint in a loop should not contend for the log
+// to be told so; the report stays below because a transaction this store cannot
+// use is Refused before anything the cursor says is looked at.
 func (this *Store) ReadAll(ctx context.Context, after event.Cursor) ([]event.Envelope, event.Cursor, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, "", err
@@ -55,17 +67,21 @@ func (this *Store) ReadAll(ctx context.Context, after event.Cursor) ([]event.Env
 	if this.closed.Load() {
 		return nil, "", event.Failure(event.Closed, nil)
 	}
-	if _, err := this.ambient(ctx); err != nil {
+	tx, err := this.ambient(ctx)
+	if err != nil {
 		return nil, "", event.Failure(event.Refused, err)
 	}
-	from, err := this.log.readCursor(after)
-	if err != nil {
-		return nil, "", event.Failure(event.BadCursor, err)
-	}
+	from, unreadable := this.log.readCursor(after)
 
 	this.log.mutex.Lock()
 	defer this.log.mutex.Unlock()
 
+	if err := tx.live(); err != nil {
+		return nil, "", event.Failure(event.Refused, err)
+	}
+	if unreadable != nil {
+		return nil, "", event.Failure(event.BadCursor, unreadable)
+	}
 	start := sort.Search(len(this.log.global), func(index int) bool {
 		return this.log.global[index].Position > from
 	})

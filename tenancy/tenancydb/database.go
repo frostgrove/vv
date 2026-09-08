@@ -177,7 +177,11 @@ func (this *Directory) reserve(key binding) (*entry, bool, []crud.Source, error)
 		return held, false, expired, nil
 	}
 	if len(this.entries) >= this.max {
-		return nil, false, expired, tenancy.ErrCapacity
+		closing, made := this.evictIdlest()
+		if !made {
+			return nil, false, expired, tenancy.ErrCapacity
+		}
+		expired = append(expired, closing...)
 	}
 	held := &entry{expires: this.now().Add(this.ttl), borrowers: 1, ready: make(chan struct{})}
 	this.entries[key] = held
@@ -283,6 +287,34 @@ func (this *Directory) sweep() []crud.Source {
 		}
 	}
 	return closing
+}
+
+// MaxCached bounds the connections this process holds, not the tenants it can
+// serve. Refusing a newcomer while an idle binding sits in the map spends the
+// budget on arrival order: every borrow of an incumbent pushes its own expiry
+// out, so under steady traffic nothing ever expires and the servable set freezes
+// at the first `max` tenants for the life of the process. The idlest binding is
+// closed to make room instead, and `ErrCapacity` is kept for what it honestly
+// means — every slot is in use right now, and closing one would cut a live
+// transaction.
+func (this *Directory) evictIdlest() ([]crud.Source, bool) {
+	var (
+		idlest *entry
+		chosen binding
+		found  bool
+	)
+	for key, held := range this.entries {
+		if held.borrowers != 0 {
+			continue
+		}
+		if !found || held.expires.Before(idlest.expires) {
+			idlest, chosen, found = held, key, true
+		}
+	}
+	if !found {
+		return nil, false
+	}
+	return this.unlink(chosen, idlest), true
 }
 
 func (this *Directory) unlink(key binding, held *entry) []crud.Source {

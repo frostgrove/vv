@@ -13,10 +13,12 @@ const (
 	setGroupName      = "vv.cache.sets"
 	providerGroupName = "vv.cache.providers"
 	resourceGroupName = "vv.cache.resources"
+	observerGroupName = "vv.cache.observers"
 
 	setGroup      = `group:"` + setGroupName + `"`
 	providerGroup = `group:"` + providerGroupName + `"`
 	resourceGroup = `group:"` + resourceGroupName + `"`
+	observerGroup = `group:"` + observerGroupName + `"`
 )
 
 func AsSet(constructor any) any {
@@ -29,6 +31,15 @@ func AsProvider(constructor any) any {
 
 func AsResource(constructor any) any {
 	return fx.Annotate(constructor, fx.ResultTags(resourceGroup))
+}
+
+// Two modules that both want to watch the cache is the ordinary case — metrics
+// and tracing, say — and a single binding made the second one silently replace
+// the first or fail the graph. Contributed observers are composed with
+// cache.Observers; the single Observer binding stays as the zero-or-one
+// shorthand and is composed alongside them.
+func AsObserver(constructor any) any {
+	return fx.Annotate(constructor, fx.ResultTags(observerGroup))
 }
 
 // Resources is the composition root saying what lives on a resource the package
@@ -52,6 +63,8 @@ type Contributions struct {
 	Resources []cache.ResourceDeclaration `group:"vv.cache.resources"`
 
 	Observer cache.Observer `optional:"true"`
+
+	Observers []cache.Observer `group:"vv.cache.observers"`
 }
 
 // Undeclared is what a resource nobody described means to this deployment. The
@@ -137,7 +150,11 @@ func (this Spec) activation(contributed Contributions, required bool) (cache.Act
 	}
 	runtime := this.Runtime
 	if runtime.Observer == nil {
-		runtime.Observer = contributed.Observer
+		observer, err := composeObservers(contributed)
+		if err != nil {
+			return cache.ActivationSpec{}, err
+		}
+		runtime.Observer = observer
 	}
 	return cache.ActivationSpec{
 		Application:              this.Application,
@@ -157,4 +174,27 @@ func join[T any](configured, contributed []T) []T {
 	joined := make([]T, 0, len(configured)+len(contributed))
 	joined = append(joined, configured...)
 	return append(joined, contributed...)
+}
+
+// One contributed observer is used as it is, so a graph with a single watcher
+// carries no fan-out. More than one is composed; cache.Observers is what refuses
+// a count above cache.MaxObservers, and its error is returned rather than
+// swallowed.
+func composeObservers(contributed Contributions) (cache.Observer, error) {
+	children := make([]cache.Observer, 0, len(contributed.Observers)+1)
+	if contributed.Observer != nil {
+		children = append(children, contributed.Observer)
+	}
+	children = append(children, contributed.Observers...)
+	switch len(children) {
+	case 0:
+		return nil, nil
+	case 1:
+		return children[0], nil
+	}
+	observer, err := cache.Observers(children...)
+	if err != nil {
+		return nil, fmt.Errorf("cachefx: composing contributed cache observers: %w", err)
+	}
+	return observer, nil
 }

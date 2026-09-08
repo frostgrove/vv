@@ -91,3 +91,36 @@ func TestATypedNilPreflightAnswerIsStillNothingToAnswerWith(t *testing.T) {
 	}()
 	authnet.AnswerPreflight(authnet.Middleware(auth.NewGuard(accepts())), (*corsAnswer)(nil))
 }
+
+// A net/http pattern may carry a host, and "admin.example.com/reports" answers
+// only on that host while "/reports" answers everywhere. Stripping the host made
+// them one route to the gate, so a declaration written for the bare path silently
+// covered the admin host's endpoint too — an endpoint nobody had declared
+// inherited another host's access.
+func TestAHostScopedRouteDoesNotInheritABarePathsDeclaration(t *testing.T) {
+	surface := authnet.Over(nil)
+	surface.HandleFunc("GET /api/v1/reports", nothing)
+	surface.HandleFunc("GET admin.example.com/api/v1/reports", nothing)
+
+	err := surface.Verify([]authhttp.Endpoint{
+		authhttp.Requires(http.MethodGet, "/reports", auth.Permission("report.read")),
+	}, authhttp.UnderPrefix(apiPrefix))
+	if err == nil {
+		t.Fatal("a host-scoped route took the bare path's declaration, so it was never declared at all")
+	}
+	if !strings.Contains(err.Error(), "admin.example.com") {
+		t.Fatalf("the failure does not name the host-scoped route: %v", err)
+	}
+
+	// The control, and the way to mount one: declare it with the host, and the
+	// gate passes.
+	declared := authnet.Over(nil)
+	declared.HandleFunc("GET /api/v1/reports", nothing)
+	declared.HandleFunc("GET admin.example.com/api/v1/reports", nothing)
+	if err := declared.Verify([]authhttp.Endpoint{
+		authhttp.Requires(http.MethodGet, "/reports", auth.Permission("report.read")),
+		authhttp.AtRoot(authhttp.Requires(http.MethodGet, "admin.example.com/api/v1/reports", auth.Permission("report.admin"))),
+	}, authhttp.UnderPrefix(apiPrefix)); err != nil {
+		t.Fatalf("a host-scoped route declared with its host was still refused: %v", err)
+	}
+}

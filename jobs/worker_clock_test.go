@@ -131,7 +131,12 @@ func TestWorkerClockNowNormalizesPanicsAndInvalidTimes(t *testing.T) {
 	}
 }
 
-func TestWorkerClockRejectsRegressionWithoutPoisoningItsLastTime(t *testing.T) {
+// A wall clock goes backwards for ordinary reasons — an NTP step, a resumed VM,
+// an operator correcting a drifting host. Answering ErrInvalid made that a fatal,
+// unrestartable failure: the pool stopped and stayed stopped over a time
+// correction. The clock is held non-decreasing instead, and says how often it
+// happened.
+func TestWorkerClockHoldsTimeNonDecreasingAcrossARegression(t *testing.T) {
 	base := time.Date(2032, 4, 5, 6, 7, 8, 0, time.UTC)
 	values := []time.Time{base, base.Add(-time.Second), base.Add(time.Second), base.Add(time.Second)}
 	var index atomic.Int32
@@ -149,8 +154,15 @@ func TestWorkerClockRejectsRegressionWithoutPoisoningItsLastTime(t *testing.T) {
 	if err != nil || first != base {
 		t.Fatalf("first Now() = (%v, %v)", first, err)
 	}
-	if regressed, err := clock.Now(); !regressed.IsZero() || err != ErrInvalid {
-		t.Fatalf("regressing Now() = (%v, %v), want zero and ErrInvalid", regressed, err)
+	regressed, err := clock.Now()
+	if err != nil {
+		t.Fatalf("a wall-clock correction stopped the worker: %v", err)
+	}
+	if regressed.Before(first) {
+		t.Fatalf("Now() went backwards to %v after %v", regressed, first)
+	}
+	if clock.Regressions() != 1 {
+		t.Fatalf("Regressions() = %d, want 1 — the correction was not reported at all", clock.Regressions())
 	}
 	third, err := clock.Now()
 	if err != nil || third != base.Add(time.Second) {

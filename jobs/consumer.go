@@ -136,7 +136,7 @@ func typedConsumerBinding[P any](definition DefinitionOf[P], handler Handler[P],
 			if !ok {
 				return fmt.Errorf("%w: consumer payload type does not match", ErrInvalid)
 			}
-			return invokeHandlerContained(func() error { return handler(ctx, value.value) })
+			return invokeHandlerContained(ctx, func() error { return handler(ctx, value.value) })
 		},
 		classifier:  resolved.classifier,
 		admission:   resolved.admission,
@@ -184,7 +184,7 @@ func typedAdapterConsumerBinding[P any](definition DefinitionOf[P], handler Adap
 			if !ok || !meta.valid() || meta.Definition() != declaration.declarationName() || meta.Binding() != resolved.binding || nilInterface(controller) {
 				return fmt.Errorf("%w: adapter consumer input does not match", ErrInvalid)
 			}
-			return invokeHandlerContained(func() error { return handler(ctx, value.value, meta, controller) })
+			return invokeHandlerContained(ctx, func() error { return handler(ctx, value.value, meta, controller) })
 		},
 		classifier:  resolved.classifier,
 		admission:   resolved.admission,

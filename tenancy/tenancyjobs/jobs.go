@@ -41,7 +41,7 @@ func (this contextProvider) Capture(ctx context.Context, request jobs.ContextCap
 		if err != nil {
 			return jobs.ContextCapture{}, tenancy.ErrMalformed
 		}
-		sealed, err := this.sealer.Seal(scope, record(request.Namespace(), request.Definition())...)
+		sealed, err := this.sealer.Seal(ctx, scope, record(request.Namespace(), request.Definition(), request.Candidate(), request.WireDigest())...)
 		if err != nil {
 			return jobs.ContextCapture{}, err
 		}
@@ -81,7 +81,7 @@ func (this identityRestorer) RestoreIdentity(ctx context.Context, request jobs.I
 	if !ok {
 		return jobs.RestoredIdentity{}, tenancy.ErrUntrusted
 	}
-	reference, generation, err := this.sealer.Unseal(token.Bytes(), record(request.Namespace(), request.Definition())...)
+	reference, generation, err := this.sealer.Unseal(token.Bytes(), record(request.Namespace(), request.Definition(), request.Invocation(), request.WireDigest())...)
 	if err != nil {
 		return jobs.RestoredIdentity{}, err
 	}
@@ -99,9 +99,16 @@ func (this identityRestorer) RestoreIdentity(ctx context.Context, request jobs.I
 	return jobs.NewRestoredIdentity(bound, jobs.Partition(reference.Value()), jobs.ProducerActor{})
 }
 
-// The queue and the definition are sealed with the reference, so a record lifted
-// out of one job and replayed into another verifies against neither.
-func record(namespace jobs.Namespace, definition jobs.Name) [][]byte {
-	digest := namespace.Digest()
-	return [][]byte{digest[:], []byte(definition.Value())}
+// The invocation and the payload are in the binding beside the queue and the
+// definition, so what the token authenticates is one row rather than a tenant's
+// work on that queue. Without them an honest token lifted off a record and
+// reattached to another — same queue, same job, an attacker's payload — verifies,
+// and queue write access becomes tenant impersonation. The invocation identifier
+// alone is not enough: it is the row's key, so an attacker who can update in
+// place keeps it and changes the payload underneath.
+func record(namespace jobs.Namespace, definition jobs.Name, invocation jobs.InvocationID, wire jobs.WireDigest) [][]byte {
+	namespaceDigest := namespace.Digest()
+	invocationBytes := invocation.Bytes()
+	wireBytes := wire.Bytes()
+	return [][]byte{namespaceDigest[:], []byte(definition.Value()), invocationBytes[:], wireBytes[:]}
 }

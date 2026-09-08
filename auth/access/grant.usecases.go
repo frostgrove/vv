@@ -3,17 +3,40 @@ package access
 import (
 	"context"
 
+	"github.com/frostgrove/vv/auth"
 	"github.com/frostgrove/vv/crud"
 	"github.com/frostgrove/vv/crud/decorators/specs"
 	"github.com/frostgrove/vv/errs"
 )
 
 type GrantService struct {
-	store *Store
+	store     *Store
+	unguarded bool
 }
 
+// Every method checks the permission it spends. The module declared and seeded
+// PermGrantRead, PermGrantWrite and PermCredentialWrite and then enforced none of
+// them, so a deployment that mounted these use cases behind an authenticated
+// route gave every signed-in caller the ability to grant themselves any role.
 func NewGrantService(store *Store) *GrantService {
 	return &GrantService{store: store}
+}
+
+// For the seed command and the operator CLI: paths that legitimately run with no
+// principal at all, and where a permission check could only ever fail. It is a
+// separate constructor rather than a nil-principal fallback so that "this runs
+// unauthenticated" is written down at the wiring rather than discovered at
+// runtime ([[D-070]]).
+func NewUnguardedGrantService(store *Store) *GrantService {
+	return &GrantService{store: store, unguarded: true}
+}
+
+func (this *GrantService) allow(ctx context.Context, permission auth.Permission) error {
+	if this.unguarded {
+		return nil
+	}
+	_, err := Require(ctx, permission)
+	return err
 }
 
 const (
@@ -22,6 +45,9 @@ const (
 )
 
 func (this *GrantService) GrantRole(ctx context.Context, cmd GrantRoleCommand) error {
+	if err := this.allow(ctx, PermGrantWrite); err != nil {
+		return err
+	}
 	role, err := this.store.RoleBySlug(ctx, cmd.Role)
 	if notFound(err) {
 		return unknown("Role", CodeUnknownRole, string(cmd.Role))
@@ -45,6 +71,9 @@ func (this *GrantService) GrantRole(ctx context.Context, cmd GrantRoleCommand) e
 }
 
 func (this *GrantService) RevokeRole(ctx context.Context, cmd GrantRoleCommand) error {
+	if err := this.allow(ctx, PermGrantWrite); err != nil {
+		return err
+	}
 	role, err := this.store.RoleBySlug(ctx, cmd.Role)
 	if notFound(err) {
 		return unknown("Role", CodeUnknownRole, string(cmd.Role))
@@ -60,6 +89,9 @@ func (this *GrantService) RevokeRole(ctx context.Context, cmd GrantRoleCommand) 
 }
 
 func (this *GrantService) GrantPermission(ctx context.Context, cmd GrantPermissionCommand) error {
+	if err := this.allow(ctx, PermGrantWrite); err != nil {
+		return err
+	}
 	permission, err := this.store.PermissionByCode(ctx, cmd.Permission)
 	if notFound(err) {
 		return unknown("Permission", CodeUnknownPermission, string(cmd.Permission))
@@ -83,6 +115,9 @@ func (this *GrantService) GrantPermission(ctx context.Context, cmd GrantPermissi
 }
 
 func (this *GrantService) RevokePermission(ctx context.Context, cmd GrantPermissionCommand) error {
+	if err := this.allow(ctx, PermGrantWrite); err != nil {
+		return err
+	}
 	permission, err := this.store.PermissionByCode(ctx, cmd.Permission)
 	if notFound(err) {
 		return unknown("Permission", CodeUnknownPermission, string(cmd.Permission))
@@ -98,6 +133,9 @@ func (this *GrantService) RevokePermission(ctx context.Context, cmd GrantPermiss
 }
 
 func (this *GrantService) AttachToRole(ctx context.Context, cmd AttachPermissionCommand) error {
+	if err := this.allow(ctx, PermRoleWrite); err != nil {
+		return err
+	}
 	permission, err := this.store.PermissionByCode(ctx, cmd.Permission)
 	if notFound(err) {
 		return unknown("Permission", CodeUnknownPermission, string(cmd.Permission))
@@ -116,6 +154,9 @@ func (this *GrantService) AttachToRole(ctx context.Context, cmd AttachPermission
 }
 
 func (this *GrantService) DetachFromRole(ctx context.Context, cmd AttachPermissionCommand) error {
+	if err := this.allow(ctx, PermRoleWrite); err != nil {
+		return err
+	}
 	role, err := this.store.Roles.GetByID(ctx, cmd.Role)
 	if err != nil {
 		return err
@@ -138,6 +179,9 @@ func (this *GrantService) DetachFromRole(ctx context.Context, cmd AttachPermissi
 }
 
 func (this *GrantService) Describe(ctx context.Context, grants *GrantsService, ref SubjectRef) (GrantsDto, error) {
+	if err := this.allow(ctx, PermGrantRead); err != nil {
+		return GrantsDto{}, err
+	}
 	principal, err := grants.For(ctx, ref)
 	if err != nil {
 		return GrantsDto{}, err

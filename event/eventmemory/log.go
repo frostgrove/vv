@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"fmt"
 	"sync"
+	"weak"
 
 	"github.com/frostgrove/vv/event"
 )
@@ -31,11 +32,12 @@ type Log struct {
 	fingerprint string
 	backing     event.Backing
 
-	mutex    sync.Mutex
-	streams  map[event.Stream][]event.Envelope
-	global   []event.Envelope
-	position event.Position
-	claims   map[event.Stream]*Tx
+	mutex        sync.Mutex
+	streams      map[event.Stream][]event.Envelope
+	global       []event.Envelope
+	position     event.Position
+	claims       map[event.Stream]weak.Pointer[Tx]
+	transactions uint64
 }
 
 func NewLog(spec LogSpec) (*Log, error) {
@@ -52,7 +54,7 @@ func NewLog(spec LogSpec) (*Log, error) {
 		maxKey:      maxKey,
 		fingerprint: rand.Text(),
 		streams:     map[event.Stream][]event.Envelope{},
-		claims:      map[event.Stream]*Tx{},
+		claims:      map[event.Stream]weak.Pointer[Tx]{},
 	}
 	log.backing, err = event.NewBacking(log)
 	if err != nil {
@@ -77,9 +79,31 @@ func (this *Log) version(stream event.Stream) event.Version {
 	return event.Version(len(this.streams[stream]))
 }
 
-func (this *Log) claimedByAnother(stream event.Stream, tx *Tx) bool {
-	holder, held := this.claims[stream]
-	return held && holder != tx
+func (this *Log) nameTransaction() txIdentity {
+	this.mutex.Lock()
+	defer this.mutex.Unlock()
+	this.transactions++
+	return txIdentity{log: this, nth: this.transactions}
+}
+
+func (this *Log) claim(stream event.Stream, tx *Tx) {
+	this.claims[stream] = weak.Make(tx)
+}
+
+// A claim names its transaction weakly, and that is what keeps an abandoned one
+// from bricking its streams: a *Tx nothing can reach any more — a panicked
+// goroutine, a forgotten defer, an early return — can never be committed or
+// appended to, so its staged records will never be published and the streams it
+// took are free the moment the runtime collects it. The dead claim is released
+// where it is found rather than swept, because the only reader of a claim is the
+// append it was about to refuse; a stream nobody appends to again keeps one dead
+// entry, which costs a word.
+func (this *Log) releaseDeadClaim(stream event.Stream) *Tx {
+	holder := this.claims[stream].Value()
+	if holder == nil {
+		delete(this.claims, stream)
+	}
+	return holder
 }
 
 // One critical section assigns the positions and publishes to both indexes, so

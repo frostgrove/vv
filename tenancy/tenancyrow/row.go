@@ -293,21 +293,49 @@ func resolveRelation[M any](path, field string) resolvedRelation {
 	return resolved
 }
 
+// Which class of work a repository's reads and writes are. Everything else in
+// this package takes a Class; a repository is the one seam that used to decide
+// for the caller, so a deployment whose admission admits a deleted tenant for
+// ClassDurable and nothing else — an erasure job, a final export — had no way to
+// ask for the one class it is allowed.
+type Classes struct {
+	Read  tenancy.Class
+	Write tenancy.Class
+}
+
+func RequestClasses() Classes {
+	return Classes{Read: tenancy.ClassRead, Write: tenancy.ClassWrite}
+}
+
+func (this Classes) classOf(action crud.Action) tenancy.Class {
+	if action == crud.ActionRead {
+		return this.Read
+	}
+	return this.Write
+}
+
 func Policy[M any, ID comparable](authority *tenancy.Authority, ownership Ownership[M]) security.Policy[M, ID] {
+	return PolicyIn[M, ID](authority, ownership, RequestClasses())
+}
+
+func PolicyIn[M any, ID comparable](authority *tenancy.Authority, ownership Ownership[M], classes Classes) security.Policy[M, ID] {
 	if authority == nil || ownership == nil {
 		panic("tenancy: a tenant-owned resource needs both an authority and an ownership strategy")
 	}
+	if !classes.Read.Valid() || !classes.Write.Valid() {
+		panic("tenancy: a tenant-owned resource needs a class this package declares for both reads and writes")
+	}
 	return security.Policy[M, ID]{
 		Scope: func(ctx context.Context) (crud.Predicate, error) {
-			scope, err := authority.Scope(ctx, tenancy.ClassRead)
+			scope, err := authority.Scope(ctx, classes.Read)
 			if err != nil {
 				return nil, err
 			}
 			return ownership.Narrow(scope.Reference())
 		},
-		RelationScopes: relationScopes[M](authority, ownership),
+		RelationScopes: relationScopes[M](authority, ownership, classes),
 		Inspect: func(ctx context.Context, action crud.Action, model *M) error {
-			scope, err := authority.Scope(ctx, classOf(action))
+			scope, err := authority.Scope(ctx, classes.classOf(action))
 			if err != nil {
 				return err
 			}
@@ -324,12 +352,12 @@ func Policy[M any, ID comparable](authority *tenancy.Authority, ownership Owners
 // says so itself rather than being probed with a fabricated reference, because a
 // probe that a strategy answered with an error would disable the narrowing in
 // exactly the silence this arrangement exists to prevent.
-func relationScopes[M any](authority *tenancy.Authority, ownership Ownership[M]) func(context.Context) (*crud.RelationScopes, error) {
+func relationScopes[M any](authority *tenancy.Authority, ownership Ownership[M], classes Classes) func(context.Context) (*crud.RelationScopes, error) {
 	if !ownership.NarrowsRelations() {
 		return nil
 	}
 	return func(ctx context.Context) (*crud.RelationScopes, error) {
-		scope, err := authority.Scope(ctx, tenancy.ClassRead)
+		scope, err := authority.Scope(ctx, classes.Read)
 		if err != nil {
 			return nil, err
 		}
@@ -337,13 +365,10 @@ func relationScopes[M any](authority *tenancy.Authority, ownership Ownership[M])
 	}
 }
 
-func classOf(action crud.Action) tenancy.Class {
-	if action == crud.ActionRead {
-		return tenancy.ClassRead
-	}
-	return tenancy.ClassWrite
-}
-
 func Repository[M any, ID comparable](authority *tenancy.Authority, ownership Ownership[M]) crud.Middleware[M, ID] {
 	return security.Gate(Policy[M, ID](authority, ownership))
+}
+
+func RepositoryIn[M any, ID comparable](authority *tenancy.Authority, ownership Ownership[M], classes Classes) crud.Middleware[M, ID] {
+	return security.Gate(PolicyIn[M, ID](authority, ownership, classes))
 }

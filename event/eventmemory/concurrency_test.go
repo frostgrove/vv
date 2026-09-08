@@ -168,6 +168,118 @@ func TestManyWritersLeaveOneDenseHistoryAndAMonotoneLog(t *testing.T) {
 	}
 }
 
+// A context is an interface the caller implements, so ctx.Value is the caller's
+// own code: a decorator, a chain of them, a wrapper that consults a cache behind
+// a lock of its own. This parks inside it, so the test can ask what the rest of
+// the log can do while a caller's Value has not returned yet.
+type parking struct {
+	context.Context
+	entered chan struct{}
+	once    sync.Once
+	release chan struct{}
+}
+
+func (this *parking) Value(key any) any {
+	this.once.Do(func() { close(this.entered) })
+	<-this.release
+	return this.Context.Value(key)
+}
+
+func TestACallersOwnContextIsNeverRunInsideTheLogsLock(t *testing.T) {
+	held := streamOf("orders.order", "acme/A-17")
+	elsewhere := streamOf("orders.order", "acme/B-9")
+
+	doors := []struct {
+		what string
+		run  func(*eventmemory.Store, context.Context) error
+	}{
+		{"an append", func(store *eventmemory.Store, ctx context.Context) error {
+			return store.Append(ctx, event.AppendRequest{Stream: held, Expected: 0, Records: records("parked")})
+		}},
+		{"a stream read", func(store *eventmemory.Store, ctx context.Context) error {
+			_, err := store.ReadStream(ctx, held, 0)
+			return err
+		}},
+		{"a log walk", func(store *eventmemory.Store, ctx context.Context) error {
+			_, _, err := store.ReadAll(ctx, "")
+			return err
+		}},
+	}
+
+	for _, door := range doors {
+		t.Run(door.what+" parked in its caller's own Value holds no other door of the log", func(t *testing.T) {
+			ctx := context.Background()
+			_, store := openStore(t)
+			waiting := &parking{Context: ctx, entered: make(chan struct{}), release: make(chan struct{})}
+			let := sync.OnceFunc(func() { close(waiting.release) })
+			t.Cleanup(let)
+
+			parked := make(chan error, 1)
+			go func() { parked <- door.run(store, waiting) }()
+			<-waiting.entered
+
+			select {
+			case err := <-parked:
+				t.Fatalf("%s answered %v before the context it was given returned from Value, so nothing below was asserted while a caller's own code was running", door.what, err)
+			case <-time.After(50 * time.Millisecond):
+			}
+
+			answers := make(chan error, 3)
+			go func() {
+				_, err := store.ReadStream(ctx, elsewhere, 0)
+				answers <- err
+				_, _, err = store.ReadAll(ctx, "")
+				answers <- err
+				answers <- store.Append(ctx, event.AppendRequest{Stream: elsewhere, Expected: 0, Records: records("elsewhere")})
+			}()
+			for other := range cap(answers) {
+				select {
+				case err := <-answers:
+					if err != nil {
+						t.Fatalf("door %d of a log %s was running against answered %v", other, door.what, err)
+					}
+				case <-time.After(5 * time.Second):
+					t.Fatalf("door %d of the log never answered while %s was still inside its own caller's ctx.Value, so the caller's code holds the one lock every reader and writer of the log contends for, and a Value that takes a lock of its own deadlocks the log for good", other, door.what)
+				}
+			}
+
+			let()
+			if err := <-parked; err != nil {
+				t.Fatalf("%s, whose context parked in Value, answered %v once it returned", door.what, err)
+			}
+		})
+	}
+}
+
+// The control for the case above: without it, a Value that never actually parks
+// would let every assertion there pass while proving nothing.
+func TestAParkedContextStopsTheDoorItWasGivenTo(t *testing.T) {
+	ctx := context.Background()
+	_, store := openStore(t)
+	stream := streamOf("orders.order", "acme/A-17")
+
+	waiting := &parking{Context: ctx, entered: make(chan struct{}), release: make(chan struct{})}
+	let := sync.OnceFunc(func() { close(waiting.release) })
+	t.Cleanup(let)
+
+	read := make(chan error, 1)
+	go func() {
+		_, err := store.ReadStream(waiting, stream, 0)
+		read <- err
+	}()
+	<-waiting.entered
+
+	select {
+	case err := <-read:
+		t.Fatalf("a read whose own context was parked in Value answered %v, so the parking context blocks nothing and the case beside this one measures nothing", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+	let()
+	if err := <-read; err != nil {
+		t.Fatalf("the parked read answered %v once its context returned", err)
+	}
+}
+
 func appendAsWriter(ctx context.Context, store *eventmemory.Store, request event.AppendRequest, transactional bool) (bool, error) {
 	if !transactional {
 		return store.Append(ctx, request) != nil, nil

@@ -16,6 +16,7 @@ adapters, tooling, utilities.
 | runtime | `github.com/frostgrove/vv/runtime` · `github.com/frostgrove/vv/runtime/runtimefx` | — | [UC-026](runtime/UC-026-run-background-work-without-losing-a-worker-silently.md) | not swept |
 | app | `github.com/frostgrove/vv/app` · `github.com/frostgrove/vv/app/module` · `github.com/frostgrove/vv/app/appfx` | — | [UC-027](app/UC-027-run-one-codebase-as-an-api-a-worker-and-a-seed-command.md) | not swept |
 | jobs | `github.com/frostgrove/vv/jobs` · `github.com/frostgrove/vv/jobs/jobsfx` · `github.com/frostgrove/vv/jobs/jobspg` | — | [UC-031](jobs/UC-031-make-an-effect-happen-exactly-when-its-transaction-commits.md) | not swept |
+| event | `github.com/frostgrove/vv/event` · `github.com/frostgrove/vv/event/eventmemory` · `github.com/frostgrove/vv/event/eventtest` | — | [UC-032](event/UC-032-record-what-happened-and-rebuild-state-from-it.md) | not swept |
 | query | `github.com/frostgrove/vv/crud/query` | [Query](query/Query.md) | [UC-002](query/UC-002-let-an-untrusted-client-query.md) | not ready |
 | specs | `github.com/frostgrove/vv/crud/decorators/specs` | [Specs](specs/Specs.md) | [UC-007](specs/UC-007-write-typed-compile-checked-queries.md) | not ready |
 | security | `github.com/frostgrove/vv/crud/decorators/security` | [Security](security/Security.md) | [UC-004](security/UC-004-isolate-tenants.md) · [UC-020](security/UC-020-authorize-without-a-policy-per-endpoint.md) | not ready |

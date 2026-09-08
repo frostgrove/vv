@@ -113,9 +113,15 @@ func decodeEnvelopeAccounting[V any](encoded []byte, runtime Runtime, codec Code
 	if !bytes.Equal(wantHash[:], encoded[total-envelopeHashSize:]) {
 		return Result[V]{}, 0, ErrCorrupt
 	}
+	// A miss, not corruption. The hash above has already verified, so these bytes
+	// are sound — they were written by a previous ValueSchema or a different
+	// codec, which is what a deployment does on purpose when it changes a cached
+	// type. Calling it corruption made a routine rotation fail every Resolve under
+	// RefuseCorrupt: the loader never ran, nothing evicted the entry, and the key
+	// stayed broken until its retention elapsed.
 	codecID := string(encoded[envelopeFixedSize : envelopeFixedSize+codecLength])
 	if codecID != descriptor.id || ValueSchema(binary.BigEndian.Uint32(encoded[14:18])) != descriptor.schema {
-		return Result[V]{}, 0, ErrCorrupt
+		return Result[V]{State: Miss}, 0, nil
 	}
 	entry := envelope{
 		presence:   presence,

@@ -9,15 +9,30 @@ import (
 
 type SetPasswordUseCase struct {
 	*Deps
+	unguarded bool
 }
 
 func NewSetPassword(dependencies *Deps) *SetPasswordUseCase {
 	return &SetPasswordUseCase{Deps: dependencies}
 }
 
+// Setting another account's password is the permission the module declared as
+// PermCredentialWrite and then enforced nowhere. Unguarded is the seed and CLI
+// path, where there is no principal to check and a check could only ever fail.
+func (this *SetPasswordUseCase) Unguarded() *SetPasswordUseCase {
+	bound := *this
+	bound.unguarded = true
+	return &bound
+}
+
 func (this *SetPasswordUseCase) Execute(ctx context.Context, cmd SetPasswordCommand) (int64, error) {
 	if cmd.Subject.Zero() {
 		return 0, fmt.Errorf("access: setting a password for an empty subject")
+	}
+	if !this.unguarded {
+		if _, err := Require(ctx, PermCredentialWrite); err != nil {
+			return 0, err
+		}
 	}
 	if err := this.checkPassword(cmd.Password); err != nil {
 		return 0, err
@@ -31,7 +46,10 @@ func (this *SetPasswordUseCase) Execute(ctx context.Context, cmd SetPasswordComm
 	if err != nil {
 		return 0, err
 	}
-	identifier := profile.Identifier
+	// Folded the same way sign-in folds what it looks up. Writing the directory's
+	// raw identifier here made the credential unfindable by every path that
+	// normalizes — a set password that silently could not be used to sign in.
+	identifier := this.Grants.normalize(cmd.Subject.Type, profile.Identifier)
 	if identifier == "" {
 		return 0, fmt.Errorf("access: %s has no identifier to sign in with", cmd.Subject)
 	}

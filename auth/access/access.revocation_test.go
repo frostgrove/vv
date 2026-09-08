@@ -291,3 +291,49 @@ func (this revokingStrategy) Build(dependencies StrategyDeps) (Issued, error) {
 }
 
 var errUnreachableSink = errors.New("redis is unreachable")
+
+// One IN list naming every live session meant a subject with enough of them could
+// not be signed out at all: the statement was refused past the dialect's bind
+// budget. The paths that need it most — a password change, a compromise — are
+// exactly the ones a long-lived account reaches.
+func TestClosingManySessionsIsChunkedAgainstTheBindBudget(t *testing.T) {
+	subject := SubjectRef{Type: testSubject, ID: uuid.New()}
+	const sessions = 2500
+
+	ids := make([][]any, 0, sessions)
+	rows := make([][]any, 0, sessions)
+	for range sessions {
+		id := uuid.New()
+		ids = append(ids, []any{id.String()})
+		rows = append(rows, sessionRow(id, subject.Type))
+	}
+	// SQLite, because its bind budget is the portable 999 — Postgres would fit
+	// 2500 ids in one statement and prove nothing about the chunking.
+	recorder := crudtest.New(crud.SQLite{}).Push(
+		crudtest.Rows(), // the password-credential lock finds nothing
+		crudtest.Rows(rows...),
+	)
+	_ = ids
+	dependencies := depsWithSinks(recorder, nil)
+
+	closed, err := NewLogoutAll(dependencies).Execute(context.Background(), LogoutAllCommand{Subject: subject})
+	if err != nil {
+		t.Fatalf("closing %d sessions: %v", sessions, err)
+	}
+	_ = closed
+
+	limit := crud.BindLimit(crud.SQLite{})
+	updates := 0
+	for _, statement := range recorder.Statements() {
+		if !strings.HasPrefix(strings.TrimSpace(strings.ToUpper(crudtest.Normalize(statement.SQL))), "UPDATE") {
+			continue
+		}
+		updates++
+		if len(statement.Args) > limit {
+			t.Fatalf("one statement carried %d binds, past the dialect's budget of %d", len(statement.Args), limit)
+		}
+	}
+	if updates < 2 {
+		t.Fatalf("%d sessions closed in %d statements — nothing was chunked, so this proves nothing", sessions, updates)
+	}
+}

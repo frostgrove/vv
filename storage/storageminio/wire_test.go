@@ -122,7 +122,7 @@ func TestWireOpenUsesImmediateGET(t *testing.T) {
 		}, nil
 	})
 	store := newWireStore(t, transport)
-	body, info, err := store.Open(context.Background(), testKey(t, "image"))
+	body, info, err := store.Open(context.Background(), testKey(t, "image"), storage.ReadOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}

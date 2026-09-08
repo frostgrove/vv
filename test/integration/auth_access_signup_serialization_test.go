@@ -204,7 +204,7 @@ func (this authSerializationTarget) signUpCommitBeforeInvalidation(
 	var err error
 	switch invalidation {
 	case "reset":
-		closed, err = runtime.SetPassword().Execute(t.Context(), access.SetPasswordCommand{
+		closed, err = runtime.SetPassword().Unguarded().Execute(t.Context(), access.SetPasswordCommand{
 			Subject: ref, Password: newPassword,
 		})
 	case "logout-all":

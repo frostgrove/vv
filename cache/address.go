@@ -64,6 +64,11 @@ func MustNamespace(application, environment, purpose string, generation Generati
 
 func (this Namespace) String() string { return "[cache namespace]" }
 
+// Exported so a backend outside this package can match a namespace to the
+// addresses written under it, which is what TagInvalidator is handed and could
+// not otherwise correlate.
+func (this Namespace) Digest() [32]byte { return this.digest }
+
 func (this Namespace) valid() bool {
 	return this.digest != [32]byte{} && this.generation != 0 &&
 		validNamespacePart(this.application) == nil &&

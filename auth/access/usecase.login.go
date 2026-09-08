@@ -80,6 +80,11 @@ func (this *LoginUseCase) Execute(ctx context.Context, cmd LoginCommand) (AuthRe
 			return badCredentials("Login")
 		}
 
+		// The password is correct and the transaction is already open, which is
+		// the one moment the plaintext exists and a write is free. Raising the
+		// cost factor otherwise protected only accounts created after the change.
+		this.rehashIfWeaker(txCtx, credential, cmd.Password)
+
 		if err := this.Store.FenceSessionIssue(txCtx, credential); err != nil {
 			return err
 		}
@@ -109,4 +114,24 @@ func (this *LoginUseCase) withinBounds(cmd LoginCommand) bool {
 func isBadCredentials(err error) bool {
 	fault, ok := errs.AsFault(err)
 	return ok && fault.Code == CodeBadCredentials
+}
+
+// Best effort, and deliberately so: the caller signed in correctly and must not
+// be refused because an upgrade write failed. A failure is logged and the old
+// hash keeps working.
+func (this *LoginUseCase) rehashIfWeaker(ctx context.Context, credential Credential, password string) {
+	rehasher, ok := RehasherOf(this.Hasher)
+	if !ok || !rehasher.NeedsRehash(credential.SecretHash) {
+		return
+	}
+	hash, err := this.Hasher.Hash(password)
+	if err != nil {
+		this.Log.WarnContext(ctx, "could not re-derive a password hash at the current cost",
+			slog.String("credential_id", credential.ID.String()), slog.Any("err", err))
+		return
+	}
+	if _, err := this.Store.Credentials.Update(ctx, credential.ID, CredentialUpdate{SecretHash: &hash}); err != nil {
+		this.Log.WarnContext(ctx, "could not store a re-derived password hash",
+			slog.String("credential_id", credential.ID.String()), slog.Any("err", err))
+	}
 }

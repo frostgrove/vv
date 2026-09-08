@@ -32,7 +32,7 @@ func (f *fakeStorageStore) Put(ctx context.Context, key storage.Key, source io.R
 	}
 	return storage.Info{Size: 10}, nil
 }
-func (f *fakeStorageStore) Open(ctx context.Context, key storage.Key) (io.ReadCloser, storage.Info, error) {
+func (f *fakeStorageStore) Open(ctx context.Context, key storage.Key, _ storage.ReadOptions) (io.ReadCloser, storage.Info, error) {
 	f.lastCtx = ctx
 	if f.panic {
 		panic("disk unmounted")
@@ -52,7 +52,7 @@ func (f *fakeStorageStore) Head(ctx context.Context, key storage.Key) (storage.I
 	}
 	return storage.Info{Size: 10}, nil
 }
-func (f *fakeStorageStore) Delete(ctx context.Context, key storage.Key) error {
+func (f *fakeStorageStore) Delete(ctx context.Context, key storage.Key, _ storage.DeleteOptions) error {
 	f.lastCtx = ctx
 	if f.panic {
 		panic("disk unmounted")
@@ -137,7 +137,7 @@ func TestStorage_AllNineOperationsTotality(t *testing.T) {
 		{
 			name: "Open",
 			execute: func(ctx context.Context, s storage.Store) error {
-				rc, _, err := s.Open(ctx, key)
+				rc, _, err := s.Open(ctx, key, storage.ReadOptions{})
 				if err == nil {
 					_ = rc.Close()
 				}
@@ -156,7 +156,7 @@ func TestStorage_AllNineOperationsTotality(t *testing.T) {
 		{
 			name: "Delete",
 			execute: func(ctx context.Context, s storage.Store) error {
-				return s.Delete(ctx, key)
+				return s.Delete(ctx, key, storage.DeleteOptions{})
 			},
 			wantSpan: "vv.storage delete",
 		},
@@ -339,7 +339,7 @@ func TestStorage_PanicsEndedSafelyAndRepanicked(t *testing.T) {
 	}()
 
 	k, _ := storage.ParseKey("test.txt")
-	_ = s.Delete(context.Background(), k)
+	_ = s.Delete(context.Background(), k, storage.DeleteOptions{})
 }
 
 func TestStorage_ErrorClassifications(t *testing.T) {
@@ -459,7 +459,7 @@ func TestStorage_OpenErrorAndPanic(t *testing.T) {
 	sErr := vvotel.Store(tel)(rawErr)
 
 	k, _ := storage.ParseKey("test.txt")
-	_, _, err := sErr.Open(context.Background(), k)
+	_, _, err := sErr.Open(context.Background(), k, storage.ReadOptions{})
 	if !errors.Is(err, storage.ErrNotFound) {
 		t.Fatalf("expected ErrNotFound, got %v", err)
 	}
@@ -487,7 +487,7 @@ func TestStorage_OpenErrorAndPanic(t *testing.T) {
 			t.Errorf("expected Error status, got %v", tp2.spans[0].status)
 		}
 	}()
-	_, _, _ = sPanic.Open(context.Background(), k)
+	_, _, _ = sPanic.Open(context.Background(), k, storage.ReadOptions{})
 }
 
 func TestStorage_GoexitPreservesGoroutineTermination(t *testing.T) {
@@ -501,7 +501,7 @@ func TestStorage_GoexitPreservesGoroutineTermination(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		_ = s.Delete(context.Background(), k)
+		_ = s.Delete(context.Background(), k, storage.DeleteOptions{})
 	}()
 	select {
 	case <-done:
@@ -523,7 +523,7 @@ func TestStorage_PanicNilIsNotSuppressed(t *testing.T) {
 			t.Fatal("panic(nil) was suppressed")
 		}
 	}()
-	_ = s.Delete(context.Background(), k)
+	_ = s.Delete(context.Background(), k, storage.DeleteOptions{})
 }
 
 func TestStorage_OpenDisabled(t *testing.T) {
@@ -534,7 +534,7 @@ func TestStorage_OpenDisabled(t *testing.T) {
 	s := vvotel.Store(tel)(raw)
 
 	k, _ := storage.ParseKey("test.txt")
-	rc, _, err := s.Open(context.Background(), k)
+	rc, _, err := s.Open(context.Background(), k, storage.ReadOptions{})
 	if err != nil {
 		t.Fatalf("unexpected Open error: %v", err)
 	}

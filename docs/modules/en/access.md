@@ -77,6 +77,14 @@ type Directory interface {
 deactivating an account lock it out on the next call rather than when its
 session happens to expire.
 
+`Describe` is the one that may fail without refusing anybody: roles and
+permissions come from the store, so a directory that is down does not change what
+a caller may do. It does change what is *known* about them, and
+`Principal.ProfileUnresolved` says so — an empty `Profile` because nobody could be
+asked reads identically to an empty `Profile` because the subject has none, and a
+caller rendering "no display name" from the first is showing a database outage as
+a fact about a person.
+
 `Mount` refuses at start-up on a subject type registered twice, two subjects
 under one prefix, and a directory that answers for a type other than the spec's.
 All three otherwise fail at run time as a caller authenticated against the wrong
@@ -231,9 +239,29 @@ closed, err := runtime.SetPassword().Execute(ctx, access.SetPasswordCommand{
 ```
 
 The identifier is the directory's, never the caller's — an administrator who
-could choose it could point a credential at an address they control. It closes
-every session the subject held and reports how many, because the reason to
-perform one is usually that somebody else may be holding one.
+could choose it could point a credential at an address they control. It is
+written through the same `SubjectSpec.Normalize` a sign-in folds what it looks
+up with, so a directory holding `Ops@Example.com` and a subject folding to lower
+case still produce a credential that can be found. Writing the raw value made the
+credential unfindable by every path that normalizes: the call succeeded, the row
+existed, and nobody could sign in with it.
+
+It closes every session the subject held and reports how many, because the reason
+to perform one is usually that somebody else may be holding one.
+
+Setting somebody else's password is `PermCredentialWrite`, and the use case
+checks it:
+
+```go
+closed, err := runtime.SetPassword().Execute(ctx, cmd)             // needs the permission
+closed, err = runtime.SetPassword().Unguarded().Execute(ctx, cmd)  // seed and CLI
+```
+
+`Unguarded()` is for the paths that legitimately run with no principal at all — a
+seed command, an operator CLI — where a permission check has nobody to check and
+could only ever fail. It is a call at the wiring rather than a fallback when the
+context happens to carry no principal, so "this runs unauthenticated" is written
+down somewhere a reader can find it ([[D-070]]).
 
 It is a method on the runtime and not a value, because it needs the resolver:
 call it after the last `Mount`.
@@ -294,6 +322,18 @@ runtime, err := access.New(access.RuntimeSpec{
 | `AttemptObserver` | told every `succeeded`, `failed` and `refused` | nothing; it is your telemetry |
 | `BulkheadHasher` | caps concurrent Argon2 work | `NewBulkhead(inner, permits, queue)`, and `Bulkhead(inner)` for `min(NumCPU, 4)` permits and eight times that queued |
 
+The same admission and the same record stand in front of **changing** a password,
+keyed on the subject rather than on an identifier the caller supplies. Verifying
+a current password is a password oracle behind a valid session: an attacker
+holding a stolen access token could otherwise guess at full speed, and nothing
+counted it. `ChangePasswordCommand.Agent` is where the caller's address arrives,
+and every binding fills it in.
+
+`Agent.IP` is a **bare address, with no port**. Gin and Fiber hand one over
+already; net/http's `RemoteAddr` is `host:port`, and storing it verbatim made the
+same client produce a different `Attempt.IP` on every request — anything grouping
+attempts by address grouped by ephemeral port instead, which never repeats.
+
 `MemoryLimiter` counts per `(subject type, identifier)` and per IP inside one
 process. It is the right thing for a single instance and the wrong thing for
 four: implement `AttemptLimiter` over whatever your replicas share, and provide
@@ -309,6 +349,36 @@ and two of the values that column can hold end the process rather than the
 sign-in: zero rounds and a zero-length digest both panic inside `argon2.IDKey`.
 An unreadable hash is a fault and never a mismatch, so a truncated row is not a
 wrong password either.
+
+### Raising the cost factor later
+
+A cost factor raised today protects accounts created after it and nothing else:
+every existing password keeps verifying against the hash it was written with. So
+a successful sign-in re-derives one that is weaker than the current parameters,
+inside the transaction it already holds — the one moment the plaintext exists and
+a write is free.
+
+```go
+type Rehasher interface {
+	NeedsRehash(encoded string) bool
+}
+
+func RehasherOf(hasher Hasher) (Rehasher, bool)
+```
+
+`Argon2Hasher` implements it: a stored hash naming less memory, fewer rounds or
+fewer threads than this hasher would use now needs re-deriving. A hash it cannot
+read — another algorithm, another package's format — is left alone, because
+rewriting one on a guess destroys a credential some other `Hasher` in the chain
+understands.
+
+`RehasherOf` walks decorators through `Next() Hasher` rather than asserting on
+the value it was handed ([[D-061]]); `Bulkhead` has one, so wrapping does not
+lose the capability. A custom hasher that implements nothing simply never
+upgrades anything.
+
+The write is best effort. A caller who signed in correctly is not refused because
+an upgrade failed; the failure is logged and the old hash keeps working.
 
 The bulkhead wraps the hasher `Runtime` builds for itself. A hasher you pass in
 `RuntimeSpec.Hasher` is yours untouched, bulkhead included if you want one.
@@ -442,6 +512,26 @@ runtime.Declare(access.ModuleGrants{
 never deletes, and recomputes `admin` to hold everything — including permissions
 declared after it was seeded.
 
+### And enforcing them
+
+`GrantService` checks the permission each of its methods spends, against the
+principal in the context:
+
+| Method | Permission |
+|---|---|
+| `GrantRole`, `RevokeRole`, `GrantPermission`, `RevokePermission` | `PermGrantWrite` |
+| `AttachToRole`, `DetachFromRole` | `PermRoleWrite` |
+| `Describe` | `PermGrantRead` |
+
+The module declared and seeded those codes long before it enforced any of them,
+which meant a deployment that mounted these use cases behind an ordinary
+authenticated route let every signed-in caller grant themselves any role. The
+codes existed, the seed wrote them, and nothing read them.
+
+`NewUnguardedGrantService(store)` is the seed and CLI counterpart of
+`SetPassword().Unguarded()` — the same reasoning, and the same reason it is a
+separate constructor rather than a nil-principal fallback.
+
 ## Seeding
 
 Two passes, and they are not one on purpose.
@@ -491,10 +581,18 @@ type Config struct {
 | `session.touch_interval` | `ACCESS_SESSION_TOUCH_INTERVAL` | `5m` | how stale `last_used_at` may get |
 | `password.min_length` | `ACCESS_PASSWORD_MIN_LENGTH` | `10` | the floor, in characters |
 | `password.max_length` | `ACCESS_PASSWORD_MAX_LENGTH` | `256` | the ceiling, in bytes, checked before hashing |
+| `password.keep_other_sessions` | `ACCESS_PASSWORD_KEEP_OTHER_SESSIONS` | `false` | leave the subject's other sessions open on a password change |
 | `login.max_identifier_length` | `ACCESS_LOGIN_MAX_IDENTIFIER_LENGTH` | `320` | the identifier ceiling, in bytes |
 
 Length and nothing else: a composition rule shortens the search space it claims
 to widen. Check whatever else you like in your `Registrar`.
+
+`keep_other_sessions` is the deployment's, and a request body may only widen it.
+It used to be the body's alone and to default to leaving the other sessions open,
+so the ordinary "change my password because it may be compromised" left every
+session an attacker held signed in, and no deployment could change that.
+`ChangeSecretRequest.RevokeOthers` still asks for revocation where the deployment
+keeps them; it cannot ask to skip it.
 
 The two ceilings are enforced in the same place on both sides. Enrolment refuses
 a field past one as a `too_long` violation naming the field; a sign-in refuses it

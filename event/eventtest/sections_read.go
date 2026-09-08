@@ -151,6 +151,11 @@ func narrowings(widest int) []int {
 	return held
 }
 
+// Neither this section nor resumption walks the log inside a bound transaction,
+// and nothing here certifies what a global read answers there. event.Log.ReadAll
+// leaves that to the store, so a store reading through the transaction it joined
+// and one answering only committed events both pass: it is a thing a store is
+// allowed to do, not one this suite has certified.
 func globalPagingSection(this *probe) {
 	ctx := this.context()
 	store, repo, held := this.open()

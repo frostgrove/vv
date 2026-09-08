@@ -9,6 +9,10 @@ import (
 
 var errSuperseded = errors.New("cache operation was superseded")
 
+// The backend refused the store-after-load. Never reaches a caller: the value the
+// loader produced is handed over regardless, and the failure is observed.
+var errStoreFailed = errors.New("cache store after load failed")
+
 type loaderFailure struct {
 	cause error
 }
@@ -49,6 +53,7 @@ type flightMember struct {
 	transient   *transientLease
 	finished    bool
 	observed    bool
+	storeFailed bool
 	decodeToken chan struct{}
 }
 
@@ -644,7 +649,13 @@ func (this *cacheCore[K, V]) storeLoaded(member *flightMember, loaded LoadResult
 		return resultSnapshot{}, err
 	}
 	if _, err := this.commitFlight(member, encoded, expiry); err != nil {
-		return resultSnapshot{}, err
+		// A backend that would not take the value does not stop the caller
+		// getting it. Anything else — superseded, a bad expiry, a cancelled
+		// context — still ends the flight.
+		if !errors.Is(err, errStoreFailed) {
+			return resultSnapshot{}, err
+		}
+		member.storeFailed = true
 	}
 	if loaded.Presence == CleanAbsent {
 		return resultSnapshot{state: Negative, encodedBytes: len(encoded)}, nil
@@ -691,10 +702,12 @@ func (this *cacheCore[K, V]) commitFlight(member *flightMember, encoded []byte, 
 	if err == nil {
 		return true, nil
 	}
-	if this.policy.WriteFailure == Ignore {
-		return false, nil
-	}
-	return false, failure("resolve", err)
+	// Never fails the Resolve. The loader has already produced the value and the
+	// caller is about to be handed it; turning a cache write error into a failed
+	// read throws away work that succeeded and makes the cache a new way for the
+	// request to fail. The failure is reported through the observer instead, by
+	// the caller of this function, which has the context to observe with.
+	return false, errStoreFailed
 }
 
 func (this *cacheCore[K, V]) finishFlightWrite(member *flightMember) bool {

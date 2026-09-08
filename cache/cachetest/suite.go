@@ -20,11 +20,18 @@ import (
 )
 
 type Harness struct {
-	Backend            cache.Backend
-	Runtime            cache.Runtime
-	Advance            func(time.Duration) error
-	Close              func() error
-	Capacity           *Capacity
+	Backend  cache.Backend
+	Runtime  cache.Runtime
+	Advance  func(time.Duration) error
+	Close    func() error
+	Capacity *Capacity
+
+	// Why this harness supplies no Capacity probe even though its backend
+	// declares CapacityBounded. Required in that case: the core trusts that flag
+	// to write entries with no expiry of their own, so a backend that declares it
+	// and proves nothing is the one shape this suite must not certify silently.
+	CapacityNotProbed string
+
 	VerifyCancellation func(*testing.T)
 	runID              string
 }
@@ -65,6 +72,8 @@ func Run(t *testing.T, factory Factory) {
 	t.Run("mutation_fences", func(t *testing.T) { runMutationFences(t, openHarness(t, factory)) })
 	t.Run("partitioning", func(t *testing.T) { runPartitioning(t, openHarness(t, factory)) })
 	t.Run("corruption_and_bounds", func(t *testing.T) { runCorruptionAndBounds(t, openHarness(t, factory)) })
+	t.Run("backend_capacity_expiry", func(t *testing.T) { runBackendCapacityExpiry(t, openHarness(t, factory)) })
+	t.Run("backend_health", func(t *testing.T) { runBackendHealth(t, openHarness(t, factory)) })
 }
 
 func openHarness(t *testing.T, factory Factory) Harness {
@@ -81,6 +90,10 @@ func openHarness(t *testing.T, factory Factory) Harness {
 		if !description.CapacityBounded || harness.Capacity.MaxEntries < 2 || harness.Capacity.MaxEntries > 1024 || harness.Capacity.BytePressureValueBytes < 1 || harness.Capacity.BytePressureValueBytes > description.MaxItemBytes || harness.Capacity.BytePressureValueBytes > maximumItemProbeBytes {
 			t.Fatal("cachetest: backend capacity probe is invalid")
 		}
+	}
+	if description.CapacityBounded && harness.Capacity == nil && harness.CapacityNotProbed == "" {
+		t.Fatal("cachetest: this backend declares CapacityBounded and supplies no Capacity probe; " +
+			"set Harness.Capacity, or say in Harness.CapacityNotProbed why eviction cannot be probed here")
 	}
 	var identity [12]byte
 	if _, err := rand.Read(identity[:]); err != nil {
@@ -164,7 +177,34 @@ func runBackendCancellation(t *testing.T, harness Harness) {
 	}
 }
 
+// The harness hook stays — a driver knows cancellation shapes the suite cannot
+// reach — but it is no longer the whole check. Delegating everything recorded
+// that the author had been asked, not that the backend behaves: a hook that did
+// nothing certified the backend.
 func runDriverCancellation(t *testing.T, harness Harness) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	address := suiteIndexedAddress(harness, 1400)
+	value := []byte("cancelled")
+	expiry := cache.Expiry{Mode: cache.RelativeExpiry, RetainFor: time.Minute}
+
+	if err := harness.Backend.Put(ctx, address, value, expiry); !errors.Is(err, context.Canceled) {
+		t.Fatalf("put on a cancelled context = %v, want context.Canceled", err)
+	}
+	description, _ := cache.BackendDescriptionOf(harness.Backend)
+	if _, _, err := harness.Backend.Get(ctx, address, cache.ReadLimit{MaxBytes: description.MaxItemBytes}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("get on a cancelled context = %v, want context.Canceled", err)
+	}
+	if err := harness.Backend.Delete(ctx, address); !errors.Is(err, context.Canceled) {
+		t.Fatalf("delete on a cancelled context = %v, want context.Canceled", err)
+	}
+
+	// And the refused write must not have landed, or "cancelled" means the call
+	// returned an error while doing the thing anyway.
+	if _, found, err := harness.Backend.Get(context.Background(), address, cache.ReadLimit{MaxBytes: description.MaxItemBytes}); err != nil || found {
+		t.Fatalf("a cancelled put stored the value anyway: found=%t err=%v", found, err)
+	}
+
 	harness.VerifyCancellation(t)
 }
 
@@ -205,7 +245,9 @@ func runBackendLimits(t *testing.T, harness Harness) {
 		}
 	}
 	if harness.Capacity == nil {
-		return
+		// A skip, not a silent return: a conformance probe that declined shows up
+		// in the output instead of reading as a pass.
+		t.Skipf("no capacity probe: %s", harness.CapacityNotProbed)
 	}
 	ctx := context.Background()
 	expiry := cache.Expiry{Mode: cache.RelativeExpiry, RetainFor: time.Minute}
@@ -367,8 +409,13 @@ func runCodecBounds(t *testing.T, harness Harness) {
 	if err := futureWriter.Put(ctx, "key", "future"); err != nil {
 		t.Fatal(err)
 	}
-	if result, err := futureReader.Lookup(ctx, "key"); !errors.Is(err, cache.ErrCorrupt) || result.State != 0 {
-		t.Fatalf("future schema = %+v, %v", result, err)
+	// A miss, not corruption. The envelope's hash verifies, so these bytes are
+	// sound — they were written under a different ValueSchema, which is what a
+	// deployment does on purpose when it changes a cached type. Answering
+	// ErrCorrupt made a routine rotation fail every read under RefuseCorrupt,
+	// with the loader never running and nothing evicting the entry.
+	if result, err := futureReader.Lookup(ctx, "key"); err != nil || result.State != cache.Miss {
+		t.Fatalf("future schema = %+v, %v — a schema rotation is not corruption", result, err)
 	}
 	address, ok := lastAddress(controller.Records(), PutOperation)
 	if !ok {
@@ -1169,16 +1216,19 @@ func runFailurePolicies(t *testing.T, harness Harness) {
 	if result, err := readAsMiss.Lookup(ctx, "read-as-miss"); err != nil || result.State != cache.Miss {
 		t.Fatalf("read-as-miss = %+v, %v", result, err)
 	}
-	ignoreWrite := newStringCache(t, harness, func(policy *cache.Policy) {
-		policy.WriteFailure = cache.Ignore
-	})
+	// A store-after-load failure is the other half, and it is not a policy: the
+	// loader already produced the value, so the caller is handed it and the
+	// failure is observed rather than returned. Turning a cache write error into
+	// a failed read throws away work that succeeded.
+	storeFailure := newStringCache(t, harness, nil)
 	controller.MustFailNext(PutOperation, private)
-	if err := ignoreWrite.Put(ctx, "ignored-write", "value"); err != nil {
-		t.Fatalf("ignored write = %v", err)
+	result, err := storeFailure.Resolve(ctx, "store-after-load", func(context.Context, string) (cache.LoadResult[string], error) {
+		return cache.Present("loaded"), nil
+	})
+	if err != nil || result.State != cache.Loaded || result.Value != "loaded" {
+		t.Fatalf("store after load = %+v, %v — a cache write error destroyed a value in hand", result, err)
 	}
-	if result, err := ignoreWrite.Lookup(ctx, "ignored-write"); err != nil || result.State != cache.Miss {
-		t.Fatalf("ignored write lookup = %+v, %v", result, err)
-	}
+	waitForQuiescence(t, storeFailure)
 	ignoreDelete := newStringCache(t, harness, func(policy *cache.Policy) {
 		policy.InvalidateFailure = cache.Ignore
 	})
@@ -1510,7 +1560,6 @@ func suitePolicy(t *testing.T) cache.Policy {
 	policy.MaxBatchKeyBytes = 4096
 	policy.MaxBatchResultBytes = 4096
 	policy.ReadFailure = cache.Propagate
-	policy.WriteFailure = cache.Propagate
 	policy.InvalidateFailure = cache.Propagate
 	policy.Corruption = cache.RefuseCorrupt
 	return policy
@@ -1613,4 +1662,69 @@ func waitForQuiescence(t *testing.T, typed *cache.Cache[string, string]) {
 		stats = typed.Stats()
 		return stats == (cache.LocalStats{})
 	})
+}
+
+// Half of Backend.Put's expiry contract was never exercised. CapacityOnlyExpiry
+// says "hold this until you need the room", and the core writes it for any
+// retention that is capacity-bounded — trusting a backend that never had to
+// prove it does not simply drop such an entry, or keep it forever.
+func runBackendCapacityExpiry(t *testing.T, harness Harness) {
+	description, _ := cache.BackendDescriptionOf(harness.Backend)
+	if !description.CapacityBounded {
+		t.Skip("backend is not capacity bounded, so it has no capacity-only retention to honour")
+	}
+	ctx := context.Background()
+	address := suiteIndexedAddress(harness, 1500)
+	value := []byte("capacity-only")
+	if err := harness.Backend.Put(ctx, address, value, cache.Expiry{Mode: cache.CapacityOnlyExpiry}); err != nil {
+		t.Fatalf("capacity-only put = %v", err)
+	}
+
+	// Far past any TTL the rest of the suite uses. Time must not take it.
+	if err := harness.Advance(24 * time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	stored, found, err := harness.Backend.Get(ctx, address, cache.ReadLimit{MaxBytes: description.MaxItemBytes})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !found || !bytes.Equal(stored, value) {
+		t.Fatalf("capacity-only entry after a day = found %t, %q — time evicted an entry that has no time bound", found, stored)
+	}
+
+	// The control: it is still evictable, so "no time bound" is not "forever".
+	if harness.Capacity == nil {
+		t.Skipf("no capacity probe: %s", harness.CapacityNotProbed)
+	}
+	for index := 0; index <= harness.Capacity.MaxEntries; index++ {
+		if err := harness.Backend.Put(ctx, suiteIndexedAddress(harness, 1600+index), []byte{byte(index)}, cache.Expiry{Mode: cache.RelativeExpiry, RetainFor: time.Hour}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, found, err := harness.Backend.Get(ctx, address, cache.ReadLimit{MaxBytes: description.MaxItemBytes}); err != nil || found {
+		t.Fatalf("capacity-only entry survived capacity pressure: found=%t err=%v", found, err)
+	}
+}
+
+// A backend whose CheckBackend always answers nil was certified conformant:
+// nothing in the suite or the Controller ever reached HealthChecker, so a health
+// endpoint built on it reported a cache that had been unreachable for hours.
+func runBackendHealth(t *testing.T, harness Harness) {
+	checker, ok := cache.HealthCheckerOf(harness.Backend)
+	if !ok {
+		t.Skip("backend declares no health capability")
+	}
+	if err := checker.CheckBackend(context.Background()); err != nil {
+		t.Fatalf("an open backend reported unhealthy: %v", err)
+	}
+	if harness.Close == nil {
+		t.Skip("harness cannot close the backend, so an unhealthy answer cannot be provoked")
+	}
+	if err := harness.Close(); err != nil {
+		t.Fatalf("closing: %v", err)
+	}
+	harness.Close = nil
+	if err := checker.CheckBackend(context.Background()); err == nil {
+		t.Fatal("a closed backend reported healthy, so this check can never fail")
+	}
 }

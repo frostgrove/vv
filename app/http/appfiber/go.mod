@@ -38,3 +38,7 @@ require (
 	golang.org/x/sys v0.46.0 // indirect
 	golang.org/x/text v0.38.0 // indirect
 )
+
+// authfiber has no tag yet; the workspace and this replace are how a satellite
+// resolves it until the first release.
+replace github.com/frostgrove/vv/auth/http/authfiber => ../../../auth/http/authfiber

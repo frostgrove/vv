@@ -357,7 +357,13 @@ func TestEnqueueInRejectsTransactionBeforeContextAndPayloadEffects(t *testing.T)
 	}
 }
 
-func TestEnqueueContextProviderIsContainedBeforePayloadAndDriverEffects(t *testing.T) {
+// The provider runs after the payload is encoded and the identifier minted,
+// because a capture that mints a record-bound token needs both — see [[D-119]].
+// What a refusal must still cost nothing is the driver: no placement, no stage,
+// no transaction. The encode is local, pure and bounded by the payload ceiling,
+// and it is asserted here rather than left implicit so that a later reordering
+// has to come back and change this line.
+func TestEnqueueContextProviderIsContainedBeforeDriverEffects(t *testing.T) {
 	secret := errors.New("identity provider password=private")
 	validCapture := mustContextCapture(t, ContextCaptureSpec{Provenance: mustIdentityProvenance(t, "framework.test"), Epoch: 1})
 	cases := []struct {
@@ -407,7 +413,7 @@ func TestEnqueueContextProviderIsContainedBeforePayloadAndDriverEffects(t *testi
 			if !errors.Is(err, test.want) || errors.Is(err, secret) || strings.Contains(fmt.Sprint(err), "private") {
 				t.Fatalf("provider error = %v", err)
 			}
-			if captures.Load() != 1 || encodes.Load() != 0 || entropyReads.Load() != 0 || senderCalls.Load() != 0 {
+			if captures.Load() != 1 || encodes.Load() != 1 || senderCalls.Load() != 0 {
 				t.Fatalf("effects = capture:%d encode:%d entropy:%d sender:%d", captures.Load(), encodes.Load(), entropyReads.Load(), senderCalls.Load())
 			}
 		})

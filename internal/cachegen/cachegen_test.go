@@ -128,7 +128,7 @@ import cachealias "github.com/frostgrove/vv/cache"
 
 var Values = cachealias.Auto[string, string](
 	cachealias.Hot.With(
-		cachealias.MaxTransientBytes(536870912),
+		cachealias.MaxTransientBytes(2147483648),
 		cachealias.MaxTransientWaiters(7),
 		cachealias.TransientSaturation(cachealias.RejectTransient()),
 	),
@@ -142,10 +142,10 @@ var Values = cachealias.Auto[string, string](
 	manifestPath := filepath.Join(directory, "cache.manifest.yml")
 	document := readTestManifest(t, manifestPath)
 	policy := document.Caches[0].Profile.Policy
-	if policy.MaxTransientBytes != 536870912 || policy.MaxTransientWaiters != 7 || policy.TransientSaturation != frameworkcache.RejectTransientMode || policy.TransientWait != 0 {
+	if policy.MaxTransientBytes != 2147483648 || policy.MaxTransientWaiters != 7 || policy.TransientSaturation != frameworkcache.RejectTransientMode || policy.TransientWait != 0 {
 		t.Fatalf("materialized transient policy = %#v", policy)
 	}
-	if document.Caches[0].Profile.Expression != "cache.Hot.With(cache.MaxTransientBytes(536870912), cache.MaxTransientWaiters(7), cache.TransientSaturation(cache.RejectTransient()))" {
+	if document.Caches[0].Profile.Expression != "cache.Hot.With(cache.MaxTransientBytes(2147483648), cache.MaxTransientWaiters(7), cache.TransientSaturation(cache.RejectTransient()))" {
 		t.Fatalf("transient policy expression = %q", document.Caches[0].Profile.Expression)
 	}
 	document.Caches[0].Scope.Confirmed = true
@@ -159,7 +159,7 @@ import "testing"
 
 func TestGeneratedTransientDescriptor(t *testing.T) {
 	descriptors := VVCacheSet.Describe()
-	if len(descriptors) != 1 || descriptors[0].Policy.MaxTransientWaiters != 7 || descriptors[0].Policy.MaxTransientBytes != 536870912 {
+	if len(descriptors) != 1 || descriptors[0].Policy.MaxTransientWaiters != 7 || descriptors[0].Policy.MaxTransientBytes != 2147483648 {
 		t.Fatalf("generated transient descriptor = %#v", descriptors)
 	}
 }
@@ -168,7 +168,7 @@ func TestGeneratedTransientDescriptor(t *testing.T) {
 	}
 	goTest(t, directory)
 	sourcePath := filepath.Join(directory, "cache.go")
-	source := strings.Replace(string(readFile(t, sourcePath)), "536870912", "536870913", 1)
+	source := strings.Replace(string(readFile(t, sourcePath)), "2147483648", "2147483649", 1)
 	if err := os.WriteFile(sourcePath, []byte(source), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -1418,13 +1418,16 @@ func goTest(t *testing.T, directory string) {
 	}
 }
 
+// The build tag and not GOEXPERIMENT: a toolchain that has jsonv2 on by default
+// sets no environment variable, so reading one said "off" while the generated
+// fixture was compiled with it on. The subprocess inherits this toolchain's
+// defaults, so the tag that decides the constant here is the tag it will build
+// under.
 func goTestJSONActivation(t *testing.T, directory string) {
 	t.Helper()
-	for _, experiment := range strings.Split(os.Getenv("GOEXPERIMENT"), ",") {
-		if experiment == "jsonv2" {
-			goTestFails(t, directory, "safe JSON is unavailable with jsonv2")
-			return
-		}
+	if !safeJSONRuntimeSupported {
+		goTestFails(t, directory, "safe JSON is unavailable with jsonv2")
+		return
 	}
 	goTest(t, directory)
 }

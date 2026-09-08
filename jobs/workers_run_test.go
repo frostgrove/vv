@@ -25,6 +25,7 @@ type workersRunDriver struct {
 	delays         []time.Duration
 	deadlineDelays []time.Duration
 	renewSizes     []int
+	renewErr       error
 	renewMutation  DeliveryMutationStatus
 	renewControl   DeliveryControlStatus
 	applyMutation  DeliveryMutationStatus
@@ -55,6 +56,9 @@ func (driver *workersRunDriver) Renew(_ context.Context, request RenewRequest) (
 	driver.mu.Lock()
 	defer driver.mu.Unlock()
 	driver.renewSizes = append(driver.renewSizes, len(request.leases))
+	if driver.renewErr != nil {
+		return RenewResult{}, driver.renewErr
+	}
 	items := make([]LeaseRenewal, len(request.leases))
 	for index, lease := range request.leases {
 		mutation := driver.renewMutation
@@ -517,5 +521,142 @@ func TestWorkersDrainBeforeRunSealsLifecycle(t *testing.T) {
 	}
 	if err = workers.Run(context.Background()); !errors.Is(err, ErrConflict) {
 		t.Fatalf("run after drain = %v", err)
+	}
+}
+
+// A renew that never reached the driver says nothing about the lease, and every
+// heartbeat is one call for the whole pool. Reading one transport failure as
+// "every lease in this batch is gone" therefore let a single dropped packet
+// revoke the pool's entire in-flight set, cancelling handlers that were running
+// perfectly well under leases nobody had taken.
+func TestOneFailedHeartbeatDoesNotLoseEveryLeaseInTheBatch(t *testing.T) {
+	fixture := newWorkerDeliveryFixture(t, PlacementRegular)
+	driver := &workersRunDriver{
+		description: queueTestBackendDescription(1),
+		observedAt:  fixture.invocation.EligibleAt(),
+		finished:    make(chan struct{}),
+	}
+	consumer := On(fixture.definition, Handler[string](func(context.Context, string) error { return nil }), Binding("worker.primary"), Concurrency(2))
+	workers, err := NewWorkers(WorkersSpec{
+		Namespace: fixture.namespace,
+		Catalog:   fixture.catalog,
+		Driver:    driver,
+		Build:     fixture.build,
+		Identity:  workerDeliveryIdentityRestorer(t),
+		Entropy:   bytes.NewReader(bytes.Repeat([]byte{1}, WorkerIncarnationBytes)),
+	}, consumer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool := newWorkerPool(workers, newWorkerRunSession(context.Background()))
+	binding := pool.bindings[fixture.definition.Name()]
+	active := newActiveWorkerDelivery(pool, binding, fixture.lease, 1)
+	pool.active[active] = struct{}{}
+
+	driver.mu.Lock()
+	driver.renewErr = errors.New("the connection to the queue dropped")
+	driver.mu.Unlock()
+	if !pool.renewActive(t.Context()) {
+		t.Fatal("a transport failure stopped the pool")
+	}
+
+	active.mu.Lock()
+	lost := active.closed
+	active.mu.Unlock()
+	if lost {
+		t.Fatal("one failed heartbeat revoked a lease that had not expired")
+	}
+
+	// The control: once the horizon from the last successful renewal has passed,
+	// the lease really is gone and the delivery is closed.
+	active.mu.Lock()
+	active.leaseHorizon = active.leaseHorizon.Add(-2 * workers.config.leaseTTL)
+	active.mu.Unlock()
+	if !pool.renewActive(t.Context()) {
+		t.Fatal("a transport failure stopped the pool")
+	}
+	active.mu.Lock()
+	expired := active.closed
+	active.mu.Unlock()
+	if !expired {
+		t.Fatal("a lease whose horizon passed with no successful renewal was kept")
+	}
+}
+
+// The takeover is the whole crash guarantee: a worker that recovers a delivery
+// somebody else was running must revoke that attempt so the fenced owner's later
+// writes are refused. Nothing at the worker level asserted it — the branch could
+// be replaced with a no-op and `go test ./jobs/...` stayed green, which is how
+// the Recover defect beside it shipped.
+func TestRecoveringARunningDeliveryRevokesTheSupersededAttempt(t *testing.T) {
+	fixture := newWorkerDeliveryFixture(t, PlacementRegular)
+	running, _, err := fixture.invocation.BeginAttempt(BeginAttemptSpec{
+		Binding:   fixture.binding.binding,
+		Build:     fixture.build,
+		StartedAt: fixture.invocation.EligibleAt(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if running.State() != InvocationRunning {
+		t.Fatalf("state = %v, want running — the fixture is not the case this test is about", running.State())
+	}
+	record, err := NewDeliveryRecord(running, fixture.payload, digestWirePayload(fixture.payload), fixture.record.PayloadDigest)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	driver := &workersRunDriver{
+		description: queueTestBackendDescription(1),
+		observedAt:  fixture.invocation.EligibleAt().Add(time.Second),
+		invocation:  running,
+		finished:    make(chan struct{}),
+	}
+	consumer := On(fixture.definition, Handler[string](func(context.Context, string) error { return nil }), Binding("worker.primary"), Concurrency(1))
+	workers, err := NewWorkers(WorkersSpec{
+		Namespace: fixture.namespace,
+		Catalog:   fixture.catalog,
+		Driver:    driver,
+		Build:     fixture.build,
+		Identity:  workerDeliveryIdentityRestorer(t),
+		Entropy:   bytes.NewReader(bytes.Repeat([]byte{1}, 1024)),
+	}, consumer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool := newWorkerPool(workers, newWorkerRunSession(context.Background()))
+
+	recovered, err := NewRecoveredDelivery(fixture.lease, record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	claimed, dispatch, ok := pool.prepareRecovered(recovered)
+	if !ok {
+		t.Fatal("recovering a running delivery stopped the pool")
+	}
+	if dispatch {
+		t.Fatalf("a delivery somebody else was running was dispatched to a handler: %#v", claimed)
+	}
+
+	driver.mu.Lock()
+	kinds := append([]DeliveryCommandKind(nil), driver.kinds...)
+	reasons := append([]Reason(nil), driver.reasons...)
+	driver.mu.Unlock()
+	if len(kinds) != 1 || kinds[0] != DeliveryCommandRevokeAttempt {
+		t.Fatalf("commands = %v, want one RevokeAttempt — the superseded attempt was left running", kinds)
+	}
+	if len(reasons) != 1 || reasons[0] != ReasonLeaseLost {
+		t.Fatalf("reasons = %v, want ReasonLeaseLost", reasons)
+	}
+
+	// The control: a recovered delivery that is merely *queued* is dispatched
+	// rather than revoked, so the revoke above is the running state and not
+	// everything recovered being thrown away.
+	queued, err := NewRecoveredDelivery(fixture.lease, fixture.record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, dispatch, ok := pool.prepareRecovered(queued); !ok || !dispatch {
+		t.Fatalf("a recovered queued delivery was not dispatched (ok=%t dispatch=%t)", ok, dispatch)
 	}
 }

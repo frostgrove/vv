@@ -122,6 +122,8 @@ func (workers *Workers) observeApply(definition Name, binding BindingName, reque
 		Definition:  definition,
 		Binding:     binding,
 		CommandKind: request.command.kind,
+		Disposition: request.command.disposition.Kind(),
+		Reason:      request.command.reason,
 		Items:       1,
 		Elapsed:     call.elapsed,
 	}

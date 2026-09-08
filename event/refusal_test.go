@@ -99,22 +99,27 @@ func (this classifiedOutcome) at(door refusalDoor) error {
 	return door.byDefault
 }
 
-func namesDeclaredInErrorsFile(t *testing.T) []string {
+// Every non-test file of the package rather than errors.go alone: a sentinel
+// declared beside the code that raises it is the ordinary drift, and one this
+// walk cannot see is one the partition table never pairs.
+func namesDeclaredInThePackage(t *testing.T) []string {
 	t.Helper()
-	file, err := parser.ParseFile(token.NewFileSet(), "errors.go", nil, 0)
-	if err != nil {
-		t.Fatalf("event/errors.go could not be parsed, so the declared sentinel set cannot be read: %v", err)
-	}
 	var names []string
-	for _, declaration := range file.Decls {
-		general, isVar := declaration.(*ast.GenDecl)
-		if !isVar || general.Tok != token.VAR {
-			continue
+	for _, source := range sourcesIn(t, ".") {
+		file, err := parser.ParseFile(token.NewFileSet(), source, nil, 0)
+		if err != nil {
+			t.Fatalf("%s could not be parsed, so the declared sentinel set cannot be read: %v", source, err)
 		}
-		for _, spec := range general.Specs {
-			for _, name := range spec.(*ast.ValueSpec).Names {
-				if strings.HasPrefix(name.Name, "Err") {
-					names = append(names, name.Name)
+		for _, declaration := range file.Decls {
+			general, isVar := declaration.(*ast.GenDecl)
+			if !isVar || general.Tok != token.VAR {
+				continue
+			}
+			for _, spec := range general.Specs {
+				for _, name := range spec.(*ast.ValueSpec).Names {
+					if strings.HasPrefix(name.Name, "Err") {
+						names = append(names, name.Name)
+					}
 				}
 			}
 		}
@@ -122,24 +127,30 @@ func namesDeclaredInErrorsFile(t *testing.T) []string {
 	return names
 }
 
+// The identifiers written inside vocabulary(), which is a reading of the source
+// and not of what the function answers. What it answers is compared with the
+// table below, by calling it. The whole package is walked rather than the file
+// the function lives in today, for the reason the sibling above walks it.
 func namesListedInTheGate(t *testing.T) []string {
 	t.Helper()
-	file, err := parser.ParseFile(token.NewFileSet(), "errors.go", nil, 0)
-	if err != nil {
-		t.Fatalf("event/errors.go could not be parsed, so the gate's sentinel list cannot be read: %v", err)
-	}
 	var names []string
-	for _, declaration := range file.Decls {
-		function, isFunction := declaration.(*ast.FuncDecl)
-		if !isFunction || function.Name.Name != "vocabulary" {
-			continue
+	for _, source := range sourcesIn(t, ".") {
+		file, err := parser.ParseFile(token.NewFileSet(), source, nil, 0)
+		if err != nil {
+			t.Fatalf("%s could not be parsed, so the gate's sentinel list cannot be read: %v", source, err)
 		}
-		ast.Inspect(function, func(node ast.Node) bool {
-			if identifier, isIdentifier := node.(*ast.Ident); isIdentifier && strings.HasPrefix(identifier.Name, "Err") {
-				names = append(names, identifier.Name)
+		for _, declaration := range file.Decls {
+			function, isFunction := declaration.(*ast.FuncDecl)
+			if !isFunction || function.Name.Name != "vocabulary" {
+				continue
 			}
-			return true
-		})
+			ast.Inspect(function, func(node ast.Node) bool {
+				if identifier, isIdentifier := node.(*ast.Ident); isIdentifier && strings.HasPrefix(identifier.Name, "Err") {
+					names = append(names, identifier.Name)
+				}
+				return true
+			})
+		}
 	}
 	return names
 }
@@ -164,13 +175,13 @@ func TestTheRefusalVocabularyIsAPartition(t *testing.T) {
 			what  string
 			names []string
 		}{
-			{"declared in event/errors.go", namesDeclaredInErrorsFile(t)},
-			{"listed in vocabulary(), which is the cross-class gate", namesListedInTheGate(t)},
+			{"declared in a non-test file of event/", namesDeclaredInThePackage(t)},
+			{"written inside vocabulary(), the source of the cross-class gate", namesListedInTheGate(t)},
 		} {
 			found := countByName(source.names)
 			for name, want := range expected {
 				if found[name] != want {
-					t.Fatalf("%s appears %d times %s and %d times in this test's table, so the partition gate and the vocabulary have drifted apart",
+					t.Fatalf("%s appears %d times %s and %d times in this test's table, so a sentinel is declared or gated somewhere this pairing does not read",
 						name, found[name], source.what, want)
 				}
 			}

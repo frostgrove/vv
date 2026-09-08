@@ -116,6 +116,10 @@ tenancy-owned type from a base seam.
   but `crud`'s own graph, and each adapter reaches nothing but the core plus its
   seam. Both halves fail when violated: an import of `cache` added to the core is
   reported, and so is `security` added to `tenancydb`.
+- `TestAPackageCostingMoreThanItsRowSaysIsReportedAndOneCostingExactlyItIsNot` —
+  the walk both cost tables are read by, driven over a written tree instead of
+  this repository, where the answer that is wanted is silence and silence is also
+  what a deleted arm gives.
 - `TestNoBaseSubsystemDependsOnTheOptionalExtension` — twelve subsystems listed,
   none of them reaching `tenancy` or anything under it.
 - `make check-deps` — tenancy adds no external package to the root module's

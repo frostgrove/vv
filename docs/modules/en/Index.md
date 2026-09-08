@@ -110,6 +110,14 @@ the exception ([[D-048]], [[D-055]]).
 | [cachememory](cachememory.md) | `vv/cache/cachememory` | Bounded process-local LRU backend with exact public charge accounting and batch reads |
 | [cachefx](cache.md) | `vv/cache/cachefx` | **Module** — the set, provider and resource groups, the required resource declarations and the activation, in an uber/fx graph |
 
+## Event sourcing — a history rather than a current row
+
+| Module | Import | What it is |
+|---|---|---|
+| [event](event.md) | `vv/event` | Optional. Declared facts, a reader chain per payload shape, expected-version append, full replay, a bounded log walk and a six-class refusal vocabulary — over any store |
+| [eventmemory](eventmemory.md) | `vv/event/eventmemory` | A complete in-memory store, transactions included. Not a test double |
+| [eventtest](eventtest.md) | `vv/event/eventtest` | The store contract as a conformance suite, plus three proxies an application runs over its own declaration |
+
 ## Observability — tracing and metrics
 
 | Module | Import | What it is |

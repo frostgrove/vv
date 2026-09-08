@@ -261,7 +261,7 @@ func TestRestoreTrustedIdentityVerifiesDecodedIdentityAndLifetime(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	systemRequest, err := system.IdentityRestoreRequest(namespace, systemPartition, definition, policy)
+	systemRequest, err := system.IdentityRestoreRequest(namespace, systemPartition, definition, testInvocationID(t), testWireDigest(t, 1), policy)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -489,7 +489,7 @@ func TestDurableContextSurfacesAreRedacted(t *testing.T) {
 	}
 	record := durable.Record()
 	token, _ := durable.Token()
-	request, err := durable.IdentityRestoreRequest(namespace, partition, definition, policy)
+	request, err := durable.IdentityRestoreRequest(namespace, partition, definition, testInvocationID(t), testWireDigest(t, 1), policy)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -603,9 +603,31 @@ func identityRestoreFixture(t *testing.T) (Namespace, PartitionKey, Name, TraceP
 	if err != nil {
 		t.Fatal(err)
 	}
-	request, err := durable.IdentityRestoreRequest(namespace, partition, definition, policy)
+	request, err := durable.IdentityRestoreRequest(namespace, partition, definition, testInvocationID(t), testWireDigest(t, 1), policy)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return namespace, partition, definition, policy, durable, request
+}
+
+func testInvocationID(t *testing.T) InvocationID {
+	t.Helper()
+	id, err := NewInvocationID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return id
+}
+
+func testWireDigest(t *testing.T, seed byte) WireDigest {
+	t.Helper()
+	var value [32]byte
+	for index := range value {
+		value[index] = seed
+	}
+	digest, err := WireDigestFromBytes(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return digest
 }

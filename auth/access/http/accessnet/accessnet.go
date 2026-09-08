@@ -2,6 +2,7 @@ package accessnet
 
 import (
 	"encoding/json"
+	"net"
 	"net/http"
 	"strings"
 
@@ -191,7 +192,7 @@ func (this *Handler) ChangeSecret(w http.ResponseWriter, r *http.Request) {
 		this.refuse(w, r, err)
 		return
 	}
-	response, err := this.endpoints.ChangeSecret(r.Context(), body)
+	response, err := this.endpoints.ChangeSecret(r.Context(), body, agentOf(r))
 	if err != nil {
 		this.refuse(w, r, err)
 		return
@@ -240,7 +241,20 @@ func (this *Handler) refuse(w http.ResponseWriter, r *http.Request, err error) {
 }
 
 func agentOf(r *http.Request) access.Agent {
-	return access.Agent{UserAgent: r.Header.Get("User-Agent"), IP: r.RemoteAddr}
+	return access.Agent{UserAgent: r.Header.Get("User-Agent"), IP: clientAddress(r.RemoteAddr)}
+}
+
+// RemoteAddr is "host:port"; Agent.IP is the address alone, which is what Gin and
+// Fiber already give it. Keeping the port made every attempt from one client a
+// different address, so anything grouping by it grouped by a number that never
+// repeats. An address that will not split is passed through rather than dropped —
+// a value that is not the shape we expected is still better evidence than none.
+func clientAddress(remote string) string {
+	host, _, err := net.SplitHostPort(remote)
+	if err != nil {
+		return remote
+	}
+	return host
 }
 
 type RegisterHandler[P any] struct {

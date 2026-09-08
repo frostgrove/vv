@@ -19,7 +19,12 @@ func TestATransactionCapableStoreSatisfiesTheContract(t *testing.T) {
 	eventtest.Run(t, stagingFactory(false, nil))
 }
 
-func TestARunThatCertifiedNothingFails(t *testing.T) {
+// The precondition of anti-vacuity rule 2 and not the rule itself: three
+// sections a store claims none of are reported in the third word and none of
+// them counts toward the certifications a run is refused for having none of.
+// That a run of nothing but those fails is Run's answer, and
+// TestTheRunReportsWhatItFound is where it is watched.
+func TestAGatedSectionIsReportedNotCertified(t *testing.T) {
 	gated := eventtest.Certify(t, sliceFactory(false, nil), "transactions", "durability", "shared backing")
 	if certified := eventtest.Certified(gated); certified != 0 {
 		t.Fatalf("a run of three sections this store claims none of certified %d of them, so the case below asserts nothing", certified)
@@ -44,8 +49,10 @@ func TestARunThatCertifiedNothingFails(t *testing.T) {
 // section ever answers a verdict and the runner keeps the row it initialised.
 // SkipNow leaves it by the same door and is the one of the two this test can
 // watch without the failure propagating to the test doing the watching, and the
-// word on that row must not be the one that means the store is correct.
-func TestASectionThatNeverReturnedIsNotReportedPassed(t *testing.T) {
+// word on that row must not be the one that means the store is correct. That Run
+// reports the row rather than counting it is watched by
+// TestTheRunReportsWhatItFound.
+func TestTheVerdictOfASectionThatNeverReturnedIsNotPassed(t *testing.T) {
 	factory := stagingFactory(false, nil)
 	factory.Begin = func(t *testing.T, _ context.Context, _ event.Store) (context.Context, eventtest.Tx) {
 		t.SkipNow()
@@ -63,7 +70,11 @@ func TestASectionThatNeverReturnedIsNotReportedPassed(t *testing.T) {
 	}
 }
 
-func TestAClaimedCapabilityWithAMissingHookIsRefused(t *testing.T) {
+// The rule the door applies, asked of the rule rather than of the door: what
+// the door then does with it — a fatal before any section runs — is
+// TestTheRunReportsWhatItFound's two admission cases, which drive these same
+// three shapes through Run itself.
+func TestAClaimWithNoHookAndACapabilityNobodyStatedAreBothNamed(t *testing.T) {
 	for _, claim := range []struct {
 		what    string
 		stated  event.Capabilities
@@ -271,9 +282,12 @@ func TestACursorAStoreCannotParseIsRefusedRatherThanReadFromTheBeginning(t *test
 	}
 }
 
-// The fourth anti-vacuity rule, computed rather than remembered: every section
-// carries a control, so a store that refuses every operation must fail every one
-// of them.
+// What this proves and what it does not, because the difference cost a review
+// round: every section reaches the store and fails when the store refuses, which
+// is liveness — a section that stopped asserting anything still fails here,
+// because every section opens with a load. What proves a section carries a
+// control is the defect inventory, where each of the twenty is named by a store
+// that answers every call successfully and wrongly.
 func TestEverySectionFailsAgainstAStoreThatRefusesEverything(t *testing.T) {
 	verdicts := eventtest.Certify(t, refusingFactory())
 	if len(verdicts) != len(eventtest.SectionNames()) {
@@ -281,7 +295,7 @@ func TestEverySectionFailsAgainstAStoreThatRefusesEverything(t *testing.T) {
 	}
 	for _, given := range verdicts {
 		if given.Word != "failed" {
-			t.Errorf("the %s section was reported %q against a store that refuses every operation, so whatever else it asserts, it carries no control", given.Section, given.Word)
+			t.Errorf("the %s section was reported %q against a store that refuses every operation, so whatever else it asserts, it never reached the store", given.Section, given.Word)
 		}
 	}
 }

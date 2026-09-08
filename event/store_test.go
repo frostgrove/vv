@@ -5,7 +5,6 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -75,20 +74,18 @@ type typedLog interface {
 	Append(context.Context, Stream, func(any) any) error
 }
 
-func exportedInterfaces(t *testing.T) map[string][]string {
+type interfaceShape struct {
+	methods []string
+	embeds  []string
+}
+
+func exportedInterfaces(t *testing.T) map[string]interfaceShape {
 	t.Helper()
-	entries, err := os.ReadDir(".")
-	if err != nil {
-		t.Fatalf("event/ could not be listed, so its exported interfaces cannot be inventoried: %v", err)
-	}
-	found := map[string][]string{}
-	for _, entry := range entries {
-		if !strings.HasSuffix(entry.Name(), ".go") || strings.HasSuffix(entry.Name(), "_test.go") {
-			continue
-		}
-		source, err := parser.ParseFile(token.NewFileSet(), entry.Name(), nil, 0)
+	found := map[string]interfaceShape{}
+	for _, path := range sourcesIn(t, ".") {
+		source, err := parser.ParseFile(token.NewFileSet(), path, nil, 0)
 		if err != nil {
-			t.Fatalf("event/%s could not be parsed: %v", entry.Name(), err)
+			t.Fatalf("%s could not be parsed: %v", path, err)
 		}
 		ast.Inspect(source, func(node ast.Node) bool {
 			declared, isType := node.(*ast.TypeSpec)
@@ -99,13 +96,19 @@ func exportedInterfaces(t *testing.T) map[string][]string {
 			if !isInterface {
 				return true
 			}
-			names := []string{}
+			written := interfaceShape{methods: []string{}, embeds: []string{}}
 			for _, member := range shape.Methods.List {
+				if len(member.Names) == 0 {
+					if embedded, isName := member.Type.(*ast.Ident); isName {
+						written.embeds = append(written.embeds, embedded.Name)
+					}
+					continue
+				}
 				for _, name := range member.Names {
-					names = append(names, name.Name)
+					written.methods = append(written.methods, name.Name)
 				}
 			}
-			found[declared.Name.Name] = names
+			found[declared.Name.Name] = written
 			return true
 		})
 	}
@@ -216,6 +219,20 @@ func TestTheStoreSeamHasEightMethodsAndNoneMutatesOrQueries(t *testing.T) {
 		}
 	})
 
+	// Answering the four methods is not the relation. ReadOnly hands a Log back
+	// by embedding the store in a value that has no Append, and a Store that
+	// spelled the four inline instead of embedding Log would keep every count
+	// here right while that value stopped compiling the moment either list moved.
+	t.Run("a store is a log by embedding one", func(t *testing.T) {
+		declared := exportedInterfaces(t)
+		if embeds := declared["Store"].embeds; len(embeds) != 1 || embeds[0] != "Log" {
+			t.Fatalf("Store embeds %v where the contract makes it a Log, so the two lists are two independent copies of four methods", embeds)
+		}
+		if embeds := declared["Log"].embeds; len(embeds) != 0 {
+			t.Fatalf("Log embeds %v, and the read-only half is where the seam stops rather than a name for something wider", embeds)
+		}
+	})
+
 	t.Run("no method rewrites a fact, queries history or controls a transaction", func(t *testing.T) {
 		for _, seam := range []struct {
 			name string
@@ -245,8 +262,8 @@ func TestTheStoreSeamHasEightMethodsAndNoneMutatesOrQueries(t *testing.T) {
 				t.Fatalf("the source walk did not find %s, so it is reading the wrong files", required)
 			}
 		}
-		for name, methods := range declared {
-			for _, method := range methods {
+		for name, shape := range declared {
+			for _, method := range shape.methods {
 				for _, verb := range forbiddenVerbs() {
 					if strings.Contains(method, verb) {
 						t.Fatalf("the exported interface %s declares %s, and event history is not a collection anything queries or rewrites", name, method)

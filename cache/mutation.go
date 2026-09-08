@@ -132,9 +132,9 @@ func (this *cacheCore[K, V]) commitMutationAs(ctx context.Context, write mutatio
 	if ctx.Err() != nil {
 		return failure(string(operation), ctx.Err())
 	}
-	if this.policy.WriteFailure == Ignore {
-		return nil
-	}
+	// Always reported. A caller who asked for a value to be stored and is
+	// answered nil believes it was stored; there is no policy under which that is
+	// the right answer, and Hot's used to give it.
 	return failure(string(operation), err)
 }
 

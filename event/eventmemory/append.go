@@ -24,13 +24,16 @@ func (this *Store) Append(ctx context.Context, req event.AppendRequest) error {
 	if this.closed.Load() {
 		return event.Failure(event.Closed, nil)
 	}
+	tx, err := this.ambient(ctx)
+	if err != nil {
+		return event.Failure(event.Refused, err)
+	}
 	recorded := this.clock()
 
 	this.log.mutex.Lock()
 	defer this.log.mutex.Unlock()
 
-	tx, err := this.ambient(ctx)
-	if err != nil {
+	if err := tx.live(); err != nil {
 		return event.Failure(event.Refused, err)
 	}
 	if len(req.Records) == 0 {
@@ -40,7 +43,7 @@ func (this *Store) Append(ctx context.Context, req event.AppendRequest) error {
 	if req.Expected != admitted {
 		return event.Failure(event.Conflict, errStreamMoved)
 	}
-	if this.log.claimedByAnother(req.Stream, tx) {
+	if holder := this.log.releaseDeadClaim(req.Stream); holder != nil && holder != tx {
 		return event.Failure(event.Conflict, errStreamClaimed)
 	}
 

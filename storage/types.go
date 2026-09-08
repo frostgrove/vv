@@ -15,9 +15,16 @@ const (
 	MaxMetadataKeyBytes   = 64
 	MaxMetadataValueBytes = 512
 
-	MaxMetadataTotalBytes  = 1536
-	DefaultStageTTL        = 24 * time.Hour
-	MaxStageTTL            = 7 * 24 * time.Hour
+	MaxMetadataTotalBytes = 1536
+	DefaultStageTTL       = 24 * time.Hour
+	MaxStageTTL           = 7 * 24 * time.Hour
+
+	// How long one Stage, Promote or Abort may hold a stage before another
+	// process may take it over. This bounds an *interruption*, so it is measured
+	// in minutes while a stage's own TTL is measured in days: a process killed
+	// mid-promote must not strand the stage for the stage's lifetime.
+	DefaultStageClaimTTL   = 5 * time.Minute
+	MaxStageClaimTTL       = time.Hour
 	DefaultTemporaryURLTTL = 15 * time.Minute
 	MaxTemporaryURLTTL     = 7 * 24 * time.Hour
 	DefaultCleanupLimit    = 100
@@ -98,11 +105,18 @@ const (
 	Replace
 )
 
+// IfMatch makes the write conditional on the object's current ETag. Without it
+// two callers who read, decided and wrote lose one of the two decisions with no
+// error on either side: CreateOnly only guards the first write of a key, and
+// Replace guards nothing. A backend that cannot honour a precondition refuses the
+// option with ErrUnsupported rather than writing unconditionally, and says so
+// through Capabilities.ConditionalWrite.
 type PutOptions struct {
 	Mode        WriteMode
 	Size        *int64
 	ContentType string
 	Metadata    Metadata
+	IfMatch     *string
 }
 
 type StageOptions struct {
@@ -113,12 +127,29 @@ type StageOptions struct {
 }
 
 type PromoteOptions struct {
-	Mode WriteMode
+	Mode    WriteMode
+	IfMatch *string
+}
+
+type DeleteOptions struct {
+	IfMatch *string
 }
 
 type TemporaryURLOptions struct {
 	ExpiresIn time.Duration
 }
+
+// A ranged read. Offset is from the start of the object; a nil Length means "to
+// the end". Without it a caller who needs the last megabyte of a multi-gigabyte
+// object has to transfer all of it, and a video or a resumable download has no
+// expressible form at all. A backend that cannot honour a range refuses a
+// non-zero one with ErrUnsupported and says so through Capabilities.RangeRead.
+type ReadOptions struct {
+	Offset int64
+	Length *int64
+}
+
+func (this ReadOptions) ranged() bool { return this.Offset != 0 || this.Length != nil }
 
 type CleanupOptions struct {
 	Limit int
@@ -139,6 +170,13 @@ type Info struct {
 	ModifiedAt  time.Time
 	ETag        string
 	Version     string
+
+	// Set when the object carried metadata this library will not hand back — an
+	// entry past the portable budget, an invalid key, a value with control bytes.
+	// A bucket holds objects this library did not write, and refusing the whole
+	// read over one such entry makes the bytes unreachable, so the entry is
+	// dropped and the answer says it is partial.
+	MetadataTruncated bool
 }
 
 type Staged struct {
@@ -171,11 +209,18 @@ func (this Link) Format(state fmt.State, _ rune) {
 }
 
 type Capabilities struct {
-	CreateOnly   bool
-	Replace      bool
-	Staging      bool
-	TemporaryURL bool
+	CreateOnly       bool
+	Replace          bool
+	Staging          bool
+	TemporaryURL     bool
+	ConditionalWrite bool
+	RangeRead        bool
 }
+
+// IfMatch names the ETag a write requires the object to carry. It is a pointer so
+// that "no precondition" and "the object must not exist" stay distinguishable
+// from each other and from the zero string.
+func IfMatch(etag string) *string { return &etag }
 
 var (
 	errInvalidStageID      = fmt.Errorf("invalid stage id")

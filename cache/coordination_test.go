@@ -343,15 +343,21 @@ func TestTerminalPathsReleaseCoordinationState(t *testing.T) {
 			assertQuiescent(t, instance)
 		})
 	}
+	// A backend that will not take the value does not stop the caller getting it:
+	// the loader has already produced it. What must still hold is that the flight
+	// ends cleanly, which assertQuiescent is here for.
 	t.Run("backend write failure", func(t *testing.T) {
 		backend := newCoordinationBackend()
 		backend.setPutHook(func(context.Context, Address, []byte, Expiry, int) error { return terminalErr })
 		instance := newCoordinationCache(t, backend, String(ValueSchema(1)))
-		_, err := instance.Resolve(context.Background(), "key", func(context.Context, string) (LoadResult[string], error) {
+		result, err := instance.Resolve(context.Background(), "key", func(context.Context, string) (LoadResult[string], error) {
 			return Present("value"), nil
 		})
-		if !errors.Is(err, terminalErr) {
-			t.Fatalf("error = %v", err)
+		if err != nil {
+			t.Fatalf("a cache write failure destroyed a value the loader produced: %v", err)
+		}
+		if result.State != Loaded || result.Value != "value" {
+			t.Fatalf("resolve = %+v", result)
 		}
 		assertQuiescent(t, instance)
 	})
@@ -394,6 +400,56 @@ func TestTerminalPathsReleaseCoordinationState(t *testing.T) {
 		backend.setDeleteHook(func(context.Context, Address, int) error { return terminalErr })
 		if err := instance.Forget(context.Background(), "key"); !errors.Is(err, terminalErr) {
 			t.Fatalf("error = %v", err)
+		}
+		assertQuiescent(t, instance)
+	})
+}
+
+// One knob governed two opposite things. Under Propagate (Warm and Durable) a
+// cache write error destroyed a value the loader had already produced, turning
+// the cache into a new way for the request to fail; under Ignore (Hot) an
+// explicit Put returned nil without storing, which is a lie to the caller. There
+// is one right answer on each path and neither of them is a policy.
+func TestACacheWriteErrorNeitherFailsAResolveNorHidesAPut(t *testing.T) {
+	failing := errors.New("the cache backend refused the write")
+
+	t.Run("a store after load hands over the value it has", func(t *testing.T) {
+		backend := newCoordinationBackend()
+		backend.setPutHook(func(context.Context, Address, []byte, Expiry, int) error { return failing })
+		instance := newCoordinationCache(t, backend, String(ValueSchema(1)))
+		result, err := instance.Resolve(context.Background(), "key", func(context.Context, string) (LoadResult[string], error) {
+			return Present("the loader's value"), nil
+		})
+		if err != nil {
+			t.Fatalf("resolve = %v — a cache write error destroyed work that succeeded", err)
+		}
+		if result.State != Loaded || result.Value != "the loader's value" {
+			t.Fatalf("resolve = %+v", result)
+		}
+		assertQuiescent(t, instance)
+	})
+
+	t.Run("an explicit put says it did not store", func(t *testing.T) {
+		backend := newCoordinationBackend()
+		backend.setPutHook(func(context.Context, Address, []byte, Expiry, int) error { return failing })
+		instance := newCoordinationCache(t, backend, String(ValueSchema(1)))
+		if err := instance.Put(context.Background(), "key", "value"); !errors.Is(err, ErrBackend) {
+			t.Fatalf("put = %v, want ErrBackend — a Put that stored nothing answered success", err)
+		}
+		assertQuiescent(t, instance)
+	})
+
+	// The control: with a backend that takes the write, both paths succeed, so
+	// the assertions above are the failure handling rather than the cache being
+	// broken.
+	t.Run("a working backend", func(t *testing.T) {
+		instance := newCoordinationCache(t, newCoordinationBackend(), String(ValueSchema(1)))
+		if err := instance.Put(context.Background(), "key", "value"); err != nil {
+			t.Fatal(err)
+		}
+		result, err := instance.Lookup(context.Background(), "key")
+		if err != nil || result.State != Hit || result.Value != "value" {
+			t.Fatalf("lookup = %+v, %v", result, err)
 		}
 		assertQuiescent(t, instance)
 	})

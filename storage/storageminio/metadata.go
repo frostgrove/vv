@@ -3,6 +3,7 @@ package storageminio
 import (
 	"errors"
 	"mime"
+	"sort"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -58,17 +59,18 @@ func infoFromObject(object minio.ObjectInfo) (storage.Info, error) {
 	if _, _, err := mime.ParseMediaType(contentType); err != nil {
 		return storage.Info{}, errors.New("object content type is invalid")
 	}
-	metadata, err := portableMetadata(object)
+	metadata, truncated, err := portableMetadata(object)
 	if err != nil {
 		return storage.Info{}, err
 	}
 	return storage.Info{
-		Size:        object.Size,
-		ContentType: contentType,
-		Metadata:    metadata,
-		ModifiedAt:  object.LastModified,
-		ETag:        object.ETag,
-		Version:     object.VersionID,
+		Size:              object.Size,
+		ContentType:       contentType,
+		Metadata:          metadata,
+		ModifiedAt:        object.LastModified,
+		ETag:              object.ETag,
+		Version:           object.VersionID,
+		MetadataTruncated: truncated,
 	}, nil
 }
 
@@ -95,36 +97,50 @@ func markedExpiry(object minio.ObjectInfo, markerKey, markerValue string) (time.
 	return expiresAt.UTC(), true, nil
 }
 
-func portableMetadata(object minio.ObjectInfo) (storage.Metadata, error) {
+// The budget is the library's own write-side rule, and a bucket holds objects
+// this library did not write — an import, another service, a console upload. On
+// the write path a violation is refused, because the caller can still fix the
+// input. On the read path refusing the whole object makes the bytes unreachable
+// over a metadata entry nobody asked for, so the entry is dropped the way `vv-`
+// entries already are, and Info.MetadataTruncated says the answer is partial.
+func portableMetadata(object minio.ObjectInfo) (storage.Metadata, bool, error) {
 	raw, err := rawUserMetadata(object)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	out := make(storage.Metadata)
+	truncated := false
 	total := 0
-	for key, value := range raw {
+	for _, key := range sortedKeys(raw) {
 		if strings.HasPrefix(key, "vv-") {
 			continue
 		}
-		if len(out) == storage.MaxMetadataEntries {
-			return nil, errors.New("object metadata has too many entries")
-		}
-		if !validMetadataKey(key) || len(key) > storage.MaxMetadataKeyBytes {
-			return nil, errors.New("object metadata key is invalid")
-		}
-		if len(value) > storage.MaxMetadataValueBytes || !utf8.ValidString(value) || hasControl(value) {
-			return nil, errors.New("object metadata value is invalid")
+		value := raw[key]
+		if len(out) == storage.MaxMetadataEntries ||
+			!validMetadataKey(key) || len(key) > storage.MaxMetadataKeyBytes ||
+			len(value) > storage.MaxMetadataValueBytes || !utf8.ValidString(value) || hasControl(value) ||
+			total+len(key)+len(value) > storage.MaxMetadataTotalBytes {
+			truncated = true
+			continue
 		}
 		total += len(key) + len(value)
-		if total > storage.MaxMetadataTotalBytes {
-			return nil, errors.New("object metadata is too large")
-		}
 		out[key] = value
 	}
 	if len(out) == 0 {
-		return nil, nil
+		return nil, truncated, nil
 	}
-	return out, nil
+	return out, truncated, nil
+}
+
+// Sorted so that which entries survive a truncation is the same on every read of
+// the same object, rather than whatever the map iteration happened to reach first.
+func sortedKeys(raw map[string]string) []string {
+	keys := make([]string, 0, len(raw))
+	for key := range raw {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 func rawUserMetadata(object minio.ObjectInfo) (map[string]string, error) {

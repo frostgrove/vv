@@ -23,6 +23,12 @@ const FormatVersion = "1"
 var ErrNotReady = errors.New("jobsredis: driver is not ready")
 var ErrFormatMismatch = errors.New("jobsredis: format mismatch")
 
+// The entry moved between the read that produced the update and the write that
+// would have applied it. The caller's claim is no longer theirs; it reaches the
+// driver as "not claimed" rather than as a write that silently discarded
+// somebody else's.
+var ErrRevisionChanged = fmt.Errorf("%w: delivery changed under this operation", jobs.ErrConflict)
+
 type Spec struct {
 	Client           redis.UniversalClient
 	Namespace        jobs.Namespace

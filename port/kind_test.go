@@ -160,3 +160,39 @@ func TestEveryKindRendersACodeAndTheTableIsTotal(t *testing.T) {
 		t.Fatalf("errs declares %d kinds and the table has %d rows", declared, len(want))
 	}
 }
+
+// sentinelKind and FaultOf are two switches over the same sentinels, and nothing
+// makes them agree except somebody remembering both. They had already drifted:
+// crud.ErrUnavailable was added to one and answered KindRetryable, while the
+// other still synthesised an internal fault, so the kind said 503 and the
+// rendered status said 500.
+func TestTheTwoSentinelTablesAgreeOnEverySentinel(t *testing.T) {
+	for name, sentinel := range map[string]error{
+		"not found":     crud.ErrNotFound,
+		"forbidden":     crud.ErrForbidden,
+		"conflict":      crud.ErrConflict,
+		"stale version": crud.ErrStaleVersion,
+		"unavailable":   crud.ErrUnavailable,
+		"bad request":   crud.ErrBadRequest,
+		"missing id":    crud.ErrMissingID,
+	} {
+		t.Run(name, func(t *testing.T) {
+			wrapped := fmt.Errorf("a caller's own message: %w", sentinel)
+			kind := sentinelKind(wrapped)
+			fault := FaultOf(wrapped)
+			if fault == nil {
+				t.Fatal("FaultOf answered nothing")
+			}
+			if fault.Kind != kind {
+				t.Fatalf("sentinelKind says %v and FaultOf builds %v", kind, fault.Kind)
+			}
+		})
+	}
+
+	// The control: an error that is none of them must still reach the internal
+	// answer through both, or the agreement above is agreement on one value.
+	stranger := errors.New("nothing this table knows")
+	if sentinelKind(stranger) != errs.KindInternal || FaultOf(stranger).Kind != errs.KindInternal {
+		t.Fatal("an unknown error did not reach the internal answer through both tables")
+	}
+}

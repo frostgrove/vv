@@ -10,9 +10,14 @@
    comes from. It resolves a renderer once and calls `Guard.Validate` at
    construction. Nil and zero-value guards fail here, before a request can call
    a nil authenticator. Gin, Fiber, Unary and Stream do the same.
-2. **`Guard.Authenticate`** — `auth/guard.go:101` — everything that is not
-   framework-shaped. It is handed a `func(name string) string`, which is all
-   four transports have in common. The Guard reached here is a finished copy of
+2. **`Guard.AuthenticateValues`** — `auth/guard.go:117` — everything that is not
+   framework-shaped. It is handed a `func(name string) []string`, which is what
+   every shipped binding calls. `Guard.Authenticate` is the same path over a
+   `func(name string) string`, and that shape cannot report a duplicate: a
+   request carrying two `Authorization` headers reaches the authenticator as one,
+   so the [[D-099]] cardinality refusal never fires on it. It is the list form
+   that keeps the refusal, and hand-written wiring is the only thing that can
+   lose it. The Guard reached here is a finished copy of
    a private construction draft: `auth.Option` is opaque and cannot be retained
    as a post-publication `*Guard` mutator. `Lookup` is still the low-level source
    hook ([[D-076]]), and `LookupOrRefuse` is the same hook for a source that can

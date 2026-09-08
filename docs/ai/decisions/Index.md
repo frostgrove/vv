@@ -171,6 +171,13 @@ and the next decision written before its code does should say so here.
 | [D-116](D-116-one-tenancy-extension-and-its-core-costs-no-seam.md) | One tenancy extension in the root module: a core that imports no seam, and one package per seam it adapts (`tenancyrow`, `tenancydb`, `tenancyjobs`, `tenancystorage`, `tenancycache`), each costing its own seam and no other; a module boundary here is a third-party dependency boundary, so a stdlib-only extension does not get one until a provider adapter needs it | accepted | composition, security, process & tooling |
 | [D-117](D-117-a-verified-scope-is-minted-never-manufactured.md) | A `tenancy.Scope` exists only where the injected authority minted it — the resolver returns plain data, the scope carries a per-authority HMAC binding, lifecycle admission is a whitelist per operation class, the epoch is checked at each boundary and pinned in between, and a refusal names a kind and never the resolver's text | accepted | security, core seam, operations |
 | [D-118](D-118-a-transactional-enqueue-is-the-outbox.md) | A durable invocation placed while the caller's transaction is bound to the driver's `crud.Source` is written inside it and disappears with a rollback — that is the outbox, there is no second one and no broker package; an ambient non-transaction is refused rather than placed on autocommit, and delivery is at-least-once and unordered | accepted | jobs, transactions & datasources |
+| [D-119](D-119-a-durable-token-binds-the-record-not-the-queue.md) | A durable tenancy token's MAC covers the invocation identifier and the payload's wire digest as well as the queue and the definition, so an honest token copied onto any other row fails verification; the payload is encoded and the identifier minted before the trusted context provider is asked, which is what makes that possible | accepted | security, jobs, core seam |
+| [D-120](D-120-a-refresh-credential-names-the-generation-that-minted-it.md) | A refresh credential is `<generation>.<session id>.<random>` and the session row counts its rotations, so reuse is detected however far back the credential comes from rather than only one rotation; the prefixes authenticate nothing, and a credential minted before this carries none and falls back to the two-digest lookup | accepted | security, auth |
+| [D-121](D-121-the-event-vocabulary-is-a-root-package.md) | `event`, `event/eventmemory` and `event/eventtest` are packages of the root module rather than a module, because a module boundary here is a third-party dependency boundary and none of them costs one; the second implementation ships with the seam, which is the event-sourcing roadmap's own E0 condition being met, and the zero-diff claim is proved by a third-package fixture rather than by a surface diff, which stays a report | accepted | event sourcing, composition, process & tooling |
+| [D-122](D-122-a-store-classifies-its-own-failure-and-the-kernel-maps-it.md) | A store's whole error channel is `event.Failure(outcome, cause)` over a closed seven-value enum, read with a bounded `errors.As` rather than a type assertion; the twenty-four sentinels partition into six classes no traversal crosses, a declared class wrap is reachable and a store's cause is not — `event.CauseOf` is the one reader that has it | accepted | event sourcing, core seam, transports |
+| [D-123](D-123-the-declaration-panics-and-try-returns-the-error.md) | `event.Define` and `event.Declare` panic on a malformed declaration and `TryDefine`/`TryDeclare` return the same value through the same code path; the short name is the one an application writes at package level, the `Try…` name is the one a negative test writes, and there is no `MustDefine` inversion | accepted | event sourcing, API design |
+| [D-124](D-124-event-json-is-deliberately-smaller-than-the-codecs-beside-it.md) | `event/encodable.go` asks only whether a type survives its own encode-and-decode and asks it once, at declaration; it carries no `goexperiment.jsonv2` build-tag pair and no decode-side depth or size bound, the byte cap is the trust boundary, and a fourth analyser or a build-tag pair here is the trigger to extract a shared one | accepted | event sourcing, caching, jobs, process & tooling |
+| [D-125](D-125-a-composed-key-is-a-wire-format.md) | `event.Compose` escapes the separator, the escape byte and exactly what the kernel text rule refuses, then joins with `/`, and the rendering is frozen because it is part of every stream ever written under it; a length-prefixed key is refused because a stream key is read, indexed and grepped where `cache`'s namespace prefix is only ever hashed | accepted | event sourcing, core seam |
 
 ## By area
 
@@ -253,7 +260,9 @@ out; D-099 is why two credential sources in one request are a refusal rather
 than a ranking; D-102 is why a cookie-borne write has to say where it came from,
 and why a bearer one does not; D-103 is why the preflight decorator answers a
 request instead of passing it on, since the headers it recognises are the
-client's to write.
+client's to write. D-120 is why a refresh credential names the generation that
+minted it, so reuse is detected however long the thief waited rather than only
+one rotation back.
 
 **Writes** — D-010 (load-diff-write, locking, `version`), D-011 (`Save` is
 JPA-shaped, when it stops being one statement, and the explicit `Create` /
@@ -359,6 +368,16 @@ D-108 (why a jobs worker fleet is named rather than inferred from the graph that
 happens to hold a consumer), D-112 (a start-up question asked of Redis, and the
 three answers a deployment can get back), D-037 (why none of this is a
 container).
+
+**Event sourcing** — D-121 (why the vocabulary is a root package, why the second
+implementation is what earns it, why the surface baseline is a report and never a
+gate, and why `ReadOnly` is the one wrapper with no `Next`), D-122 (the closed
+outcome enum, the six-class partition, the two traversals and the cause only
+`CauseOf` reaches, and the bounded walk a foreign error chain is read under),
+D-123 (which of the pair panics and why the `Must` inversion is refused), D-124
+(what the shipped codec refuses, what it deliberately does not bound, and when a
+third analyser becomes a shared one), D-125 (the frozen key rendering, and why
+`cache`'s length prefix is the wrong precedent for it).
 
 **Philosophy & docs** — D-021 (magic over orthodoxy, and D-050 as its newest
 application), D-023 (guides lead with the result), D-020 (what a test is for).

@@ -163,6 +163,10 @@ func Mount[P any](runtime *Runtime, spec SubjectSpec[P]) (*MountedSubject, *Sign
 		return nil, nil, err
 	}
 	candidateGrants := NewGrants(runtime.store, directories)
+	for _, mounted := range runtime.subjects {
+		candidateGrants.registerNormalizer(mounted.subject)
+	}
+	candidateGrants.registerNormalizer(subject)
 
 	strategy := spec.Strategy
 	if strategy == nil {

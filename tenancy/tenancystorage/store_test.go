@@ -43,7 +43,7 @@ func read(t *testing.T, store storage.Store, key string) (string, error) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	body, _, err := store.Open(context.Background(), name)
+	body, _, err := store.Open(context.Background(), name, storage.ReadOptions{})
 	if err != nil {
 		return "", err
 	}

@@ -16,6 +16,7 @@ import (
 
 	"github.com/frostgrove/vv/storage"
 	"github.com/minio/minio-go/v7"
+	"github.com/minio/minio-go/v7/pkg/credentials"
 )
 
 var testNow = time.Date(2026, time.August, 27, 12, 0, 0, 0, time.UTC)
@@ -585,7 +586,7 @@ func TestOpenUsesImmediateCoreGetAndFiltersInternalMetadata(t *testing.T) {
 	}}
 	backend := newTestBackend(t, &fakeClient{}, core)
 	store := newTestStore(t, backend)
-	gotBody, info, err := store.Open(context.Background(), testKey(t, "image"))
+	gotBody, info, err := store.Open(context.Background(), testKey(t, "image"), storage.ReadOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -620,7 +621,7 @@ func TestOpenBodyMapsAndRedactsDeferredReadError(t *testing.T) {
 		return body, minio.ObjectInfo{Size: 1, ContentType: "application/octet-stream", LastModified: testNow}, nil, nil
 	}}
 	store := newTestStore(t, newTestBackend(t, &fakeClient{}, core))
-	gotBody, _, err := store.Open(context.Background(), testKey(t, "image"))
+	gotBody, _, err := store.Open(context.Background(), testKey(t, "image"), storage.ReadOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -651,7 +652,7 @@ func TestOpenBodyMapsAndRedactsDeferredCloseError(t *testing.T) {
 		return body, minio.ObjectInfo{Size: 0, ContentType: "application/octet-stream", LastModified: testNow}, nil, nil
 	}}
 	store := newTestStore(t, newTestBackend(t, &fakeClient{}, core))
-	gotBody, _, err := store.Open(context.Background(), testKey(t, "image"))
+	gotBody, _, err := store.Open(context.Background(), testKey(t, "image"), storage.ReadOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -682,7 +683,7 @@ func TestOpenRejectsCaseAmbiguousMetadata(t *testing.T) {
 		}, nil, nil
 	}}
 	store := newTestStore(t, newTestBackend(t, &fakeClient{}, core))
-	_, _, err := store.Open(context.Background(), testKey(t, "image"))
+	_, _, err := store.Open(context.Background(), testKey(t, "image"), storage.ReadOptions{})
 	if !errors.Is(err, storage.ErrInternal) || body.closed != 1 {
 		t.Fatalf("error/closed = %v/%d", err, body.closed)
 	}
@@ -988,7 +989,7 @@ func TestAbsentOrEmptyMetadataIsCanonicalNilAcrossResults(t *testing.T) {
 			}, nil, nil
 		}}
 		store := newTestStore(t, newTestBackend(t, &fakeClient{}, core))
-		body, info, err := store.Open(context.Background(), testKey(t, "empty"))
+		body, info, err := store.Open(context.Background(), testKey(t, "empty"), storage.ReadOptions{})
 		assertNilMetadata(t, info, err)
 		if err := body.Close(); err != nil {
 			t.Fatal(err)
@@ -1948,4 +1949,225 @@ func cloneObjectInfo(info minio.ObjectInfo) minio.ObjectInfo {
 	}
 	info.UserMetadata = metadata
 	return info
+}
+
+// A claim bounds one Stage, Promote or Abort. Deriving its expiry from
+// MaxStageTTL made an interrupted promote a seven-day outage for that stage:
+// Promote refused it as already active, Abort refused it the same way, and
+// CleanupExpired walked past it reporting {Removed:0, More:false}.
+func TestAClaimLeaseBoundsTheOperationRatherThanTheStage(t *testing.T) {
+	id, _ := storage.NewStageID()
+	namespace, _ := storage.ParseNamespace("tenant")
+	var claimed time.Time
+	client := &fakeClient{
+		put: func(_ context.Context, _, object string, source io.Reader, size int64, options minio.PutObjectOptions) (minio.UploadInfo, error) {
+			if !strings.Contains(object, "/"+claimDirectory+"/") {
+				t.Fatalf("claim put = %q", object)
+			}
+			parsed, err := time.Parse(time.RFC3339Nano, options.UserMetadata[stageExpiryKey])
+			if err != nil {
+				t.Fatalf("claim expiry %q: %v", options.UserMetadata[stageExpiryKey], err)
+			}
+			claimed = parsed
+			return successfulClaimPut(t, source, size, options)
+		},
+		stat: func(_ context.Context, _, object string, _ minio.StatObjectOptions) (minio.ObjectInfo, error) {
+			return stageObjectInfo(testNow.Add(time.Hour)), nil
+		},
+	}
+	backend := newTestBackend(t, client, &fakeCore{})
+	if _, err := backend.acquireClaim(context.Background(), "promote", namespace, id); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := claimed.Sub(testNow.UTC()); got != storage.DefaultStageClaimTTL {
+		t.Fatalf("claim lease = %v, want %v — an interrupted operation strands the stage for this long", got, storage.DefaultStageClaimTTL)
+	}
+	// The control: the stage's own lifetime is the thing this must not be, and it
+	// is three orders of magnitude longer.
+	if claimed.Sub(testNow.UTC()) >= storage.MaxStageTTL {
+		t.Fatal("the claim lease is the stage's lifetime, so an interruption is an outage")
+	}
+}
+
+// A stage that outlived the operation holding it is work the sweep did, and
+// answering {Removed:0, More:false} for it tells an operator the namespace is
+// clean when a stage is still unpromotable until the next sweep.
+func TestCleanupReportsMoreWhenItRetiresAStrandedClaim(t *testing.T) {
+	stranded, _ := storage.NewStageID()
+	claimPrefix := "root/.vv-stage-claim/tenant/"
+	stagePrefix := "root/.vv-stage/tenant/"
+	client := &fakeClient{
+		put: func(_ context.Context, _, object string, source io.Reader, size int64, options minio.PutObjectOptions) (minio.UploadInfo, error) {
+			return successfulClaimPut(t, source, size, options)
+		},
+		list: func(_ context.Context, _ string, options minio.ListObjectsOptions) <-chan minio.ObjectInfo {
+			result := make(chan minio.ObjectInfo, 1)
+			if options.Prefix == claimPrefix {
+				result <- minio.ObjectInfo{Key: claimPrefix + stranded.Value()}
+			}
+			close(result)
+			return result
+		},
+		stat: func(_ context.Context, _, object string, _ minio.StatObjectOptions) (minio.ObjectInfo, error) {
+			switch object {
+			case stagePrefix + stranded.Value():
+				// The stage is alive and well; only the claim over it is stale.
+				return stageObjectInfo(testNow.Add(24 * time.Hour)), nil
+			case claimPrefix + stranded.Value():
+				return minio.ObjectInfo{
+					ETag: "claim-etag",
+					UserMetadata: minio.StringMap{
+						claimMarkerKey: claimMarkerValue,
+						claimStateKey:  claimStateActive,
+						claimTokenKey:  "the-interrupted-operations-token",
+						stageExpiryKey: testNow.Add(-time.Minute).Format(time.RFC3339Nano),
+					},
+				}, nil
+			}
+			return minio.ObjectInfo{}, minio.ErrorResponse{Code: "NoSuchKey", StatusCode: 404}
+		},
+		remove: func(context.Context, string, string, minio.RemoveObjectOptions) error { return nil },
+	}
+	store := newTestStore(t, newTestBackend(t, client, &fakeCore{}))
+	result, err := store.CleanupExpired(context.Background(), storage.CleanupOptions{Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.More {
+		t.Fatalf("result = %#v — a sweep that broke a stranded claim reported nothing to come back for", result)
+	}
+}
+
+// A stage is accepted, billed and held for its TTL. Discovering only at Promote
+// that the default create-only placement cannot take it leaves the caller holding
+// a StageID that was never promotable, so the ceiling is applied where the
+// payload first becomes knowable.
+func TestStageRefusesAPayloadNoDefaultPromoteCouldPlace(t *testing.T) {
+	oversized := MaxCreateOnlySize + 1
+	var removed []string
+	client := &fakeClient{
+		put: func(_ context.Context, _, object string, source io.Reader, _ int64, _ minio.PutObjectOptions) (minio.UploadInfo, error) {
+			if _, err := io.Copy(io.Discard, source); err != nil {
+				return minio.UploadInfo{}, err
+			}
+			return minio.UploadInfo{ETag: "staged-etag"}, nil
+		},
+		stat: func(_ context.Context, _, object string, _ minio.StatObjectOptions) (minio.ObjectInfo, error) {
+			return minio.ObjectInfo{Size: oversized, ETag: "staged-etag", LastModified: testNow}, nil
+		},
+		remove: func(_ context.Context, _, object string, _ minio.RemoveObjectOptions) error {
+			removed = append(removed, object)
+			return nil
+		},
+	}
+	store := newTestStore(t, newTestBackend(t, client, &fakeCore{}))
+
+	// Declared: refused before a byte is uploaded.
+	_, err := store.Stage(context.Background(), strings.NewReader("x"), storage.StageOptions{
+		ExpiresIn: time.Hour, Size: storage.ExactSize(oversized),
+	})
+	if !errors.Is(err, storage.ErrUnsupported) {
+		t.Fatalf("declared oversize = %v, want ErrUnsupported", err)
+	}
+	if len(removed) != 0 {
+		t.Fatalf("a refused-before-upload stage still wrote something: %v", removed)
+	}
+
+	// The control: a payload the promotion could place is still accepted, so the
+	// refusal above is the ceiling rather than Stage being broken.
+	client.stat = func(_ context.Context, _, object string, _ minio.StatObjectOptions) (minio.ObjectInfo, error) {
+		return minio.ObjectInfo{Size: 3, ETag: "staged-etag", LastModified: testNow}, nil
+	}
+	if _, err := store.Stage(context.Background(), strings.NewReader("abc"), storage.StageOptions{ExpiresIn: time.Hour}); err != nil {
+		t.Fatalf("an ordinary stage was refused: %v", err)
+	}
+}
+
+// A bucket holds objects this library did not write — an import, another service,
+// a console upload. Applying the library's own write-side metadata budget to
+// those on the read path made the bytes unreachable over a metadata entry nobody
+// asked for.
+func TestAnObjectWithUnportableMetadataIsStillReadable(t *testing.T) {
+	oversized := strings.Repeat("v", storage.MaxMetadataValueBytes+1)
+	client := &fakeClient{
+		stat: func(_ context.Context, _, object string, _ minio.StatObjectOptions) (minio.ObjectInfo, error) {
+			return minio.ObjectInfo{
+				Size:         3,
+				ContentType:  "text/plain",
+				ETag:         "an-etag",
+				LastModified: testNow,
+				UserMetadata: minio.StringMap{"Owner": "avatar", "Huge": oversized},
+			}, nil
+		},
+	}
+	store := newTestStore(t, newTestBackend(t, client, &fakeCore{}))
+	info, err := store.Head(context.Background(), testKey(t, "imported/object"))
+	if err != nil {
+		t.Fatalf("an object written by something else became unreadable: %v", err)
+	}
+	if !info.MetadataTruncated {
+		t.Fatal("metadata was dropped and the answer did not say so")
+	}
+	if info.Metadata["owner"] != "avatar" {
+		t.Fatalf("the entries that do fit were lost too: %#v", info.Metadata)
+	}
+	if _, present := info.Metadata["huge"]; present {
+		t.Fatal("an entry past the portable budget was handed back")
+	}
+
+	// The control: an object entirely within the budget reports no truncation, so
+	// the flag means something.
+	client.stat = func(_ context.Context, _, object string, _ minio.StatObjectOptions) (minio.ObjectInfo, error) {
+		return minio.ObjectInfo{Size: 3, ContentType: "text/plain", ETag: "an-etag", LastModified: testNow,
+			UserMetadata: minio.StringMap{"Owner": "avatar"}}, nil
+	}
+	ordinary, err := store.Head(context.Background(), testKey(t, "ordinary/object"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ordinary.MetadataTruncated {
+		t.Fatal("an object inside the budget was reported truncated")
+	}
+}
+
+// A presigned URL stops working when the credentials that signed it expire. A
+// client using STS, IRSA or an instance role has a session measured in an hour,
+// so a link this package says is good for a day is a promise the object store
+// breaks, silently, at a time the caller was told nothing about.
+type expiringClient struct {
+	*fakeClient
+	expiry time.Time
+}
+
+func (this expiringClient) GetCreds() (credentials.Value, error) {
+	return credentials.Value{AccessKeyID: "k", SecretAccessKey: "s", Expiration: this.expiry}, nil
+}
+
+func TestATemporaryURLDoesNotOutliveTheCredentialsThatSignedIt(t *testing.T) {
+	signed, _ := url.Parse("https://example.test/root/tenant/avatar")
+	inner := &fakeClient{
+		presigned: func(context.Context, string, string, time.Duration, url.Values) (*url.URL, error) {
+			return signed, nil
+		},
+	}
+	backend := newTestBackend(t, inner, &fakeCore{})
+	backend.client = expiringClient{fakeClient: inner, expiry: testNow.Add(20 * time.Minute)}
+	store := newTestStore(t, backend)
+
+	// The control: inside the session, a link is issued as before.
+	if _, err := store.TemporaryURL(context.Background(), testKey(t, "avatar"), storage.TemporaryURLOptions{ExpiresIn: 15 * time.Minute}); err != nil {
+		t.Fatalf("a link well inside the session was refused: %v", err)
+	}
+
+	_, err := store.TemporaryURL(context.Background(), testKey(t, "avatar"), storage.TemporaryURLOptions{ExpiresIn: time.Hour})
+	if !errors.Is(err, storage.ErrInvalid) {
+		t.Fatalf("err = %v, want ErrInvalid — a link was issued that outlives the credentials signing it", err)
+	}
+
+	// A static credential has no expiry and is unaffected.
+	backend.client = expiringClient{fakeClient: inner}
+	if _, err := store.TemporaryURL(context.Background(), testKey(t, "avatar"), storage.TemporaryURLOptions{ExpiresIn: time.Hour}); err != nil {
+		t.Fatalf("a static credential was treated as expiring: %v", err)
+	}
 }

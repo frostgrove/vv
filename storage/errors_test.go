@@ -108,7 +108,7 @@ func TestTheCoreProjectsOnlyBoundedBackendFailures(t *testing.T) {
 		backend := &fakeBackend{delete: func(context.Context, storage.Namespace, storage.Key) error {
 			return context.Canceled
 		}}
-		err := newStore(backend).Delete(context.Background(), key)
+		err := newStore(backend).Delete(context.Background(), key, storage.DeleteOptions{})
 		if !errors.Is(err, storage.ErrCancelled) || !errors.Is(err, context.Canceled) {
 			t.Fatalf("Delete cancellation = %v", err)
 		}
@@ -119,7 +119,7 @@ func TestTheCoreProjectsOnlyBoundedBackendFailures(t *testing.T) {
 		backend := &fakeBackend{open: func(context.Context, storage.Namespace, storage.Key) (io.ReadCloser, storage.Info, error) {
 			return nil, storage.Info{}, storage.NewError(backendOperation, storage.KindNotFound, errors.New(secret))
 		}}
-		_, _, err := newStore(backend).Open(context.Background(), key)
+		_, _, err := newStore(backend).Open(context.Background(), key, storage.ReadOptions{})
 		if !errors.Is(err, storage.ErrNotFound) || storage.KindOf(err) != storage.KindNotFound {
 			t.Fatalf("Open classified error = %v", err)
 		}

@@ -936,3 +936,810 @@ store reading `"original"`; the page comes back `len == cap`.
   `claimedByAnother`, `publish`, `handOut`, `revalidate`, `mintCursor`, `release`). Comments are
   decisions and invariants rather than restatements — the two round 1 named are gone, and I
   found no new one that restates its code.
+
+---
+
+## Round 3 — remediation, cluster `ctx-value-under-the-log-mutex` — 2026-09-08
+
+The three findings this cluster carries — GAP-13, GAP-14 and GAP-7 — were
+reproduced first from a throwaway out-of-tree module at `/tmp/vvprobe` with a
+`replace` onto this checkout, so the transcripts below are this worktree's and
+not a rerun of the reviewer's. Each fix was then verified by mutation: the
+source was broken, the named test watched to go red, and the file restored and
+its sha256 compared.
+
+### Reproduced before the fix
+
+```
+an unrelated ReadStream on a DIFFERENT stream waited 580.8ms
+while the appending caller's ctx.Value ran                       ← GAP-13
+
+autocommit append to the same stream after the transaction was abandoned:
+                                          event: the store reported [outcome conflict]
+a second transaction's append to the same stream:
+                                          event: the store reported [outcome conflict]
+control, an unclaimed stream:             <nil>                  ← GAP-7
+
+ReadAll inside the transaction that staged one event: 0 envelopes, cursor "…:0"
+staged envelope read back inside the transaction: version 1 position 0
+                                                                 ← GAP-14, both answers
+                                                                   decided in the extension
+```
+
+### Answered after it
+
+```
+an unrelated ReadStream on a DIFFERENT stream waited 0.0ms
+while the appending caller's ctx.Value ran
+
+autocommit append to the same stream after the transaction was abandoned: <nil>
+a second transaction's append to the same stream:                         <nil>
+control, an unclaimed stream:                                             <nil>
+```
+
+| Finding | Grade | Disposition |
+|---|---|---|
+| GAP-13 | `[medium][immediate]` | **closed by splitting `ambient` in two.** `ambient` is the `ctx.Value` lookup and runs **before** `this.log.mutex.Lock()` at all three doors; the new `Tx.live` is the liveness check and is the only half inside the section that acts. `ReadAll` resolves it the same way as the other two, so one concept has one resolution point. `Store.Transaction` reads both without the lock, because it acts on nothing |
+| GAP-14 | `[medium][immediate]` | **closed in the kernel.** `event/store.go`'s `Log.ReadAll` now states that what a global read answers inside a bound transaction is **unspecified** — a store reading through the transaction it joined returns its uncommitted events, one whose global order is assigned at commit returns none, both conformant — that the kernel runs no global read inside a write transaction, and that a cursor from one must not be persisted. `Envelope.Position` states that it means nothing before the append carrying it committed, and that `Version` is not in that boat |
+| GAP-7 | `[medium][deferred]` | **closed by a mechanism, not only the sentence round 1 added.** `log.claims` holds a `weak.Pointer[Tx]`. A transaction nobody can reach can never be committed, so its staged records will never be published and the streams it took are released the moment the runtime collects it — the next append to one of them drops the dead claim and is admitted. Stdlib only, no module, no `go.work` edit |
+
+### Round 1's sentence, corrected
+
+Round 1's dispositions say *"GAP-2's fix moves foreign code out of no critical
+section, and one call is now made on a path that refuses."* The first clause was
+**wrong** and GAP-13 is what it cost: `Spec.Clock` stayed above the lock, but the
+same fix moved `ctx.Value` — foreign code the caller implements — below it. The
+sentence should have read *the clock is still outside the section; the context
+lookup moved inside it, and should not have.* The second clause still holds: an
+empty or refused append reads the clock once and discards the answer. Round 1 is
+left as written, as the ledger requires; this is the correction.
+
+### Why GAP-7 got a mechanism after round 2 had closed it with a sentence
+
+The close criteria offered three doors — the doc, a finaliser or a `Log`-level
+sweep, or a suite case — and round 2 took the doc. The remediation list carries
+the finding anyway with the reviewer's failing input attached, and a fix that
+does not make that input pass is not a fix. A finaliser cannot work here on its
+own: `claims[stream] = tx` makes the transaction **reachable from the log**, so
+nothing would ever be collected and no cleanup would ever run. Making the claim
+weak removes the retention and the reclamation in the same line, and it also
+stops the log pinning an abandoned transaction's staged payloads. The one
+non-determinism it adds is the collection's timing, it is one-way — a claim is
+never *taken* by a collection, only released — and it is declared in the plan's
+**Degradation** paragraph.
+
+### Zero-diff obligation
+
+Nothing under `event/` gained or lost an exported symbol: `make api` regenerates
+`docs/api/surface.md` with no change attributable to this round. `ambient`,
+`Tx.live`, `Log.claim` and the weak claim are unexported, and every value
+`eventpg` must construct is still constructible from outside package `event`.
+GAP-14 is deliberately the loosest clause that keeps both stores conformant: a
+kernel that had *required* the committed-only answer would have forced `eventpg`
+to open a second connection to serve `ReadAll`.
+
+### Verified by mutation — seven applied, seven killed, every file restored byte-identically
+
+```
+Append resolves the ambient under the      → door 0 of the log never answered while an
+  lock again                                 append was still inside its own caller's
+                                             ctx.Value  (TestACallersOwnContextIsNever…)
+ReadStream resolves it under the lock      → same, "…while a stream read was still inside…"
+ReadAll resolves it under the lock         → same, "…while a log walk was still inside…"
+the liveness check hoisted back out of     → panic: assignment to entry in nil map
+  the critical section (GAP-2's defect)      (TestOneTransactionUsedFromManyGoroutines…)
+the claim names its transaction strongly   → "appending to a stream claimed by a transaction
+  again                                      nobody can reach any more answered [outcome
+                                             conflict] after 8 collections"
+no claim is ever held (the control)        → "appending to a stream a live transaction has
+                                             claimed was admitted"
+a staged envelope carries a position       → "the staged event reads back at position 2 beside
+                                             the committed one at 1, and this store's answer
+                                             to the position the kernel leaves unspecified
+                                             before a commit is zero"
+```
+
+`TestOneTransactionUsedFromManyGoroutinesRefusesRatherThanCrashes` still goes red
+on the fourth mutation, which is GAP-13's own close criterion: the split did not
+undo GAP-2.
+
+### Tests left behind
+
+- `TestACallersOwnContextIsNeverRunInsideTheLogsLock`
+  (`event/eventmemory/concurrency_test.go`) — a context that parks inside its own
+  `Value`, driven through **each** of the three doors in turn, with the other two
+  and an append asserted to answer within five seconds while it is parked. It
+  first asserts the parked call has **not** answered, so the window it measures
+  is real.
+- `TestAParkedContextStopsTheDoorItWasGivenTo` — the control: without it, a
+  `Value` that never actually parks would let every assertion above pass while
+  proving nothing.
+- `TestAStreamIsClaimedOnlyWhileSomethingCanStillCommitIt`
+  (`event/eventmemory/transaction_test.go`) — the abandoned case, with the
+  control beside it: a transaction the caller still holds keeps its claim across
+  eight collections, and the positive case asserts the abandoned one's staged
+  records were **not** published when the claim went. Stable at `-count=20`
+  under `-race` and under `-gcflags=all=-N`.
+- `TestAReadInsideATransactionSeesItsOwnStagedAppends` gains the staged-position
+  assertion, so this store's answer to the field the kernel now leaves
+  unspecified is pinned rather than incidental.
+
+### Docs and plan updated in the same change
+
+`event/eventmemory/doc.go`, `docs/modules/{en,ru}/event.md`,
+`docs/modules/{en,ru}/eventmemory.md`, `docs/ai/flows/FL-036` (three new notes,
+two file-table rows, two **Proved by** rows), `docs/ai/usecases/modules/event/UC-032`
+clause 13, and the plan's GAP-2 and staged-position decision-table rows, its
+**Degradation** paragraph, its S3 mutation transcript and a new S5 paragraph
+recording that `global paging` and `resumption` certify **neither** answer to
+GAP-14's question. `event/eventtest/sections_read.go` says the same where the
+sections are written.
+
+---
+
+## Round 4 — econv-impl-reviewer (clean context, remediation audit of cluster `ctx-value-under-the-log-mutex`) — 2026-09-08
+
+Scope: the three findings the cluster carries — **GAP-13** (`ctx.Value` under the log-wide
+mutex; `ReadAll` resolving the ambient at a second point), **GAP-14** (`Log.ReadAll` and
+`Envelope.Position` inside a bound transaction unspecified in the kernel), **GAP-7** (an
+abandoned `*Tx` bricking its streams). Verified against the code, not against round 3's
+disposition notes. Every probe below ran from a throwaway out-of-tree module at
+`/tmp/evprobe2` with a `replace` onto this checkout. Six mutations were applied in place and
+each file restored byte-identically — `append.go` `sha256 2cf5c9f3…c9296`, `read.go`
+`775715fa…3322f`, `log.go` `8a40cd0a…bb54a`, `transaction.go` `0422263e…f5c1e92`, `store.go`
+`2536262c…a46d3`, all five compared before and after; `git status --short -- event/` is
+unchanged from the start.
+
+### Checks I ran myself
+
+| Command | Result |
+|---|---|
+| `gofmt -l .` (whole tree) | silent |
+| `go vet ./event/...` | clean |
+| `go test -race -count=2 ./event/...` | `ok event 6.016s`, `ok event/eventmemory 1.488s`, `ok event/eventtest 4.011s` |
+| `go test -race -count=3 ./event/...` then `-count=1 -shuffle=on ./event/...` | green both times |
+| `go test -race -count=30 -run TestAStreamIsClaimedOnlyWhileSomethingCanStillCommitIt ./event/eventmemory/` | green — the GC-driven case is not flaky at 30 runs |
+| the same at `-count=20 -gcflags=all='-N -l'` and under `GOGC=off` | green both |
+| `make check` | nine arms, all `ok` |
+| plan checkpoint clause `…=8` (`event/eventmemory`) | `COUNT-8 OK` |
+| plan checkpoint clause `…=12` (`event/eventmemory`) | `COUNT-12 OK` |
+| `go list -deps ./event/eventmemory` minus stdlib | `utils, crud, errs, event, eventmemory` — no third-party, `go.mod`/`go.work` `use` untouched (`weak` is stdlib since Go 1.24; this module declares `go 1.26`) |
+
+No flake observed anywhere.
+
+### Microkernel — derived here, not inherited
+
+`grep -rn "eventmemory" event/*.go | grep -v _test` → **0**. Stronger: I wrote a **complete
+second `event.Store` in a package outside this repository** (`/tmp/evprobe2/store.go`, ~120
+lines: its own `Backing` through `NewBacking`, its own `Limits` through `ResidentPage`, its own
+cursor format, `Failure(Conflict|BadCursor, …)`, `var _ event.Store`). It **builds with zero
+diffs to anything under `event/`**, and `eventtest.Run` drives it unchanged and correctly
+reports four sections *failed* for the four things I deliberately left out (page cap, close,
+cancellation, foreign-cursor rejection). Exported surface of `eventmemory` after this round is
+unchanged at **8** package-level symbols, **10** `*Store` methods, **2** `*Tx` methods;
+`Log.claim` and `Tx.live` are unexported. **`event/eventpg` is still writable with zero diffs
+under `event/`: yes.**
+
+### Metrics — counted
+
+Non-test files under `event/eventmemory`: `transaction.go` 166, `store.go` 122, `log.go` 114,
+`read.go` 97, `append.go` 67, `cursor.go` 42, `doc.go` 38 — threshold 400, no breach. Longest
+function `Store.Append` **48** (was 45), then `ReadStream` 36, `ReadAll` 35, `NewLog` 22 —
+threshold 50, no breach, and `Append` is now within two lines of it. Maximum nesting depth 2.
+Internal imports per file **1** (`event`). Import cycles 0. Longest access chain
+`this.log.streams[stream]` — 2 dots. No global mutable state, no `init`, no logger, no env
+read, no `TODO`/`FIXME`/`nolint`, no `t.Skip` outside the two places where `SkipNow` **is** the
+subject under test (`eventtest/run_test.go:133`, `eventtest/suite_test.go:58` — both legitimate).
+No new string, numeric or regex literal in non-test code; `collections = 8` is test-only and named.
+
+### The three cluster findings, re-derived
+
+**GAP-13 — closed.** All five close criteria met, and I proved each by mutation rather than by
+reading.
+
+| Mutation applied in place | Test that went red |
+|---|---|
+| `Append` resolves `ambient` under the lock again | `TestACallersOwnContextIsNeverRunInsideTheLogsLock/an append …` — *"door 0 of the log never answered while an append was still inside its own caller's ctx.Value"* |
+| `ReadStream` and `ReadAll` resolve it under the lock again | the same test's *"a stream read"* and *"a log walk"* subtests, both |
+| the liveness check hoisted back out of the critical section (GAP-2's original defect) | `TestOneTransactionUsedFromManyGoroutinesRefusesRatherThanCrashes` → `panic: assignment to entry in nil map` at `(*Tx).stage ← (*Store).Append:65`. **The split did not undo GAP-2** |
+
+I also built the AB-BA case the finding named, which no test in the tree covers: a caller whose
+context decorator takes lock `L` inside `Value`, and a second goroutine holding `L` across an
+`Append`. Against the mutated store it **hangs the whole log** (`DEADLOCK … after 20s`);
+against the code as it stands the same probe finishes in `0.202s`. `ambient` is called at
+exactly four sites (`append.go:27`, `read.go:21`, `read.go:64`, `transaction.go:49`) and none is
+under a lock; the other two pieces of foreign code, `ctx.Err()` and the injected `Spec.Clock`,
+are both above the lock too. `ReadAll` now resolves the ambient exactly as the other two doors
+do — one concept, one resolution point.
+
+**GAP-14 — closed, with one residual carried below as GAP-21.** `event/store.go:130-138` states
+the `Log.ReadAll` answer as unspecified and names both conformant shapes; `:91-97` states what
+`Envelope.Position` means before a commit and that `Version` is not in that boat. The plan's
+decision-table row (`EVENTSOURCE_P1_PLAN.md:2310`) is rewritten as *this store's answer to a
+question the kernel now settles as the store's*; `eventtest/sections_read.go:154-158` records
+that neither `global paging` nor `resumption` certifies either answer. Mutating
+`TestAReadInsideATransactionSeesItsOwnStagedAppends` is not needed — the new assertion at
+`transaction_test.go:90-92` pins this store's answer, and it is the first thing in the tree that
+does. The loosest-clause choice is right: requiring the committed-only answer would have forced
+`eventpg` to open a second connection, which is a kernel dictating an extension's plumbing.
+
+**GAP-7 — closed by a mechanism, with one hole carried below as GAP-20.** Two mutations, both
+killed:
+
+| Mutation | Test that went red |
+|---|---|
+| the claim names its transaction strongly again (`map[Stream]*Tx`) | *"appending to a stream claimed by a transaction nobody can reach any more answered [outcome conflict] after 8 collections"* |
+| no claim is ever consulted (the control) | *"appending to a stream a live transaction has claimed was admitted, and it is what the store is supposed to refuse"* |
+
+The reachability argument holds where it applies: a `*Tx` nobody can reach cannot be committed,
+so releasing its claims on collection can never publish a record or admit an append at a version
+a committable transaction also staged, and `errStaleClaim` stays unreachable for the same reason
+round 2 gave. The hole is *who* can still reach it, which is GAP-20.
+
+### What is clean, with the check that says so
+
+- **No behaviour was widened and no assertion weakened.** The refusal precedence at `ReadAll` is
+  unchanged (`Refused` still beats `BadCursor`; I checked the order, not the diff).
+  `Store.Transaction` answers `(Authority{}, errFinished)` for a finished `*Tx` exactly as it did
+  when `ambient` carried that check. A nil `*Tx` still reaches `live()` on a nil receiver
+  legally and answers nil, and `WithTransaction(ctx, nil)` still refuses at all three doors.
+- **Every map touch on `Log` is under `log.mutex`** — `claim`, `claimedByAnother` (including its
+  `delete`), `publish`, `version`, `release`, `stage`, `stagedFor`, `stagedCount`; `Tx.finished`
+  is the one field read outside it and it is an `atomic.Bool`.
+- **Payload and page ownership are untouched**: inbound clone `append.go:57`, outbound clone
+  `read.go:95`, pages allocated at `len == cap`.
+- **Docs moved with the code, as `CLAUDE.md` requires.** `doc.go`, `docs/modules/{en,ru}/eventmemory.md`,
+  `docs/ai/flows/FL-036` (two file-table rows naming `claim`, `claimedByAnother`, `ambient`,
+  `Tx.live`, and two **Proved by** rows) and the plan all say the same thing. Every test name
+  they cite exists: `TestACallersOwnContextIsNeverRunInsideTheLogsLock`,
+  `TestAParkedContextStopsTheDoorItWasGivenTo`,
+  `TestAStreamIsClaimedOnlyWhileSomethingCanStillCommitIt`,
+  `TestAClaimCoversOnlyTheStreamsATransactionWroteTo` — all four found.
+
+---
+
+### GAP-20 [medium][immediate] The weak claim is defeated by the receipt the kernel itself hands back, and three documents state the reclamation with no condition on it
+
+- **Where:** `event/eventmemory/log.go:81-83` and `:92-103` (the weak claim) against
+  `event/authority.go:13-16` and `:33` — `Authority.identity` is a plain `any` holding the
+  store's own `*Tx` — reached through `event/repo.go:92` and `:101`, which put that authority
+  into every non-empty `Commit` receipt, and `event/token.go:34` and `:47`, which hand it to the
+  caller. The unconditional claims are at `event/eventmemory/doc.go:17-22`
+  (*"holds its claims and its staged records **only until the runtime collects it**"*),
+  `docs/modules/en/eventmemory.md:75-81` and `ru:76-82` (*"an abandoned transaction is a stall
+  and not a brick"*), and `.agents/artifacts/plans/EVENTSOURCE_P1_PLAN.md:2274-2287`
+  (*"holds nothing once nobody can reach it"*).
+- **What:** the mechanism is reachability, and the kernel publishes a strong reference to the
+  `*Tx` as part of its normal write result. A caller that retains a `Commit` receipt — an audit
+  buffer, an outbox row, a slice of receipts two subsystems compare later, which is exactly the
+  §UC-030 use `token.go:28` names — keeps the `*Tx` alive, so its claims and its staged payloads
+  are never reclaimed. Round 3's own justification (*"it also stops the log pinning an abandoned
+  transaction's staged payloads"*) is false in that shape. `Repo.Authority(ctx)` returns the same
+  value through a second door.
+- **Why this severity:** reproduced, deterministically, in `/tmp/evprobe2`. A transaction is
+  begun, staged to `orders.order acme/A-17`, and abandoned; the frame returns **only** the
+  `event.Authority` the store answered for it — byte for byte what `Repo.Append` puts in the
+  receipt. Eight `runtime.GC()` calls later, appending to that stream still answers
+  `event: the store reported [outcome conflict]`, and it will for the life of the process:
+
+  ```
+  PINNED: appending to the stream of an abandoned transaction whose authority
+  the caller still holds answered event: the store reported [outcome conflict]
+  after 8 collections
+  ```
+
+  Delete `runtime.KeepAlive(held)` from that probe and the append is admitted, so the pin is the
+  receipt and nothing else. The resulting behaviour is precisely GAP-7's original defect — one
+  aggregate refusing every write forever, reported as a retryable-looking `Conflict` a §UC-022
+  reload can never clear — reached through the one value the kernel is designed to hand out.
+  Medium rather than high because it is the *pre-existing, already-accepted* degradation rather
+  than a new wrong answer; what is new is three documents that deny it and a test that asserts
+  only the case where nothing retains the transaction.
+- **Why this timing:** the plan's **Degradation** paragraph is a written contract that phase 2's
+  author reads and that `eventpg`'s own degradation section will be modelled on, and
+  `docs/modules/{en,ru}/eventmemory.md` is where a consumer decides whether an abandoned
+  transaction is a stall or a brick. A sentence costs nothing now; a store author who copied
+  *"nobody can reach it"* as a general property has to be corrected later, in two packages and
+  four documents.
+- **Close criteria:**
+  - [ ] `doc.go`, both `docs/modules/*/eventmemory.md` and the plan's **Degradation** paragraph
+        state that the reclamation is reachability-based and that anything still naming the
+        transaction — a retained `event.Commit` receipt, an `event.Authority`, a context that
+        outlives the request — keeps its claims, **or** the store stops depending on reachability
+        for this
+  - [ ] a test beside `TestAStreamIsClaimedOnlyWhileSomethingCanStillCommitIt` covers the
+        retained-receipt case and asserts whichever answer the sentence above promises, so the
+        two cases are told apart rather than one standing for both
+  - [ ] the plan's round-3 claim that the weak claim *"stops the log pinning an abandoned
+        transaction's staged payloads"* is corrected or qualified
+- **Status:** open
+
+---
+
+### GAP-21 [medium][deferred] The consumer half of the `ReadAll`-inside-a-transaction rule is written only where a store author reads it, and the kernel's own sentence about itself is ambiguous
+
+- **Where:** `event/store.go:130-138` — the clause lives on `Log.ReadAll`, the interface a
+  **store implementer** satisfies. The party it binds holds `*event.Reader`:
+  `event/reader.go:27-33` (`Read`), `:48-57` (`Next`) and `:62` (`Cursor`) say nothing about a
+  bound transaction. The same sentence is repeated at
+  `docs/ai/flows/FL-036-a-decision-becomes-a-recorded-fact.md:230-235`.
+- **What:** two things. First, *"a consumer that does may not checkpoint the cursor it comes back
+  with"* is the one clause that prevents the failure GAP-14 named — a projector drain run inside
+  a write transaction checkpointing past events a rollback then discards — and it is written on
+  the store contract, not on the value the consumer holds and calls `Cursor()` on. Second,
+  *"The kernel runs no global read inside a write transaction"* reads as a guarantee and is not
+  one: `Reader.Next` **is** kernel code issuing the global read, on whatever context the consumer
+  hands it, and nothing in `Read`, `Next` or `Cursor` refuses, warns or records that the context
+  carried a transaction. What is true is the narrower *no kernel-initiated path opens a
+  transaction and then reads globally*.
+- **Why this severity:** on `eventmemory` a drain inside a write transaction silently reads
+  nothing; on a store that joins the transaction it reads its own uncommitted rows and
+  `Reader.Cursor()` returns a cursor past them. A consumer that persists that cursor and then
+  rolls back skips those events permanently — §INV-034's *"an event that is permanently visible
+  to one read and not the other"* reached without breaking a stated rule. Medium because phase 1
+  ships only the store that answers the safe way and the rule *is* written down somewhere; the
+  defect is that it is written in the doorway the wrong party walks through.
+- **Why this timing:** a doc sentence on an already-shipped S4 type. Nothing is rewritten by
+  adding it later and no contract another section is about to depend on changes shape.
+- **Close criteria:**
+  - [ ] `Reader.Next` or `Reader.Cursor` carries the consumer's obligation — a cursor from a walk
+        issued while a transaction of this backing is bound must not be persisted — or `Read`
+        refuses such a context outright and the plan says which was chosen and why
+  - [ ] `event/store.go`'s sentence distinguishes *the kernel initiates no global read inside a
+        write transaction* from *`Reader.Next` will run one on any context it is given*
+  - [ ] `docs/modules/{en,ru}/event.md` states the same where the consumer of `Read` reads it
+- **Status:** open
+
+---
+
+### GAP-22 [low][deferred] `ReadAll` moved cursor parsing *into* the critical section GAP-13 asked to shrink
+
+- **Where:** `event/eventmemory/read.go:75-78`. Before this round `readCursor` ran at what was
+  `read.go:58-62`, above `this.log.mutex.Lock()`; it now runs inside it.
+- **What:** GAP-13's first close criterion reads *"only the `finished` check and the staging
+  remain inside the critical section"*. `readCursor` (`cursor.go:26-42`) reads only
+  `this.fingerprint`, which is written once in `NewLog` and never again, so it needs no lock —
+  and a `strings.Cut` plus a `strconv.ParseUint` over caller-supplied text now runs while every
+  reader and writer of the log waits. The same round also moved the refusal of a malformed
+  cursor from *before* the lock to *after* it: a caller replaying a corrupt checkpoint in a loop
+  now contends for the log on every attempt.
+- **Why this severity:** no foreign code is involved, so there is no deadlock and no unbounded
+  hold — the work is a few hundred nanoseconds over a string the caller supplied and the store
+  bounds nothing about its length. Cosmetic in effect, and the direction is the one the cluster
+  was opened to reverse.
+- **Why this timing:** module-internal, no contract, and moving it back is three lines.
+- **Close criteria:**
+  - [ ] `readCursor` runs before `this.log.mutex.Lock()`, or a comment at the call site says why
+        it is inside a section that only the liveness check and the staging were meant to hold
+  - [ ] the refusal precedence is unchanged either way — `Refused` before `BadCursor`, which is
+        what `TestATransactionThisStoreCannotUseIsRefusedAtEveryDoor` pins today
+- **Status:** open
+
+---
+
+### GAP-23 [low][deferred] `ambient`'s comment still explains a rule `ambient` no longer applies
+
+- **Where:** `event/eventmemory/transaction.go:59-62`, on a function whose body is now
+  `transaction.go:69-78`.
+- **What:** the first paragraph reads *"A transaction of another log is nothing of this store's,
+  so its operations run on this store's own autocommit. **A finished one is not:** the caller
+  holds a context that reads like a transaction and is not one, and answering it with autocommit
+  is the escape the transaction rule exists to close."* After the split, `ambient` returns a
+  finished `*Tx` with a nil error and decides nothing about it; the rule the sentence states is
+  implemented in `Tx.live` (`:84-89`), which carries its own comment. The house rule is that a
+  comment exists only where it carries something the code cannot — a comment that describes a
+  neighbouring function's rule is the failure mode that rule guards against.
+- **Why this severity:** cosmetic, and it misleads only a reader who trusts the comment over the
+  five lines beneath it.
+- **Why this timing:** an unexported function's comment; nothing reads it and nothing bends
+  around it.
+- **Close criteria:**
+  - [ ] the finished-transaction rule is stated once, where it is implemented
+  - [ ] `ambient`'s remaining comment says only what `ambient` does — the two keys, and why the
+        lookup is above the lock
+- **Status:** open
+
+---
+
+### GAP-24 [low][deferred] `claimedByAnother` is spelled as a predicate and mutates the map
+
+- **Where:** `event/eventmemory/log.go:92-103`, the `delete(this.claims, stream)` at `:99`.
+- **What:** the name is a question and the body answers it *and* drops the entry it found dead.
+  The comment above it argues the lazy drop well (*"A claim is dropped where it is found rather
+  than swept, because the only reader is the append that was about to be refused by it"*), and
+  the argument is right; the name is what does not say so. `release` and `stage` are the package's
+  two other writers of `claims` and both read as commands, which is the shape this one breaks.
+  A second consequence, not a defect on its own: a claim left by a collected transaction on a
+  stream nobody appends to again is never removed, so `claims` keeps one dead entry per such
+  stream for the life of the log.
+- **Why this severity:** local, correct, and covered by a comment. Command-query separation in an
+  unexported six-line helper is a readability preference, not a behaviour question.
+- **Why this timing:** internal naming, no contract.
+- **Close criteria:**
+  - [ ] the function's name says it may drop a dead claim, or the drop moves to the caller that
+        acts on the answer
+- **Status:** open
+
+---
+
+### Verdict for this cluster
+
+**GAP-13 closed** (five of five criteria, four proved by mutation and one by a deadlock probe the
+tree has no test for). **GAP-14 closed** (four of four criteria; GAP-21 is the residual, and it
+is a doorway question rather than a reopening). **GAP-7 closed by a mechanism** (two of two
+criteria, both proved by mutation) **but the mechanism has the hole GAP-20 names.** One
+`[medium][immediate]` is open, so the cluster is not green.
+
+---
+
+## Round 5 — remediation of round 4, cluster `ctx-value-under-the-log-mutex` — 2026-09-08
+
+Round 4 left one `[medium][immediate]` (GAP-20) and four deferred findings, three of
+which round 3's own fixes introduced (GAP-21, GAP-22, GAP-23) and one of which its
+rename opportunity created (GAP-24). All five are closed. GAP-20 was reproduced
+before the fix from a throwaway out-of-tree module at `/tmp/evprobe3` with a
+`replace` onto this checkout, driving the **kernel's** own `Repo.Append` receipt
+rather than the store's `Transaction` directly, because the receipt is the value
+the finding names.
+
+### GAP-20 reproduced, through the receipt the kernel hands back
+
+`/tmp/evprobe3` binds a `Repo` over an `eventmemory` store, begins a transaction in
+a frame that returns **only** the `event.Commit` it got back, appends to
+`orders.order acme/A-17` inside it and never commits. Eight `runtime.GC()` calls
+later it loads and appends to the same aggregate through the same `Repo`:
+
+```
+the caller keeps the commit receipt:      event: the stream is not at the version this append was decided at: conflict
+  and the authority in it is still valid: true
+control, the receipt is dropped:          <nil>
+control, the caller keeps the *Tx itself: event: the stream is not at the version this append was decided at: conflict
+```
+
+The first line is the defect and the two controls are what make it one: dropping
+the receipt admits the append, so the pin **is** the receipt; holding the `*Tx`
+refuses it, which is the claim doing its job. After the fix, same probe, same
+three cases:
+
+```
+the caller keeps the commit receipt:      <nil>
+  and the authority in it is still valid: true
+control, the receipt is dropped:          <nil>
+control, the caller keeps the *Tx itself: event: the stream is not at the version this append was decided at: conflict
+```
+
+| Finding | Grade | Disposition |
+|---|---|---|
+| GAP-20 | `[medium][immediate]` | **closed by mechanism and sentence, in that order.** The authority no longer names the `*Tx`: `Tx` carries a `txIdentity{log, nth}`, minted under the log's mutex at `Begin`, and `Store.Transaction` hands *that* to `event.NewAuthority`. It is comparable, stable for the transaction's life, monotone per log and never reused — every property `NewAuthority` asks for — and it names nothing that could commit or append, so a retained receipt pins no claim. What reachability still means is then stated without a condition missing: `doc.go`, `docs/modules/{en,ru}/eventmemory.md` and the plan's **Degradation** paragraph say that the `*Tx` itself and a context carrying it that outlives the request keep their claims — both of which can still be *used*, so the claim is doing its job — and that the receipt does not. The plan's round-3 claim about pinned staged payloads is corrected in the same paragraph |
+| GAP-21 | `[medium][deferred]` | **closed on the consumer's own value.** `Reader.Cursor` now carries the obligation — a cursor is safe to persist *unless the walk ran on a context carrying a transaction of this backing* — because that is the value the consumer holds and calls. `event/store.go`'s sentence is split in two: *no path the kernel initiates opens a transaction and then reads globally*, which is true, and *`Reader.Next` issues this call on whatever context the consumer hands it, and neither it nor `Read` refuses one carrying a transaction*, which is the part that read as a guarantee and was not one. `docs/modules/{en,ru}/event.md` say both, on the `Reader.Cursor()` row and in the two store's-answer bullets. Refusing at the call was **rejected and the plan says why**: a `Reader` holds a `Log`, which has no `Transaction` method, and `ReadOnly` deliberately has no `Next` to walk past, so the kernel cannot ask the question without a store call per page and a widened seam |
+| GAP-22 | `[low][deferred]` | **closed by moving the parse back out.** `readCursor` runs above `this.log.mutex.Lock()` again; only the liveness check and what acts on the log are inside. The *report* stays below, because the precedence is `Refused` before `BadCursor` — and that precedence was **not** pinned by anything, contrary to round 4's note: `TestATransactionThisStoreCannotUseIsRefusedAtEveryDoor` passed `""`, a cursor that parses. It now also passes a foreign one at every refusing door, with the control beside it — the same cursor inside a **live** transaction, which must be `BadCursor`, so the refusal above is the transaction and not the cursor |
+| GAP-23 | `[low][deferred]` | **closed by moving the sentence to the code that implements it.** `Tx.live` carries the finished-transaction rule (*"answering it with autocommit is the escape the transaction rule exists to close"*); `ambient`'s comment says only what `ambient` does — the two keys, another log's transaction running on this store's autocommit, and why the lookup is above the lock |
+| GAP-24 | `[low][deferred]` | **closed by naming the command.** `claimedByAnother(stream, tx) bool` is `releaseDeadClaim(stream) *Tx`: the name is the write it performs and the result is the claimant that survived it, which `Append` compares against its own transaction. The drop stays where it was found — moving it to `Append` would have pushed that function from 48 lines past `architecture.md`'s 50 — and the comment keeps the argument for the lazy drop, now including what it costs (one word per stream nobody appends to again) |
+
+### Verified by mutation — four applied, four killed, every file restored byte-identically
+
+The first is measured twice, in the tree and out of it, because the finding's own
+input is an out-of-tree caller holding a receipt.
+
+```
+Store.Transaction hands the *Tx to        → "appending to a stream claimed by an abandoned
+  NewAuthority again                        transaction whose commit receipt the caller still
+                                            holds answered [outcome conflict] after 8
+                                            collections"  (TestAStreamIsClaimedOnly…)
+nameTransaction returns a constant        → "two live transactions of this store answer
+  ordinal                                   authorities that compare the same" — the
+                                            conformance suite's `transactions` section, at
+                                            both limit settings, and TestASecondAppendIn…
+ReadAll reports the bad cursor before it  → "reading the log from an unreadable cursor
+  asks whether the transaction is live      through a context carrying a transaction that
+                                            was already finished reported [outcome bad
+                                            cursor] rather than … [outcome refused]"
+ReadAll resolves the ambient under the    → "door 0 of the log never answered while a log
+  lock again (GAP-13's own criterion,       walk was still inside its own caller's ctx.Value"
+  re-checked after the parse moved)         (TestACallersOwnContextIsNeverRunInside…)
+the fix reverted and the probe rerun      → the transcript above, first line
+  out of tree
+```
+
+`event/eventmemory/read.go` `sha256 1e33722d…cc15ac` and `transaction.go`
+`291405cb…c1e68` compared before and after every mutation, identical each time.
+
+### Tests left behind
+
+- `TestAStreamIsClaimedOnlyWhileSomethingCanStillCommitIt` gains *"the commit
+  receipt of an abandoned transaction is not a route back to it"*, beside the two
+  cases already there — the abandoned one and the still-held one — so the three
+  are told apart rather than one standing for all. It asserts the authority is
+  still valid at the end, so the case cannot pass by not holding the value it
+  claims to hold. Stable at `-count=30`, at `-count=20 -gcflags=all='-N -l'` and
+  under `GOGC=off`.
+- `TestATransactionThisStoreCannotUseIsRefusedAtEveryDoor` gains the unreadable
+  cursor at the two refusing doors and, in the live-transaction subtest, the
+  control that the same cursor is `BadCursor` there.
+
+### Zero-diff obligation
+
+`txIdentity`, `nameTransaction` and `releaseDeadClaim` are unexported and
+`Tx.identity` is an unexported field. `make api` regenerates `docs/api/surface.md`
+with `eventmemory` at the same **8** package-level symbols; nothing under `event/`
+gained or lost an exported symbol, and the two kernel edits — `Log.ReadAll`'s
+clause and `Reader.Cursor`'s — are comments. `eventpg` is still writable with zero
+diffs under `event/`, and nothing here narrows what it may answer: an authority
+naming the store's own transaction handle stays conformant, because
+`NewAuthority` asks for identity and never for the transaction object.
+
+### Docs and plan updated in the same change
+
+`event/eventmemory/doc.go`, `event/eventmemory/transaction.go` (the `txIdentity`
+paragraph), `event/store.go`, `event/reader.go`, `docs/modules/{en,ru}/event.md`,
+`docs/modules/{en,ru}/eventmemory.md`, `docs/ai/flows/FL-036` (the claim note, the
+`ReadAll` note, two file-table rows and one **Proved by** row), and the plan — a
+new decision-table row for what the authority names, the `Degradation` paragraph
+rewritten around reachability, and the GAP-14 row extended with GAP-21's answer
+and the rejected alternative.
+
+---
+
+## Round 6 — econv-impl-reviewer (clean context, re-audit of cluster `ctx-value-under-the-log-mutex` after round 5) — 2026-09-08
+
+Scope: the three cluster findings — **GAP-13**, **GAP-14**, **GAP-7** — plus the five round 5
+claims to have closed (**GAP-20**, **GAP-21**, **GAP-22**, **GAP-23**, **GAP-24**). Verified
+against the code. Six mutations applied in place, each restored and checked with
+`sha256sum -c`; `append.go 1363b8e7…e286ae`, `read.go 1e33722d…cc15ac`, `log.go 3a49f4ba…dfd6f98`,
+`transaction.go 291405cb…c1e68`, `store.go b2fd2455…ba4e80`, `reader.go c04594c4…10a9aa3` all
+identical before and after, and `git status --short -- event/` is unchanged from the start.
+Out-of-tree probes ran from a throwaway module at `/tmp/vvaudit` with a `replace` onto this
+checkout.
+
+### Checks I ran myself
+
+| Command | Result |
+|---|---|
+| `gofmt -l .` (whole tree) | silent |
+| `go vet ./event/...` | clean |
+| `go test -race -count=2 ./event/...` | `ok event 6.005s`, `ok event/eventmemory 1.492s`, `ok event/eventtest 4.036s` |
+| `go test -race -count=50 -run TestAStreamIsClaimedOnlyWhileSomethingCanStillCommitIt ./event/eventmemory/` | green — the GC-driven case does not flake at 50 |
+| the same at `-count=20 -gcflags=all='-N -l'` and under `GOGC=off` | green both |
+| `make check` | nine arms, all `ok` (`check-deps`, `check-tiers`, `check-utils`, `check-triplets`, `check-todo`, `check-replaces`, `check-tidy`, `check-otel-schema`, `check-workspace`) |
+| `make api` then `diff` against the pre-existing baseline | **no diff** — `eventmemory` still at 8 package-level entries; file restored |
+| `go list -deps ./event/eventmemory` minus stdlib | `utils, crud, errs, event, eventmemory` — no third-party; `weak` is stdlib and the module declares `go 1.26` |
+
+No flake observed anywhere.
+
+### Microkernel — derived here, not inherited
+
+`grep -rn "eventmemory\|eventtest\|eventpg" event/*.go | grep -v _test` → **0 lines**. Stronger
+than a grep: I wrote a **complete second `event.Store` in a package outside this repository**
+(`/tmp/vvaudit/pgshaped.go`, ~300 lines) and deliberately gave it the **opposite** shape to
+`eventmemory` on every question this cluster touched — positions drawn from a non-transactional
+sequence at *append* time (so a staged envelope already carries one), `ReadAll` reading **through**
+the transaction it joined (so a walk inside a bound transaction returns that transaction's
+uncommitted events), a **strong** claim, and the `*Tx` itself as the authority's identity. It is
+built only from the exported surface (`NewBacking`, `NewAuthority`, `Failure`, `Limits`,
+`Capabilities`, `ResidentPage`), and `eventtest.Run` drives it **unchanged, with zero diffs under
+`event/`**, green at two limit settings. On the way there the suite caught two real defects in it
+that I then fixed — a cursor fingerprint shared between two backings (`resumption` failed) and a
+factory that reset its backing between store values — which is the suite doing its job on a store
+it has never seen.
+
+**`event/eventpg` is still writable with zero diffs under `event/`: yes.** GAP-14's loosening is
+real rather than declared: the store that answers the *other* way passes.
+
+### Metrics — counted
+
+Non-test files under `event/eventmemory`: `transaction.go` 182, `store.go` 122, `log.go` 118,
+`read.go` 103, `append.go` 67, `cursor.go` 42, `doc.go` 41 — threshold 400, no breach. Longest
+function `Store.Append` **48**, then `ReadStream` 36, `ReadAll` 35, `New` 33, `NewLog` 22 —
+threshold 50, no breach. Maximum nesting depth **3** (counting the function body as 1). Internal
+imports per non-test file **1** (`event`). Import cycles 0. Longest access chain
+`this.log.streams[stream]` — 2 dots. Exported surface: 8 package-level entries, unchanged against
+`docs/api/surface.md`. Global mutable state 0 (`grep -n "^var " event/eventmemory/*.go` finds only
+sentinel `errors.New` blocks and one `var _ event.Store` assertion). `init` 0, `log.Print`/`fmt.Print`
+in non-test code 0, `os.Getenv` under `event/` 1 and it is in `eventtest/run_test.go` driving its own
+subprocess, `TODO`/`FIXME` 0, `nolint` 0, `t.Parallel` 0. No new string, numeric or regex literal in
+non-test code; the only literals under `event/eventmemory` are sentinel text, `cursorSeparator = ":"`
+(the store's own format, and `readCursor(mintCursor(x)) == x` is fuzz-pinned by
+`FuzzACursorEitherResumesInsideTheLogOrIsRefused`), and the four named defaults, each with its
+derivation written beside it. `rand.Text()` is base32, so it can never contain the separator.
+
+### The eight findings, re-derived
+
+**GAP-13 — closed.** `ambient` is called at exactly four sites — `append.go:27`, `read.go:21`,
+`read.go:70`, `transaction.go:62` — and **none is under `log.mutex`**; the other foreign values,
+`ctx.Err()` and the injected `Spec.Clock`, are above it too. Three mutations, three kills:
+
+| Mutation applied in place | Test that went red |
+|---|---|
+| `ReadAll` resolves `ambient` under the lock again (re-checked after round 5 moved the cursor parse) | `TestACallersOwnContextIsNeverRunInsideTheLogsLock/a log walk …` — *"door 0 of the log never answered while a log walk was still inside its own caller's ctx.Value"* |
+| the liveness check hoisted back out of the critical section (GAP-2's original defect) | `TestOneTransactionUsedFromManyGoroutinesRefusesRatherThanCrashes` → `panic: assignment to entry in nil map` at `(*Tx).stage ← (*Store).Append:65`. **Round 5 did not undo GAP-2** |
+| `Append` resolves `ambient` under the lock again | my own out-of-tree AB-BA probe hung: `DEADLOCK … after 20s` |
+
+The AB-BA case the finding named is genuinely closed, and I built it rather than reasoned about it:
+`/tmp/vvaudit/abba_test.go` runs a context decorator that takes a caller lock `L` inside `Value`
+against a goroutine that holds `L` across an `Append`, 200 rounds each. Against the code as it
+stands it finishes in `0.00s`; against the mutated store it hangs the whole log for the full 20s
+budget. The tree has no test for that case, and it does not need one — it is implied by
+`TestACallersOwnContextIsNeverRunInsideTheLogsLock`, whose control
+(`TestAParkedContextStopsTheDoorItWasGivenTo`) asserts the parking context really does park.
+
+**GAP-14 — closed.** `event/store.go:125-141` states the `Log.ReadAll` answer inside a bound
+transaction and names both conformant shapes; `:91-97` states what `Envelope.Position` means before
+a commit and that `Version` is not in that boat. Both are proved conformant rather than asserted:
+my out-of-tree store answers the *other* way on both and passes `eventtest.Run` unchanged. In-tree,
+the mutation *"a staged envelope carries a position"* goes red at `transaction_test.go:91` —
+*"the staged event reads back at position 2 beside the committed one at 1"* — so this store's
+answer is pinned rather than incidental. `eventtest/sections_read.go:154-158` records that neither
+`global paging` nor `resumption` certifies either answer.
+
+**GAP-7 — closed by a mechanism.** Two mutations, two kills: making the claim strong again
+(`map[Stream]*Tx`) reddens *"appending to a stream claimed by a transaction nobody can reach any
+more answered [outcome conflict] after 8 collections"*, and the same test's first subtest is the
+control — a transaction the caller still holds keeps its claim across the same 8 collections, so
+the positive case cannot pass by the claim never being taken.
+
+**GAP-20 — closed, and it closed a second hole on the way.** `Store.Transaction` hands
+`tx.identity` — a `txIdentity{log, nth}` minted under the log's mutex at `Begin` — and never the
+`*Tx`. I reproduced the finding's own input out of tree, through the **kernel's** `Repo.Append`
+receipt rather than the store's `Transaction`, with both controls:
+
+```
+the caller keeps the commit receipt:      <nil>   (and the authority is still Valid)
+control, the receipt is dropped:          <nil>
+control, the caller keeps the *Tx itself: event: … conflict   ← the claim doing its job
+```
+
+Reverting `Store.Transaction` to name the `*Tx` reddens
+`TestAStreamIsClaimedOnlyWhileSomethingCanStillCommitIt/the commit receipt …`, and making
+`nameTransaction` return a constant ordinal reddens the conformance suite's `transactions` section
+at both limit settings plus `TestASecondAppendInOneTransactionIsAdmitted/the two operations answer
+one authority`. Unremarked in round 5: the old scheme was ABA-free only *because* it pinned — a
+collected `*Tx`'s address can be reused — so `Repo.transaction`'s `marked.Same(authority)` mismatch
+check is now safe by construction instead of safe by retention.
+
+**GAP-21 — closed.** `Reader.Cursor` carries the consumer's obligation, `event/store.go:137-141`
+separates *no path the kernel initiates* from *`Reader.Next` runs one on any context you hand it*,
+`docs/modules/en/event.md:141` and `ru:143` say it on the `Reader.Cursor()` row, and the plan
+(`EVENTSOURCE_P1_PLAN.md:2328`) records the rejected alternative and why. One residual below as
+GAP-26.
+
+**GAP-22 — closed.** `readCursor` runs at `read.go:74`, above `this.log.mutex.Lock()` at `:76`; only
+`tx.live()` and what acts on the log are inside. The precedence is now genuinely pinned:
+`TestATransactionThisStoreCannotUseIsRefusedAtEveryDoor` passes `foreignCursor` at the two refusing
+doors **and** carries the control that the same cursor inside a *live* transaction is `BadCursor`.
+Mutating `ReadAll` to report the bad cursor before asking whether the transaction is live reddens it.
+
+**GAP-23 — closed.** `ambient`'s comment now says only what `ambient` does; the finished-transaction
+rule is stated once, on `Tx.live`, where it is implemented.
+
+**GAP-24 — closed.** `releaseDeadClaim(stream) *Tx` names the write it performs and returns the
+claimant that survived it. `Append:46` compares that against its own transaction. The lazy-drop
+argument and its cost are in the comment.
+
+### What is clean, with the check that says so
+
+- **Nothing was widened and no assertion weakened.** Refusal precedence at all three doors is
+  `Closed` → `Refused` (ambient) → `Refused` (liveness) → `BadCursor`/`Conflict`; I checked the
+  order in the code, not the diff, and mutated the one pair round 5 moved. Every map touch on `Log`
+  is under `log.mutex` (`claim`, `releaseDeadClaim` including its `delete`, `publish`, `version`,
+  `nameTransaction`, `release`, `stage`, `stagedFor`, `stagedCount`); `Tx.finished` is the one field
+  read outside it and it is an `atomic.Bool`; `Tx.identity` is written once at construction and
+  never again.
+- **`nameTransaction` introduced no new lock-order hazard**: `Store.Begin` calls `ctx.Err()` and
+  reads `closed` *before* taking the log's mutex, and nothing foreign runs inside it.
+- **Payload and page ownership are untouched**: inbound clone `append.go:57`, outbound clone
+  `read.go:101`, pages allocated at `len == cap`.
+- **Docs moved with the code.** `doc.go:22-25`, `docs/modules/en/eventmemory.md:83-89` and
+  `ru:85-92` (parallel, both carrying the receipt clause), `docs/modules/{en,ru}/event.md`'s
+  `Reader.Cursor()` row, `docs/ai/flows/FL-036` (file-table rows naming `claim`,
+  `releaseDeadClaim`, `nameTransaction`, `txIdentity`, `ambient`, `Tx.live`, `readCursor`) and the
+  plan all say the same thing. Every `Test…`/`Fuzz…` name any of them cites exists — I checked all
+  of them mechanically against `func <name>` in the tree, and none is missing.
+- **Universality**: nothing in the changed non-test code is fitted to a sample. No fixed phrase
+  list, no layout-tuned regex, no `if id == "…"`, no `parts[2]`, no fixture path from a non-test
+  file, no uncalibrated threshold. The one number a reader might question, `collections = 8`, is
+  test-only, named, and survives `-count=50`, `-gcflags=all='-N -l'` and `GOGC=off`.
+
+---
+
+### GAP-25 [low][deferred] `Log.ReadAll`'s new clause opens by stating as fact the thing its next breath declares unspecified
+
+- **Where:** `event/store.go:131-135`.
+- **What:** the paragraph reads *"**Unlike ReadStream, this does not read the caller's own
+  writes**: whether a read issued while a transaction of this store's backing is bound returns that
+  transaction's uncommitted events is unspecified. A store reading through the transaction it
+  joined returns them, a store whose global order is assigned at commit returns none, and both are
+  conformant."* The lead clause is a flat statement of the committed-only answer; the rest of the
+  sentence retracts it. Only the colon binds them, and the lead clause is the part that reads like
+  a contract line on an interface method, sits beside `ReadStream`'s genuinely absolute clause at
+  `:187-189`, and is what a skim picks up.
+- **Why this severity:** cosmetic in effect — the paragraph as a whole is right and the two
+  conformant shapes are named two lines down. It is a comment, so nothing behaves differently.
+- **Why this timing:** the reader it misleads is phase 2's author, and the cost if he stops at the
+  colon is exactly what GAP-14's close was written to avoid: implementing the committed-only answer
+  and opening a second connection to serve `ReadAll` inside a write transaction. Cheap to say
+  correctly now; a doc sentence either way, and nothing is rewritten by fixing it later.
+- **Close criteria:**
+  - [ ] the clause's first sentence states the question rather than one of its answers — e.g.
+        *"Unlike `ReadStream`, whether this reads the caller's own uncommitted writes is
+        unspecified"*
+  - [ ] the two conformant shapes still follow, unchanged
+  - [ ] `docs/modules/{en,ru}/event.md` do not repeat the flat form
+- **Status:** open
+
+---
+
+### GAP-26 [low][deferred] `Reader.Cursor` carries the right obligation with a cause that does not hold
+
+- **Where:** `event/reader.go:62-68`, repeated as the finding's own words in
+  `EVENTSOURCE_P1_S3_GAPS.md` round 4 GAP-21.
+- **What:** the obligation — *a cursor from a walk that ran on a context carrying a transaction of
+  this backing must not be persisted* — is correct and unconditional. The reason given for it is
+  not: *"a store reading through that transaction answered its uncommitted events and this cursor
+  is already past them, so **a rollback afterwards discards events nothing will read again**"*. If
+  the transaction rolls back its own events never existed, so skipping them is the right answer,
+  not a loss. The harm that is real is the other one: on a store drawing positions from a
+  non-transactional sequence, a walk inside a transaction returns its own uncommitted rows at
+  positions **above the store's safe watermark**, and the cursor then sits past positions that
+  *other, still-in-flight* transactions hold and will commit at. Persisting it skips those
+  permanently — and it does so whether the walking transaction commits or rolls back.
+- **Why this severity:** a comment. A consumer who simply obeys the stated obligation is safe
+  either way, which is why this is not medium.
+- **Why this timing:** the obligation is already stated correctly, so nothing is blocked and no
+  contract shape changes. The risk is second-order — a phase-2 author reasoning *past* the
+  obligation from the cause given ("we always commit, so this cannot bite us") and draining inside
+  a committing transaction — which is §INV-034's *an event permanently visible to one read and not
+  the other* reached without breaking any written rule.
+- **Close criteria:**
+  - [ ] the reason on `Reader.Cursor` names the in-flight-position hazard rather than the rollback,
+        or drops the reason and keeps the obligation
+  - [ ] `docs/modules/{en,ru}/event.md`'s `Reader.Cursor()` row says the same
+  - [ ] the plan's GAP-14/GAP-21 row (`EVENTSOURCE_P1_PLAN.md:2328`) is not left stating the
+        rollback as the reason
+- **Status:** open
+
+---
+
+### GAP-27 [low][deferred] The envelope construction and the payload clone are the largest thing left inside the section GAP-13 and GAP-22 were opened to shrink
+
+- **Where:** `event/eventmemory/append.go:50-60`, between `this.log.mutex.Lock()` at `:33` and the
+  `stage`/`publish` at `:62`/`:65`.
+- **What:** GAP-13's first close criterion, as round 3 quoted it, is *"only the `finished` check and
+  the staging remain inside the critical section"*, and GAP-22 was filed for a `strings.Cut` plus a
+  `strconv.ParseUint` that had moved into it. The loop that builds the envelopes and calls
+  `bytes.Clone` on every record's payload is still there and is two orders of magnitude larger: at
+  this store's own defaults that is `MaxBatch 64 × MaxPayload 64 KiB = 4 MiB` of `memcpy` per
+  append while every reader and writer of the log waits, and the kernel admits an append up to
+  `MaxResidentBytes` = **64 MiB** (`event/repo.go:187`), so a deployment that raises `MaxPayload`
+  can hold the log-wide mutex across a 64 MiB copy. Only `Version: admitted + offset + 1` genuinely
+  needs the lock; the clone does not.
+- **Why this severity:** no foreign code, so no deadlock and no unbounded hold — the work is
+  bounded, this store's own, and cannot block. It is head-of-line latency in an in-memory store,
+  which is the ordinary harm the cluster named rather than the severe one. Not introduced by this
+  cluster; it predates it, and this round is the first to measure it.
+- **Why this timing:** module-internal, no contract, and it is a hoist of ten lines. It is recorded
+  because the criterion it fails is one this cluster is being graded against, and because the two
+  smaller occupants of the same section were both moved out — leaving the largest one unremarked
+  reads as a decision nobody made.
+- **Close criteria:**
+  - [ ] the payload clone runs above `this.log.mutex.Lock()`, or a comment at `append.go:50` says
+        why the whole envelope build belongs inside a section only the liveness check and the
+        staging were meant to hold
+  - [ ] `Store.Append` stays inside `architecture.md`'s 50-line bound (it is at 48 today)
+  - [ ] the inbound-clone guarantee is unchanged either way — no `event.Record.Payload` array
+        reaches `Log.streams` or `Log.global`, which
+        `TestNothingACallerHandsToAnAppendIsRetainedOrRewritten`
+        (`event/eventmemory/ownership_test.go:12`) pins
+- **Status:** open
+
+---
+
+### Verdict for this cluster
+
+**GAP-13, GAP-14 and GAP-7 are closed**, and so are **GAP-20, GAP-21, GAP-22, GAP-23 and GAP-24**
+— six mutations applied and killed, two out-of-tree probes (the receipt through `Repo.Append`, and
+the AB-BA deadlock) reproducing the finding's own inputs and now answering correctly, both with
+controls that fail if the mechanism under test stops being the thing that makes them pass. The
+microkernel boolean was re-derived rather than inherited: a complete second store written outside
+this repository, deliberately the opposite shape on every question this cluster touched, passes
+`eventtest.Run` with **zero diffs under `event/`**. Three new findings, all `[low][deferred]`, two
+of them comments and one a pre-existing hoist. **Nothing in this cluster blocks.**

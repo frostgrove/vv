@@ -8,7 +8,8 @@ dependency and starts no background work.
 
 - `Put`, `Open`, `Head` and idempotent `Delete` over opaque, validated `Key`s;
 - explicit `CreateOnly` and `Replace` write modes, with `CreateOnly` as the
-  zero-value default;
+  zero-value default, and an `IfMatch` precondition on top of either;
+- ranged reads through `ReadOptions`;
 - bounded portable content type and metadata;
 - `Stage`, `Promote`, `Abort` and `CleanupExpired` for uploads made before a UI
   form is confirmed;
@@ -48,6 +49,52 @@ info, err = files.Put(ctx, key, source, storage.PutOptions{
     Mode: storage.Replace,
 })
 ```
+
+### Conditional writes
+
+`CreateOnly` guards only the first write of a key and `Replace` guards nothing,
+so two callers who read, decided and wrote lose one of the two decisions with no
+error on either side. `IfMatch` makes a write conditional on the `ETag` the
+caller last saw:
+
+```go
+current, err := files.Head(ctx, key)
+// ... decide something from the current object ...
+_, err = files.Put(ctx, key, source, storage.PutOptions{
+    Mode:    storage.Replace,
+    IfMatch: storage.IfMatch(current.ETag),
+})
+// errors.Is(err, storage.ErrPreconditionFailed) — somebody else wrote first
+```
+
+It is available on `PutOptions`, `PromoteOptions` and `DeleteOptions`. A backend
+that cannot honour it refuses the option with `ErrUnsupported` rather than
+writing unconditionally, and says which it is through
+`Capabilities().ConditionalWrite`. Both shipped backends support it.
+
+On MinIO the comparison is S3's own `If-Match` and is atomic with the write. On
+the filesystem it is a read immediately before the rename that publishes the
+object, so the window is narrow rather than zero — what it buys there is that a
+caller who lost a race is *told*, instead of silently discarding the other write.
+
+### Ranged reads
+
+`Open` takes a `ReadOptions`. Without one it reads the whole object, which is
+what the zero value means:
+
+```go
+tail := int64(1 << 20)
+body, info, err := files.Open(ctx, key, storage.ReadOptions{Offset: info.Size - tail, Length: &tail})
+```
+
+A backend that cannot honour a range refuses a non-zero one with
+`ErrUnsupported` rather than widening it to the whole object, and says so through
+`Capabilities().RangeRead`.
+
+`Info.MetadataTruncated` reports that the object carried metadata this library
+will not hand back — an entry past the portable budget, an invalid key, a value
+with control bytes. A bucket holds objects this library did not write, so those
+are dropped and the answer says it is partial, rather than the read failing.
 
 ## Upload before the form is confirmed
 

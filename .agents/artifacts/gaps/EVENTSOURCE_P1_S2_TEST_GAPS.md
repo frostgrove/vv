@@ -480,9 +480,9 @@ exactly one sample.**
   implementation half is **GAP-190 `[medium][deferred]`**, open.
 - **Why this timing:** deferred with GAP-190; the test row moves with whatever that decides.
 - **Close criteria:**
-  - [ ] Once GAP-190 is decided, a case drives the accepted marker shape through `RoundTrip` and
+  - [x] Once GAP-190 is decided, a case drives the accepted marker shape through `RoundTrip` and
         asserts the decided answer (a pass, or a refusal with a message that names the escape).
-- **Status:** deferred, carried 2026-09-07 into `EVENTSOURCE_P1_PLAN.md` `## Debt` under *From the S2 test review, round 1*, with the section that owns the assertion named.
+- **Status:** closed 2026-09-08 with GAP-190, in S2 rather than in S5 — the repair was one predicate in the kernel (`singleValued`, `event/comparison.go`) rather than a policy in the `*testing.T` wrapper. `TestACodecThatDecodesIntoAReusedBufferIsCaught/a fact whose whole content is that it happened round trips` drives the accepted `struct{}` shape through the second door and asserts the pass, with a payload-carrying fact given its own zero value as the control that still refuses. Struck from `EVENTSOURCE_P1_PLAN.md` `## Debt`. Mutation: `singleValued` dropped from the zero-value guard turns that subtest red.
 
 ---
 
@@ -785,6 +785,7 @@ only.**
   - [ ] An allocating codec of the same wire format beside each one as the control, asserted to
         pass.
   - [ ] Deleting `fact.go:199-201`, `:203-208` or `:209-214` alone turns the matching case red.
+- **Status:** closed 2026-09-08 — see `## Round 8 dispositions`.
 
 ---
 
@@ -843,6 +844,7 @@ only.**
         **accepted** (a pass, not an accusation), asserted against the constant rather than derived
         from it — S1's GAP-T15 rule, which `declaration_test.go:427-430` already applies correctly
         to the type-graph bounds.
+- **Status:** closed 2026-09-08 — see `## Round 8 dispositions`.
 
 ---
 
@@ -927,6 +929,7 @@ only.**
         `MarshalJSON`/`UnmarshalJSON` pair that embeds a plain struct with a field beside it; and
         `struct{ Held [2]posted }`.
   - [ ] Each of the three mutations above turns the matching row red.
+- **Status:** closed 2026-09-08 — see `## Round 8 dispositions`.
 
 ---
 
@@ -1162,3 +1165,1956 @@ still correctly carried.
 Nothing was edited to produce this report: the twelve tests, two fuzz targets and 62 subtests the
 plan's checkpoint claims all exist and all pass, and the tree is byte-identical to its pre-review
 state.
+
+---
+
+## Round 2 dispositions — 2026-09-08 — GAP-T36
+
+**GAP-T36 — closed by removing the `json:"-"` skip from `promotedMarshaller`, plus one refused row,
+one accepting control and one diagnosis row.**
+
+*Reproduced first, out of tree.* `/tmp/vvprobe`, a third module with a `replace` onto this
+checkout, nothing in the repository edited:
+
+```
+Skipped  CanEncode = <nil>
+Skipped  Encode = 500  err=<nil>
+Skipped  Decode = {Money:{Cents:500} SKU:}  err=<nil>
+Lined    CanEncode = ... so SKU is written by nobody and read back by nobody ...
+Named    CanEncode = <nil>
+Itemised CanEncode = <nil>
+```
+
+The finding's reading of the cause is the correct one and the fix is the one it names. Go's method
+promotion is a language rule; `json:"-"` on an embedded field tells `encoding/json` not to write
+that field **as a member** and leaves the promoted `MarshalJSON` exactly where it was. So the tag
+is no longer asked about at `event/encodable.go`: `promotedMarshaller` now skips only a field that
+is not `Anonymous`. `besideIt` still reads the tag, because there the tag means what it says — a
+field spelled `json:"-"` is one the author declared unwritten, not one the promotion hid.
+
+After the fix, same probe, same command:
+
+```
+Skipped  CanEncode = event: the codec cannot encode its own reader type: event: the declaration is
+  malformed: main.Skipped writes itself through the MarshalJSON of the embedded main.Money, so SKU
+  is written by nobody and read back by nobody; name the embedded field instead of promoting it, or
+  declare a codec of your own
+Named    CanEncode = <nil>
+Itemised CanEncode = <nil>
+Tallied  round-trip: 700 -> {Money:{Cents:700}} err=<nil> CanEncode=<nil>
+```
+
+*Close criteria, one by one.*
+
+- **A refused row for the tagged spelling** — `event/declaration_test.go`, named type `skipped`
+  (`money` embedded with `json:"-"`, `SKU string` beside it), in the refused table beside the
+  `json:"money"` row. Red on the pre-fix walk: re-applying the E5 mutation gives
+  `declaration_test.go:656: the shipped codec accepted the same shape spelled json:"-", which does
+  not undo it either (<nil>), and what it cannot encode must be refused before main`.
+- **A diagnosis row** asserting the message names both the embedded type and the hidden field:
+  substring `the embedded event.money, so SKU is written by nobody`. Red on the pre-fix walk:
+  `declaration_test.go:771: the embedding spelled json:"-" was accepted, so nothing here says which
+  repair it needs`.
+- **An accepting control beside it** — `invoiced` (named field) and `itemised` (embedded, nothing
+  beside it) already served; added `tallied`, the tagged spelling *with nothing beside it*, which
+  is the shape the naive repair ("refuse a `json:"-"` embedded marshaller outright") breaks and
+  neither existing row catches. Verified truthful out of tree: `tallied` round-trips `700`.
+  Mutation `hidden != "" || field.Tag.Get("json") == "-"` is now caught —
+  `declaration_test.go:700: the shipped codec refused the same, spelled json:"-"`.
+- **The E5 mutation no longer survives.** It is the exact revert of this fix and is killed by the
+  refused row and the diagnosis row together, in two subtests.
+
+*Docs updated in the same change.* `docs/ai/decisions/D-124` — the refusal bullet now says no tag
+on the embedded field escapes it, `json:"-"` included. `EVENTSOURCE_P1_PLAN.md` §S2 refusal 6 — the
+same, with GAP-T36 named as where it was found. `docs/modules/{en,ru}/event.md` do not enumerate the
+eight shapes and needed no edit; `docs/ai/flows/FL-036` and the `event` use-case pages name no
+promotion rule.
+
+*Gates.* `gofmt -l .` silent, `go build ./...` ok, `go vet ./event/...` clean,
+`go test -race -count=1 ./event/...` green (`event` 4.997s, `eventmemory` 1.042s, `eventtest`
+2.507s), `make unit` green with no `FAIL` line, `make check` green through all nine checks.
+
+GAP-T34, GAP-T35, GAP-T37, GAP-T38, GAP-T39 and GAP-T40 are untouched here and stay open as round 2
+left them.
+
+---
+
+## Round 3 — clean-context remediation audit (impl reviewer) — 2026-09-08 — the GAP-T36 cluster
+
+Scope: the one cluster handed to this round — `promotedMarshaller`'s `json:"-"` skip
+(`event/encodable.go`) and the missing refused row (`event/declaration_test.go`). Everything below
+was derived from the code and from mutation, not from the round-2 disposition note. The tree was
+restored byte-for-byte after every mutation (`sha256 event/encodable.go` =
+`2dd3dc58fc2f6ecfc34f53fe5921b49ae114d77078871121666dd173059e6baa`, unchanged from the state this
+round found).
+
+### GAP-T36 [critical][immediate] The `json:"-"` spelling of the promoted-marshaller embedding — verified closed
+
+Not closed by the note; closed by the code and by four mutations.
+
+- **The skip is gone.** `event/encodable.go:244-248` is now `field := value.Field(index); if
+  !field.Anonymous { continue }`. `grep -n 'json:"-"' event/encodable.go` returns two hits, both in
+  prose (`:152`, `:235`); no branch in `promotedMarshaller` reads a tag.
+- **The defect is real and the refusal is right.** Measured out of tree (`/tmp/promoprobe`, a
+  standalone module, nothing in this repository imported):
+  `json.Marshal(skipped{money{500}, "ABC"})` = `500`; `json.Unmarshal` of those bytes gives
+  `{money:{Cents:500} SKU:}`. `SKU` is lost with `nil` at both doors.
+- **The revert is killed, in two subtests.** Re-applying
+  `if !field.Anonymous || field.Tag.Get("json") == "-" { continue }` →
+  `declaration_test.go:656: the shipped codec accepted the same shape spelled json:"-" ... (<nil>)`
+  **and** `declaration_test.go:771: the embedding spelled json:"-" was accepted, so nothing here
+  says which repair it needs`.
+- **The two plausible over-broad repairs are killed by controls.**
+  `besideIt` dropping `index == embedded` → `declaration_test.go:700: the shipped codec refused an
+  embedded marshalling type with no field beside it` (`itemised`).
+  `promotedMarshaller` refusing on the tag itself, before `besideIt` → `declaration_test.go:700:
+  the shipped codec refused the same, spelled json:"-"` (`tallied`) plus the diagnosis row. The new
+  `tallied` control therefore earns its place: it is the only row that catches the naive repair,
+  and `itemised` does not.
+- **Adjacent shapes still answer correctly.** Probed in-tree (temporary `_test.go`, deleted):
+  `struct{ money; SKU string \`json:"-"\` }` accepted, `struct{ money; sku string }` accepted,
+  `struct{ auditMid; SKU string }` (two-level promotion) refused, `struct{ *money; SKU string }`
+  refused.
+- **No public surface moved.** `git diff event/encodable.go` = 14 insertions / 10 deletions, of
+  which 10/9 are the doc comment and 1/1 is the condition. Package `event` exports 138 top-level
+  symbols before and after.
+- **Docs closed with it.** `docs/ai/decisions/D-124` line 50-51 now states the rule
+  (`promotion is a language rule, so no tag on the embedded field escapes this, json:"-"
+  included`); `EVENTSOURCE_P1_PLAN.md:1435` carries the same with GAP-T36 named.
+- **Status:** fixed
+
+Gates run by this round: `gofmt -l .` silent; `go vet ./event/...` clean;
+`go test -race -count=2 ./event/...` green (`event` 5.304s, `eventmemory` 1.082s, `eventtest`
+4.011s), no flake; `go test ./scripts/ -run Event` ok; `make check` green through all nine checks.
+
+**Microkernel, derived not inherited.** `grep -rn "eventmemory\|eventpg\|eventtest" event/*.go |
+grep -v _test.go` → **0 hits**; the only two kernel files that name an extension at all are
+`declaration_test.go` and `sources_test.go`, both tests. Every `event.X` symbol `eventmemory`
+touches from outside the package is exported — 27 of them, `AppendRequest Authority Backing
+BadCursor Capabilities Closed Conflict Cursor Envelope ErrClosed ErrWrongStore Failure Limits
+MaxBatchCount MaxKeyBytes MaxPageCount MaxPayloadBytes NewAuthority NewBacking Position Refused
+ResidentPage Store Stream Supported Unsupported Version` — and `Cursor` is a bare `string`
+(`event/identity.go:14`), so a store mints and parses one with no help. `event/eventpg` is still
+writable with zero diffs under `event/`. This cluster added no unexported-only construction path.
+
+---
+
+### GAP-T41 [high][immediate] The text-route arm of `promotedMarshaller` has no row anywhere, its mutant survives the whole suite, and GAP-185's close criterion (c) was never met
+
+- **Where:** `event/encodable.go:243-257` (`promotedMarshaller`, reached with
+  `writes == byTextMethods` from `ownMethods:216-217`); `event/declaration_test.go:611-658`,
+  `:659-698`, `:746-777` — the 36 refused, 32 accepted and 18 diagnosis rows, none of which
+  embeds a text-pair type
+- **What:** `promotedMarshaller` is route-generic — it compares `writeRoute(...) != writes` and
+  renders `writes.writer()`, so it refuses `MarshalText` promotion exactly as it refuses
+  `MarshalJSON` promotion. Nothing tests that half. The mutation
+
+  ```go
+  func promotedMarshaller(value reflect.Type, writes route, where string) error {
+      if writes == byTextMethods { return nil }   // <- added
+      for index := range value.NumField() {
+  ```
+
+  **SURVIVED** `go test ./event/...` — `event` ok 0.830s, `eventmemory` ok, `eventtest` ok. The
+  two complete text pairs in the fixture set (`settled` at `declaration_test.go:188-192`,
+  `district` at `:162-166`) appear only as **map keys** (`:667`, `:679`); no fixture embeds either.
+
+  The shape the arm protects, measured out of tree:
+
+  ```
+  type settled string    // MarshalText on the value receiver, UnmarshalText on the pointer
+  type textPromoted struct{ settled; SKU string }
+      json.Marshal   = "s"
+      json.Unmarshal = {settled:s SKU:}      // SKU lost, nil at both doors
+  ```
+
+  and in-tree today: `CanEncode` = *"event.auditTextPromoted writes itself through the MarshalText
+  of the embedded event.settled, so SKU is written by nobody and read back by nobody"*.
+- **Why this severity:** `gaps.md` — *missing test for a stated invariant*. The invariant is stated
+  three times: `D-124` bullet 7 ("a struct written by a marshaller promoted from an embedded field
+  with a field of its own beside it"), `encodable.go:58-63`'s eight-shape list, and the plan's
+  refusal 6. It is also **GAP-185's own close criterion 2 verbatim** — *"`declaration_test.go`
+  carries shapes (a), (b), (c) and (d)"* — where shape (c) is spelled out at
+  `EVENTSOURCE_P1_S2_GAPS.md:1200`: `type Tagged struct{ Code; Note string } // Code has the TEXT
+  pair`. GAP-185's closing note (`:1251`) accounts for (a), (b), the `json:"money"` spelling and
+  (d), and **does not mention (c) at all**. The criterion was dropped, not met, and the finding was
+  marked closed anyway — a finding closed by a note and not by the code is still open, and this one
+  is. The code is correct today, so there is no live data loss; what is missing is the only thing
+  that keeps it correct through the next edit.
+- **Why this timing:** the plan states `encodable.go` is at 383 of the 400-line threshold and that
+  "the next arm the walk gains is the one that splits it". An unprotected route is exactly what a
+  file split loses silently. `CanEncode` is a published contract that S3, S4 and S5 declare
+  fixtures against, and a fact log written through this shape is unrecoverable — there is no later
+  door. It is also the fifth spelling of a root cause repaired four times (GAP-178, GAP-179,
+  GAP-185, GAP-T36), each time against the route the finding named rather than against the rule.
+- **Close criteria:**
+  - [ ] A refused row for a struct embedding a **text**-pair type with a field of its own beside it
+        (`struct{ settled; SKU string }` — `settled` already exists), asserted `ErrCodecType`.
+  - [ ] A diagnosis row for it asserting the message names `MarshalText` and the hidden field, so
+        it cannot pass through the JSON arm beside it.
+  - [ ] An accepting control beside it: the same embedded text pair with **nothing** beside it, and
+        the same type in a **named** field — the pair `itemised`/`invoiced` already provides for the
+        JSON route.
+  - [ ] `if writes == byTextMethods { return nil }` in `promotedMarshaller` turns the refused row
+        and the diagnosis row red.
+  - [ ] GAP-185's status line in `EVENTSOURCE_P1_S2_GAPS.md` is amended to record that criterion 2
+        shape (c) was outstanding until now, rather than left claiming a closure it did not have.
+- **Status:** open
+
+---
+
+### GAP-T42 [medium][immediate] An embedded pointer to a marshalling type is refused by the wrong arm, with a diagnosis whose remedy the developer has already applied
+
+- **Where:** `event/encodable.go:220-221` (`ownMethods`' value-receiver arm) reached before
+  `promotedMarshaller` for this shape; no row in `event/declaration_test.go`
+- **What:** `struct{ *money; SKU string }` — embedding a **pointer** to a type whose pair is
+  `MarshalJSON` on the value receiver and `UnmarshalJSON` on the pointer receiver. Both method sets
+  promote through a pointer embed, so the outer type implements `json.Unmarshaler` **on its own
+  value**, `readsAs` answers `byFields`, and `ownMethods` falls into the value-receiver arm.
+  Measured in-tree:
+
+  ```
+  CanEncode = event.auditPtrEmbed declares UnmarshalJSON on the value receiver, so encoding/json
+  calls it on a copy and discards everything it writes; every fact recorded with it reads back as
+  the zero value with no error at any door — declare it on the pointer receiver
+  ```
+
+  Two things in that sentence are false for this shape. `encoding/json` does not discard: measured
+  out of tree, `json.Marshal` writes `9` and `json.Unmarshal` **panics** with
+  `runtime error: invalid memory address or nil pointer dereference`, because the promoted method
+  runs against a nil embedded pointer. And the remedy — "declare it on the pointer receiver" — is
+  already satisfied: `UnmarshalJSON` *is* on `*money`. The developer is told to do the thing they
+  did.
+- **Why this severity:** the shape fails closed, so no fact is lost and nothing is corrupted —
+  `medium`, not `high`. But message accuracy is a property this suite asserts explicitly (the
+  *"a refusal names which asymmetry it found, because the three share one sentinel"* subtest, 18
+  rows), and this is a refusal whose stated asymmetry is not the one that is there. The correct
+  answer is `promotedMarshaller`'s: the struct writes itself as the embedded value and `SKU` is
+  written by nobody.
+- **Why this timing:** `CanEncode` is a boot-time gate that panics through `Declare`; a diagnosis
+  that names an impossible repair turns a five-minute fix into an afternoon, and S3/S4/S5 all
+  inherit these messages as the published contract. Cheap now, and the arm ordering is the thing
+  that would have to be revisited later.
+- **Close criteria:**
+  - [ ] A refused row for `struct{ *money; SKU string }`, and a diagnosis row asserting the message
+        names the embedded type and the hidden field rather than a receiver the developer already
+        got right.
+  - [ ] `ownMethods` reaches `promotedMarshaller` for this shape, or the value-receiver arm's
+        message is qualified so it does not claim "discards everything it writes" where the real
+        outcome is a nil dereference.
+  - [ ] An accepting control beside it: an embedded pointer to a marshalling type with nothing
+        beside it, if that shape is in fact legal, or a second refused row if it is not.
+- **Status:** open
+
+---
+
+### GAP-T43 [medium][deferred] D-124 lists the eight refusals as data-loss shapes only, and never states the deliberate false positive that this fix just widened
+
+- **Where:** `docs/ai/decisions/D-124-event-json-is-deliberately-smaller-than-the-codecs-beside-it.md:38-54`;
+  the rule it omits is stated only in `event/encodable.go:240-242`
+- **What:** the decision doc introduces the list with *"the walk refuses eight shapes whose bytes no
+  declaration reads back"* — every bullet reads as a shape that loses data. The code refuses a ninth
+  thing that does **not**: a struct that declares its own correct `MarshalJSON`/`UnmarshalJSON`
+  pair and also embeds a marshalling type. Measured in-tree, a struct embedding `time.Time` with
+  its own complete pair that writes and reads both fields is refused with
+  *"writes itself through the MarshalJSON of the embedded time.Time, so Note is written by
+  nobody"* — which is not true of it. `reflect` cannot distinguish declared from promoted, so the
+  over-refusal is the right trade; it is simply not in the binding document. This round's fix
+  widened its reach: the same struct written with `json:"-"` on the embedded field was accepted
+  before and is refused now.
+- **Why this severity:** the decision doc is binding law here and is what the next agent reads
+  instead of the code; a consumer whose legal payload type will not boot finds no explanation in
+  it. No behaviour is wrong — `medium`.
+- **Why this timing:** documentation of an existing, correct trade; it changes no contract and
+  blocks no section. Deferred, and it must not be dropped.
+- **Close criteria:**
+  - [ ] `D-124` gains a paragraph naming the false positive, the reason `reflect` forces it, and
+        the two remedies the refusal already offers.
+  - [ ] The paragraph says explicitly that the tagged spelling does not escape it either, so the
+        rule and the GAP-T36 bullet are one statement rather than two.
+- **Status:** open
+
+---
+
+### GAP-T44 [low][deferred] The refusal a developer sees after writing `json:"-"` never mentions the tag they wrote
+
+- **Where:** `event/encodable.go:253` — one message for every spelling of the promotion
+- **What:** `struct{ money \`json:"-"\`; SKU string }` is refused with the identical sentence
+  `struct{ money; SKU string }` gets: *"writes itself through the MarshalJSON of the embedded
+  event.money, so SKU is written by nobody"*. The tag is the developer's stated belief that the
+  embedding is suppressed; the message neither confirms nor contradicts it, and the remedy it does
+  offer — "name the embedded field instead of promoting it" — reads as advice to start encoding the
+  money they had just told the encoder to skip. `encodable.go:235-238`'s own comment says this
+  spelling "is the spelling a developer reaches for after reading this refusal", which is precisely
+  the reader the message does not address.
+- **Why this severity:** wording of a diagnostic. Nothing is wrong and nothing is lost — `low`.
+- **Why this timing:** cosmetic, and the fix is one clause; no section depends on it.
+- **Close criteria:**
+  - [ ] When the embedded field carries a `json` tag, the refusal says so and states that no tag
+        undoes method promotion.
+  - [ ] The existing diagnosis row for `skipped` is extended, or a second one added, so the tagged
+        and untagged messages cannot silently become one again.
+- **Status:** open
+
+---
+
+### GAP-T45 [low][deferred] D-124's "Proven by" does not name the test that is the only gate for its eight refusals
+
+- **Where:** `docs/ai/decisions/D-124-...md:140-155`
+- **What:** the six entries name `TestEveryMalformedDeclarationPanicsAndTryDefineReturnsIt`,
+  `TestACodecThatDecodesIntoAReusedBufferIsCaught`, `TestTheProxiesCompareSomethingThatCanDiffer`,
+  `TestACodecPanicBecomesThatMethodsOwnRefusal`,
+  `TestAPanickingCodecBecomesTheRefusalItsErrorWouldHaveBeen`,
+  `TestOneDeclarationIsDecidedAndFoldedFromManyGoroutines` and
+  `FuzzAStoredPayloadIsFoldedOrRefused` — all seven verified to exist. The eight-shape list at
+  `:38-54` is gated by none of them: it is gated by `TestADeclaration`'s *"the shipped codec answers
+  for the whole type graph"* (36 refused + 32 accepted rows) and *"a refusal names which asymmetry
+  it found"* (18 rows), and this round's fix added three rows to exactly those two subtests.
+  `CLAUDE.md` makes updating **Proven by** part of the same change as a test that pins an invariant.
+- **Why this severity:** documentation index, no behaviour — `low`.
+- **Why this timing:** no contract depends on it; it is drift to be swept, not a block.
+- **Close criteria:**
+  - [ ] `D-124`'s **Proven by** names `TestADeclaration` and the two subtests, with the row counts
+        or without them, so a reader looking for the gate on the eight shapes finds it.
+- **Status:** open
+
+---
+
+**Verdict for this cluster.** GAP-T36 is genuinely closed — reproduced, reverted, killed, and
+controlled. The cluster does **not** go green: GAP-T41 is `[high][immediate]` and is the same arm,
+carrying an unmet close criterion inherited from GAP-185 and a surviving mutant proven here.
+
+---
+
+## Round 4 dispositions — 2026-09-08 — GAP-T41 … GAP-T45
+
+All five findings of round 3's GAP-T36 cluster are closed. Every one was reproduced before it was
+repaired, and every repair is held by a mutation that turns a named row red.
+
+### GAP-T41 — closed by asking the promotion question of both routes and gating it with three rows
+
+*Reproduced first.* The mutation the finding names was applied to this tree and run:
+
+```
+### M1 GAP-T41 revert: the text route stops being asked
+  (before the fix) ok  github.com/frostgrove/vv/event  0.849s   <- SURVIVED, as the finding said
+```
+
+Measured out of tree (`/tmp/vvprobe3`, standalone module, nothing here imported):
+
+```
+TextPromoted Marshal   = "s"
+TextPromoted Unmarshal = {Settled:s SKU:}   err=<nil>      <- SKU lost, nil at both doors
+```
+
+*What changed.* No production change was needed — `promotedMarshaller` was route-generic already.
+What was missing was the gate, and it is now three fixtures and four rows in
+`event/declaration_test.go`: `termed` (`struct{ settled; SKU string }`) on the refused table and in
+the diagnosis table asserting `the MarshalText of the embedded event.settled, so SKU is written by
+nobody`; `netted` (`struct{ settled }`) and `agreed` (`struct{ Terms settled; SKU string }`) as the
+accepting controls. Both controls were verified truthful out of tree rather than assumed:
+`Netted round-trip: "net30" -> {Settled:net30}` and
+`Agreed round-trip: {"Terms":"net30","SKU":"ABC"} -> {Terms:net30 SKU:ABC}`.
+
+*Evidence it is closed.* Same mutation, after:
+
+```
+### M1 GAP-T41 revert: the text route stops being asked
+--- FAIL: TestADeclaration/the_shipped_codec_answers_for_the_whole_type_graph…
+    declaration_test.go:685: the shipped codec accepted the same promotion on the text route
+    (<nil>), and what it cannot encode must be refused before main
+--- FAIL: TestADeclaration/a_refusal_names_which_asymmetry_it_found…
+```
+
+The naive over-broad repair is killed too — `hidden := "SKU"` (refuse any embedded marshalling
+type) turns `itemised` red: *"the shipped codec refused an embedded marshalling type with no field
+beside it"*. `netted` holds the same line for the text route.
+
+Criterion 5 is met: `EVENTSOURCE_P1_S2_GAPS.md` GAP-185 now carries an **Amended 2026-09-08**
+paragraph and a matching note in its summary row, recording that close criterion 2 shape (c) was
+outstanding until this round rather than met.
+
+- **Status:** closed
+
+### GAP-T42 — closed by asking the promotion question before the receiver question
+
+*Reproduced first.* In tree, before the fix:
+
+```
+ptrEmbed      = … event.probePtrEmbed declares UnmarshalJSON on the value receiver, so
+  encoding/json calls it on a copy and discards everything it writes … declare it on the pointer
+  receiver
+ptrEmbedAlone = … the same message …
+```
+
+Out of tree, what actually happens to that shape — the finding's reading confirmed on every
+spelling of it, both routes, with and without a field beside it:
+
+```
+MoneyAlone zero write    PANIC runtime error: invalid memory address or nil pointer dereference
+MoneyAlone read          PANIC …
+MoneyBeside read         PANIC …
+GuardedAlone read        PANIC …      (the pair on the pointer receiver)
+SettledAlone write/read  PANIC …      (the text route)
+```
+
+So the message was wrong twice over: nothing is discarded, and the remedy it named was already
+applied. The shape is also never legal, which answers criterion 3 — it takes a **second refused
+row**, not an accepting control.
+
+*What changed.* `ownMethods` (`event/encodable.go`) now asks `promotedMarshaller` of **every**
+struct that writes itself through methods, not only where the two routes agree, and asks it before
+the receiver arm. An embedded pointer promotes both of the embedded type's method sets onto the
+outer value, which is why the receiver arm answered first. `promotedMarshaller` gained the arm for
+it, and refuses with nothing beside it too, because the panic is the whole failure:
+
+```
+event.charged writes itself through the MarshalJSON promoted from the embedded pointer
+*event.money, which nothing allocates before encoding/json calls the UnmarshalJSON promoted with
+it, so every load of a fact recorded with it panics on a nil pointer, and SKU is written by nobody
+either; embed the type by value, or name the field
+```
+
+`charged` and `owed` are on the refused table; three diagnosis rows name the embedded pointer, the
+field it hides, and the same for the no-field-beside-it spelling.
+
+*Evidence it is closed.* Four mutations, each red:
+
+```
+M2 promotion asked only where the routes agree  -> charged falls back to "declares UnmarshalJSON
+   on the value receiver", which never says "the embedded pointer *event.money"
+M3 the embedded-pointer arm removed             -> charged gets the generic promotion message
+M9 the pointer arm fires only when a field sits beside it -> owed falls back to the receiver
+   message
+```
+
+(`owed`'s refused row alone does **not** hold the line — the shape stays refused through the wrong
+arm — which is why its diagnosis row exists; the refused row would otherwise pass with the feature
+deleted.)
+
+- **Status:** closed
+
+### GAP-T43 — closed by a section in D-124, and the eight-shape list is now nine
+
+`docs/ai/decisions/D-124-…md` gains **The one deliberate false positive**: `reflect` will not say
+whether a method is declared or promoted, so a struct with its own complete pair that also embeds a
+marshalling type is refused although it round-trips; the trade is stated, the alternative named
+(lose a field silently and irreversibly in the one place nothing can be recovered from), and the
+two remedies the refusal already offers are listed. The paragraph says the tagged spelling does not
+escape it either, so the rule and the GAP-T36 bullet are one statement.
+
+The refused list itself is now **nine** shapes: the embedded-pointer refusal of GAP-T42 is a
+different failure from the promotion one — a panic rather than a loss, and one that fires with
+nothing beside it — so it is its own bullet. Updated in the same change: `D-124` (the count, the
+bullet, the "Where it lives" line), `event/encodable.go`'s `chargeJSON` comment,
+`docs/ai/flows/FL-036` (the `D-124` line and the file table) and `EVENTSOURCE_P1_PLAN.md` §S2
+(refusal 6 now says "on either route", the new refusal 8, the old 8 renumbered to 9, "all nine
+refusals", and the diagnosis row count). `docs/modules/{en,ru}/event.md` enumerate no shapes and
+needed no edit.
+
+- **Status:** closed
+
+### GAP-T44 — closed by `noTagUndoesIt`, with a control on the untagged message
+
+The refusal now answers the developer who wrote the tag:
+
+```
+event.skipped writes itself through the MarshalJSON of the embedded event.money, so SKU is written
+by nobody and read back by nobody — the json:"-" you put on it does not undo that, because a tag
+speaks to encoding/json's field walk and method promotion is a language rule; name the embedded
+field instead of promoting it, or declare a codec of your own
+```
+
+The `json:"money"` spelling gets the same clause with its own tag text. The existing diagnosis row
+for `skipped` is unchanged and still passes — the clause was placed after the substring it asserts
+— and a second row asserts `the json:"-" you put on it does not undo that`.
+
+The control is the row beside it: `lined`, untagged, asserts `read back by nobody; name the
+embedded field`, a substring that exists only when there is **no** clause. Both directions are
+mutation-proven — dropping the clause turns the tagged row red, appending it unconditionally turns
+the untagged row red (`… — the json:"" you put on it …`).
+
+- **Status:** closed
+
+### GAP-T45 — closed by naming the real gate in D-124's Proven by
+
+`D-124`'s **Proven by** gains `TestADeclaration` and its two subtests — *"the shipped codec answers
+for the whole type graph"* and *"a refusal names which asymmetry it found, because the three share
+one sentinel"* — and says that the accepting rows (`itemised`, `tallied`, `netted`, `agreed`) are
+the controls a repair that over-refuses breaks.
+
+- **Status:** closed
+
+### Gates
+
+```
+$ gofmt -l .                              (silent)
+$ go build ./...                          ok
+$ go vet ./event/...                      ok
+$ go test -race -count=1 ./event/...
+ok  github.com/frostgrove/vv/event            4.910s
+ok  github.com/frostgrove/vv/event/eventmemory 1.048s
+ok  github.com/frostgrove/vv/event/eventtest   2.505s
+$ go test -race -count=2 ./event/...      ok, no flake (5.384s / 1.096s / 4.067s)
+$ make unit                               exit 0, no FAIL line
+$ make check                              check-deps, check-tiers, check-utils, check-triplets,
+                                          check-todo, check-replaces, check-tidy,
+                                          check-otel-schema, check-workspace — all ok
+```
+
+### The zero-diff obligation for `event/eventpg`
+
+Untouched. `git diff event/encodable.go | grep '^[+-]func'` shows two additions, both unexported
+(`alsoHidden`, `noTagUndoesIt`); no exported declaration was added, removed or changed, and no
+value a store constructs moved behind an unexported path. Every change is inside the codec walk,
+which a store neither calls nor implements.
+
+---
+
+## Round 5 — clean-context re-audit of the GAP-T36 cluster (impl reviewer) — 2026-09-08
+
+Scope: the cluster handed to this round — `promotedMarshaller`'s `json:"-"` arm
+(`event/encodable.go`) and its row in `event/declaration_test.go` — plus everything round 4's
+repair of GAP-T41…GAP-T45 touched. Nothing below was taken from a disposition note. Every claim
+is the output of code run in this tree or of a mutation applied to it and then reverted; the tree
+was restored byte-for-byte after each (`sha256 event/encodable.go` =
+`f78fb87256fb5f820fd5befa27867e07cf546741af67290e88d3b4bda3a05b61`, `sha256
+event/declaration_test.go` = `312fb58c29f01a90ad32f2a7a6a013edfd35c1703ecdef8970e19649427ffbeb`,
+both unchanged from the state this round found).
+
+### What is confirmed closed
+
+**GAP-T36, GAP-T41, GAP-T42, GAP-T44 — closed by the code and by six mutations, each killed.**
+Every mutation was applied to this tree, run, and reverted.
+
+```
+M1  restore `|| field.Tag.Get("json") == "-"` in promotedMarshaller
+    -> declaration_test.go:685  the shipped codec accepted the same shape spelled json:"-"
+       declaration_test.go:808  the embedding spelled json:"-" was accepted
+M2  `if writes == byTextMethods { return nil }` at the top of promotedMarshaller
+    -> declaration_test.go:685  accepted the same promotion on the text route
+       declaration_test.go:808  the same promotion on the text route was accepted
+M3  delete the embedded-pointer arm (encodable.go:273-275)
+    -> declaration_test.go:811  charged refused with "... the embedded *event.money ...", which
+       never says "the embedded pointer *event.money"
+M4  noTagUndoesIt always returns ""
+    -> declaration_test.go:811  skipped never says `the json:"-" you put on it does not undo that`
+M5  noTagUndoesIt returns the clause unconditionally
+    -> declaration_test.go:811  lined (the untagged control) says `the json:"" you put on it ...`
+M6  besideIt stops skipping `index == embedded`
+    -> declaration_test.go:731  itemised, the accepting control, is refused
+       declaration_test.go:811  charged now names `money` rather than `SKU`
+```
+
+Both directions are held: M1–M4 kill the positive rows, M5 and M6 kill the controls. `tallied`,
+`itemised`, `netted`, `agreed` and `invoiced` are real controls, not decoration.
+
+**The defect GAP-T36 named is real and the refusal is right.** Measured in this tree with a
+temporary probe (`event/zzauditprobe_test.go`, deleted; `ls` confirms it is gone and
+`git status event/` shows the same 12 untracked files it showed on arrival):
+`json.Marshal(skipped{money{500}, "ABC"})` = `500`, `json.Unmarshal` gives `{money:{Cents:500}
+SKU:}` — `SKU` lost, `nil` at both doors. `CanEncode` refuses it, and names the tag.
+
+**GAP-T43 and GAP-T45 — closed in the binding document, verified by reading it.**
+`docs/ai/decisions/D-124-…:38` says nine, `:49-53` carries the promotion bullet on either route
+with `json:"-"` named and the embedded-pointer bullet, `:62-78` is *The one deliberate false
+positive* with the `reflect` reason, the two remedies and the sentence that no tag escapes it,
+`:157` and `:166-172` name `TestADeclaration`, its two subtests and the four accepting controls.
+`EVENTSOURCE_P1_S2_GAPS.md:1253` and `:1579` carry GAP-185's amendment (criterion 2 shape (c)).
+`FL-036:182` and `:237` say nine. The plan's `:1488` says all nine.
+
+**Gates run by this round.** `gofmt -l ./event/` silent · `go vet ./event/...` clean ·
+`go test -race -count=2 ./event/...` green, no flake (`event` 5.296s, `eventmemory` 1.085s,
+`eventtest` 4.021s; a second full run 5.267s / 1.085s / 4.008s).
+
+**Microkernel — derived, not inherited: PASS.**
+`grep -rn "eventmemory\|eventpg\|eventtest" event/*.go | grep -v _test.go` → **0**.
+`go list -f '{{join .Imports "\n"}}' ./event` → `bytes context encoding encoding/json errors fmt
+crud errs reflect strings sync sync/atomic time unicode unicode/utf8` — stdlib plus two
+root-module packages, no third party, no extension. `eventmemory` and `eventtest` each import
+`github.com/frostgrove/vv/event` and stdlib only; neither imports the other.
+`find event -name go.mod` → 0; `find event -type d -name internal` → 0. No exported interface in
+`event` carries an unexported method, so a store outside the package can implement `Store` and
+`Log` in full. The exported surface is **byte-identical** before and after this cluster's change:
+`go doc -all ./event` diffed against the same command run with `event/encodable.go` and
+`event/declaration_test.go` stashed to `HEAD` — no difference. `event/eventpg` is still writable
+with zero diffs under `event/`.
+
+---
+
+### GAP-T46 [critical][immediate] The promotion question is asked one hop deep, so a marshaller promoted through two embeddings hides the field at the inner hop with no refusal at any door — the arm GAP-T36 called the last one is not the last one
+
+- **Where:** `event/encodable.go:263-281` (`promotedMarshaller` walks only `value`'s own
+  anonymous fields) and `event/encodable.go:298-307` (`besideIt` looks only at `value`'s own
+  fields); the rule they are supposed to hold is stated without a depth qualifier at
+  `event/encodable.go:58-61` and at
+  `docs/ai/decisions/D-124-event-json-is-deliberately-smaller-than-the-codecs-beside-it.md:49-52`
+- **What:** `promotedMarshaller` asks *"does an immediate anonymous field of this struct write by
+  the route this struct writes by, and does this struct have a field of its own beside it"*. Both
+  halves stop at the outermost struct. When the marshaller arrives through **two** embeddings and
+  the hidden field sits at the **inner** one, `besideIt` answers `""`, `promotedMarshaller`
+  returns `nil`, `ownMethods` then settles the position on `writes == reads` and the walk never
+  descends. Measured in this tree (temporary `event/zzauditprobe_test.go`, since deleted):
+
+  ```go
+  type probeMid   struct { money; Extra string }   // refused, correctly
+  type probeOuter struct { probeMid }              // CanEncode() = <nil>   <- ACCEPTED
+
+  json.Marshal(probeOuter{probeMid{money{500}, "beside"}}) = 500
+  json.Unmarshal(that, &probeOuter{})              = {probeMid:{money:{Cents:500} Extra:}}
+  ```
+
+  `Extra` is written by nobody and read back by nobody. Every spelling of the shape behaves the
+  same way and every one is accepted:
+
+  ```
+  probeOuter      struct{ probeMid }                          <nil>   Extra lost
+  probeTextOuter  struct{ probeTextMid }  (MarshalText route) <nil>   Extra lost, writes "net30"
+  probeTimeOuter  struct{ probeTimeMid }  (probeTimeMid = struct{ time.Time; Zone string })
+                                                              <nil>   Zone lost, writes
+                                                                      "1970-01-01T00:00:00Z"
+  probeThreeC     three levels, hidden field at the innermost <nil>   Deep lost, writes 7
+  map[string]probeOuter, []probeOuter, [2]probeOuter, struct{ F probeOuter }
+                                                              <nil>   all four
+  ```
+
+  `probeTimeOuter` is `noted`, the fixture the refused table calls *"the textbook embedding, whose
+  pair arrives from the standard library"* (`declaration_test.go:668`), with exactly one more
+  struct wrapped around it. `struct{ probeMid; SKU string }` **is** refused — the hole is
+  precisely *"the outer struct has nothing of its own beside the embed"*, which is the shape a
+  developer reaches for when factoring a shared `Audit`/`Timestamps`/`Money` block out of several
+  payloads.
+- **Why this severity:** `gaps.md` — *wrong behaviour, data loss/corruption*, and it is data loss
+  in the one place this whole walk exists to protect. A consumer declares
+  `type Audit struct { time.Time; Actor string }` as a shared block and
+  `Declare(aggregate, "accounts.opened", From(JSON[opened]()), …)` where
+  `type opened struct{ Audit }`. `CanEncode` returns nil, the process boots, and every fact ever
+  written records the timestamp and drops `Actor`. There is no later door: the bytes are the
+  record. `D-124:49-52` states the rule with no depth qualifier and `encodable.go:58-61` repeats
+  it, so the binding document promises a refusal the code does not give. This is the sixth
+  spelling of one root cause (GAP-178, GAP-179, GAP-185, GAP-T36, GAP-T41 and now this), and the
+  fifth time it was repaired against the shape the finding named rather than against the rule —
+  the cluster brief calls the `json:"-"` arm *"the last surviving arm of the GAP-178/185 family"*
+  and it is not.
+- **Why this timing:** `CanEncode` is the boot-time gate S3, S4 and S5 declare fixtures against
+  and phase 2's `event/eventpg` inherits unchanged; a fact log written through this shape cannot
+  be repaired by anything phase 2 ships. The general mechanism that closes it is not a new row:
+  `promotedMarshaller` must follow the **promotion chain** — when an immediate anonymous field
+  carries the route the struct writes by and is itself a struct, ask the same question of that
+  struct (its own `besideIt`, and its own embedded fields) before answering `nil`, with the same
+  visited-set bound the rest of the walk already uses so an embedded pointer to the type being
+  walked still terminates. That is a change to the arm, not to the table, and doing it after
+  phase 2 has fixtures against these messages is the expensive order.
+- **Close criteria:**
+  - [ ] `JSON[struct{ probeMid }]().CanEncode()` is `ErrCodecType`, where
+        `probeMid = struct{ money; Extra string }`, and the message names `Extra` and the
+        embedded type the marshaller came from.
+  - [ ] The same for the text route (`struct{ termedMid }` where
+        `termedMid = struct{ settled; Extra string }`) and for three levels of embedding.
+  - [ ] A refused row and a diagnosis row for each in `event/declaration_test.go`.
+  - [ ] The accepting controls survive: `itemised`, `tallied`, `netted`, `agreed`, `invoiced`,
+        `ring` (which embeds a pointer to itself), `carried`, `labelled` and
+        `struct{ *Stream }` still return `nil`, and a new control — a struct embedding a struct
+        that embeds a marshalling type **with nothing hidden at either level** — returns `nil`.
+  - [ ] Restricting the new recursion to depth 1 (that is, reverting it) turns the new refused
+        rows red, and making it refuse any nested embed turns the new accepting control red.
+  - [ ] `D-124`'s promotion bullet and `encodable.go`'s shape list say *at any depth of the
+        promotion chain*, so the document and the code state one rule.
+- **Status:** open
+
+---
+
+### GAP-T47 [high][immediate] `event/encodable.go` is 422 lines against the 400-line budget the plan tracks it by, and the plan's "No file breaches 400 lines" is now false
+
+- **Where:** `event/encodable.go` (422 lines; `wc -l`); the budget is
+  `references/architecture.md:49` — *Lines per file/module <= 400*; the plan asserts compliance at
+  `EVENTSOURCE_P1_PLAN.md:5238` (*"**No file breaches 400 lines**"*) and names this exact file as
+  the one at the edge at `:3310`
+- **What:** counted, not eyeballed: `422` total, `96` comment lines, `30` blank, `296` code. At
+  `HEAD` the file was `379`; round 2's `json:"-"` repair took it to `383` and round 4's
+  embedded-pointer arm plus `alsoHidden`/`noTagUndoesIt` took it to `422` — **22 over**. The plan
+  wrote the trigger itself at `:3310`: *"still under the 400-line threshold but no longer with a
+  section's worth of room — the next arm the walk gains is the one that splits it."* The walk
+  gained refusal 9 and was not split. Two other measured figures are inside their thresholds and
+  are recorded here so the count is not one number: longest function `members.collect` at 40
+  lines, then `jsonWalk.visit` 33, `jsonWalk.fields` 21, `ownMethods` 21, `objectKey` 21,
+  `promotedMarshaller` 19 — none over the function budget; maximum nesting in the file is 3;
+  package `event` imports 13 stdlib packages plus `crud` and `errs`, no cycle.
+- **Why this severity:** `gaps.md` — *violation of a measurable threshold in `architecture.md`*.
+  Nothing is wrong at runtime today. What it costs is the thing the plan predicted: the file now
+  holds two separable subjects — the graph walk with its budgets and visited set (`chargeJSON`,
+  `jsonWalk`, `members`) and `encoding/json`'s routing rules restated as refusals (`ownMethods`,
+  `promotedMarshaller`, `besideIt`, `writeRoute`, `readRoute`, `readsAs`, `writesAs`,
+  `onTheValueReceiver`, `objectKey`, the `route` methods) — and GAP-T46's repair adds to the
+  second. A split done after that repair has to move a function that just changed.
+- **Why this timing:** it is a structural claim the plan's own metrics section makes and no longer
+  holds, and the next change to this file is GAP-T46's, which grows it further. Splitting first is
+  strictly cheaper than splitting after.
+- **Close criteria:**
+  - [ ] `wc -l event/encodable.go` and every file it is split into is `<= 400`.
+  - [ ] The exported surface of package `event` is unchanged (`go doc -all ./event` diffed).
+  - [ ] `EVENTSOURCE_P1_PLAN.md:5238` and `:3310` record the real numbers rather than the old
+        claim, and `docs/ai/flows/FL-036`'s file table names every file the walk now lives in.
+  - [ ] `go test -race ./event/...` green with no test edited.
+- **Status:** open
+
+---
+
+### GAP-T48 [low][deferred] A struct embedding a write-only marshalling type now names a remedy that leads to a second refusal rather than the missing reader
+
+- **Where:** `event/encodable.go:229-233` — round 4 moved `promotedMarshaller` ahead of the
+  "declares no reader" arm at `:240`
+- **What:** for `struct{ writeOnly; SKU string }`, where `writeOnly` has `MarshalJSON` and no
+  `UnmarshalJSON` at all, the refusal is now
+
+  ```
+  event.probeWriteOnlyEmbed writes itself through the MarshalJSON of the embedded
+  event.probeWriteOnly, so SKU is written by nobody and read back by nobody; name the embedded
+  field instead of promoting it, or declare a codec of your own
+  ```
+
+  measured in tree. Before round 4 it was *"writes itself through MarshalJSON and declares no
+  UnmarshalJSON"*. Both sentences are true, but the first remedy the new one offers — *name the
+  embedded field* — does not fix the type: naming the field makes the outer written field by
+  field, the walk descends into `writeOnly`, and the developer gets a second refusal for the
+  missing reader. The root cause is one hop further in than the message says.
+- **Why this severity:** wording of a diagnostic on a shape that fails closed either way. Nothing
+  is lost and nothing is wrong — `low`.
+- **Why this timing:** cosmetic, no contract depends on it, and GAP-T46's repair touches the same
+  arm; sweeping it then is the cheap moment. Deferred, and not to be dropped.
+- **Close criteria:**
+  - [ ] Where the embedded type carries no reader on the route it writes by, the refusal says so
+        rather than offering only the promotion remedy — or the promotion message names both hops.
+  - [ ] A diagnosis row for the shape, so the two messages cannot silently become one.
+- **Status:** open
+
+---
+
+### GAP-T49 [low][deferred] A new fixture comment narrates the review round rather than the fixture
+
+- **Where:** `event/declaration_test.go:205-207` (the comment above `termed`)
+- **What:** *"…and a walk that asks the question only of the route the last finding named answers
+  'legal' here."* — "the last finding" is this artifact's review history, not anything a reader of
+  the file can resolve. `CLAUDE.md` says comments are exceptional and tests are not narrated; the
+  first two sentences of the same comment do carry an invariant the code cannot make visible (that
+  `encoding/json` reaches a text pair on a payload type as readily as a JSON one) and earn their
+  place. The comment above `charged` at `:130-133` is the same kind and stays entirely on the
+  invariant — it is the model. Removing the trailing clause is expected cleanup, not a regression.
+- **Why this severity:** cosmetics — `low`.
+- **Why this timing:** no contract, no behaviour; sweep it with the next edit to the file.
+- **Close criteria:**
+  - [ ] The comment above `termed` states only what `encoding/json` does, with no reference to a
+        finding or a review round.
+- **Status:** open
+
+---
+
+**Verdict for this cluster.** GAP-T36, GAP-T41, GAP-T42, GAP-T43, GAP-T44 and GAP-T45 are
+genuinely closed — reproduced, mutated in six ways and killed in all six, controls proven in both
+directions, docs read rather than trusted. The microkernel boolean is derived and holds:
+`event/eventpg` is writable with zero diffs under `event/`. The cluster does **not** go green:
+GAP-T46 is `[critical][immediate]` and is the same root cause the brief called closed — the walk
+asks the promotion question one hop deep, so `struct{ probeMid }` is accepted and loses a field on
+every fact ever written — and GAP-T47 is a measured threshold breach the plan's own metrics
+section denies.
+
+---
+
+## Round 6 dispositions — 2026-09-08 — GAP-T46 … GAP-T49
+
+All four closed. Every claim below is the output of code run in this tree, or of a mutation applied
+to it and then reverted; the tree was restored after each and `sha256 event/routing.go` returned to
+`e5dc40bc5fdb99013eeea5882ed3a2d6b44532f0021f755cd2456dc4734f25ba` every time.
+
+### GAP-T46 — closed by asking the promotion question along the whole chain
+
+**Reproduced first.** A scratch `event/zzrepro_test.go` (deleted; `git status event/` shows the same
+untracked files it showed on arrival plus `event/routing.go`) printed, before the fix:
+
+```
+probeMid   struct{money; Extra}       CanEncode=…event.probeMid writes itself through the
+                                      MarshalJSON of the embedded event.money, so Extra is …
+probeOuter struct{probeMid}           CanEncode=<nil>
+probeTextOuter                        CanEncode=<nil>
+probeTimeOuter                        CanEncode=<nil>
+probeThreeA (three levels)            CanEncode=<nil>
+map[string]probeOuter / []probeOuter / [2]probeOuter / struct{F probeOuter}   all <nil>
+json.Marshal(probeOuter{500,"beside"}) = 500
+json.Unmarshal -> {probeMid:{money:{Cents:500} Extra:}}
+json.Marshal(probeTextOuter) = "net30" · probeTimeOuter = "1970-01-01T00:00:00Z" · probeThreeA = 7
+```
+
+Every one of the reviewer's spellings, to the byte.
+
+**The change.** `promotedMarshaller` takes the chain it was reached through and recurses: where an
+immediate anonymous field carries the route the struct writes by and **nothing of the struct's own
+sits beside it**, the same question is asked of that embedded struct. The recursion enters an
+embedded struct held **by value** and nothing else — the embedded-pointer arm returns where it is
+found, and a non-struct promotes no fields — and a Go struct cannot contain itself by value, so the
+chain is finite without a visited set. That is stated in the function's comment, because it is the
+termination argument and the code cannot show it. `besideIt` is unchanged; what changed is who asks
+it and with what prefix.
+
+The refusal names the chain rather than the outermost type: *`event.probeOuter` writes itself
+through the `MarshalJSON` of **the `event.money` embedded in `probeMid`**, so **`probeMid.Extra`**
+is written by nobody and read back by nobody*. At depth 0 the sentence is byte-identical to what it
+was, which is why every row round 4 left behind still passes unchanged.
+
+**Rows.** Five refused, one accepted, six diagnoses (the diagnosis table goes from 24 rows to 32 across GAP-T46 and GAP-T48; the refused table to 46 and the accepted to 35). Refused: `stacked` (`struct{ lined }`),
+`layered` (`struct{ stacked }` — three levels, hidden at the innermost), `filed`
+(`struct{ noted }` — the standard library's pair one hop out), `staged` (`struct{ termed }` — the
+text route), `owing` (`struct{ charged }` — the embedded pointer one hop out). Accepted:
+**`folded`** (`struct{ itemised }` — two embeddings, nothing hidden at either level), the control
+the close criteria asked for. The diagnoses pin the chain in the message, including the
+three-level path `stacked.lined.SKU`.
+
+**Mutations, each applied alone and reverted.**
+
+```
+M1  the recursion deleted (the fix reverted)   -> declaration_test.go:722  stacked accepted
+                                                  declaration_test.go:854  and undiagnosed
+M2  any nested embed refused (over-broad)      -> declaration_test.go:769  folded refused
+                                                  declaration_test.go:857  layered misdiagnosed
+M5  embeddedAs ignores the chain               -> declaration_test.go:857  "the embedded event.money"
+M6  the hidden field named without its chain   -> declaration_test.go:857  "so SKU" not "so lined.SKU"
+```
+
+Both directions: M1 and M5/M6 kill the positive rows, M2 kills the accepting control.
+
+**Live proof, out of tree.** `/tmp/vvprobe`, a third module with a `replace` onto this checkout,
+declares the reviewer's own scenario:
+
+```
+Opened{Audit{time.Time; Actor}}   CanEncode=…the MarshalJSON of the time.Time embedded in Audit,
+                                  so Audit.Actor is written by nobody…
+Wrapped{Line{Money; SKU}}         CanEncode=…the main.Money embedded in Line, so Line.SKU…
+Deep (three levels)               CanEncode=…embedded in Wrapped.Line, so Wrapped.Line.SKU…
+CleanOuter (control)              CanEncode=<nil>
+Opened  writes "1970-01-01T00:00:00Z" and reads back Actor=""
+Wrapped writes 500 and reads back SKU=""
+CleanOuter writes 500 and reads back {Clean:{Money:{Cents:500}}} — the accepted one round-trips,
+through the shipped codec's own Encode/Decode as well
+```
+
+**Documents.** `D-124`'s promotion bullet now says *at any depth of the promotion chain* and shows
+the shape; its *one deliberate false positive* section says what the chain widens and what stays
+legal; `FL-036`'s step 4 and file table name both files; the plan's refusal 6 carries the chain
+clause and GAP-T46. `docs/modules/{en,ru}/event.md` gained *What `JSON[V]()` refuses, and when* —
+the embedding trap with the accepted spelling beside it, in both languages, because this is the one
+refusal a consumer meets by writing ordinary Go.
+
+### GAP-T47 — closed by splitting the file at the boundary the plan itself named
+
+`event/encodable.go` was **422**. It is now **212**, and `event/routing.go` is **256** — the split
+is exactly the two subjects the finding and the plan both named: the graph walk (`chargeJSON`,
+`jsonWalk`, `position`, `members`, the three budgets) stays in `encodable.go`; `encoding/json`'s
+routing rules restated as refusals (`ownMethods`, `promotedMarshaller`, `besideIt`, `writeRoute`,
+`readRoute`, `readsAs`, `writesAs`, `onTheValueReceiver`, `objectKey`, the `route` methods) are
+`routing.go`. No test was edited to make the split pass and no exported name moved: `make api`
+regenerates `docs/api/surface.md` byte-identical across the whole round (`diff` silent against the
+copy taken before it), and `go doc -all ./event` names none of the symbols in either file. The plan's `:3334` and `:5262` metrics now record the real numbers, its
+`| event/encodable.go |` row is both files, and the largest file shipped in the kernel is
+`event/errors.go` at 369.
+
+The seven mutations round 5 verified against the unsplit file were re-run against the split one and
+all seven are still killed: the `json:"-"` skip restored, `if writes == byTextMethods { return nil }`,
+the embedded-pointer arm deleted, `noTagUndoesIt` silent, `noTagUndoesIt` unconditional, `besideIt`
+counting the embedded field, and the promotion question moved back behind the receiver question.
+
+### GAP-T48 — closed by naming the hop the promotion remedy does not reach
+
+`nameItInstead` asks whether the embedded type reads itself back on the route it writes by. Where
+it does, the message is what it was — *name the embedded field instead of promoting it, or declare
+a codec of your own*. Where it does not, the remedy says which hop is the real one:
+
+```
+event.billed  … so SKU is written by nobody and read back by nobody; event.cents declares no
+              UnmarshalJSON, so naming the embedded field moves the refusal one hop in rather than
+              closing it — declare that reader, or declare a codec of your own
+event.mislaid … event.sloppy declares UnmarshalJSON on the value receiver, where encoding/json
+              calls it on a copy, so naming the embedded field moves the refusal one hop in rather
+              than closing it — declare that reader on the pointer receiver
+```
+
+Two refused rows and two diagnosis rows (`billed`, `mislaid`). Mutations: `nameItInstead` always
+returning the promotion remedy kills the `billed` diagnosis; always returning the other kills
+`lined`'s *"read back by nobody; name the embedded field"* — the control that pins the ordinary
+case still saying the ordinary thing.
+
+### GAP-T49 — closed by deleting the clause
+
+The comment above `termed` is now two sentences and both are about what `encoding/json` does. The
+clause naming *"the last finding"* is gone.
+
+### Gates
+
+```
+$ gofmt -l .                          (silent)
+$ go build ./...                      EXIT=0
+$ go vet ./event/...                  EXIT=0
+$ go test -race -count=1 ./event/...  ok event 4.946s · eventmemory 1.047s · eventtest 2.508s
+$ go test -run XXX -fuzz FuzzAStoredPayloadIsFoldedOrRefused -fuzztime 20s ./event/
+                                      1 792 845 execs, PASS, nothing written to testdata/fuzz
+$ make unit                           zero FAIL lines
+$ make check                          nine arms, all ok
+```
+
+### The zero-diff obligation for `event/eventpg`
+
+Untouched. The split moved unexported functions between two files of one package and added two
+more (`embeddedAs`, `nameItInstead`) plus one parameter on `promotedMarshaller`; `make api`
+regenerates `docs/api/surface.md` with no diff. No value a store constructs moved behind an
+unexported path, and no exported interface gained a method. `event/eventpg` is still writable with zero diffs
+under `event/`.
+
+---
+
+## Round 7 — clean-context re-audit of the GAP-T36 cluster (impl reviewer) — 2026-09-08
+
+Scope: the cluster handed to this round — `promotedMarshaller`'s `json:"-"` arm and its rows in
+`event/declaration_test.go` — plus everything round 6's repair of GAP-T46…GAP-T49 touched
+(`event/routing.go` is new in that round, 257 lines, untracked). Nothing below is taken from a
+disposition note. Every claim is the output of code run in this tree or of a mutation applied to it
+and reverted; after each the tree was restored and `diff` confirmed byte-identity, and
+`git status --porcelain event/` at the end shows the same 10 modified and 13 untracked files it
+showed on arrival.
+
+### What is confirmed closed
+
+**GAP-T36 — closed by the code, and the test that closes it dies without it.**
+`event/routing.go:87-89` reads `if !field.Anonymous { continue }`; the `|| field.Tag.Get("json") ==
+"-"` clause the finding named is gone. Restoring it (mutation M1, applied and reverted) turns
+`declaration_test.go:722` red — *the shipped codec accepted the same shape spelled `json:"-"`* —
+and `declaration_test.go:854` — *the embedding spelled `json:"-"` was accepted*. Measured in this
+tree with a temporary probe (`event/zzaudit_probe_test.go`, deleted; `git status event/` confirms):
+`JSON[struct{ money \`json:"-"\`; SKU string }]().CanEncode()` is `ErrCodecType` and the message
+names the tag.
+
+**GAP-T46 — closed along the whole chain, at every position I could reach it from.** A probe over
+22 shapes: `struct{ mid }`, the same tagged `json:"mid"`, the same tagged `json:"-"`, three and four
+levels of embedding, the `time.Time`-in-a-shared-`Audit`-block shape, an embedded interface, an
+unexported intermediate, an intermediate that itself embeds a pointer, and the same outer type
+reached through `map[string]T`, `[]T`, `[2]T`, `struct{ F T }` and `struct{ F *T }` — **every one
+refused**, each naming the chain (`the event.money embedded in pL3.pL2.pL1, so pL3.pL2.pL1.Deep is
+written by nobody`). The accepting controls hold: `struct{ struct{ money } }` round-trips through
+`Encode`/`Decode` and `CanEncode` is nil. Four mutations applied and reverted, all killed:
+recursion deleted → `declaration_test.go:722`/`:854`; `nameItInstead` always the promotion remedy →
+`:857`; `embeddedAs` ignoring the chain → `:857`; the hidden field named without its chain prefix →
+`:857`.
+
+**GAP-T47 — closed, counted.** `wc -l`: `event/encodable.go` **213**, `event/routing.go` **257**;
+the largest non-test file shipped under `event/` is `event/errors.go` at **369**, and no non-test
+file in `event/`, `event/eventmemory/` or `event/eventtest/` exceeds 400 (max of the three trees:
+369, 364 `eventtest/sections_write.go`). Longest function in the two files: `members.collect` 40,
+`jsonWalk.visit` 33, `promotedMarshaller` 28, `ownMethods` 21, `objectKey` 21 — all ≤ 50. Maximum
+nesting depth in `routing.go` is 3. `event` imports 13 stdlib packages plus `crud` and `errs`; no
+cycle. The plan records the real numbers at `:3340`, `:5240` and `:5277`; `FL-036:41` and `:241`
+name `event/routing.go`.
+
+**GAP-T48, GAP-T49 — closed, read rather than trusted.** `billed` and `mislaid` carry the
+second-hop clause and the mutation that removes it kills `declaration_test.go:857`; the comment
+above `termed` (`declaration_test.go:219-220`) is two sentences, both about what `encoding/json`
+does, with no reference to a finding.
+
+**Gates run by this round.** `gofmt -l .` silent · `go vet ./event/...` exit 0 ·
+`go test -race -count=2 ./event/...` green, no flake (`event` 5.304s, `eventmemory` 1.086s,
+`eventtest` 4.027s) · `make check` — nine arms, all `ok` · `make api` regenerates
+`docs/api/surface.md` **byte-identical** (`diff` silent against a copy taken first).
+
+**Microkernel — derived, not inherited: PASS.**
+`grep -rn "eventmemory\|eventpg\|eventtest" event/*.go | grep -v _test.go` → **0**.
+`go list -f '{{join .Imports "\n"}}' ./event` → stdlib plus `crud` and `errs`, no third party, no
+extension. `find event -name go.mod` → 0; `find event -type d -name internal` → 0. `eventmemory` and
+`eventtest` each import `github.com/frostgrove/vv/event` and stdlib; neither imports the other.
+`Store` and `Log` (`event/store.go:111`, `:142`) carry **no** unexported method, so a store outside
+the package implements them in full; every value a store constructs is exported or has an exported
+constructor — `Envelope`/`Record`/`Capabilities`/`Limits` are exported fields, `Cursor` is a
+`string`, `Authority` via `NewAuthority`, `Backing` via `NewBacking`, refusals via `Failure`. The
+only unexported method on an exported interface is `Declaration.declaration()`, which a store never
+implements. `event/eventpg` is still writable with zero diffs under `event/`.
+
+---
+
+### GAP-T50 [critical][immediate] The map-key door never asks the promotion question, so a struct key whose text pair is promoted collapses a map to one entry and loses a field on every fact ever written
+
+- **Where:** `event/routing.go:236-256` (`objectKey` asks only *writes/reads*, and never calls
+  `promotedMarshaller`); reached from `event/encodable.go:88-92`, the map arm of `jsonWalk.visit`,
+  which passes `at.value.Key()` to `objectKey` and descends only into `Elem()` — the key type is
+  never `visit`ed, so `ownMethods` is never asked of it. Test side:
+  `event/declaration_test.go:675-689`, `:718`, `:731-749`, `:821-850` — nine map-key rows and not
+  one of them keys a map by a struct whose text pair is **promoted**.
+- **What:** `ownMethods` (`routing.go:33-53`) asks the promotion question of every *value* position.
+  `objectKey` is the parallel gate for a *key* position and asks four questions — pair, reader on
+  the value receiver, writer only, reader only — and stops. A struct key that promotes
+  `MarshalText`/`UnmarshalText` from an embedded field, with a field of its own beside it, answers
+  "writes and reads" and is accepted. Measured in this tree
+  (`event/zzaudit_probe_test.go`, since deleted):
+
+  ```go
+  type pTerm struct{ Days int }                       // MarshalText / *UnmarshalText
+  type pKey  struct { pTerm; Region string }
+
+  JSON[pKey]().CanEncode()          -> ErrCodecType   // refused as a payload
+  JSON[map[pKey]int]().CanEncode()  -> <nil>          // ACCEPTED as a key
+  JSON[map[pKeyOuter]int]().CanEncode() -> <nil>      // and one embedding further out
+  ```
+
+  and it is reachable through the real seam, not only through the codec:
+
+  ```
+  type pLedger struct { Balances map[pKey]int; Note string }
+  TryDeclare(aggregate, "ledgers.posted", From(JSON[pLedger]()), fold)   err = <nil>
+  declared.New("one", …).Err()                                          = <nil>
+  recorded bytes: {"Balances":{"30":1,"30":2},"Note":"n"}
+  replayed:       Balances:map[{pTerm:{Days:30} Region:""}:2]  Note:"n"
+  ```
+
+  Two distinct keys — `{30,"EU"}` and `{30,"US"}` — write the same object name, the fact is
+  **recorded with a duplicate JSON name**, and the replay is a one-entry map whose surviving key has
+  `Region:""`. Nil at every door: `CanEncode` nil, `TryDeclare` nil, `Change.Err()` nil, `Encode`
+  nil, `Decode` nil.
+- **Why this severity:** `gaps.md` — *wrong behaviour, data loss/corruption*, in the one place this
+  whole walk exists to protect, and it is the same root cause the cluster brief calls closed. A
+  consumer declares `type Terms struct{ Duration; Region string }` as a shared block and a payload
+  `struct{ Limits map[Terms]int }`; the process boots, every fact is written with a key that
+  discards `Region`, and half the entries are gone before anything is read back. The bytes are the
+  record and no later door can recover them. `D-124:49-53` states the promotion refusal with no
+  position qualifier — *"a struct written by a marshaller promoted from an embedded field with a
+  field of its own beside it — on either route, `MarshalJSON` and `MarshalText` alike … asked at any
+  depth of the promotion chain"* — so the binding document promises a refusal the code does not
+  give, exactly as GAP-T46 found. This is the seventh spelling of one root cause (GAP-178, GAP-179,
+  GAP-185, GAP-T36, GAP-T41, GAP-T46, and now the key door), and the sixth time the repair was made
+  against the shape the finding named rather than against the rule.
+- **Why this timing:** `CanEncode` is the boot-time gate S3, S4 and S5 write fixtures against and
+  phase 2's `event/eventpg` inherits unchanged; a fact log written through this shape cannot be
+  repaired by anything phase 2 ships. The general mechanism that closes it is not a new row: the key
+  position is a position like any other, so `objectKey` must ask the promotion question the value
+  door already asks — where the key is a struct and writes by `byTextMethods`, call
+  `promotedMarshaller(key, byTextMethods, where, "")` before answering `nil`, with the same chain
+  recursion and the same refusal text. Doing it after phase 2 has fixtures against these messages is
+  the expensive order.
+- **Close criteria:**
+  - [ ] `JSON[map[pKey]int]().CanEncode()` is `ErrCodecType` where
+        `pKey = struct{ pTerm; Region string }` and `pTerm` carries a text pair, and the message
+        names `Region` and the embedded type the `MarshalText` came from.
+  - [ ] The same one and two embeddings further out (`map[struct{ pKey }]int`), and for a key whose
+        pair arrives from the standard library.
+  - [ ] A refused row and a diagnosis row for each in `event/declaration_test.go`, beside the nine
+        map-key rows already there.
+  - [ ] The accepting controls survive and one is added: `map[district]int`, `map[settled]int`,
+        `map[string]int64`, `map[int64]int` still return `nil`, and `map[struct{ pTerm }]int` — a
+        struct key that promotes a text pair and hides **nothing** — returns `nil` and round-trips
+        through `Encode`/`Decode`.
+  - [ ] Reverting the new call turns the new refused rows red, and refusing any struct key with an
+        embedded field turns the new accepting control red.
+  - [ ] `D-124`'s map-key bullet and its promotion bullet state one rule for both positions, and
+        `event/routing.go`'s `objectKey` comment says the key door asks what the value door asks.
+- **Status:** open
+
+---
+
+### GAP-T51 [medium][immediate] Removing `besideIt`'s `json:"-"` skip kills no test, so the accept side of the arm this cluster is about is unpinned
+
+- **Where:** `event/routing.go:149-158` (`besideIt`, line 152:
+  `if index == embedded || field.Tag.Get("json") == "-" || !readAsJSON(field)`);
+  `event/declaration_test.go:731-768` — the accepted table has `itemised` (`struct{ money }`),
+  `tallied` (`struct{ money \`json:"-"\` }`) and `folded` (`struct{ itemised }`), and no row where a
+  marshalling type is embedded **with a sibling the developer spelled `json:"-"`**.
+- **What:** mutation M-E, applied to this tree and reverted — delete `field.Tag.Get("json") == "-"`
+  from `besideIt`'s skip list — leaves `go test -run TestADeclaration ./event/` **green**
+  (`ok github.com/frostgrove/vv/event 0.009s`). Four other mutations of the same function and its
+  callers were killed; this one survives. With the mutation in place,
+  `struct{ money; SKU string \`json:"-"\` }` — a legal, correctly round-tripping shape, where the
+  developer told `encoding/json` not to write `SKU` — is refused at `Declare`, and no test says so.
+  The current behaviour is right; nothing holds it.
+- **Why this severity:** no wrong behaviour today. What is missing is the control `CLAUDE.md`
+  requires beside anything that could pass vacuously: the whole `json:"-"` arm of this cluster is
+  about a tag that *does not* excuse a shape, and the neighbouring rule — a tag on a **sibling**
+  that *does* — has no row. A later edit that unifies the two tag reads (an obvious tidy-up, since
+  `promotedMarshaller` was just taught to ignore the tag on the embedded field) turns a booting
+  consumer application into a panic at `Declare`, and the suite stays green. `medium`, because the
+  gap is a missing test rather than a defect.
+- **Why this timing:** immediate — it is one row in the accepted table and one in the diagnosis
+  table of the file this cluster is already editing, and it is precisely the distinction the
+  cluster's own repair created. Adding it after GAP-T50's repair touches the same function is the
+  expensive order.
+- **Close criteria:**
+  - [ ] An accepted row for `struct{ money; SKU string \`json:"-"\` }` (a marshalling embed with a
+        deliberately skipped sibling) and one for the same shape one embedding out.
+  - [ ] Deleting `field.Tag.Get("json") == "-"` from `besideIt` turns that row red.
+  - [ ] `tallied` and `itemised` still pass, so the new row is not the only thing holding the arm.
+- **Status:** open
+
+---
+
+### GAP-T52 [low][deferred] A `json:"-"` on the embedded field is named only when the refusal is raised at depth 0, so the developer who wrote the tag one hop out is not told it does not help
+
+- **Where:** `event/routing.go:101` (`noTagUndoesIt(field)` reads the tag of the field the refusal
+  is raised at) and `event/routing.go:131-137`
+- **What:** measured in this tree. For `struct{ mid \`json:"-"\` }` where
+  `mid = struct{ money; Extra string }`, the refusal is raised at the **inner** hop, whose embedded
+  field carries no tag, so the message is
+
+  ```
+  event.pOuterSkip writes itself through the MarshalJSON of the event.pMoney embedded in pMid,
+  so pMid.Extra is written by nobody and read back by nobody; name the embedded field instead of
+  promoting it, or declare a codec of your own
+  ```
+
+  — accurate, actionable, and silent about the `json:"-"` the developer just wrote and is about to
+  write again. At depth 0 the same spelling does say it (`skipped`, `declaration_test.go:835`).
+- **Why this severity:** wording of a diagnostic on a shape that fails closed either way. Nothing is
+  lost and nothing is wrong — `low`.
+- **Why this timing:** cosmetic, no contract depends on it, and GAP-T50's repair touches the same
+  message assembly; sweeping it then is the cheap moment. Deferred, and not to be dropped.
+- **Close criteria:**
+  - [ ] Where any hop of the promotion chain carries a `json` tag on its embedded field, the refusal
+        says the tag does not undo promotion.
+  - [ ] A diagnosis row for the tagged spelling one embedding out, beside
+        `declaration_test.go:835`.
+- **Status:** open
+
+---
+
+**Verdict for this cluster.** GAP-T36 is genuinely closed — reproduced, reverted, killed by two
+named assertions, and the fix introduced nothing on the shapes it touches. GAP-T46, GAP-T47, GAP-T48
+and GAP-T49 are closed too, verified by four more mutations and by counting the files rather than
+reading the disposition. The microkernel boolean is derived and holds: `event/eventpg` is writable
+with zero diffs under `event/`. The cluster does **not** go green: GAP-T50 is `[critical][immediate]`
+and is the same root cause the brief called closed one door over — a struct map key whose text pair
+is promoted is accepted, writes a duplicate JSON name, and replays as one entry with a field lost,
+through `TryDeclare` and the shipped codec, with nil at every door.
+
+---
+
+## Round 8 dispositions — 2026-09-08 — GAP-T34, GAP-T35, GAP-T37
+
+Tests only. No file under `event/` outside `declaration_test.go` and `roundtrip_test.go` was
+edited, so `event/eventpg`'s zero-diff obligation is untouched and no contract in
+`EVENTSOURCE_P1_PLAN.md` moved.
+
+**Reproduced first, in this tree.** Twelve mutations, each applied alone to the real
+implementation, `go test -count=1 ./event/...` run, the file restored byte-for-byte after each.
+The two functions the findings name have moved since they were written — `sharesMemory` is
+`valueWalk.shares` and `sameValue` is `valueWalk.same`, both now in `event/comparison.go`, and
+`besideIt`/`promotedMarshaller` are in `event/routing.go` — so each mutation is named by what it
+does rather than by the line it was found at.
+
+| Mutation | Before | After |
+|---|---|---|
+| `shares`: the `Pointer, Interface` arm → `return false` | **SURVIVED** | CAUGHT |
+| `shares`: the same arm for a pointer only | **SURVIVED** | CAUGHT |
+| `shares`: the slice/array element walk deleted | **SURVIVED** | CAUGHT |
+| `shares`: the map entry walk deleted | **SURVIVED** | CAUGHT |
+| `shares`: the struct field walk deleted (control) | CAUGHT | CAUGHT |
+| `same`: the `default:` arm answers `true` for every comparable leaf | CAUGHT | CAUGHT |
+| `same`: the same arm for integer kinds only | CAUGHT | CAUGHT |
+| `same`: the same arm for `String` only | CAUGHT | CAUGHT |
+| `same`: the `Pointer, Interface` recursion → `return true` | CAUGHT | CAUGHT |
+| `same`: the same for a pointer only | CAUGHT | CAUGHT |
+| `same`: the same for a pointer to a struct with an exported field | **SURVIVED** | CAUGHT |
+| `same`: the map-length comparison dropped | **SURVIVED** | CAUGHT |
+| `same`: the slice-length comparison dropped (control) | CAUGHT | CAUGHT |
+| `same`: budget exhaustion answers `false` | CAUGHT | CAUGHT |
+| both walks run on `codecGraphNodes` instead of `valueWalkNodes` | CAUGHT | CAUGHT |
+| `besideIt` counts a `json:"-"` field | **SURVIVED** | CAUGHT |
+| `promotedMarshaller` stops comparing the write route | **SURVIVED** | CAUGHT |
+| an array element loses the position's addressability | **SURVIVED** | CAUGHT |
+
+Four of GAP-T35's five arms were closed by fixtures the section gained after the finding was
+written, and the finding is stale about them: the `default:` arm is driven for an integer by
+`slippingCodec` and for a string by `unnotedCodec`, and the pointer arm by `ledgered`'s `*big.Int`.
+The row above that still survived says what was left: the pointer arm is held **only** by the wire
+fallback, so a pointer to a struct the walk could have compared was decided by nothing. That is
+what the new pointer row closes.
+
+**GAP-T34 — closed by three refused fixtures, one per arm, each with an allocating control.**
+
+`event/roundtrip_test.go` gains `chunked` (`[][]byte`), `parted` (`map[string][]byte`) and
+`pocketed` (`*bodied`) — a payload whose shared memory is an element of a slice, a value of a map
+and a field behind a pointer, which is what a compact binary format decodes into and what no
+fixture in the file reached before: every one of the nine older cases reaches its bytes through one
+exported field holding a slice or a map directly, so the top-level pointer comparison and the
+struct field walk decided all of them. Each of the three has two codecs over one wire format — a
+count of frames, then a length-prefixed frame each — one filling a `[64]byte` of its own from the
+front on every decode and never clearing it, one cloning. The zero value of each encodes as a count
+of nought whose decode writes nothing, so the re-encode arm that disturbs a reused buffer cannot
+decide any of them and the walk over the two answers is the whole verdict.
+
+The subtest is *memory shared one hop in is found through a slice element, a map value and a
+pointer*. It asserts `ErrPayload` **and** the substring `decoded into memory its codec reuses`, so
+a fidelity refusal cannot be mistaken for the aliasing one, and asserts the cloning codec of the
+same format passes as the control. Each of the three arms deleted alone turns exactly that subtest
+red.
+
+**GAP-T35 — closed by four refused rows and one accepted one.**
+
+`event/roundtrip_test.go` gains *a scalar changed, a map entry dropped and a value behind a pointer
+are each a difference*: four codecs that keep the shape and change one ordinary thing, each beside
+the same payload through a faithful codec of the same wire format.
+
+- `driftingCodec` writes `Minor+1` and reads it back — the unit mix-up that writes minor units and
+  reads major. Decided by the `default:` arm on an `int64`.
+- `clippingCodec` clips `Reason` to three bytes — a string truncated to a column width. Decided by
+  the same arm on a `string`.
+- `droppingCodec` writes every entry but `"drop"` and reads back exactly what it wrote, so every
+  entry that arrives is the entry it was given and `first.Len() == second.Len()` is the only thing
+  that says one is missing.
+- `slantingCodec` keeps the pointer and changes what it points at (`totalling{Held *totalled}`), so
+  the `Pointer` recursion has to follow it — `totalled` has an exported field, so the wire fallback
+  that holds `ledgered` never runs.
+
+The budget clause's row is the accepting control in *a sample larger than the walk is refused rather
+than reported as a pass*: `marksOf(codecGraphNodes + 8)` is asserted to **pass**, against the
+constant and not derived from it, which is what says a sample's values are counted on a budget of
+their own and not on the one that bounds a type graph.
+
+**GAP-T37 — closed by three accepted rows, the mirror of three refusals that had a control in the
+refusing direction only.**
+
+`event/declaration_test.go` gains `muted` (`money` embedded, `Note string \`json:"-"\`` beside it),
+`remitted` (a struct declaring its own `MarshalJSON`/`UnmarshalJSON` pair and embedding `summed`,
+which declares none, with `Note string` beside it), and the row
+`JSON[struct{ Held [2]posted }]().CanEncode()` — a pointer-receiver pair held in an array at an
+addressable position, whose refused mirror `map[string][2]posted` was already there. All three are
+shapes the shipped codec encodes and decodes; each of the three over-broad repairs turns exactly
+one of them into an `ErrCodecType` panic out of `Declare`, which is a process that will not boot,
+and each is now red on that mutation.
+
+**Docs updated in the same change.** `docs/ai/decisions/D-124` — *Proven by* now names the two new
+`RoundTrip` subtests and what each arm they hold is, and the three new accepting rows beside the
+five controls already listed, saying which over-broad repair each catches. `docs/ai/flows/FL-036`
+names both test functions already and no file or symbol moved, so its file table and the reverse
+index in `docs/ai/flows/Index.md` are unchanged. No caller-visible behaviour changed, so
+`docs/modules/{en,ru}/event.md`, the use-case pages and `EVENTSOURCE_P1_PLAN.md`'s contracts needed
+no edit.
+
+**Gates.** `gofmt -l .` silent, `go build ./...` exit 0, `go vet ./event/...` exit 0,
+`go test -race -count=1 ./event/...` green (`event` 5.350s, `eventmemory` 1.248s, `eventtest`
+2.547s), `make unit` exit 0, `make check` green through all nine checks.
+
+GAP-T38, GAP-T39, GAP-T40 and GAP-T50 … GAP-T52 are untouched here and stay as their own rounds
+left them.
+
+---
+
+## Round 9 — clean-context re-audit of the GAP-T34 / GAP-T35 / GAP-T37 cluster (test reviewer) — 2026-09-08
+
+**What was audited.** The round-8 dispositions for GAP-T34, GAP-T35 and GAP-T37, against
+`event/{comparison,fact,routing,encodable}.go` and `event/{roundtrip,declaration}_test.go`, the
+plan's §S2 and §Contracts,
+`.agents/artifacts/usecases/EVENTSOURCE_P1_USECASES.md` §UC-042/§UC-015/§INV-021/§INV-023, and
+`~/.claude/skills/econv/references/{gaps,restrictions,universality,architecture,building-blocks,data-integrity,microkernel,readability}.md`.
+Every verdict below was measured in this worktree; nothing was taken from a disposition note.
+
+**Gates, run here.** `gofmt -l .` silent. `go vet ./event/...` exit 0. `go test -race -count=2
+./event/...` green — `event` 6.000s, `eventmemory` 1.495s, `eventtest` 4.061s, 6.4s wall.
+`go test -race -count=1 -shuffle=on ./event/...` green, no order dependence, no flake. After the
+whole mutation campaign, `event/{comparison,routing,encodable,fact}.go` are byte-identical to the
+pre-campaign copies (`diff -q`, four files, all identical), so the tree is exactly as it was found.
+
+**Microkernel: PASSES, derived rather than inherited.** A store written entirely outside the
+module (`/tmp/eprobe2/kernel`, a throwaway module with a `replace` onto this checkout — nothing in
+the repository was edited) implements `event.Store` and constructs every value the contract asks of
+it: `event.NewBacking`, the zero `event.Authority` as *nothing of mine is bound*, `Capabilities`,
+`Limits` sized through the exported `event.ResidentPage`, `Envelope` field by field, `Cursor` as a
+plain string, and refusals through `event.Failure(event.Conflict, …)` / `event.Failure(
+event.BadCursor, …)`. `event.Open`/`event.Bind`/`Repo.Load`/`Repo.Append`/`event.Read` drive it end
+to end and it answers `state={Total:250}` after one append and one read. No unexported value is
+needed anywhere, so `event/eventpg` remains writable with zero diffs under `event/`.
+
+**The three findings of this cluster are genuinely closed.** All thirteen mutations the round-8
+table names were reproduced against the real implementation, one at a time, each with
+`go test -count=1 ./event/...` and a byte-for-byte restore afterwards. Every one now **fails**, and
+each fails in the subtest the disposition claims:
+
+| Mutation | Verdict | Killed by |
+|---|---|---|
+| `shares`: the `Pointer, Interface` arm → `return false` | CAUGHT | *memory shared one hop in …* |
+| `shares`: the slice/array element walk deleted | CAUGHT | *memory shared one hop in …* |
+| `shares`: the map entry walk deleted | CAUGHT | *memory shared one hop in …* |
+| `shares`: the struct field walk deleted (control) | CAUGHT | three subtests |
+| `same`: the `default:` arm answers `true` | CAUGHT | *a scalar changed …* + five more |
+| `same`: the `Pointer, Interface` recursion → `return true` | CAUGHT | *a scalar changed …* |
+| `same`: a **pointer to a struct** answers `true` (the narrow survivor of round 8) | CAUGHT | *a scalar changed …* |
+| `same`: the map-length comparison dropped | CAUGHT | *a scalar changed …* |
+| `same`: the slice-length comparison dropped (control) | CAUGHT | *a codec that records less …* |
+| `same`: budget exhaustion answers `false` | CAUGHT | three subtests |
+| both walks on `codecGraphNodes` instead of `valueWalkNodes` | CAUGHT | *a sample larger than the walk …* |
+| `besideIt` counts a `json:"-"` field | CAUGHT | `TestADeclaration` (the `muted` row) |
+| `promotedMarshaller` stops comparing the write route | CAUGHT | `TestADeclaration` (the `remitted` row) |
+| an array element loses the position's addressability | CAUGHT | `TestADeclaration` (the `[2]posted` row) |
+
+The fixtures behind them hold up on inspection: each of the six new refusing cases carries an
+allocating or faithful control of the same wire format, the aliasing rows assert the substring
+`decoded into memory its codec reuses` rather than the bare sentinel so a fidelity refusal cannot
+be mistaken for an aliasing one, no sample is shared mutably across rows, and the budget row pins
+`valueWalkNodes` against `codecGraphNodes` in both directions. The three new accepted rows were
+checked out of tree to be shapes the shipped codec really does round-trip (`remitted` and
+`struct{ Held [2]posted }` both answer `RoundTrip=<nil>`), so none of them is a control that passes
+by blessing a shape that loses data.
+
+**Checked and not a finding.** `muted` is on the accepted table and a sample of it carrying a
+populated `Note` is refused by `Fact.RoundTrip` — but that asymmetry is pre-existing and not
+introduced here: `dropped` (`First`/`Second` both `json:"-"`) has been on that table since round 1
+and behaves identically, measured. The CanEncode door asks whether the shape loses data the
+developer did not ask to lose; the RoundTrip door compares exported fields without reading tags.
+
+**Sixteen further mutations of my own, in the same files, that no finding named.** Twelve died.
+The four survivors are below, and three of them are one hole.
+
+### GAP-T53 [critical][immediate] The value walk's *absence* arms are unpinned: a codec that reads a map entry back under another name, one that changes a map value, and one that drops a pointer field are each refused by the implementation and by no test
+
+- **Where:** `event/comparison.go:248-255` (`sameEntries`, the entry comparison at `:250`),
+  `event/comparison.go:167-169` (the invalid-value arm of `same`), `event/comparison.go:180-184`
+  (the nil clause of the `Pointer, Interface` arm); the test that is supposed to hold them,
+  `event/roundtrip_test.go:1126-1156` — the four-row subtest round 8 added, plus
+  `event/roundtrip_test.go:1215-1236`
+- **What:** three survivors, each applied alone to the real implementation and re-run with
+  `go test -count=1 ./event/...`:
+
+  | Mutation | Verdict |
+  |---|---|
+  | `sameEntries`: `this.same(first.MapIndex(key), second.MapIndex(key))` → `…, first.MapIndex(key))` | **SURVIVED** |
+  | `same`: `if !first.IsValid() \|\| !second.IsValid() { return first.IsValid() == second.IsValid() }` → `return true` | **SURVIVED** |
+  | `same`: `if first.IsNil() \|\| second.IsNil() { return first.IsNil() == second.IsNil() }` → `return true` | **SURVIVED** |
+
+  Measured out of tree (`/tmp/eprobe2`, a `replace` onto this checkout — nothing in the repository
+  was edited), the implementation **does** catch all three, so the arms are live and load-bearing:
+
+  ```
+  reads every value back multiplied by 100   → ErrPayload "does not read back the main.Counted"
+  reads every key back as key+"!"            → ErrPayload, same
+  keeps the note, reads the pointer as nil   → ErrPayload "does not read back the main.Referring"
+  ```
+
+  The round-8 subtest closed the **map-length** check (`droppingCodec` drops an entry, so
+  `first.Len() == second.Len()` is what decides it) and the **pointer recursion** (`slantingCodec`
+  keeps the pointer and changes what it points at). Neither reaches these three. `droppingCodec`
+  short-circuits at `&&` and never enters `sameEntries`' body for a refusal at all — the only
+  payload that runs that body to a verdict is the passing control. No fixture anywhere makes a
+  codec read back a *different set* of things rather than a different value in the same place, and
+  `unnotedCodec` (`roundtrip_test.go:480-491`) drops the `Note` **beside** an already-unset pointer
+  rather than dropping a pointer that was set.
+- **Why this severity:** `restrictions.md`, "tests that pass on a gutted implementation", on the
+  same helper the cluster is about. These are not exotic codecs. A map read back under another key
+  is what a codec that lower-cases, trims or prefixes its keys does — the ordinary normalisation
+  someone adds for a database column. A map value read back changed is the unit mix-up §UC-042
+  exists to catch, one level in from the scalar the round-8 subtest does pin. A pointer field read
+  back as `nil` is what every codec that forgets an optional field produces, and it is the single
+  most common way a JSON schema drifts. For all three, `Fact.RoundTrip` reports a pass, the fact is
+  recorded, and §UC-042's "a codec that drops part of what it was given … found before a stream
+  contains one" is a sentence with nothing running it.
+- **Why this timing:** S5 exports this comparison as `eventtest.RoundTrip`, the proxy every store
+  implementer is told to run, and §UC-042's **Observed** is the message it produces. Three arms of
+  it that can answer `true` unconditionally are three promises the conformance suite cannot keep,
+  and S5's defect fixtures will be written against whatever S2 established. It is the same class as
+  GAP-T35, one door over, in the same function.
+- **Close criteria:**
+  - [ ] A refused fixture whose codec reads every entry back under a **different key**, the entry
+        count unchanged, asserted `ErrPayload` with the `does not read back` substring, with the
+        same wire format read back faithfully beside it as the control. The invalid-value arm
+        answering `true` turns it red.
+  - [ ] A refused fixture whose codec reads a map **value** back changed, every key and the count
+        unchanged, so `sameEntries` comparing `first` with itself turns it red.
+  - [ ] A refused fixture whose codec reads a **set** pointer field back as `nil` while keeping the
+        field beside it, so the nil clause answering `true` turns it red; the existing
+        `referring{Ref: nil}` case is already the accepting control for the other direction.
+- **Status:** closed — round 10 dispositions
+
+### GAP-T54 [medium][immediate] `sameNumber`'s exactness guard — the clause that makes "a number too large for a float to hold is a difference like any other" true — is asserted by nothing
+
+- **Where:** `event/comparison.go:208-220` (`asFloat`, the integer clause at `:210-212` and the
+  unsigned one at `:213-215`); the comment that states the rule,
+  `event/comparison.go:197-201`; the table that is supposed to hold it,
+  `event/roundtrip_test.go:1401-1431`
+- **What:** `return float64(held), int64(float64(held)) == held` → `return float64(held), true`
+  **SURVIVED** the full suite. Measured out of tree, the implementation catches it: a payload
+  `boxed{Meta: int64(1<<62 + 1)}` read back as `float64(1<<62)` answers `ErrPayload "does not read
+  back the main.Boxed it was given"` today and is silently accepted with the guard gone. The
+  ten-row substitution table drives the widening rule at `1` versus `float64(1)` and at `1` versus
+  `float64(2)` and nowhere near the boundary where a float stops holding an integer exactly.
+- **Why this severity:** the widening exception is the one place the comparison deliberately calls
+  two values of *different types* the same value, and it is the crack every other row of that table
+  is there to keep narrow. Its own comment says "a number too large for that to hold is a
+  difference like any other"; nothing makes that sentence true. The concrete loss is an identifier
+  or an amount above 2^53 recorded as an `int64` behind an interface and read back rounded — the
+  ordinary shape of a Snowflake id or a satoshi balance — passing the helper that exists to say the
+  codec kept what it was handed.
+- **Why this timing:** it is a boundary value of a public contract S5 exports as
+  `eventtest.RoundTrip`, and `universality.md`'s rule about assertions that fit only the sample
+  applies: `1` and `2` are the sample, and the rule is about magnitudes.
+- **Close criteria:**
+  - [ ] Two rows on the substitution table: an `int64` above 2^53 read back as the `float64` nearest
+        to it, asserted refused; and an `int64` a float holds exactly (`1 << 52`) read back as that
+        float, asserted accepted, so the row above is not bought by refusing every large number.
+  - [ ] Dropping either exactness clause in `asFloat` turns the first row red.
+- **Status:** closed — round 10 dispositions
+
+### GAP-T55 [low][deferred] `valueWalk.spend`'s carried-out short-circuit can be deleted, so which of two refusals a payload with two problems reports is decided by nothing
+
+- **Where:** `event/comparison.go:76-86`, the guard at `:77-79`
+- **What:** deleting `if this.beyond || this.panicked != "" || this.unrecordable != "" ||
+  this.opaque != "" { return false }` **SURVIVED**. That clause is what makes the *first*
+  carried-out condition the one the caller is told about: today a payload holding a func beside a
+  field the codec loses answers `ErrSample … record what identifies the behaviour — a name, a code`
+  (measured out of tree); without it the walk keeps going, finds the lost field, and answers
+  `ErrPayload … does not read back`, which is true and names no repair the caller can make for the
+  func. No fixture in the file carries two carried-out conditions at once.
+- **Why this severity:** low — both answers are refusals and neither is silent data loss. What is
+  unpinned is which message a caller sees, and §UC-042's **Observed** is the message.
+- **Why this timing:** deferred. It is one function's internal ordering with no contract another
+  section reads, and the section already has the diagnosis table that would host the row.
+- **Close criteria:**
+  - [ ] One row on the diagnosis table: a payload holding a func **and** a field the codec drops,
+        asserted `ErrSample` and the `record what identifies the behaviour` substring, so the
+        short-circuit is what decides it.
+  - [ ] Deleting the guard at `comparison.go:77-79` turns that row red.
+- **Status:** closed — round 10 dispositions
+
+### Mutation log — round 9, complete
+
+Each applied alone to the real implementation, `go test -count=1 ./event/...`, file restored
+byte-for-byte afterwards. Thirteen named by the cluster, sixteen mine.
+
+| # | Mutation | File | Verdict |
+|---|---|---|---|
+| 1 | `shares`: `Pointer, Interface` arm → `return false` | comparison.go | CAUGHT |
+| 2 | `shares`: slice/array element walk deleted | comparison.go | CAUGHT |
+| 3 | `shares`: map entry walk deleted | comparison.go | CAUGHT |
+| 4 | `shares`: struct field walk deleted (control) | comparison.go | CAUGHT |
+| 5 | `same`: `default:` arm → `return true` | comparison.go | CAUGHT |
+| 6 | `same`: `Pointer, Interface` recursion → `return true` | comparison.go | CAUGHT |
+| 7 | `same`: a pointer to a struct answers `true` | comparison.go | CAUGHT |
+| 8 | `same`: map-length comparison dropped | comparison.go | CAUGHT |
+| 9 | `same`: slice-length comparison dropped (control) | comparison.go | CAUGHT |
+| 10 | `same`: budget exhaustion → `return false` | comparison.go | CAUGHT |
+| 11 | both walks on `codecGraphNodes` | fact.go | CAUGHT |
+| 12 | `besideIt` counts a `json:"-"` field | routing.go | CAUGHT |
+| 13 | `promotedMarshaller` stops comparing the write route | routing.go | CAUGHT |
+| 14 | array element loses the position's addressability | encodable.go | CAUGHT |
+| 15 | `sameEntries` compares `first` with itself | comparison.go | **SURVIVED** — GAP-T53 |
+| 16 | `same`: the invalid-value arm answers `true` | comparison.go | **SURVIVED** — GAP-T53 |
+| 17 | `same`: the nil clause answers `true` | comparison.go | **SURVIVED** — GAP-T53 |
+| 18 | `asFloat`: the integer exactness guard dropped | comparison.go | **SURVIVED** — GAP-T54 |
+| 19 | `spend`: the carried-out guard dropped | comparison.go | **SURVIVED** — GAP-T55 |
+| 20 | `shares`: struct arm drops the `IsExported` filter | comparison.go | CAUGHT |
+| 21 | `shares`: the empty-slice/map length guard dropped | comparison.go | CAUGHT |
+| 22 | `shares`: the same-type guard dropped | comparison.go | CAUGHT |
+| 23 | `shares`: map arm compares `first` with itself | comparison.go | CAUGHT |
+| 24 | `shares`: slice arm compares `first` with itself | comparison.go | CAUGHT |
+| 25 | `sameElements` compares `first` with itself | comparison.go | CAUGHT |
+| 26 | `sameFields`: `compared` set unconditionally | comparison.go | CAUGHT |
+| 27 | `sameEntries` walks `second`'s keys (behaviour-preserving under the length guard) | comparison.go | SURVIVED, not a finding |
+| 28 | `sameNumber` answers `true` | comparison.go | CAUGHT |
+| 29 | `readsBackOnTheWire` answers `true` | comparison.go | CAUGHT |
+| 30 | `singleValued` answers `false` | comparison.go | CAUGHT |
+| 31 | `notAliased` never called | fact.go | CAUGHT |
+| 32 | a struct field is always addressable | encodable.go | CAUGHT |
+| 33 | `promotedMarshaller` never recurses past the first hop | routing.go | CAUGHT |
+| 34 | `besideIt` returns the first field, embedded or not | routing.go | CAUGHT |
+
+Detection rate: 30 of 32 behaviour-changing mutations caught (#27 is semantically equivalent under
+the length guard and #4/#9 are the dispositions' own controls). All five survivors are in
+`event/comparison.go`, and four of the five are in the value walk's *fidelity* half rather than its
+aliasing half — the same side of the helper GAP-T35 was about.
+
+**Verdict for the cluster.** GAP-T34, GAP-T35 and GAP-T37 are **closed**, verified by code rather
+than by note. The cluster is not green: the same audit found GAP-T53 `[critical][immediate]`, a
+hole of the same class, three arms wide, in the function GAP-T35 named.
+
+---
+
+## Round 10 dispositions — 2026-09-08 — GAP-T53, GAP-T54, GAP-T55
+
+Tests and docs only. No file under `event/` outside `roundtrip_test.go` was edited, so
+`event/eventpg`'s zero-diff obligation is untouched and no value a store must construct moved.
+All three are **closed**, including GAP-T55, which round 9 graded `[deferred]`: it is one fixture
+and one row in a subtest that already asserts the sentinel, and deferring one row costs more to
+carry than to write.
+
+**Reproduced first, in this tree.** Six mutations, each applied alone to the real implementation of
+`event/comparison.go`, `go test -count=1 ./event/...` run, the file restored byte-for-byte after
+each and confirmed identical by `diff -q` at the end.
+
+| Mutation | Before | After | Killed by |
+|---|---|---|---|
+| `sameEntries`: `this.same(first.MapIndex(key), second.MapIndex(key))` → `…, first.MapIndex(key))` | **SURVIVED** | CAUGHT | *a value read back somewhere else, or not at all, is a difference too* |
+| `same`: the invalid-value arm → `return true` | **SURVIVED** | CAUGHT | the same subtest |
+| `same`: the nil clause of the `Pointer, Interface` arm → `return true` | **SURVIVED** | CAUGHT | the same subtest |
+| `asFloat`: `int64(float64(held)) == held` → `true` | **SURVIVED** | CAUGHT | *a value substituted for another behind an interface is answered, not walked* |
+| `asFloat`: `uint64(float64(held)) == held` → `true` | **SURVIVED** | CAUGHT | the same subtest |
+| `spend`: the carried-out guard deleted | **SURVIVED** | CAUGHT | *a leaf no wire format records is refused rather than reported as a pass* |
+
+**GAP-T53 — closed by three refused fixtures with three faithful controls, in a subtest of their
+own.**
+
+`event/roundtrip_test.go` gains *a value read back somewhere else, or not at all, is a difference
+too*, three codecs that keep the count and lose the place. Each is beside a codec that reads the
+same wire format back where it stood, and each row asserts `ErrPayload` **and** the substring
+`does not read back`, so an aliasing refusal cannot be mistaken for the fidelity one.
+
+- `rekeyingCodec` reads every entry back under an upper-cased key — the normalisation somebody adds
+  for a database column. The entry count is unchanged, so the length check decides nothing;
+  `second.MapIndex(key)` is invalid for a key the sample never had, and it is the invalid-value arm
+  that turns that into a difference. This row is red on **both** the entry-comparison mutation and
+  the invalid-arm mutation.
+- `inflatingCodec` reads every amount back multiplied by a hundred, every key and the count
+  unchanged — §UC-042's unit mix-up one level in from the scalar the round-8 subtest pinned.
+  Verified to be the killing row on its own: with the `rekeying` row removed from the table, the
+  entry-comparison mutation is still red, and the message names the multiplied amount.
+- `unreferringCodec` keeps the note and reads the set `*target` back as `nil` — the codec that
+  forgets an optional field. The `referring{Ref: nil}` case at *a pointer field is not asked its own
+  type's `Equal` through a nil* is the accepting control for the other direction and was already
+  there; the faithful `JSON[referring]()` row beside this one is the control for this direction.
+
+Round 9's close criteria are met as written. The `droppingCodec` gap the finding named — a refusal
+that short-circuits at `&&` and never enters `sameEntries`' body — is what these three enter.
+
+**GAP-T54 — closed by three rows on the substitution table, two refused and one accepted.**
+
+The ten-row table in *a value substituted for another behind an interface is answered, not walked*
+is now thirteen. `int64(1)<<62 + 1` read back as `float64(int64(1)<<62 + 1)` is asserted **refused**,
+`uint64(1)<<63 + 1` the same way, and `int64(1) << 52` read back as that float is asserted
+**accepted**. The refused pair is what makes the comment's *"a number too large for that to hold is
+a difference like any other"* true — one row per exactness clause, because an `int64` row cannot be
+turned red by dropping the unsigned clause. The accepted row is the control in the other direction,
+and it is not decorative: an over-strict guard (`… && held < 1<<20`) turns exactly that row red and
+leaves the two refused rows green.
+
+**GAP-T55 — closed by one row beside the func case, not deferred.**
+
+`unroutedCodec` is `routingCodec` losing the note as well, so `routed` carries two of the walk's
+carried-out conditions at once — a `func` it cannot record and a field the codec dropped. The row
+sits in *a leaf no wire format records is refused rather than reported as a pass*, which already
+asserts the sentinel, and demands `ErrSample` **and** `record what identifies the behaviour`.
+Deleting the guard at `comparison.go:77-79` makes the walk keep going, find the lost note and answer
+`ErrPayload … does not read back`, and the row is red on exactly that. Round 9's criterion named the
+diagnosis table as the host; that table asserts a substring and never a sentinel, so the row was put
+where both halves of the criterion can be asserted. The existing `routes` row (a func alone →
+`ErrSample`) and the `truncatingCodec` row (a dropped field alone → `ErrPayload`) are the two
+one-condition controls that say the new row is about the order and not about either condition.
+
+**Three over-refusal controls, run to prove the new rows are not vacuous in the accepting
+direction.** `asFloat` made to refuse any integer above 2^20 → the `1 << 52` row red. `same` made to
+answer `false` for every map → four subtests red including the new one's faithful column. `same`
+made to answer `false` for every pointer → six subtests red including the new one's. And the
+`pipes` row was checked to be still reached past the new GAP-T55 row: the mutation it exists for
+(the default arm refusing every leaf) still fails at *a channel read back as another channel*, so
+nothing was masked by inserting a row above it.
+
+**Docs updated in the same change.** The boundary of the widening exception is behaviour a caller
+sees — an id above 2^53 is now demonstrably `ErrPayload` — so `docs/modules/en/event.md` and
+`docs/modules/ru/event.md` state it on the interface bullet, `docs/ai/decisions/D-124` states it in
+the numeric-exception paragraph and names the three new accepting rows in *Proven by*, and
+`EVENTSOURCE_P1_PLAN.md`'s clause 6e records it. D-124's *Proven by* also names the new subtest and
+the new GAP-T55 row, and its stale "the seven subtests that hold the comparison itself" is corrected
+to the nine the list actually holds. `FL-036` names test functions rather than subtests and no file
+or symbol moved, so its file table and the reverse index in `docs/ai/flows/Index.md` are unchanged.
+No contract in the plan changed — no implementation line was edited.
+
+**Gates.** `gofmt -l .` silent, `go build ./...` exit 0, `go vet ./event/...` exit 0,
+`go test -race -count=1 ./event/...` green, `go test -race -count=1 -shuffle=on ./event/...` green,
+`make unit` exit 0, `make check` green through all nine checks.
+
+GAP-T38, GAP-T39, GAP-T40 and GAP-T50 … GAP-T52 are untouched here and stay as their own rounds
+left them.
+
+---
+
+## Round 11 — clean-context re-audit of the GAP-T34 / GAP-T35 / GAP-T37 cluster (test reviewer) — 2026-09-08
+
+**What was audited.** The round-8 dispositions for GAP-T34, GAP-T35 and GAP-T37 and the round-10
+dispositions for GAP-T53, GAP-T54 and GAP-T55, against `event/{comparison,fact,routing,encodable}.go`
+and `event/{roundtrip,declaration}_test.go`, `.agents/artifacts/usecases/EVENTSOURCE_P1_USECASES.md`
+§UC-042/§INV-021/§INV-023, `EVENTSOURCE_P1_PLAN.md` §S2 and its architecture metrics,
+`docs/ai/decisions/D-124`, and
+`~/.claude/skills/econv/references/{gaps,restrictions,universality,architecture,building-blocks,data-integrity,microkernel,readability}.md`.
+Every verdict below was measured in this worktree. Nothing was taken from a disposition note.
+
+**Gates, run here.** `gofmt -l .` silent. `go vet ./event/...` exit 0. `go test -race -count=2
+./event/...` green — `event` 5.993s, `eventmemory` 1.492s, `eventtest` 4.026s, **6.4s wall**.
+`go test -race -count=1 -shuffle=on ./event/...` green: no order dependence, no flake, no
+`t.Parallel` anywhere under `event/`. After the campaign, `event/{comparison,fact,routing,
+encodable}.go` and `event/roundtrip_test.go` are byte-identical to the pre-campaign copies
+(`diff -q`), so the tree is exactly as it was found.
+
+**Microkernel: PASSES, derived and not inherited.** A store written entirely outside the module
+(`/tmp/eaudit/probe/kernel`, a throwaway module with a `replace` onto this checkout — nothing in the
+repository was edited) satisfies `event.Store` using only exported values: `event.NewBacking` over
+its own handle, the zero `event.Authority` as *nothing of mine is bound*, `Capabilities` with the
+four `Support` constants, `Limits` sized through the exported `event.ResidentPage`, `Envelope` field
+by field, `Cursor` as a plain string, and refusals through `event.Failure(event.Conflict, …)` and
+`event.Failure(event.BadCursor, …)`. `event.Open` / `event.Bind` / `Repo.Load` / `Repo.Append` /
+`event.Read` drive it end to end and it answers `state={Total:250}` after one append and one read,
+`read 1 envelope(s) cursor="1"`. No unexported value is needed anywhere, so `event/eventpg` remains
+writable with **zero diffs** under `event/`.
+
+**The six findings under audit are genuinely closed, verified against the code.** All nineteen
+mutations the round-8 and round-10 tables name were reproduced against the real implementation, one
+at a time, `go test -count=1 ./event/...` each, with a byte-for-byte restore afterwards. Every one
+now fails, in the subtest the disposition claims:
+
+| Mutation | Verdict | Killed by |
+|---|---|---|
+| `shares`: the `Pointer, Interface` arm → `return false` | CAUGHT | *memory shared one hop in …* |
+| `shares`: the slice/array element walk deleted | CAUGHT | *memory shared one hop in …* |
+| `shares`: the map entry walk deleted | CAUGHT | *memory shared one hop in …* |
+| `shares`: the struct field walk deleted (control) | CAUGHT | three subtests |
+| `same`: the `default:` arm → `return true` | CAUGHT | *a scalar changed …* + four more |
+| `same`: the `Pointer, Interface` recursion → `return true` | CAUGHT | *a scalar changed …* |
+| `same`: a pointer to a struct answers `true` | CAUGHT | *a scalar changed …* |
+| `same`: the map-length comparison dropped | CAUGHT | *a scalar changed …* |
+| `same`: the slice-length comparison dropped (control) | CAUGHT | *a codec that records less …* |
+| `same`: budget exhaustion → `return false` | CAUGHT | three subtests |
+| both walks on `codecGraphNodes` | CAUGHT | *a sample larger than the walk …* |
+| `besideIt` counts a `json:"-"` field | CAUGHT | `TestADeclaration` (the `muted` row) |
+| `promotedMarshaller` stops comparing the write route | CAUGHT | `TestADeclaration` (`remitted`) |
+| an array element loses the position's addressability | CAUGHT | `TestADeclaration` (`[2]posted`) |
+| `sameEntries` compares `first` with itself | CAUGHT | *a value read back somewhere else …* |
+| `same`: the invalid-value arm → `return true` | CAUGHT | the same subtest |
+| `same`: the nil clause → `return true` | CAUGHT | the same subtest |
+| `asFloat`: the signed exactness guard → `true` | CAUGHT | *a value substituted for another …* |
+| `asFloat`: the unsigned exactness guard → `true` | CAUGHT | the same subtest |
+| `spend`: the carried-out guard deleted | CAUGHT | *a leaf no wire format records …* |
+
+Round 10's strongest claim was re-derived rather than believed: with the `rekeying` row **deleted
+from the table** and the entry-comparison mutation applied, the subtest is still red and the message
+names *every amount multiplied, every key and the count unchanged* — so `inflatingCodec` is
+load-bearing on its own and is not carried by the row above it. The test file was restored and
+re-run green afterwards. The three accepting rows GAP-T37 added were checked out of tree to be
+shapes the shipped codec really does round-trip, and the substitution table's boundary rows are
+written as expressions (`int64(1)<<62 + 1`, `int64(1) << 52`, `marksOf(codecGraphNodes + 8)`) rather
+than as literals fitted to one sample — `universality.md` holds here.
+
+**Fifty further mutations of my own, in the same four files, that no finding named.** Thirty-nine
+died. The survivors are below. Five are findings, four are equivalent or unreachable, and one probe
+that started as a mutation found a live defect the suite cannot see at all.
+
+### GAP-T56 [critical][immediate] A codec that reuses a decode buffer it never clears, reached through an unexported field, passes `RoundTrip` — obligation 2's own shape, answered `<nil>`
+
+- **Where:** `event/comparison.go:17-38` (`reusesItsBuffer`, the two arms); the fixture set that is
+  supposed to cross them, `event/roundtrip_test.go:23-42` (`scratchCodec`), `:49-63`
+  (`prefixCodec`), `:70-100` (`sealedNote`, `sealedCodec`); the subtest,
+  `event/roundtrip_test.go:1108-1122`; the claim, `docs/ai/decisions/D-124` §*The codec as a party*
+  obligation 2 and §*Proven by*
+- **What:** the aliasing half has two arms and four codec shapes to cover, and the fixture set
+  covers three cells of the four:
+
+  | | zeroes its buffer on every decode | fills it and never clears it |
+  |---|---|---|
+  | the bytes are reachable through an **exported** field | `scratchCodec` — caught by the walk | `prefixCodec` — caught by the walk |
+  | the bytes are reachable only through an **unexported** field | `sealedCodec` — caught by the re-encode probe | **no fixture — and not caught** |
+
+  Measured out of tree (`/tmp/eaudit/probe/crossed`, a `replace` onto this checkout — nothing in the
+  repository was edited), a codec in the fourth cell — `sealedPrefixCodec`, which is `prefixCodec`'s
+  body returning `sealedNote{body: this.buffer[:width]}` and an allocating `Encode`:
+
+  ```
+  RoundTrip answers: <nil>
+  the application holds "twelve"
+  after the next payload it holds "zzzzzz"
+  ```
+
+  Both arms miss it and neither can see it: `shares` walks the exported half only and there is none,
+  and the re-encode probe decodes the reader type's **zero value**, whose encoding is one byte of
+  width nought, so it copies nothing into the buffer and the first answer is undisturbed. The
+  fidelity walk then compares an intact value with the sample and agrees. `sealedCodec` is caught
+  only because it writes `this.scratch = [32]byte{}` on every decode, which the ordinary
+  implementation does not — the test file says so itself, at `roundtrip_test.go:44-48`, about
+  `prefixCodec`, and never crosses that observation with the unexported case one fixture below it.
+- **Why this severity:** `D-124` states obligation 2 as *"It must **not** return one that aliases
+  memory the codec itself will write or reuse … `Fact.RoundTrip` is the runnable proxy and refuses a
+  codec that does it"*, without qualification, and §UC-042's helper is what a store implementer and
+  an application are told to run. Here the proxy reports a pass for a codec that hands the
+  application memory it rewrites on the next decode: every fact folded from that stream holds bytes
+  belonging to whichever payload was read last. A zero-copy reader over a private scratch buffer is
+  the ordinary shape of exactly the compact binary codec `event/eventpg` exists to make attractive,
+  and it is the one shape the whole obligation was written for.
+- **Why this timing:** S5 exports this as `eventtest.RoundTrip` (`event/eventtest/proxies.go:16`),
+  the proxy phase 2's store implementer runs, and D-124 is binding law that currently claims more
+  than the code does. Either the proxy covers the fourth cell or the decision must say it does not;
+  both are cheaper before `event/eventpg` is written against the claim.
+- **Close criteria:**
+  - [ ] A fixture in the fourth cell — no exported field, a decode buffer filled to the payload's
+        width and never cleared — asserted `ErrPayload` **and** the substring `decoded into memory
+        its codec reuses`, with the same wire format over an allocating codec beside it as the
+        control.
+  - [ ] `Fact.RoundTrip` refuses it. If the kernel cannot, `D-124` obligation 2 and its *Proven by*
+        say which shapes the proxy does not reach, `docs/modules/{en,ru}/event.md` say it where a
+        consumer reads it, and the fixture above is asserted to pass with a comment naming the
+        limitation — a stated limit is acceptable, an unstated one is not.
+  - [ ] The three cells that are covered stay covered: deleting either arm of `reusesItsBuffer`
+        turns a test red.
+- **Status:** open
+
+### GAP-T57 [high][immediate] `besideIt`'s second clause is unpinned: with `readAsJSON` replaced by `IsExported`, a struct embedding a marshaller beside an embedded unexported struct type is accepted, and every field it promotes is lost
+
+- **Where:** `event/routing.go:149-158` (`besideIt`, the condition at `:152`);
+  `event/encodable.go:202-205` (`readAsJSON`, what the clause defers to); the accepted table,
+  `event/declaration_test.go:759-801`
+- **What:** `if index == embedded || field.Tag.Get("json") == "-" || !readAsJSON(field)` →
+  `… || !field.IsExported()` **SURVIVED** the whole suite. Measured out of tree, the clause is live
+  and decides a real shape:
+
+  ```
+  today:            struct{ money; secret } → ErrCodecType "… so secret is written by nobody and
+                    read back by nobody; name the embedded field instead of promoting it"
+  with the mutant:  struct{ money; secret } → <nil>
+  encoding/json:    wrapped{money{500}, secret{Code:"abc"}} encodes as 500
+  ```
+
+  `secret` is an unexported struct type embedded by value; encoding/json promotes and writes its
+  exported fields, and `readAsJSON` is what says so. GAP-T37 closed the `json:"-"` clause of this
+  same expression with the `muted` row. The clause beside it, in the same `if`, has no row at all.
+- **Why this severity:** this is the ninth refused shape's own arm, and the failure it prevents is
+  silent data loss at the one door that exists to prevent it: the fact is recorded as `500`, `Code`
+  is written by nobody and read back by nobody, and no error appears at any door — the exact
+  sentence D-124's refusal list is built out of. A mutation that reopens a data-loss shape and keeps
+  the suite green is `restrictions.md`'s "tests that pass on a gutted implementation".
+- **Why this timing:** it is one row on a table that already exists, and the refusal it protects is
+  in D-124's enumerated list, which phase 2 and the module docs both cite.
+- **Close criteria:**
+  - [ ] A refused row for a struct embedding a marshalling type beside an **embedded unexported
+        struct type**, asserting `ErrCodecType` and the substring naming the hidden field, so
+        replacing `readAsJSON` with `IsExported` turns it red.
+  - [ ] Its accepting mirror stays green — `itemised` (an embedded marshaller with nothing beside
+        it) already is; the new row must not be closable by refusing every embedded struct.
+- **Status:** open
+
+### GAP-T58 [high][immediate] The fourth rule of the promotion loop has a control in the refusing direction only: dropping `!field.Anonymous` turns an ordinary struct that declares its own pair into a boot-time panic
+
+- **Where:** `event/routing.go:84-111` (`promotedMarshaller`, the anonymity skip at `:87-89`); the
+  accepted table, `event/declaration_test.go:759-801`, whose three GAP-T37 rows are at `:793-795`
+- **What:** deleting `if !field.Anonymous { continue }` **SURVIVED** the whole suite. Measured out
+  of tree:
+
+  ```
+  today:            struct{ Paid money; Note string } with its own MarshalJSON/UnmarshalJSON → <nil>
+                    (and encoding/json round-trips it: [500,"n"] → {Paid:{Cents:500} Note:n})
+  with the mutant:  ErrCodecType "main.receipt writes itself through the MarshalJSON of the embedded
+                    main.money, so Note is written by nobody" — for a field that is not embedded
+  ```
+
+  GAP-T37 named three rules of this walk and round 8 gave each an accepting mirror: `muted` for the
+  tag clause, `remitted` for the write-route comparison, `struct{ Held [2]posted }` for
+  addressability. The loop has a fourth rule and it has no mirror. `remitted` does not reach it —
+  the embedded `summed` declares no pair, so the route comparison rejects it one line earlier, and
+  the anonymity skip is never what decides that row.
+- **Why this severity:** the shape the over-broad repair refuses is not exotic. Any aggregate
+  payload that declares its own JSON pair and holds a named field of a marshalling type — a named
+  `time.Time`, a `money`, a `netip.Addr` — panics out of `Declare`, which is a process that will not
+  boot, with a message that names an embedding the developer did not write. That is the failure mode
+  GAP-T37 exists to make impossible, one rule over, in the same `for` body.
+- **Why this timing:** same table, same subtest, and the same class this cluster was opened for. A
+  repair to this walk is exactly what phase 2's first unfamiliar payload type will provoke.
+- **Close criteria:**
+  - [ ] An accepted row for a struct that declares its own `MarshalJSON`/`UnmarshalJSON` pair and
+        holds a **named** field whose type declares one too, so deleting the anonymity skip turns it
+        red.
+  - [ ] `lined` stays refused, so the new row is not bought by accepting the promotion it mirrors.
+- **Status:** open
+
+### GAP-T59 [medium][immediate] The aliasing walk's bound is decided by nothing: both its budget guard and its carried-out report are deletable with the suite green
+
+- **Where:** `event/comparison.go:109-142` (`shares`, the `spend()` guard at `:110`);
+  `event/fact.go:178-188` (`notAliased`, the report at `:187`); the subtest that reads as if it
+  covered them, `event/roundtrip_test.go:1381-1405`
+- **What:** two survivors, each applied alone:
+
+  | Mutation | Verdict |
+  |---|---|
+  | `shares`: `if !this.spend() \|\| !first.IsValid() …` → `if !first.IsValid() …` | **SURVIVED** |
+  | `notAliased`: `return walk.unanswered(…)` → `return nil` | **SURVIVED** |
+
+  Both walks are made on separate `valueWalk` values, and `readBack`'s is what answers *a sample
+  larger than the walk is refused rather than reported as a pass* in every direction — so the
+  aliasing walk's half of "both walks are bounded" (`event/fact.go:118-119`, and D-124's *Where it
+  lives*) is asserted by nothing. Measured out of tree, the guard is live and load-bearing: a codec
+  whose decoded value points at itself answers today
+  `ErrSample: … was given a sample holding more than the 65536 values a round trip walks`, and with
+  the guard gone the walk recurses until the process dies.
+- **Why this severity:** a caller's codec producing a cyclic value is a mistake, not an attack, and
+  the difference between a diagnosis naming the repair and a stack overflow in the test binary is
+  the difference between a bug found and a morning lost. No data is lost either way, which is why
+  this is medium and not high.
+- **Why this timing:** `eventtest.RoundTrip` is what a store implementer runs, and S5's defect
+  fixtures will be written against whatever S2 established about which walk answers what.
+- **Close criteria:**
+  - [ ] A refused fixture whose decoded value is cyclic, or larger than `valueWalkNodes` and
+        reachable only through the aliasing walk, asserting `ErrSample` and the `holding more than`
+        substring, so deleting `shares`'s `spend()` guard turns it red.
+  - [ ] The same row, or one beside it, turns red when `notAliased` stops asking `unanswered`.
+- **Status:** open
+
+### GAP-T60 [medium][immediate] The sealed subtest asserts the bare sentinel, so which arm refused is decided by nothing — and `before = bytes.Clone(before)` is deletable with the suite green
+
+- **Where:** `event/comparison.go:25-37` (`reusesItsBuffer`, the clone at `:29`);
+  `event/roundtrip_test.go:1108-1122`, whose assertion is `!errors.Is(err, ErrPayload)` and nothing
+  else
+- **What:** two survivors in the same arm:
+
+  | Mutation | Verdict |
+  |---|---|
+  | `before = bytes.Clone(before)` deleted | **SURVIVED** |
+  | the fallback's verdict discarded (`return false, nil` with the probe's side effects left in place) | **SURVIVED** |
+
+  Measured out of tree on `sealedCodec` restated verbatim, the refusal **changes arm** and the test
+  cannot tell:
+
+  ```
+  today:        ErrPayload "… decoded into memory its codec reuses"
+  clone gone:   ErrPayload "… does not read back the main.sealedNote it was given"
+  ```
+
+  The clone is what keeps the two encodings comparable when the codec reuses its **encode** buffer,
+  which `sealedCodec` does. Without it, `before` and `after` are one slice, the aliasing arm always
+  answers false, and the row stays green only because the probe's zero decode happens to zero the
+  scratch array before the fidelity walk runs — an accident of that fixture, and the reason
+  GAP-T56's fourth cell is invisible.
+- **Why this severity:** the round-8 and round-10 rows learned this lesson and assert
+  `decoded into memory its codec reuses` beside the sentinel; the row the arm was written for still
+  asserts `ErrPayload` alone, which both refusals share. `restrictions.md`: an assertion two
+  different mechanisms satisfy pins neither.
+- **Why this timing:** it is one substring on an existing assertion, and it is the assertion that
+  makes GAP-T56 measurable.
+- **Close criteria:**
+  - [ ] `event/roundtrip_test.go:1108-1122` asserts the `decoded into memory its codec reuses`
+        substring as well as the sentinel, so deleting `before = bytes.Clone(before)` turns it red.
+  - [ ] Discarding the fallback's verdict turns the same row red.
+- **Status:** open
+
+### GAP-T61 [low][deferred] `equalByMethod`'s argument-type clause is unpinned, so an over-broad repair turns a legal payload into an `ErrSample` blaming an `Equal` that never ran
+
+- **Where:** `event/comparison.go:298-313` (the signature check at `:304`); the fixture that pins
+  the arity but not the type, `event/roundtrip_test.go:435-455` (`weighed`)
+- **What:** `if asked.NumIn() != 1 || asked.In(0) != first.Type() || …` → `if asked.NumIn() != 1 ||
+  …` **SURVIVED**. `weighed` declares `Equal(first, second int64)`, so `NumIn() != 1` decides it and
+  the argument-type clause is never what answers. Measured out of tree, an all-unexported struct
+  declaring `Equal(other int64) bool` round-trips today (`<nil>`); with the clause dropped the call
+  panics, is recovered, and the caller is told *carries a main.tally whose own Equal panicked when
+  it was asked whether the sample came back* — about a method that was never asked.
+- **Why this severity:** low. It is a false refusal in a narrow shape (no exported field, a
+  one-argument `Equal` of another type), and it fails closed rather than losing data.
+- **Why this timing:** deferred. One row on a table that already exists, with no contract another
+  section reads.
+- **Close criteria:**
+  - [ ] A row whose payload type has no exported field and declares `Equal` with **one** argument of
+        another type, asserted to round-trip, so dropping the `In(0)` clause turns it red.
+- **Status:** open
+
+### GAP-T62 [low][deferred] D-124's *Proven by* overstates what the ten rows pin, and the `sealedCodec` comment claims an arm it does not reach
+
+- **Where:** `docs/ai/decisions/D-124…md:379-380` — *"Every one of the ten is red when the arm it
+  names is neutralised, and no other case in the file is"*; `:326-328` — *"including the re-encode
+  arm that reaches a reused buffer the value walk cannot see through"*;
+  `event/roundtrip_test.go:64-68`
+- **What:** measured, the first sentence is false in its second half: neutralising the `default:`
+  arm — the arm the `driftingCodec` row names — turns **five** subtests red, not that row alone. The
+  second overstates by GAP-T56: the re-encode arm reaches a reused buffer only where the reader
+  type's zero value disturbs it, which is the fixture's spelling and not the ordinary one.
+- **Why this severity:** low — a doc that claims more than the tests do, in a decision that is
+  otherwise the most carefully written page in the section. `CLAUDE.md` treats a stale doc as a
+  failing test, which is why it is written down rather than waved past.
+- **Why this timing:** deferred; it moves with whatever closes GAP-T56 and GAP-T60.
+- **Close criteria:**
+  - [ ] The *Proven by* sentence states what is measurable — each row is red when its arm is
+        neutralised — without the "and no other case" clause, or the clause is made true.
+  - [ ] The `sealedCodec` comment says which spelling of a reused buffer the re-encode arm reaches.
+- **Status:** open
+
+### GAP-T63 [low][deferred] `TestACodecThatDecodesIntoAReusedBufferIsCaught` is 640 lines and 24 subtests, and its name states one of them
+
+- **Where:** `event/roundtrip_test.go:1061-1700`
+- **What:** the function now holds the aliasing half, the fidelity half, the substitution table, the
+  walk budget, marker facts, the zero-value refusal, the retained-revision cases and the diagnosis
+  table. Nineteen of the twenty-four subtests are about something other than a reused buffer.
+  `readability.md`: a name that states the behaviour is the cheapest documentation there is, and this
+  one now misdirects — a reader looking for where a substituted value behind an interface is decided
+  has no reason to open a function named for buffer reuse.
+- **Why this severity:** low. Nothing is untested and nothing is wrong; the cost is navigation, paid
+  by every later round.
+- **Why this timing:** deferred — a split is mechanical but touches every line of the file, and the
+  cluster's open findings should land first.
+- **Close criteria:**
+  - [ ] The aliasing subtests and the fidelity subtests live in two functions whose names say which
+        obligation each holds, with `D-124`'s *Proven by* and `FL-036` updated in the same change.
+- **Status:** open
+
+### Mutation log — round 11, complete
+
+Each applied alone to the real implementation, `go test -count=1 ./event/...`, restored
+byte-for-byte afterwards and confirmed identical by `diff -q` at the end. Nineteen reproduced from
+the round-8 and round-10 tables (all CAUGHT, table above), fifty of my own below.
+
+| # | Mutation | File | Verdict |
+|---|---|---|---|
+| 1 | `asFloat`: over-strict guard `&& held < 1<<20` (over-refusal control) | comparison.go | CAUGHT (the `1 << 52` row) |
+| 2 | `same`: every map is a difference (over-refusal control) | comparison.go | CAUGHT (5 subtests) |
+| 3 | `same`: every non-nil pointer is a difference (over-refusal control) | comparison.go | CAUGHT (6 subtests) |
+| 4 | `shares`: the `second.Len() > 0` half of the empty guard dropped | comparison.go | SURVIVED — near-equivalent, see note |
+| 5 | `singleValued`: a nil type answers `true` | comparison.go | SURVIVED — unreachable, see note |
+| 6 | `sameFields`: unexported fields compared too | comparison.go | CAUGHT |
+| 7 | `equalByMethod`: the whole signature check dropped | comparison.go | CAUGHT |
+| 8 | `same`: two different types answered `true` rather than as numbers | comparison.go | CAUGHT |
+| 9 | `asFloat`: the float arm answers "not a number" | comparison.go | CAUGHT |
+| 10 | `sameOpaque`: the `==` arm answers `true` | comparison.go | CAUGHT |
+| 11 | `sameOpaque`: the `singleValued` short-circuit dropped | comparison.go | CAUGHT |
+| 12 | `reusesItsBuffer`: the decoder is handed the shared buffer | comparison.go | CAUGHT |
+| 13 | `reusesItsBuffer`: the whole re-encode fallback removed | comparison.go | CAUGHT |
+| 14 | `reusesItsBuffer`: the fallback's verdict discarded, side effects kept | comparison.go | **SURVIVED — GAP-T60** |
+| 15 | `reusesItsBuffer`: `before = bytes.Clone(before)` dropped | comparison.go | **SURVIVED — GAP-T60** |
+| 16 | `reusesItsBuffer`: the zero decode between the two encodings dropped | comparison.go | CAUGHT |
+| 17 | `spend`: the budget is never spent | comparison.go | CAUGHT |
+| 18 | `unanswered`: `beyond` reported ahead of the unrecordable leaf | comparison.go | CAUGHT |
+| 19 | `same`: the NaN clause dropped | comparison.go | CAUGHT |
+| 20 | `asFloat`: `Uintptr` dropped from the unsigned arm | comparison.go | SURVIVED — no codec this admits produces one |
+| 21 | `equalByMethod`: only the `In(0)` clause dropped | comparison.go | **SURVIVED — GAP-T61** |
+| 22 | `readsBackOnTheWire`: compared with the zero encoding | comparison.go | CAUGHT |
+| 23 | `same`: the func leaf waved through as agreement | comparison.go | CAUGHT |
+| 24 | `sameOpaque`: the opaque leaf waved through as agreement | comparison.go | CAUGHT |
+| 25 | `shares`: the `spend()` guard dropped | comparison.go | **SURVIVED — GAP-T59** |
+| 26 | `unanswered`: the panicked arm never reported | comparison.go | CAUGHT |
+| 27 | `roundTrip`: the first decode is handed the shared buffer | fact.go | CAUGHT |
+| 28 | `roundTrip`: the fidelity walk never run | fact.go | CAUGHT |
+| 29 | `roundTrip`: `notAliased` run for a sample that disturbs nothing too | fact.go | SURVIVED — equivalent for a zero-sized type |
+| 30 | `roundTrip`: the sample-type check dropped | fact.go | CAUGHT |
+| 31 | `roundTrip`: a sample encoding as its own zero value accepted | fact.go | CAUGHT |
+| 32 | `notAliased`: the reuse verdict never acted on | fact.go | CAUGHT |
+| 33 | `notAliased`: the carried-out report dropped | fact.go | **SURVIVED — GAP-T59** |
+| 34 | `readBack`: `unanswered` never asked after the walk | fact.go | CAUGHT |
+| 35 | `readBack`: the opaque wire fallback always answers same | fact.go | CAUGHT |
+| 36 | `besideIt`: `readAsJSON` replaced by `IsExported` | routing.go | **SURVIVED — GAP-T57** |
+| 37 | `promotedMarshaller`: the `!field.Anonymous` skip dropped | routing.go | **SURVIVED — GAP-T58** |
+| 38 | `promotedMarshaller`: an embedded non-struct entered too | routing.go | CAUGHT |
+| 39 | `promotedMarshaller`: the embedded-pointer arm falls through | routing.go | CAUGHT |
+| 40 | `besideIt`: the embedded field itself counts | routing.go | CAUGHT |
+| 41 | `ownMethods`: the unaddressable marshaller accepted | routing.go | CAUGHT |
+| 42 | `readAsJSON`: an embedded unexported struct is not written | encodable.go | CAUGHT |
+| 43 | `structBehind`: a pointer is not followed | encodable.go | CAUGHT |
+| 44 | `fields`: a struct with one unwritten field accepted | encodable.go | CAUGHT |
+| 45 | `collect`: the `json:"-"` skip dropped | encodable.go | CAUGHT |
+| 46 | `visit`: a slice element loses its addressability | encodable.go | CAUGHT |
+| 47 | `visit`: a map value becomes addressable | encodable.go | CAUGHT |
+| 48 | *(attribution reruns)* `sameEntries`, the invalid arm and the nil clause, each run alone to read which row reports | comparison.go | CAUGHT — rekeying, rekeying, unreferring |
+| 49 | the `rekeying` row deleted from the table + the entry-comparison mutation | roundtrip_test.go | CAUGHT by `inflating` alone — round 10's claim verified |
+| 50 | *(probe, not a mutation)* the fourth cell of the aliasing matrix, run against the unmutated tree | — | **PASSES — GAP-T56** |
+
+**Detection: 39 of 50 caught; of the 11 survivors, 4 are equivalent or unreachable and 7 are the
+findings above.** With the nineteen reproduced mutations added, 58 of 69 were caught.
+
+Two survivors are deliberately **not** findings, and why: **#4** — dropping the `second.Len() > 0`
+half of the empty-slice guard changes an answer only when two decodes of one payload return slices
+of different lengths, which is a nondeterministic codec and a different defect; **#5** —
+`singleValued`'s `held != nil` guard cannot be reached, because `link.accepts` (`event/chain.go:67`)
+rejects a nil interface before `reflect.TypeOf(sample)` is taken and `sameOpaque` never passes a nil
+type. It is dead defensive code; under this repository's house style it is removable cleanup rather
+than a defect. **#20** and **#29** are equivalent for every shape either door admits.
+
+**Verdict for the cluster.** GAP-T34, GAP-T35 and GAP-T37 are **closed**, and so are GAP-T53,
+GAP-T54 and GAP-T55 — all verified by killed mutations against the real implementation rather than
+by a note, and the round-10 independence claim was re-derived by deleting the row it rests on. The
+cluster is **not green**: the same audit found GAP-T56 `[critical]`, a codec doing precisely what
+D-124 obligation 2 forbids and answering `<nil>` from the proxy that claims to refuse it, and two
+`[high]` holes of GAP-T37's own class — one rule of `besideIt` and one of `promotedMarshaller` with
+a control in one direction only.

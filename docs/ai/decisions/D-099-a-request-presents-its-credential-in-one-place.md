@@ -3,7 +3,9 @@
 **Status:** accepted
 **Invariant:** a guard reading a named cookie accepts a credential from the
 cookie or from the `Authorization` header, never from both, and never from two
-cookies of that name. Two sources are a refusal wrapping
+cookies of that name. This holds on `Guard.AuthenticateValues`, which every
+shipped binding calls; it cannot hold on `Guard.Authenticate`, whose
+`func(name string) string` has no way to report that a second value was present. Two sources are a refusal wrapping
 `ErrCredentialCardinality`, not a ranking. The old precedence survives only as
 `UnsafeCookieWinsOverAuthorization`.
 

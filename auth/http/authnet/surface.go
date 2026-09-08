@@ -49,14 +49,23 @@ func (this *Surface) VerifyAreas(areas ...authhttp.Area) error {
 	return authhttp.VerifyAreas(this.Routes(), areas...)
 }
 
+// A net/http pattern may carry a host — "admin.example.com/reports" is a
+// different route from "/reports", and only the first one answers on that host.
+// Stripping the host made the two the same route to the gate, so a declaration
+// written for "/reports" silently covered the admin host's endpoint as well, and
+// an endpoint that was never declared at all inherited whatever the bare path
+// had been given.
+//
+// The host is therefore kept. The gate has no host of its own to compare against
+// ([[D-073]] names a method and a path), so a host-scoped route simply does not
+// match a bare declaration: it reads as undeclared and the start-up gate refuses
+// it. A deployment that means to mount one declares it with the host in the
+// path, which is the only form that says which route it is talking about.
 func routeOf(pattern string) authhttp.Route {
 	method := AnyMethod
 	if verb, rest, found := strings.Cut(pattern, " "); found {
 		method = strings.ToUpper(strings.TrimSpace(verb))
 		pattern = strings.TrimSpace(rest)
-	}
-	if slash := strings.Index(pattern, "/"); slash > 0 {
-		pattern = pattern[slash:]
 	}
 	pattern = strings.TrimSuffix(pattern, "{$}")
 	return authhttp.Route{Method: method, Path: pattern}

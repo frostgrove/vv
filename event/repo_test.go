@@ -124,6 +124,54 @@ func TestAppendRefusesInItsStatedOrder(t *testing.T) {
 	}
 }
 
+// Bind refuses two declarations of one family through one Binding, so the
+// crossing arrives through two, which INV-039 admits deliberately. What refuses
+// it here is the change naming the aggregate it was decided on, and the sentinel
+// is Bind's, because the two doors answer one question.
+func TestAnAppendRefusesAChangeDecidedOnAnotherAggregateOfThisFamily(t *testing.T) {
+	store := newRecordingStore(t)
+	repo, _ := bindAccounts(t, store)
+	acme := accountID{tenant: "acme", number: "A-17"}
+	ctx := context.Background()
+
+	twin := Define[account]("accounts.account", accountKey)
+	twinned := Declare(twin, "accounts.credited",
+		Then(From(JSON[creditedV1]()), JSON[creditedV2](), toCreditedV2), creditAccount)
+	elsewhere, err := Bind(Open(store), twin)
+	if err != nil {
+		t.Fatalf("a second declaration of one family through a second binding was refused at Bind: %v, and the escape this case is about is the one INV-039 admits", err)
+	}
+
+	_, at, err := repo.Load(ctx, acme)
+	if err != nil {
+		t.Fatalf("the token this append starts from could not be minted: %v", err)
+	}
+	crossing := twinned.New(acme, creditedV2{Minor: 250, Reason: "deposit"})
+	if crossing.Stream() != at.Stream() {
+		t.Fatalf("the change names %v and the token %v, so the two declarations no longer share a stream and the stream comparison is what refuses below", crossing.Stream(), at.Stream())
+	}
+
+	store.forget()
+	answered, _, err := repo.Append(ctx, at, crossing)
+	if !errors.Is(err, ErrFamily) || errors.Is(err, ErrWrongStream) {
+		t.Fatalf("a change decided on another aggregate of this family appended with %v, and a fact recorded through it is unloadable by the declaration that wrote it", err)
+	}
+	if store.count("Append") != 0 {
+		t.Fatalf("the refused append reached the store %d times", store.count("Append"))
+	}
+	if answered != at {
+		t.Fatalf("the refusal answered a token other than the one it was given")
+	}
+
+	store.forget()
+	if _, _, err := elsewhere.Append(ctx, at, crossing); err != nil {
+		t.Fatalf("the same token and the same change, through the repository whose aggregate minted it, were refused with %v — so the refusal above is a repository that refuses every append rather than one that reads which aggregate decided", err)
+	}
+	if store.count("Append") != 1 {
+		t.Fatalf("the control append reached the store %d times", store.count("Append"))
+	}
+}
+
 func TestAForgedTokenIsRefusedBeforeAnyStatement(t *testing.T) {
 	store := newRecordingStore(t)
 	repo, declared := bindAccounts(t, store)

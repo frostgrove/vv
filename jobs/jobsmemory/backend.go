@@ -625,7 +625,12 @@ func (backend *Backend) Recover(ctx context.Context, request jobs.RecoverRequest
 		if item.invocation.Namespace() != request.Namespace() || item.lease == nil {
 			continue
 		}
-		if item.lease.incarnation == request.Incarnation() || !item.lease.expiresAt.After(now) {
+		// An own-incarnation lease is a claim that committed while its response
+		// was lost — unless the session says it is running it right now, which is
+		// what Holds answers. Without that question every reclaim tick handed the
+		// pool back its own in-flight deliveries and the dispatcher revoked them.
+		own := item.lease.incarnation == request.Incarnation() && !request.Holds(item.invocation.ID())
+		if own || !item.lease.expiresAt.After(now) {
 			candidates = append(candidates, item)
 		}
 	}

@@ -558,7 +558,6 @@ func newCacheTestPolicy(maxValueBytes int) Policy {
 	}
 	policy.MaxBatchResultBytes = maximum
 	policy.ReadFailure = Propagate
-	policy.WriteFailure = Propagate
 	policy.InvalidateFailure = Propagate
 	policy.Corruption = RefuseCorrupt
 	return policy
@@ -593,4 +592,81 @@ func mustCodecDescriptor[V any](t *testing.T, codec Codec[V]) codecDescriptor {
 func withoutNegativeCaching(policy Policy) Policy {
 	policy.Negative = NoNegativeCaching()
 	return policy
+}
+
+// A ValueSchema bump is what a deployment does on purpose when a cached type
+// changes. Reading the old entries as corruption made that a hard failure under
+// RefuseCorrupt: every Resolve for a warm key returned ErrCorrupt, the loader
+// never ran, and nothing evicted the entry — so the key stayed broken until its
+// retention elapsed, which is measured in hours.
+func TestAValueSchemaRotationIsAMissRatherThanCorruption(t *testing.T) {
+	policy := newCacheTestPolicy(1 << 10)
+	runtime := newCacheTestRuntime(time.Unix(1_900_000_000, 0).UTC())
+
+	written, _, _, err := encodeEnvelope(runtime, String(ValueSchema(1)), mustCodecDescriptor(t, String(ValueSchema(1))), policy, Present("the previous schema's value"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The control: the same bytes under the schema that wrote them still decode,
+	// so the miss below is the rotation and not the envelope being unreadable.
+	same, _, err := decodeEnvelope(written, runtime, String(ValueSchema(1)), mustCodecDescriptor(t, String(ValueSchema(1))), policy)
+	if err != nil || same.State != Hit {
+		t.Fatalf("same schema = %+v, %v", same, err)
+	}
+
+	rotated, _, err := decodeEnvelope(written, runtime, String(ValueSchema(2)), mustCodecDescriptor(t, String(ValueSchema(2))), policy)
+	if err != nil {
+		t.Fatalf("a schema rotation answered %v, so RefuseCorrupt would fail every read of a warm key", err)
+	}
+	if rotated.State != Miss {
+		t.Fatalf("rotated = %+v, want Miss — the loader has to be allowed to run", rotated)
+	}
+
+	// And genuine damage is still corruption, or the change above has traded the
+	// integrity check away for the convenience.
+	damaged := append([]byte(nil), written...)
+	damaged[len(damaged)-1] ^= 0xff
+	if _, _, err := decodeEnvelope(damaged, runtime, String(ValueSchema(1)), mustCodecDescriptor(t, String(ValueSchema(1))), policy); !errors.Is(err, ErrCorrupt) {
+		t.Fatalf("a tampered envelope answered %v, want ErrCorrupt", err)
+	}
+}
+
+// The options are the escape from the three profiles that keeps a cache inside
+// the activation graph. Without one for freshness, retention, negative caching
+// or corruption, a deployment that wanted a different TTL — or absences not
+// cached at all — had to build the policy by hand and hand it to New, which is
+// exactly the constructor that skips the graph's checks.
+func TestAProfileCanBeAdjustedWithoutAbandoningTheActivationGraph(t *testing.T) {
+	adjusted, err := Hot.With(
+		FreshFor(2*time.Minute, time.Minute),
+		RetainFor(10*time.Minute),
+		NoNegative(),
+		OnCorruption(CorruptAsMiss),
+		OnReadFailure(Propagate),
+		OnInvalidateFailure(Ignore),
+		JitterBy(NoJitter()),
+	).Build()
+	if err != nil {
+		t.Fatalf("adjusting a profile: %v", err)
+	}
+	described := describePolicy(adjusted)
+	if described.Freshness.FreshFor != 2*time.Minute || described.Freshness.StaleFor != time.Minute {
+		t.Fatalf("freshness = %v/%v", described.Freshness.FreshFor, described.Freshness.StaleFor)
+	}
+	if described.Corruption != CorruptAsMiss || described.ReadFailure != Propagate || described.InvalidateFailure != Ignore {
+		t.Fatalf("failure policies = %+v", described)
+	}
+	if adjusted.Negative.duration != 0 {
+		t.Fatalf("negative caching = %v, want none", adjusted.Negative.duration)
+	}
+
+	// The control: an option that names something outside the vocabulary is
+	// refused rather than silently accepted.
+	if _, err := Hot.With(OnCorruption(CorruptionPolicy(99))).Build(); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("an unknown corruption policy = %v, want ErrInvalid", err)
+	}
+	if _, err := Hot.With(RetainFor(0)).Build(); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("a zero retention = %v, want ErrInvalid", err)
+	}
 }

@@ -81,7 +81,15 @@ func normalizePutOptions(options PutOptions) (PutOptions, error) {
 	if err != nil {
 		return PutOptions{}, err
 	}
-	return PutOptions{Mode: mode, Size: size, ContentType: contentType, Metadata: metadata}, nil
+	// Copied rather than aliased, for the same reason Size is: a caller who
+	// mutates the value they passed must not change the precondition the write
+	// is about to be judged against.
+	var ifMatch *string
+	if options.IfMatch != nil {
+		copied := *options.IfMatch
+		ifMatch = &copied
+	}
+	return PutOptions{Mode: mode, Size: size, ContentType: contentType, Metadata: metadata, IfMatch: ifMatch}, nil
 }
 
 func normalizeStageOptions(options StageOptions) (StageOptions, error) {
@@ -225,4 +233,37 @@ func cloneMetadata(metadata Metadata) Metadata {
 func cloneInfo(info Info) Info {
 	info.Metadata = cloneMetadata(info.Metadata)
 	return info
+}
+
+// A precondition a backend cannot honour is refused rather than dropped. Silently
+// writing unconditionally is the failure the option exists to prevent: the caller
+// believes it did a compare-and-swap and it did a blind overwrite.
+func validatePrecondition(operation string, ifMatch *string, capabilities Capabilities) error {
+	if ifMatch == nil {
+		return nil
+	}
+	if !capabilities.ConditionalWrite {
+		return NewError(operation, KindUnsupported, fmt.Errorf("backend has no conditional write"))
+	}
+	if *ifMatch == "" {
+		return NewError(operation, KindInvalid, fmt.Errorf("precondition ETag is empty"))
+	}
+	return nil
+}
+
+// A range a backend cannot honour is refused rather than widened to the whole
+// object. Silently returning everything is the failure the option exists to
+// prevent: the caller asked for a megabyte and is handed a gigabyte, and only the
+// bandwidth bill says so.
+func validateRange(operation string, options ReadOptions, capabilities Capabilities) error {
+	if !options.ranged() {
+		return nil
+	}
+	if options.Offset < 0 || (options.Length != nil && *options.Length <= 0) {
+		return NewError(operation, KindInvalid, fmt.Errorf("read range is invalid"))
+	}
+	if !capabilities.RangeRead {
+		return NewError(operation, KindUnsupported, fmt.Errorf("backend has no ranged read"))
+	}
+	return nil
 }

@@ -36,7 +36,7 @@ implement an adapter. Three-state values and small generic helpers live in
 | **Transactions** | `InTx`, `BindExecutor`, `Session` — join a foreign transaction without guessing its database |
 | **Typed bulk writes** | `Repo.InsertBatch`, with native-driver magic and a portable SQL opt-out |
 | **Dialects** | `Postgres`, `MySQL` (MariaDB too), `SQLite` |
-| **Sentinels** | `ErrNotFound`, `ErrConflict`, `ErrForbidden`, `ErrStaleVersion`, … |
+| **Sentinels** | `ErrNotFound`, `ErrConflict`, `ErrForbidden`, `ErrUnavailable`, `ErrStaleVersion`, … |
 
 ---
 
@@ -528,7 +528,8 @@ Compare with `errors.Is`, never by string ([[D-015]]).
 
 ```go
 crud.ErrNotFound       crud.ErrConflict       crud.ErrForbidden
-crud.ErrStaleVersion   crud.ErrReadOnly       crud.ErrMissingID
+crud.ErrUnavailable    crud.ErrStaleVersion   crud.ErrReadOnly
+crud.ErrMissingID
 crud.ErrNoTxSupport    crud.ErrExecutorScope   crud.ErrNoBatchInsertSupport
 crud.ErrNoBulkInsertSupport               crud.ErrNoCreateSupport
 crud.ErrNoReplaceSupport                  crud.ErrNoUnscopedExists
@@ -537,6 +538,14 @@ crud.ErrNoReplaceSupport                  crud.ErrNoUnscopedExists
 Every one of them survives being wrapped in an `errs.Fault`, so a caller who
 wrote `errors.Is(err, crud.ErrConflict)` before the error subsystem existed keeps
 that branch ([[D-038]]).
+
+`ErrUnavailable` is the retryable class, and the only one a caller is meant to try
+again: `port` renders anything wrapping it as **503 with a `Retry-After`** rather
+than the 500 that means "a bug". It is what a package with an operational refusal
+— a pool with no free slot, a control plane that will not answer — wraps so the
+refusal is legible to a client and to an operator without either importing that
+package. `tenancy.ErrCapacity` and `tenancy.ErrUnavailable` are its two users
+today.
 
 ## Dialects
 

@@ -9,9 +9,9 @@ import (
 
 type Store interface {
 	Put(context.Context, Key, io.Reader, PutOptions) (Info, error)
-	Open(context.Context, Key) (io.ReadCloser, Info, error)
+	Open(context.Context, Key, ReadOptions) (io.ReadCloser, Info, error)
 	Head(context.Context, Key) (Info, error)
-	Delete(context.Context, Key) error
+	Delete(context.Context, Key, DeleteOptions) error
 
 	Stage(context.Context, io.Reader, StageOptions) (Staged, error)
 	Promote(context.Context, StageID, Key, PromoteOptions) (Info, error)
@@ -43,9 +43,9 @@ func Chain(base Store, middleware ...Middleware) Store {
 
 type Backend interface {
 	Put(context.Context, Namespace, Key, io.Reader, PutOptions) (Info, error)
-	Open(context.Context, Namespace, Key) (io.ReadCloser, Info, error)
+	Open(context.Context, Namespace, Key, ReadOptions) (io.ReadCloser, Info, error)
 	Head(context.Context, Namespace, Key) (Info, error)
-	Delete(context.Context, Namespace, Key) error
+	Delete(context.Context, Namespace, Key, DeleteOptions) error
 
 	Stage(context.Context, Namespace, io.Reader, StageOptions) (Staged, error)
 	Promote(context.Context, Namespace, StageID, Key, PromoteOptions) (Info, error)
@@ -88,6 +88,9 @@ func (this *store) Put(ctx context.Context, key Key, source io.Reader, options P
 	if err != nil {
 		return Info{}, NewError("put", KindInvalid, err)
 	}
+	if err := validatePrecondition("put", normalized.IfMatch, this.backend.Capabilities()); err != nil {
+		return Info{}, err
+	}
 	info, err := this.backend.Put(ctx, this.namespace, key, source, normalized)
 	if err != nil {
 		return Info{}, projectError("put", err)
@@ -95,11 +98,14 @@ func (this *store) Put(ctx context.Context, key Key, source io.Reader, options P
 	return cloneInfo(info), nil
 }
 
-func (this *store) Open(ctx context.Context, key Key) (io.ReadCloser, Info, error) {
+func (this *store) Open(ctx context.Context, key Key, options ReadOptions) (io.ReadCloser, Info, error) {
 	if err := validateReadCall(ctx, key); err != nil {
 		return nil, Info{}, NewError("open", KindInvalid, err)
 	}
-	body, info, err := this.backend.Open(ctx, this.namespace, key)
+	if err := validateRange("open", options, this.backend.Capabilities()); err != nil {
+		return nil, Info{}, err
+	}
+	body, info, err := this.backend.Open(ctx, this.namespace, key, options)
 	if err != nil {
 		if !nilInterface(body) {
 			_ = body.Close()
@@ -123,11 +129,14 @@ func (this *store) Head(ctx context.Context, key Key) (Info, error) {
 	return cloneInfo(info), nil
 }
 
-func (this *store) Delete(ctx context.Context, key Key) error {
+func (this *store) Delete(ctx context.Context, key Key, options DeleteOptions) error {
 	if err := validateReadCall(ctx, key); err != nil {
 		return NewError("delete", KindInvalid, err)
 	}
-	return projectError("delete", this.backend.Delete(ctx, this.namespace, key))
+	if err := validatePrecondition("delete", options.IfMatch, this.backend.Capabilities()); err != nil {
+		return err
+	}
+	return projectError("delete", this.backend.Delete(ctx, this.namespace, key, options))
 }
 
 func (this *store) Stage(ctx context.Context, source io.Reader, options StageOptions) (Staged, error) {
@@ -157,7 +166,10 @@ func (this *store) Promote(ctx context.Context, id StageID, key Key, options Pro
 	if err != nil {
 		return Info{}, NewError("promote", KindInvalid, err)
 	}
-	info, err := this.backend.Promote(ctx, this.namespace, id, key, PromoteOptions{Mode: mode})
+	if err := validatePrecondition("promote", options.IfMatch, this.backend.Capabilities()); err != nil {
+		return Info{}, err
+	}
+	info, err := this.backend.Promote(ctx, this.namespace, id, key, PromoteOptions{Mode: mode, IfMatch: options.IfMatch})
 	if err != nil {
 		return Info{}, projectError("promote", err)
 	}

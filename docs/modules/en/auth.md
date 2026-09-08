@@ -176,6 +176,23 @@ and `new(auth.Guard)` fail while the server graph is built; a direct low-level
 `gin.Context.GetHeader`, `fiber.Ctx.Get` and gRPC metadata can all supply one,
 which is what lets the four transports share every decision above them.
 
+**A `func(name) string` cannot report a duplicate, so `Authenticate` cannot
+enforce [[D-099]].** `http.Header.Get` returns the first of two `Authorization`
+headers and says nothing about the second, so a request presenting two
+credentials reaches the authenticator as one and the cardinality refusal never
+fires. Use `AuthenticateValues` on any path where that matters:
+
+```go
+ctx, err := guard.AuthenticateValues(r.Context(), func(name string) []string {
+	return r.Header.Values(name)
+})
+```
+
+Every shipped binding — `authnet`, `authgin`, `authfiber`, `authgrpc` — already
+calls the list form, so a deployment that mounts the middleware gets the refusal.
+It is only hand-written wiring that can lose it, which is why the list form is
+the one shown here.
+
 `auth.Header("X-Auth")` moves that same parser to another header; the value is
 still scheme-shaped, for example `X-Auth: Bearer token`. For a bare
 `X-Api-Key: secret`, use [`apikey.Header`](apikey.md) instead. Blank header names

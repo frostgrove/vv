@@ -223,6 +223,9 @@ func TestTheCacheIsBoundedRatherThanGrowingWithTenants(t *testing.T) {
 		held = append(held, lease)
 	}
 
+	// Both slots are in use, which is the only thing ErrCapacity now means: the
+	// idlest binding is closed to make room when there is one, so a directory that
+	// still refuses here is refusing for the honest reason.
 	if _, err := directory.Borrow(boundTo(t, authority, cohort[2]), tenancy.ClassWrite); !errors.Is(err, tenancy.ErrCapacity) {
 		t.Fatalf("err = %v, want ErrCapacity — the pool grew with the tenant list", err)
 	}
@@ -295,10 +298,21 @@ func TestABindingIsGivenBackAfterItsBorrowerLifetime(t *testing.T) {
 		t.Fatal(err)
 	}
 	first.Release()
-
-	if _, err := directory.Borrow(boundTo(t, authority, cohort[1]), tenancy.ClassWrite); !errors.Is(err, tenancy.ErrCapacity) {
-		t.Fatalf("err = %v — the bound did not hold before the lifetime elapsed", err)
+	if directory.Cached() != 1 {
+		t.Fatal("the binding was not kept at all, so the lifetime below proves nothing")
 	}
+
+	// Nobody is asking for the slot, so the lifetime is what gives the binding
+	// back. Borrowing the same tenant again inside the lifetime reuses it rather
+	// than opening a second pool.
+	again, err := directory.Borrow(boundTo(t, authority, cohort[0]), tenancy.ClassWrite)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.Source() != first.Source() {
+		t.Fatal("a binding still inside its lifetime was reopened rather than reused")
+	}
+	again.Release()
 
 	clock = clock.Add(2 * time.Minute)
 	second, err := directory.Borrow(boundTo(t, authority, cohort[1]), tenancy.ClassWrite)
@@ -306,6 +320,54 @@ func TestABindingIsGivenBackAfterItsBorrowerLifetime(t *testing.T) {
 		t.Fatalf("a binding nobody holds was never given back: %v", err)
 	}
 	second.Release()
+}
+
+// MaxCached is a connection budget, not a ceiling on the tenants a process can
+// serve. Refusing a newcomer while an idle binding sits in the map hands the
+// budget to whoever arrived first: every borrow renews its own expiry, so under
+// steady traffic nothing expires and the servable set is frozen for the life of
+// the process. The idlest binding is closed instead.
+func TestANewcomerClosesTheIdlestBindingRatherThanBeingRefused(t *testing.T) {
+	sources := &openings{}
+	clock := time.Now()
+	authority, cohort := manyTenantAuthority(t, 3)
+	directory := directoryOf(t, authority, tenancydb.DirectorySpec{
+		Sources: sources, MaxCached: 2, TTL: time.Hour,
+		Now: func() time.Time { return clock },
+	})
+
+	first, err := directory.Borrow(boundTo(t, authority, cohort[0]), tenancy.ClassWrite)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldest := first.Source().(*closeable)
+	first.Release()
+
+	clock = clock.Add(time.Minute)
+	second, err := directory.Borrow(boundTo(t, authority, cohort[1]), tenancy.ClassWrite)
+	if err != nil {
+		t.Fatal(err)
+	}
+	newer := second.Source().(*closeable)
+	second.Release()
+
+	// Well inside the hour, so nothing here is the sweep giving a binding back.
+	clock = clock.Add(time.Minute)
+	third, err := directory.Borrow(boundTo(t, authority, cohort[2]), tenancy.ClassWrite)
+	if err != nil {
+		t.Fatalf("a third tenant was refused while two idle bindings sat in the map: %v", err)
+	}
+	defer third.Release()
+
+	if !oldest.isClosed() {
+		t.Fatal("room was made without closing anything, so the connection budget is not a budget")
+	}
+	if newer.isClosed() {
+		t.Fatal("the more recently used binding was closed, so the replacement is not least-recently-used")
+	}
+	if directory.Cached() != 2 {
+		t.Fatalf("the directory holds %d bindings, want 2", directory.Cached())
+	}
 }
 
 func boundTo(t *testing.T, authority *tenancy.Authority, raw string) context.Context {

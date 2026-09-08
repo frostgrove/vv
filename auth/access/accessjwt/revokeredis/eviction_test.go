@@ -230,3 +230,57 @@ func TestAServerThatIsNotThereIsRefusedRatherThanCalledUnknown(t *testing.T) {
 		t.Fatalf("an absent server was reported as one that merely would not answer: %q", written.String())
 	}
 }
+
+// Revocations are written across the whole cluster and this client type exists to
+// be multi-node, so a verdict from one node said nothing about the node a given
+// session's key actually lands on. One evicting node is an evicting deployment:
+// the keys that node holds are the ones that will silently disappear.
+type fanOutCluster struct {
+	*redis.Client
+	nodes []*redis.Client
+}
+
+func (this fanOutCluster) ForEachMaster(ctx context.Context, fn func(context.Context, *redis.Client) error) error {
+	for _, node := range this.nodes {
+		if err := fn(ctx, node); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func clusterOver(t *testing.T, addresses ...string) *List {
+	t.Helper()
+	nodes := make([]*redis.Client, 0, len(addresses))
+	for _, address := range addresses {
+		client := redis.NewClient(&redis.Options{Addr: address})
+		t.Cleanup(func() { _ = client.Close() })
+		nodes = append(nodes, client)
+	}
+	list, err := New(fanOutCluster{Client: nodes[0], nodes: nodes}, Logger(slog.New(slog.DiscardHandler)))
+	if err != nil {
+		t.Fatalf("cannot build the revocation list: %v", err)
+	}
+	return list
+}
+
+func TestOneEvictingNodeMakesTheWholeClusterEvicting(t *testing.T) {
+	retaining := serverAnswering(t, RetainingPolicy)
+	evicting := serverAnswering(t, "allkeys-lru")
+
+	// The control: every node retaining is a retaining deployment, so the verdict
+	// below is the second node and not the fan-out refusing everything.
+	if policy := clusterOver(t, retaining.Addr(), retaining.Addr()).EvictionPolicy(t.Context()); policy.Verdict != Retaining {
+		t.Fatalf("a cluster whose nodes all retain answered %v", policy.Verdict)
+	}
+
+	// The evicting node is second, so a check that stopped at the first would
+	// have said Retaining.
+	policy := clusterOver(t, retaining.Addr(), evicting.Addr()).EvictionPolicy(t.Context())
+	if policy.Verdict != Evicting {
+		t.Fatalf("a cluster with an evicting node answered %v — the keys that node holds vanish silently", policy.Verdict)
+	}
+	if _, err := clusterOver(t, retaining.Addr(), evicting.Addr()).VerifyEvictionPolicy(t.Context()); !errors.Is(err, ErrEvicting) {
+		t.Fatalf("start-up accepted a cluster with an evicting node: %v", err)
+	}
+}

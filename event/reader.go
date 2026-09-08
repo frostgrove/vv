@@ -59,6 +59,13 @@ func (this *Reader) Next(ctx context.Context) (bool, error) {
 
 func (this *Reader) Events() []Envelope { return this.events }
 
+// Safe to persist and to resume from in another process, with one exception:
+// not if the walk that produced it ran on a context carrying a transaction of
+// this backing. What such a walk returned is the store's business — a store
+// reading through that transaction answered its uncommitted events and this
+// cursor is already past them, so a rollback afterwards discards events nothing
+// will read again. Drain outside the write, or discard the cursor with the
+// transaction.
 func (this *Reader) Cursor() Cursor { return this.cursor }
 
 // Gaps in the positions are normal and going backwards is not, so a page that

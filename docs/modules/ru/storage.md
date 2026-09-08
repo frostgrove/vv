@@ -7,7 +7,9 @@ store, общий для filesystem и MinIO. У пакета нет внешн�
 ## Что вы получаете
 
 - `Put`, `Open`, `Head` и идемпотентный `Delete` по непрозрачным проверенным `Key`;
-- явные режимы `CreateOnly` и `Replace`, причём zero value означает `CreateOnly`;
+- явные режимы `CreateOnly` и `Replace`, причём zero value означает `CreateOnly`,
+  и предусловие `IfMatch` поверх любого из них;
+- чтение диапазонами через `ReadOptions`;
 - ограниченные переносимые content type и metadata;
 - `Stage`, `Promote`, `Abort` и `CleanupExpired` для загрузки до подтверждения UI-формы;
 - один download-only `TemporaryURL` для filesystem и MinIO;
@@ -45,6 +47,53 @@ info, err = files.Put(ctx, key, source, storage.PutOptions{
     Mode: storage.Replace,
 })
 ```
+
+### Условные записи
+
+`CreateOnly` защищает только первую запись ключа, а `Replace` не защищает ничего,
+поэтому двое, кто прочитал, решил и записал, теряют одно из двух решений — без
+ошибки у обоих. `IfMatch` делает запись условной по `ETag`, который вызывающий
+видел последним:
+
+```go
+current, err := files.Head(ctx, key)
+// ... что-то решаем по текущему объекту ...
+_, err = files.Put(ctx, key, source, storage.PutOptions{
+    Mode:    storage.Replace,
+    IfMatch: storage.IfMatch(current.ETag),
+})
+// errors.Is(err, storage.ErrPreconditionFailed) — кто-то записал первым
+```
+
+Опция есть у `PutOptions`, `PromoteOptions` и `DeleteOptions`. Backend, который
+не может её выполнить, отказывает с `ErrUnsupported`, а не пишет безусловно, и
+сообщает о себе через `Capabilities().ConditionalWrite`. Оба поставляемых
+backend её поддерживают.
+
+На MinIO сравнение — это собственный `If-Match` у S3, атомарный с записью. На
+файловой системе это чтение непосредственно перед rename, публикующим объект,
+поэтому окно узкое, а не нулевое: там опция покупает то, что проигравшему гонку
+*сообщают*, вместо молчаливой потери чужой записи.
+
+### Чтение диапазонами
+
+`Open` принимает `ReadOptions`. Без них читается весь объект — это и означает
+zero value:
+
+```go
+tail := int64(1 << 20)
+body, info, err := files.Open(ctx, key, storage.ReadOptions{Offset: info.Size - tail, Length: &tail})
+```
+
+Backend, который не умеет диапазоны, отказывает ненулевому с `ErrUnsupported`, а
+не расширяет его до всего объекта, и сообщает об этом через
+`Capabilities().RangeRead`.
+
+`Info.MetadataTruncated` говорит, что объект нёс metadata, которую эта библиотека
+не отдаёт: запись сверх переносимого бюджета, некорректный ключ, значение с
+управляющими байтами. В bucket лежат объекты, которые писала не эта библиотека,
+поэтому такие записи отбрасываются, а ответ сообщает о неполноте — вместо того
+чтобы чтение падало.
 
 ## Загрузка до подтверждения формы
 

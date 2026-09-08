@@ -326,6 +326,13 @@ func (d *Driver) Apply(ctx context.Context, request jobs.ApplyRequest) (jobs.App
 	} else {
 		err = d.repo.save(opCtx, &entry, &updated)
 	}
+	// The entry moved between the read above and this write, so somebody else
+	// holds it now. That is a lost lease, which the worker knows how to handle,
+	// rather than a driver error, which it would read as a transport problem and
+	// keep the delivery for.
+	if errors.Is(err, ErrRevisionChanged) {
+		return leaseLostApply(now, jobs.DeliveryControlNone)
+	}
 	if err != nil {
 		return jobs.ApplyResult{}, err
 	}
@@ -350,7 +357,10 @@ func (d *Driver) Recover(ctx context.Context, request jobs.RecoverRequest) (jobs
 	}
 	defer cancel()
 	defer unlock()
-	ids, err := d.repo.recoveryIDs(opCtx, request.Incarnation(), now, int64(request.MaxItems()))
+	ids, err := d.repo.recoveryIDs(opCtx, request.Incarnation(), now, int64(request.MaxItems()), func(raw string) bool {
+		id, parseErr := jobs.ParseInvocationID(raw)
+		return parseErr == nil && request.Holds(id)
+	})
 	if err != nil {
 		return jobs.RecoverResult{}, err
 	}
@@ -449,16 +459,18 @@ func entryFromRecord(record jobs.DeliveryRecord, invocation jobs.Invocation, int
 		return storedEntry{}, err
 	}
 	return storedEntry{
-		ID:         invocation.ID().String(),
-		Definition: invocation.Definition().Value(),
-		Codec:      record.Payload.Codec.Value(),
-		Version:    record.Payload.Version,
-		Priority:   invocation.Priority(),
-		State:      invocation.State(),
-		ReadyAt:    invocation.EligibleAt(),
-		RecordSize: size,
-		Record:     encoded,
-		Intents:    intents,
+		ID:              invocation.ID().String(),
+		Definition:      invocation.Definition().Value(),
+		Codec:           record.Payload.Codec.Value(),
+		Version:         record.Payload.Version,
+		Priority:        invocation.Priority(),
+		State:           invocation.State(),
+		ReadyAt:         invocation.EligibleAt(),
+		RecordSize:      size,
+		Record:          encoded,
+		Intents:         intents,
+		Retention:       invocation.Policy().Retention(),
+		IntentRetention: invocation.Policy().IntentRetention(),
 	}, nil
 }
 

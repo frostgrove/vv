@@ -368,3 +368,54 @@ func assertWorkerRuntimeApplyEvent(t *testing.T, events []WorkerEvent, operation
 	t.Fatalf("missing worker apply event %s in %#v", kind, events)
 	return WorkerEvent{}
 }
+
+// An apply event used to say a command kind and nothing else, and
+// DeliveryCommandFinishDelivery is success, a permanent failure and a
+// dead-letter all at once — so a dashboard could count applies and could not
+// tell any of them apart.
+func TestAnApplyEventSaysHowTheDeliveryEnded(t *testing.T) {
+	fixture := newWorkerDeliveryFixture(t, PlacementRegular)
+	driver := &workersRunDriver{
+		description: queueTestBackendDescription(1),
+		observedAt:  fixture.invocation.EligibleAt(),
+		finished:    make(chan struct{}),
+	}
+	observed := make([]WorkerEvent, 0, 4)
+	consumer := On(fixture.definition, Handler[string](func(context.Context, string) error { return nil }), Binding("worker.primary"), Concurrency(1))
+	workers, err := NewWorkers(WorkersSpec{
+		Namespace: fixture.namespace,
+		Catalog:   fixture.catalog,
+		Driver:    driver,
+		Build:     fixture.build,
+		Identity:  workerDeliveryIdentityRestorer(t),
+		Entropy:   bytes.NewReader(bytes.Repeat([]byte{1}, WorkerIncarnationBytes)),
+		Observer: WorkerObserverFunc(func(_ context.Context, event WorkerEvent) {
+			observed = append(observed, event)
+		}),
+	}, consumer)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	command, err := DeferDeliveryCommand(fixture.lease, ReasonDependency, PublicFailure{}, DefaultRetryDelay)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, err := NewApplyRequest(command)
+	if err != nil {
+		t.Fatal(err)
+	}
+	workers.observeApply(fixture.definition.Name(), mustWorkerBinding(t, "worker.primary"), request, ApplyResult{},
+		workerDriverCall{outcome: WorkerOutcomeFailed, failure: WorkerFailureDriver, err: ErrDriver, started: true})
+
+	if len(observed) != 1 {
+		t.Fatalf("observed %d events, want 1", len(observed))
+	}
+	event := observed[0]
+	if event.Operation() != WorkerOperationApply {
+		t.Fatalf("operation = %v", event.Operation())
+	}
+	if event.Reason() != ReasonDependency {
+		t.Fatalf("Reason() = %v, want ReasonDependency — the event cannot say why the delivery ended", event.Reason())
+	}
+}

@@ -134,7 +134,7 @@ func (this authSerializationTarget) loginBeforeInvalidation(
 	switch invalidation {
 	case "reset":
 		go func() {
-			count, err := runtime.SetPassword().Execute(t.Context(), access.SetPasswordCommand{
+			count, err := runtime.SetPassword().Unguarded().Execute(t.Context(), access.SetPasswordCommand{
 				Subject: ref, Password: newPassword,
 			})
 			invalidated <- authCountResult{count: count, err: err}
@@ -144,7 +144,7 @@ func (this authSerializationTarget) loginBeforeInvalidation(
 			ctx := auth.WithPrincipal(t.Context(), &access.Principal{Ref: ref})
 			response, err := mounted.Endpoints().ChangeSecret(ctx, access.ChangeSecretRequest{
 				Current: oldPassword, New: newPassword, RevokeOthers: true,
-			})
+			}, access.Agent{})
 			invalidated <- authCountResult{count: response.Revoked, err: err}
 		}()
 	case "logout-all":
@@ -212,7 +212,7 @@ func (this authSerializationTarget) postgresSnapshotInvalidationFailsClosed(
 
 	invalidated := make(chan authCountResult, 1)
 	go func() {
-		count, err := runtime.SetPassword().Execute(t.Context(), access.SetPasswordCommand{
+		count, err := runtime.SetPassword().Unguarded().Execute(t.Context(), access.SetPasswordCommand{
 			Subject: ref, Password: newPassword,
 		})
 		invalidated <- authCountResult{count: count, err: err}
@@ -246,7 +246,7 @@ func (this authSerializationTarget) postgresSnapshotInvalidationFailsClosed(
 	}); err != nil {
 		t.Fatalf("rolled-back invalidation poisoned the committed session: %v", err)
 	}
-	revoked, err := runtime.SetPassword().Execute(t.Context(), access.SetPasswordCommand{
+	revoked, err := runtime.SetPassword().Unguarded().Execute(t.Context(), access.SetPasswordCommand{
 		Subject: ref, Password: newPassword,
 	})
 	if err != nil || revoked != 1 {
@@ -277,7 +277,7 @@ func (this authSerializationTarget) resetBeforeLogin(t *testing.T, strategy auth
 
 	resetDone := make(chan error, 1)
 	go func() {
-		_, err := runtime.SetPassword().Execute(t.Context(), access.SetPasswordCommand{
+		_, err := runtime.SetPassword().Unguarded().Execute(t.Context(), access.SetPasswordCommand{
 			Subject: ref, Password: newPassword,
 		})
 		resetDone <- err
@@ -897,6 +897,7 @@ var authSchemaPostgres = []string{
         subject_id UUID NOT NULL,
         token_hash TEXT NOT NULL UNIQUE,
         previous_token_hash TEXT NOT NULL DEFAULT '',
+        generation BIGINT NOT NULL DEFAULT 0,
         user_agent TEXT NOT NULL DEFAULT '',
         ip TEXT NOT NULL DEFAULT '',
         created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -952,6 +953,7 @@ var authSchemaMySQL = []string{
         subject_id CHAR(36) NOT NULL,
         token_hash VARCHAR(128) NOT NULL UNIQUE,
         previous_token_hash VARCHAR(128) NOT NULL DEFAULT '',
+        generation BIGINT NOT NULL DEFAULT 0,
         user_agent VARCHAR(256) NOT NULL DEFAULT '',
         ip VARCHAR(64) NOT NULL DEFAULT '',
         created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),

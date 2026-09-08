@@ -679,7 +679,10 @@ func TestPutCancellationDuringEvictionPlanningPreservesLiveEntries(t *testing.T)
 		mustPut(t, backend, testAddress(byte(index+1)), "a", testExpiry)
 	}
 	before := backend.Stats()
-	ctx := newStepCancelContext(8)
+	// Two steps: the expiry sweep on the write path is bounded now and no longer
+	// spends a context check per sixty-four entries, so the cancellation has to
+	// still land inside eviction planning, which is what this test is about.
+	ctx := newStepCancelContext(2)
 	newAddress := testAddress(250)
 	err := backend.Put(ctx, newAddress, bytes.Repeat([]byte{'b'}, limits.MaxItemBytes), testExpiry)
 	if !errors.Is(err, context.Canceled) {
@@ -783,4 +786,47 @@ func assertInvariant(t *testing.T, backend *Backend) {
 	if charged != backend.charged || charged > backend.limits.MaxBytes {
 		t.Fatalf("charge: list=%d backend=%d", charged, backend.charged)
 	}
+}
+
+// The sweep runs under the single mutex every read also takes, so an unbounded
+// one made the cost of a write grow with the number of entries the cache holds:
+// the more the cache was worth having, the longer each write stalled every
+// reader.
+func TestAWriteSweepsABoundedNumberOfEntriesRatherThanAllOfThem(t *testing.T) {
+	const entries = 4096
+	clock := newFakeClock()
+	recorder := &eventRecorder{}
+	backend := mustBackend(t, testLimits(entries+1, 8), WithClock(clock), WithObserver(recorder))
+	shortExpiry := cache.Expiry{Mode: cache.RelativeExpiry, RetainFor: time.Second}
+	for index := 0; index < entries; index++ {
+		mustPut(t, backend, testAddress4(index+1), "value", shortExpiry)
+	}
+	clock.Advance(time.Second)
+
+	before := len(recorder.Events())
+	mustPut(t, backend, testAddress4(entries+1), "new", testExpiry)
+	swept := 0
+	for _, event := range recorder.Events()[before:] {
+		if event.Reason == ExpiredReason {
+			swept++
+		}
+	}
+	if swept > purgeStepBudget {
+		t.Fatalf("one write swept %d entries — the cost of a write grows with the size of the cache", swept)
+	}
+
+	// The control: the sweep does happen, so the bound above is a bound and not
+	// the sweep having been removed.
+	if swept == 0 {
+		t.Fatal("a write swept nothing at all, so expired entries are never reclaimed on this path")
+	}
+}
+
+func testAddress4(index int) cache.Address {
+	var address cache.Address
+	last := len(address.KeyDigest) - 1
+	address.KeyDigest[last] = byte(index)
+	address.KeyDigest[last-1] = byte(index >> 8)
+	address.KeyDigest[last-2] = byte(index >> 16)
+	return address
 }

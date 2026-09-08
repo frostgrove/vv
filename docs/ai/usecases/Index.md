@@ -104,6 +104,7 @@ For newcomer-oriented navigation, see the [module index](modules/Index.md) and
 | [UC-027](modules/app/UC-027-run-one-codebase-as-an-api-a-worker-and-a-seed-command.md) | Run one codebase as an API, a worker and a seed command | the application author | `app` | appfx · appfiber · runtime | covered |
 | [UC-030](general/UC-030-observing-services-and-storage.md) | Observe services, storage and cache without changing core contracts | application operator | `general` | port · storage · cache · otel | covered |
 | [UC-031](modules/jobs/UC-031-make-an-effect-happen-exactly-when-its-transaction-commits.md) | Make an effect happen when, and only when, its transaction commits | application author | `jobs` | crud · jobspg | covered |
+| [UC-032](modules/event/UC-032-record-what-happened-and-rebuild-state-from-it.md) | Record what happened, and rebuild state from it | application author | `event` | eventmemory · eventtest | covered |
 
 ## Coverage map
 | Use case | Flows |
@@ -138,6 +139,7 @@ For newcomer-oriented navigation, see the [module index](modules/Index.md) and
 | [UC-028](modules/tenancy/UC-028-serve-many-tenants-from-one-deployment.md) | `tenancy` | crud · security · jobs · storage · cache | [[FL-033]] [[FL-007]] [[FL-008]] |
 | [UC-030](general/UC-030-observing-services-and-storage.md) | `general` | port · storage · cache · otel | [[FL-034]] |
 | [UC-031](modules/jobs/UC-031-make-an-effect-happen-exactly-when-its-transaction-commits.md) | `jobs` | crud · jobspg | [[FL-035]] |
+| [UC-032](modules/event/UC-032-record-what-happened-and-rebuild-state-from-it.md) | `event` | eventmemory · eventtest | [[FL-036]] |
 
 ## Gaps
 

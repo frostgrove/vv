@@ -19,10 +19,16 @@ see — no embedded type of ours, none of golang-jwt's.
 |---|---|
 | `New[C]`, `Parser[C].Warm`, `Parser[C].Parse` | readiness and verification, into your own type |
 | `HMAC`, `HMAC256/384/512`, `RSA`, `ECDSA`, `EdDSA`, `JWKS`, `Custom` | key sources, each pinning the methods it verifies |
-| `Issuer`, `Audience`, `Leeway` | what is checked |
+| `Issuer`, `Audience`, `Leeway` | what is checked — `Audience` means **all of** |
 | `AllowAnyIssuer`, `AllowAnyAudience`, `AllowNoExpiry` | how to say a check is deliberately skipped |
 | `Authenticator` | the bridge to `auth.Principal` |
 | `Claims`, `Standard` | the ready-made claims type, and both calls in one |
+
+**`Audience(a, b)` requires the token to carry both**, not either. It compiles to
+`jwt.WithAllAudiences`, so a token audienced only for `a` is refused. A parser
+that should accept either audience is two parsers, chained — there is no
+`AnyAudienceOf` today, and a single `Audience` call listing two values is the
+shape most likely to be read as one.
 
 ## The parser
 

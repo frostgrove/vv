@@ -1070,7 +1070,6 @@ func TestWorkerDriverBoundaryClassifiesExpiredTimerReportedByStop(t *testing.T) 
 }
 
 func TestWorkerDriverBoundaryContainsClockFailures(t *testing.T) {
-	base := time.Date(2034, 5, 6, 7, 8, 9, 0, time.UTC)
 	tests := []struct {
 		name      string
 		now       func(int32) time.Time
@@ -1078,12 +1077,6 @@ func TestWorkerDriverBoundaryContainsClockFailures(t *testing.T) {
 		started   bool
 	}{
 		{name: "start panic", now: func(int32) time.Time { panic("private clock panic") }},
-		{name: "finish regression", now: func(call int32) time.Time {
-			if call <= 3 {
-				return base
-			}
-			return base.Add(-time.Nanosecond)
-		}, wantCalls: 1, started: true},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -1820,4 +1813,38 @@ func newWorkerBoundary(t *testing.T, source *workerBoundaryClock) (workerDriverB
 		claimBytes: MaxClaimBytes,
 		fatal:      newWorkerFailureLatch(),
 	}, source, timers
+}
+
+// A wall-clock correction between the start and the finish of a driver call is
+// not a driver failure. It used to be: the boundary answered ErrInvalid and the
+// pool treated that as fatal, so an NTP step during a claim stopped the worker
+// for good.
+func TestWorkerDriverBoundarySurvivesAWallClockCorrection(t *testing.T) {
+	base := time.Date(2034, 5, 6, 7, 8, 9, 0, time.UTC)
+	timer := &workerBoundaryTimer{channel: make(chan time.Time)}
+	source := &workerBoundaryClock{
+		now: func(call int32) time.Time {
+			if call <= 3 {
+				return base
+			}
+			return base.Add(-time.Second)
+		},
+		timer: func(int32, time.Time) Timer { return timer },
+	}
+	boundary, _, _ := newWorkerBoundary(t, source)
+	var calls atomic.Int32
+	value, call := invokeWorkerDriver(boundary, context.Background(), func(context.Context) (int, error) {
+		calls.Add(1)
+		return 71, nil
+	}, func(value int) (int, error) { return value, nil })
+
+	if call.err != nil || call.outcome == WorkerOutcomeFailed {
+		t.Fatalf("a clock correction failed the driver call: %#v", call)
+	}
+	if value != 71 || calls.Load() != 1 {
+		t.Fatalf("value %d calls %d — the driver result was discarded", value, calls.Load())
+	}
+	if call.elapsed < 0 {
+		t.Fatalf("elapsed = %v — a correction made a call take negative time", call.elapsed)
+	}
 }

@@ -79,3 +79,34 @@ func TestASampledObserverSeesOneRefusalInEveryRun(t *testing.T) {
 		t.Fatalf("eight refusals sampled one in four reached the observer %d times, want 2", got)
 	}
 }
+
+// Observers are consumer code on the refusal path, and this fan-out ran them
+// inline with nothing between them. A panic in one took the request with it and
+// took every observer registered after it — so a metrics counter that blew up
+// could silence the audit log next to it. Every other fan-out in this repository
+// isolates its children.
+type panickingObserver struct{ called bool }
+
+func (this *panickingObserver) Refused(context.Context, auth.Reason) {
+	this.called = true
+	panic("an observer's own bug")
+}
+
+func TestAPanickingObserverStopsNeitherTheRefusalNorTheObserverAfterIt(t *testing.T) {
+	first := &panickingObserver{}
+	after := &refusals{}
+
+	_, err := auth.NewGuard(no("signature does not verify"),
+		auth.Observe(first), auth.Observe(after)).
+		Authenticate(t.Context(), headers(map[string]string{"Authorization": "Bearer forged"}))
+
+	if err == nil {
+		t.Fatal("a credential that does not verify was accepted")
+	}
+	if !first.called {
+		t.Fatal("the panicking observer was never reached, so this proves nothing")
+	}
+	if kinds := after.kinds(); len(kinds) != 1 || kinds[0] != auth.ReasonRejected {
+		t.Fatalf("the observer after the panicking one saw %v — one consumer's bug silenced another's audit log", kinds)
+	}
+}

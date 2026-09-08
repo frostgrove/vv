@@ -69,12 +69,22 @@ func (this *sampling) Refused(ctx context.Context, reason Reason) {
 	this.observer.Refused(ctx, reason)
 }
 
+// Each observer is contained. They are consumer code on the refusal path, and a
+// panic in one used to take the request with it — and take every observer after
+// it, so a metrics counter could silence an audit log. Every other fan-out in
+// this repository isolates its children the same way; this one did not.
 func (this *Guard) refuse(ctx context.Context, kind ReasonKind, detail string, err error) error {
 	if this == nil {
 		return err
 	}
+	reason := Reason{Kind: kind, Detail: detail, Err: err}
 	for _, observer := range this.observers {
-		observer.Refused(ctx, Reason{Kind: kind, Detail: detail, Err: err})
+		observeRefusalContained(observer, ctx, reason)
 	}
 	return err
+}
+
+func observeRefusalContained(observer Observer, ctx context.Context, reason Reason) {
+	defer func() { _ = recover() }()
+	observer.Refused(ctx, reason)
 }

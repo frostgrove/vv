@@ -18,14 +18,16 @@ func (f *fakeStore) Put(ctx context.Context, key storage.Key, r io.Reader, opts 
 	*f.log = append(*f.log, "base.Put")
 	return storage.Info{}, nil
 }
-func (f *fakeStore) Open(ctx context.Context, key storage.Key) (io.ReadCloser, storage.Info, error) {
+func (f *fakeStore) Open(ctx context.Context, key storage.Key, _ storage.ReadOptions) (io.ReadCloser, storage.Info, error) {
 	*f.log = append(*f.log, "base.Open")
 	return io.NopCloser(strings.NewReader("")), storage.Info{}, nil
 }
 func (f *fakeStore) Head(ctx context.Context, key storage.Key) (storage.Info, error) {
 	return storage.Info{}, nil
 }
-func (f *fakeStore) Delete(ctx context.Context, key storage.Key) error { return nil }
+func (f *fakeStore) Delete(ctx context.Context, key storage.Key, _ storage.DeleteOptions) error {
+	return nil
+}
 func (f *fakeStore) Stage(ctx context.Context, r io.Reader, opts storage.StageOptions) (storage.Staged, error) {
 	return storage.Staged{}, nil
 }

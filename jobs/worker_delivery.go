@@ -100,7 +100,7 @@ func prepareClaimedDelivery(ctx context.Context, namespace Namespace, catalog Ca
 			return claimedDeliveryPreparation{}, err
 		}
 	}
-	request, err := invocation.Context().IdentityRestoreRequest(namespace, invocation.Partition(), invocation.Definition(), invocation.Policy().Trace())
+	request, err := invocation.Context().IdentityRestoreRequest(namespace, invocation.Partition(), invocation.Definition(), invocation.ID(), restored.WireDigest(), invocation.Policy().Trace())
 	if contextErr := ctx.Err(); contextErr != nil {
 		return claimedDeliveryPreparation{}, contextErr
 	}

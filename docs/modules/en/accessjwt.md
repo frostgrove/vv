@@ -156,10 +156,38 @@ type Window struct {
 | `Rotate` | the digest is the current one | swap it, answer normally |
 | `RotateAgain` | it is the previous one, within `Window.Grace` | two tabs refreshed at once — rotate again, answer normally |
 | `Replay` | it is the previous one, after the grace | a spent credential came back: **close the lineage** |
+| `Replay` | its generation is below `CurrentGeneration - 1` | a credential from further back than either digest: **close the lineage** |
 | `Unusable` | anything else, or the session is closed, expired, or untouched for longer than `Window.Idle` | one refusal |
 
 `Presented.LastUsedAt` is the session row's `last_used_at`, which is what the
 idle arm reads.
+
+### How far back reuse is detected
+
+The row holds two digests, so on their own they see exactly one rotation of
+history: a credential from three rotations ago matched neither, was never found,
+and came back as an ordinary 401 that closed nothing. Waiting made a stolen
+credential *safer* to try.
+
+So a credential names the generation that minted it:
+
+```
+<generation>.<session id>.<random>
+```
+
+The row counts its rotations in `generation`, and when neither digest matches,
+the row the credential names is read and compared. Two generations or more
+behind is a credential this session really issued and somebody kept — `Replay`,
+with the same response as any other. One behind or level would have matched a
+digest, so arriving there without one is a refusal and nothing more ([[D-120]]).
+
+Neither prefix authenticates anything; the digest still does. A credential naming
+a session it did not come from matches no digest and closes nothing, and reaching
+even the lookup takes the session's v4 UUID.
+
+A credential minted before the prefix existed carries none, reads as generation
+zero, and falls back to the two-digest lookup — so deploying this does not sign
+anybody out. Every rotation after it mints a prefixed credential.
 
 `Classify` also decides the swap that changed no row. Two refreshes that both
 read the row before either wrote it do not reach the table above on the first
@@ -184,13 +212,17 @@ Every failed rotation gets the same refusal, whatever it was.
 
 ## The schema
 
-`auth/access/accessjwt/migrations/00001_accessjwt.sql` adds two columns to the
+`auth/access/accessjwt/migrations/00001_accessjwt.sql` adds three columns to the
 `sessions` table access already owns:
 
 | Column | Why |
 |---|---|
 | `previous_token_hash` | the digest replaced by the last rotation |
 | `rotated_at` | when, so the grace window means something |
+| `generation` | how many times the lineage has rotated, so reuse is detectable further back than the two digests reach |
+
+`generation` is `NOT NULL DEFAULT 0`, so rows written before it existed read as
+zero and are behind nothing.
 
 `last_used_at` and `expires_at` are access's own columns, and rotation reads
 both: the first is the idle deadline, the second is the end `exp` is clamped to.

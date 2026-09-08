@@ -206,7 +206,7 @@ func TestOpenLeavesASuccessfulBodyForTheCallerAndClosesAnErroredOne(t *testing.T
 		backend := &fakeBackend{open: func(context.Context, storage.Namespace, storage.Key) (io.ReadCloser, storage.Info, error) {
 			return body, storage.Info{Size: 8, Metadata: backendMetadata}, nil
 		}}
-		opened, info, err := newStore(backend).Open(context.Background(), key)
+		opened, info, err := newStore(backend).Open(context.Background(), key, storage.ReadOptions{})
 		if err != nil {
 			t.Fatalf("Open: %v", err)
 		}
@@ -231,7 +231,7 @@ func TestOpenLeavesASuccessfulBodyForTheCallerAndClosesAnErroredOne(t *testing.T
 		backend := &fakeBackend{open: func(context.Context, storage.Namespace, storage.Key) (io.ReadCloser, storage.Info, error) {
 			return body, storage.Info{Size: 7}, storage.NewError("minio open", storage.KindTemporary, errors.New("lost response"))
 		}}
-		opened, info, err := newStore(backend).Open(context.Background(), key)
+		opened, info, err := newStore(backend).Open(context.Background(), key, storage.ReadOptions{})
 		if !errors.Is(err, storage.ErrTemporary) {
 			t.Fatalf("Open error = %v", err)
 		}
@@ -245,7 +245,7 @@ func TestOpenLeavesASuccessfulBodyForTheCallerAndClosesAnErroredOne(t *testing.T
 		backend := &fakeBackend{open: func(context.Context, storage.Namespace, storage.Key) (io.ReadCloser, storage.Info, error) {
 			return body, storage.Info{Size: 7}, storage.NewError("minio open", storage.KindTemporary, errors.New("lost response"))
 		}}
-		opened, info, err := newStore(backend).Open(context.Background(), key)
+		opened, info, err := newStore(backend).Open(context.Background(), key, storage.ReadOptions{})
 		if !errors.Is(err, storage.ErrTemporary) || opened != nil || !reflect.DeepEqual(info, storage.Info{}) {
 			t.Fatalf("errored typed-nil Open = body %v info %#v error %v", opened, info, err)
 		}
@@ -255,7 +255,7 @@ func TestOpenLeavesASuccessfulBodyForTheCallerAndClosesAnErroredOne(t *testing.T
 		backend := &fakeBackend{open: func(context.Context, storage.Namespace, storage.Key) (io.ReadCloser, storage.Info, error) {
 			return nil, storage.Info{Size: 1}, nil
 		}}
-		opened, info, err := newStore(backend).Open(context.Background(), key)
+		opened, info, err := newStore(backend).Open(context.Background(), key, storage.ReadOptions{})
 		if !errors.Is(err, storage.ErrInternal) || opened != nil || !reflect.DeepEqual(info, storage.Info{}) {
 			t.Fatalf("nil-body Open = body %v info %#v error %v", opened, info, err)
 		}
@@ -266,7 +266,7 @@ func TestOpenLeavesASuccessfulBodyForTheCallerAndClosesAnErroredOne(t *testing.T
 		backend := &fakeBackend{open: func(context.Context, storage.Namespace, storage.Key) (io.ReadCloser, storage.Info, error) {
 			return body, storage.Info{Size: 1}, nil
 		}}
-		opened, info, err := newStore(backend).Open(context.Background(), key)
+		opened, info, err := newStore(backend).Open(context.Background(), key, storage.ReadOptions{})
 		if !errors.Is(err, storage.ErrInternal) || opened != nil || !reflect.DeepEqual(info, storage.Info{}) {
 			t.Fatalf("typed-nil-body Open = body %v info %#v error %v", opened, info, err)
 		}

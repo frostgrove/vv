@@ -35,6 +35,35 @@ type storedEntry struct {
 	Intents          []string
 	ExcludedBinding  string
 	ExcludedBuild    string
+
+	// Bumped on every write, and compared under WATCH before the next one lands.
+	// The namespace mutation lock is a lease with a TTL: a holder that stalls past
+	// it — a slow driver call, a paused process, a GC pause — has the lock taken
+	// from underneath it, and two blind read-modify-writes then lose one of the
+	// two. The revision makes the mutex an optimisation rather than the invariant.
+	Revision uint64
+
+	// Carried on the entry because save() is where the expiry has to be set and
+	// the policy is inside the encoded record, which save does not decode. Without
+	// them nothing here honoured Policy.Retention or Policy.IntentRetention: every
+	// once-intent and its record were written with no expiry and swept by nothing,
+	// so a queue's Redis footprint grew forever.
+	Retention       time.Duration
+	IntentRetention time.Duration
+}
+
+func (entry storedEntry) entryExpiry() time.Duration {
+	if !entry.State.Terminal() || entry.Retention <= 0 {
+		return 0
+	}
+	return entry.Retention
+}
+
+func (entry storedEntry) intentExpiry() time.Duration {
+	if !entry.State.Terminal() || entry.IntentRetention <= 0 {
+		return 0
+	}
+	return entry.IntentRetention
 }
 
 var releaseLockScript = redis.NewScript(`
@@ -172,22 +201,29 @@ func (r repository) readyIDs(ctx context.Context, priority int, definition strin
 	return values, nil
 }
 
-func (r repository) recoveryIDs(ctx context.Context, incarnation jobs.WorkerIncarnation, now time.Time, limit int64) ([]string, error) {
+func (r repository) recoveryIDs(ctx context.Context, incarnation jobs.WorkerIncarnation, now time.Time, limit int64, held func(string) bool) ([]string, error) {
 	expired, err := r.client.ZRangeByScore(ctx, r.leasedKey(), &redis.ZRangeBy{
 		Min: "-inf", Max: strconv.FormatInt(now.UnixMilli(), 10), Offset: 0, Count: limit + 1,
 	}).Result()
 	if err != nil {
 		return nil, fmt.Errorf("jobsredis: read expired leases: %w", err)
 	}
+	// An own-incarnation lease is a claim that committed while its response was
+	// lost — unless the session is running it right now, which is what held
+	// answers. Without that question every reclaim tick handed the pool back its
+	// own in-flight deliveries and the dispatcher revoked them as lost.
 	owned, err := r.client.ZRange(ctx, r.incarnationKey(incarnation.Bytes()), 0, limit).Result()
 	if err != nil {
 		return nil, fmt.Errorf("jobsredis: read worker leases: %w", err)
 	}
 	seen := make(map[string]struct{}, len(expired)+len(owned))
 	result := make([]string, 0, len(expired)+len(owned))
-	for _, values := range [][]string{expired, owned} {
+	for index, values := range [][]string{expired, owned} {
 		for _, id := range values {
 			if _, exists := seen[id]; exists {
+				continue
+			}
+			if index == 1 && held(id) {
 				continue
 			}
 			seen[id] = struct{}{}
@@ -197,11 +233,75 @@ func (r repository) recoveryIDs(ctx context.Context, incarnation jobs.WorkerInca
 	return result, nil
 }
 
+// The read that produced `current` happened before this call, so the entry may
+// have moved since. WATCH is what makes the check and the write one operation:
+// if the entry key changed between the watch and the EXEC, the transaction
+// aborts and the caller is told the claim is no longer theirs, rather than
+// silently overwriting whatever landed in between.
 func (r repository) save(ctx context.Context, previous *storedEntry, current *storedEntry) error {
+	watched := entryKeyOf(r, previous, current)
+	if watched == "" {
+		return r.saveUnwatched(ctx, previous, current)
+	}
+	err := r.client.Watch(ctx, func(tx *redis.Tx) error {
+		stored, found, readErr := readEntryFrom(ctx, tx, watched)
+		if readErr != nil {
+			return readErr
+		}
+		if !matchesExpectedRevision(previous, stored, found) {
+			return ErrRevisionChanged
+		}
+		return r.saveWith(ctx, tx, previous, current)
+	}, watched)
+	if errors.Is(err, redis.TxFailedErr) {
+		return ErrRevisionChanged
+	}
+	return err
+}
+
+func entryKeyOf(r repository, previous, current *storedEntry) string {
+	if current != nil {
+		return r.entryKey(current.ID)
+	}
+	if previous != nil {
+		return r.entryKey(previous.ID)
+	}
+	return ""
+}
+
+func matchesExpectedRevision(previous *storedEntry, stored storedEntry, found bool) bool {
+	if previous == nil {
+		// A create: nothing may be there already, and an entry that reappeared is
+		// somebody else's.
+		return !found
+	}
+	return found && stored.Revision == previous.Revision
+}
+
+func readEntryFrom(ctx context.Context, client redis.Cmdable, key string) (storedEntry, bool, error) {
+	raw, err := client.Get(ctx, key).Bytes()
+	if errors.Is(err, redis.Nil) {
+		return storedEntry{}, false, nil
+	}
+	if err != nil {
+		return storedEntry{}, false, fmt.Errorf("jobsredis: read delivery: %w", err)
+	}
+	var stored storedEntry
+	if err := json.Unmarshal(raw, &stored); err != nil {
+		return storedEntry{}, false, fmt.Errorf("jobsredis: decode delivery metadata: %w", err)
+	}
+	return stored, true, nil
+}
+
+func (r repository) saveUnwatched(ctx context.Context, previous *storedEntry, current *storedEntry) error {
+	return r.saveWith(ctx, r.client, previous, current)
+}
+
+func (r repository) saveWith(ctx context.Context, client redis.Cmdable, previous *storedEntry, current *storedEntry) error {
 	previousIntents := make([]string, 0)
 	if previous != nil {
 		for _, intent := range previous.Intents {
-			id, err := r.client.Get(ctx, r.intentKey(intent)).Result()
+			id, err := client.Get(ctx, r.intentKey(intent)).Result()
 			if err == nil && id == previous.ID {
 				previousIntents = append(previousIntents, intent)
 			} else if err != nil && !errors.Is(err, redis.Nil) {
@@ -209,7 +309,14 @@ func (r repository) save(ctx context.Context, previous *storedEntry, current *st
 			}
 		}
 	}
-	_, err := r.client.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
+	if current != nil {
+		if previous != nil {
+			current.Revision = previous.Revision + 1
+		} else {
+			current.Revision = 1
+		}
+	}
+	_, err := client.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
 		if previous != nil {
 			pipe.ZRem(ctx, r.readyKey(previous.Priority, previous.Definition), previous.ID)
 			pipe.ZRem(ctx, r.leasedKey(), previous.ID)
@@ -231,7 +338,9 @@ func (r repository) save(ctx context.Context, previous *storedEntry, current *st
 		if encodeErr != nil {
 			return fmt.Errorf("jobsredis: encode delivery metadata: %w", encodeErr)
 		}
-		pipe.Set(ctx, r.entryKey(current.ID), encoded, 0)
+		// A terminal record is kept for its retention and then expires on its own;
+		// anything still live must never expire underneath a worker.
+		pipe.Set(ctx, r.entryKey(current.ID), encoded, current.entryExpiry())
 		pipe.SAdd(ctx, r.deliveriesKey(), current.ID)
 		pipe.ZAdd(ctx, r.prioritiesKey(), redis.Z{Score: float64(current.Priority), Member: strconv.Itoa(current.Priority)})
 		if len(current.LeaseToken) > 0 {
@@ -241,7 +350,7 @@ func (r repository) save(ctx context.Context, previous *storedEntry, current *st
 			pipe.ZAdd(ctx, r.readyKey(current.Priority, current.Definition), redis.Z{Score: float64(current.ReadyAt.UnixMilli()), Member: current.ID})
 		}
 		for _, intent := range current.Intents {
-			pipe.Set(ctx, r.intentKey(intent), current.ID, 0)
+			pipe.Set(ctx, r.intentKey(intent), current.ID, current.intentExpiry())
 		}
 		return nil
 	})

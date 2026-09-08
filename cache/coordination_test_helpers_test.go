@@ -115,6 +115,12 @@ func (backend *coordinationBackend) calls() (int, int, int) {
 	return backend.getCalls, backend.putCalls, backend.deleteCalls
 }
 
+func (backend *coordinationBackend) setGetHook(hook coordinationGetHook) {
+	backend.mu.Lock()
+	backend.getHook = hook
+	backend.mu.Unlock()
+}
+
 func (backend *coordinationBackend) setPutHook(hook coordinationPutHook) {
 	backend.mu.Lock()
 	backend.putHook = hook
@@ -160,7 +166,6 @@ func coordinationPolicy() Policy {
 		MaxBatchKeyBytes:    4 << 10,
 		MaxBatchResultBytes: 64 << 10,
 		ReadFailure:         Propagate,
-		WriteFailure:        Propagate,
 		InvalidateFailure:   Propagate,
 		Corruption:          RefuseCorrupt,
 		profile:             "coordination-test",

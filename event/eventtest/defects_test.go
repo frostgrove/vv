@@ -1,6 +1,7 @@
 package eventtest_test
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/frostgrove/vv/event/eventtest"
@@ -39,6 +40,66 @@ func TestTheSuiteStillDetectsEveryDefectItWasBuiltToDetect(t *testing.T) {
 	}
 }
 
+// The inventory is the only mutation harness this suite has, so its size is
+// asserted rather than left to whatever the slice holds: a row dropped in a
+// refactor takes a section's only control with it and reports nothing. The
+// control is the same assertion over an inventory one row shorter.
+const inventoried = 29
+
+func TestTheDefectInventoryIsTheSizeItSaysItIs(t *testing.T) {
+	defects := eventtest.Defects()
+	if err := sized(defects); err != nil {
+		t.Fatal(err)
+	}
+	if err := sized(defects[:len(defects)-1]); err == nil {
+		t.Fatal("an inventory one row shorter passed the assertion that pins the size, so what is pinned is whatever the slice holds")
+	}
+}
+
+func sized(defects []eventtest.Defect) error {
+	if len(defects) != inventoried {
+		return fmt.Errorf("the suite carries %d defects where its inventory is %d rows", len(defects), inventoried)
+	}
+	return nil
+}
+
+// A section no defect names has no control that can fail: every assertion in it
+// can be deleted and every run stays green, which is the failure a conformance
+// suite cannot see about itself. The control is one run of the same assertion
+// per section, over an inventory with that section's rows taken out — so this
+// proves the sections are covered rather than that a list was iterated.
+func TestEverySectionIsNamedByADefectThatBreaksIt(t *testing.T) {
+	names := eventtest.SectionNames()
+	defects := eventtest.Defects()
+	if err := guarded(names, defects); err != nil {
+		t.Fatal(err)
+	}
+	for _, unguarded := range names {
+		kept := []eventtest.Defect{}
+		for _, defect := range defects {
+			if defect.Section != unguarded {
+				kept = append(kept, defect)
+			}
+		}
+		if err := guarded(names, kept); err == nil {
+			t.Fatalf("an inventory naming no defect of the %s section passed the assertion that every section carries one", unguarded)
+		}
+	}
+}
+
+func guarded(names []string, defects []eventtest.Defect) error {
+	naming := map[string]int{}
+	for _, defect := range defects {
+		naming[defect.Section]++
+	}
+	for _, name := range names {
+		if naming[name] == 0 {
+			return fmt.Errorf("no defect in this suite's inventory breaks the %s section, so nothing here can tell whether that section still asserts anything", name)
+		}
+	}
+	return nil
+}
+
 func oneVerdict(t *testing.T, factory eventtest.Factory, section string) string {
 	t.Helper()
 	verdicts := eventtest.Certify(t, factory, section)
@@ -48,24 +109,30 @@ func oneVerdict(t *testing.T, factory eventtest.Factory, section string) string 
 	return verdicts[0].Word
 }
 
-// The two defects that are stores rather than decorators are the two a decorator
-// could not commit without doing something the contract forbids a decorator, so
-// this test builds them and every other defect wraps the store the row describes.
+// The four defects that are stores rather than decorators, each with the pair of
+// factories it is built from: one that has the defect and one that does not.
+// Everything else in the inventory wraps the store its row describes.
+func storeShaped() map[string]func(broken bool) eventtest.Factory {
+	return map[string]func(broken bool) eventtest.Factory{
+		"ignores AppendRequest.Expected and admits every append": func(broken bool) eventtest.Factory {
+			return sliceFactory(broken, nil)
+		},
+		"leaves a rolled-back transaction's events readable": func(broken bool) eventtest.Factory {
+			return stagingFactory(broken, nil)
+		},
+		"claims persistence and builds a second value over its backing that has none of what the first wrote": persistentFactory,
+		"reads from the beginning of its log for a cursor it could not parse":                                 lenientFactory,
+	}
+}
+
 func factoriesFor(t *testing.T, defect eventtest.Defect) (plain, broken eventtest.Factory) {
 	t.Helper()
 	if defect.Over != nil {
 		return stagingFactory(false, nil), stagingFactory(false, defect.Over)
 	}
-	switch defect.Name {
-	case "ignores AppendRequest.Expected and admits every append":
-		return sliceFactory(false, nil), sliceFactory(true, nil)
-	case "leaves a rolled-back transaction's events readable":
-		return stagingFactory(false, nil), stagingFactory(true, nil)
-	case "claims persistence and builds a second value over its backing that has none of what the first wrote":
-		return persistentFactory(false), persistentFactory(true)
-	case "reads from the beginning of its log for a cursor it could not parse":
-		return lenientFactory(false), lenientFactory(true)
+	build, known := storeShaped()[defect.Name]
+	if !known {
+		t.Fatalf("the defect %q is a store rather than a decorator and this test builds no store for it", defect.Name)
 	}
-	t.Fatalf("the defect %q is a store rather than a decorator and this test builds no store for it", defect.Name)
-	return eventtest.Factory{}, eventtest.Factory{}
+	return build(false), build(true)
 }
