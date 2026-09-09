@@ -7,14 +7,22 @@ import "github.com/frostgrove/vv/event"
 // looks complete. The inventory is what closes that: one slice, built here so
 // nothing is package-level and mutable, iterated by the runner, and asserted
 // against by a test that reads the report rather than the list.
-type section struct {
+type section[P running] struct {
 	name  string
-	needs func(event.Capabilities, Factory) string
-	run   func(*probe)
+	needs func(P) string
+	run   func(P)
 }
 
-func inventory() []section {
-	return []section{
+// What the runner needs of a section's subject, and no more: the two halves of
+// a verdict. A subject is a store's probe or a checkpoint store's, and neither
+// of those is this file's business.
+type running interface {
+	walk(func())
+	verdict() verdict
+}
+
+func inventory() []section[*probe] {
+	return []section[*probe]{
 		{name: "binding", run: bindingSection},
 		{name: "stream identity", run: streamIdentitySection},
 		{name: "expected version", run: expectedVersionSection},
@@ -38,36 +46,36 @@ func inventory() []section {
 	}
 }
 
-func needsTransactions(capabilities event.Capabilities, _ Factory) string {
-	if capabilities.Transactions != event.Supported {
+func needsTransactions(this *probe) string {
+	if this.capabilities.Transactions != event.Supported {
 		return "this store does not claim transactions"
 	}
 	return ""
 }
 
-func needsPersistence(capabilities event.Capabilities, _ Factory) string {
-	if capabilities.Persistence != event.Supported {
+func needsPersistence(this *probe) string {
+	if this.capabilities.Persistence != event.Supported {
 		return "this store does not claim persistence, so nothing of it survives a restart"
 	}
 	return ""
 }
 
-func needsSharedBacking(capabilities event.Capabilities, _ Factory) string {
-	if capabilities.SharedBacking != event.Supported {
+func needsSharedBacking(this *probe) string {
+	if this.capabilities.SharedBacking != event.Supported {
 		return "this store does not claim a shared backing, so it has no second value to be one store with"
 	}
 	return ""
 }
 
-func needsMonotoneVisibility(capabilities event.Capabilities, _ Factory) string {
-	if capabilities.MonotoneVisibility != event.Supported {
+func needsMonotoneVisibility(this *probe) string {
+	if this.capabilities.MonotoneVisibility != event.Supported {
 		return "this store does not promise monotone visibility"
 	}
 	return ""
 }
 
-func needsFailHook(_ event.Capabilities, factory Factory) string {
-	if factory.Fail == nil {
+func needsFailHook(this *probe) string {
+	if this.factory.Fail == nil {
 		return "this factory supplies no Fail hook, so no failure of this store's own can be driven"
 	}
 	return ""

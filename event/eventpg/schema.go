@@ -13,7 +13,7 @@ import (
 
 const (
 	DefaultSchema = "frostgrove_events"
-	SchemaVersion = 1
+	SchemaVersion = 2
 
 	DefaultMaxPayload = 64 << 10
 	DefaultMaxKey     = 512
@@ -56,12 +56,24 @@ func (this Schema) Resolved() (Schema, error) {
 	return this, nil
 }
 
-func (this Schema) Fingerprint() (string, error) {
+func (this Schema) Fingerprint() (string, error) { return this.fingerprintAt(SchemaVersion) }
+
+// A historical version's fingerprint, and it has exactly one caller: the
+// statement that stamps a deployed schema at the version it migrates from. That
+// guard is on the deployed fingerprint and not on the version alone, so this
+// build's list meeting a version-1 schema deployed at other bounds stamps
+// nothing and the assertion after it refuses. A version whose model this build
+// no longer carries is a build that cannot migrate from it, and it says so here
+// rather than writing a description that is false.
+func (this Schema) fingerprintAt(version int) (string, error) {
 	resolved, err := this.Resolved()
 	if err != nil {
 		return "", err
 	}
-	return fingerprintOf(expected(resolved).rendering()), nil
+	if version < 1 || version > SchemaVersion {
+		return "", fmt.Errorf("%w: this build carries no model of schema version %d, and describes versions 1 to %d", ErrSpec, version, SchemaVersion)
+	}
+	return fingerprintOf(expected(resolved, version).rendering()), nil
 }
 
 func fingerprintOf(rendering string) string {
@@ -96,13 +108,18 @@ func validSchemaName(value string) bool {
 	return true
 }
 
-// What this build expects the deployed schema to be. One model, two independent
-// renderings: rendering() below is what the fingerprint digests, and
-// migrationStatements is what a deployment runs. A change to the model moves
+// What this build expects the deployed schema to be, at a version. One model,
+// two independent renderings: rendering() below is what the fingerprint digests,
+// and migrationStatements is what a deployment runs. A change to the model moves
 // both; a change to either rendering moves only itself, which is why the
 // statement list is pinned byte for byte by testdata/migration.golden and
 // testdata/migration_narrow.golden and not by the fingerprint.
+//
+// The version is a field because the migration needs the model of the version it
+// migrates from as well as the one it builds, and a build that carried only the
+// current one could not tell a schema it can migrate from one it cannot.
 type expectation struct {
+	version   int
 	schema    Schema
 	tables    []expectedTable
 	functions []expectedFunction
@@ -169,9 +186,10 @@ type expectedFunction struct {
 }
 
 const (
-	metaTable    = "schema_meta"
-	streamsTable = "streams"
-	eventsTable  = "events"
+	metaTable        = "schema_meta"
+	streamsTable     = "streams"
+	eventsTable      = "events"
+	checkpointsTable = "checkpoints"
 
 	appendOnlyFunction = "events_are_append_only"
 	writerXidFunction  = "events_assign_writer_xid"
@@ -192,11 +210,12 @@ func bytesBetween(column string, high string) string {
 	return "octet_length(" + column + ") >= 1 AND octet_length(" + column + ") <= " + high
 }
 
-func expected(resolved Schema) expectation {
+func expected(resolved Schema, version int) expectation {
 	key := strconv.Itoa(resolved.MaxKey)
 	name := strconv.Itoa(event.MaxNameBytes)
-	return expectation{
-		schema: resolved,
+	model := expectation{
+		version: version,
+		schema:  resolved,
 		tables: []expectedTable{
 			{
 				name: metaTable,
@@ -273,6 +292,44 @@ func expected(resolved Schema) expectation {
 			}},
 		},
 	}
+	if version >= 2 {
+		model.tables = append(model.tables, checkpoints(name))
+	}
+	return model
+}
+
+// The fourth table, and the one that carries no trigger: a checkpoint is not
+// history, so the append-only pair stays on events alone and level 3 compares
+// this table's expected trigger set as empty — a trigger added to it by hand is
+// caught by the comparison that already exists.
+//
+// cursor is bytea for the reason payload is: it holds bytes the kernel does not
+// constrain, and a cursor carrying a NUL or an invalid UTF-8 byte is two server
+// errors in a text column. It is bounded below as well as above because the
+// empty cursor is the origin of a log, so a row carrying one at a non-zero
+// advance is a readable checkpoint that restarts a consumer at the beginning.
+func checkpoints(name string) expectedTable {
+	return expectedTable{
+		name: checkpointsTable,
+		columns: []expectedColumn{
+			{name: "projection", dataType: textType, notNull: true},
+			{name: "cursor", dataType: byteaType, notNull: true},
+			{name: "advance", dataType: bigintType, notNull: true},
+			{name: "highest", dataType: bigintType, notNull: true},
+			{name: "applied", dataType: bigintType, notNull: true},
+			{name: "quarantined", dataType: bigintType, notNull: true},
+			{name: "updated_at", dataType: timestampType, notNull: true},
+		},
+		pk: []string{"projection"},
+		checks: []expectedCheck{
+			{name: "checkpoints_projection_check", expression: bytesBetween("projection", name)},
+			{name: "checkpoints_cursor_check", expression: bytesBetween("cursor", strconv.Itoa(event.MaxCursorBytes))},
+			{name: "checkpoints_advance_check", expression: "advance > 0"},
+			{name: "checkpoints_highest_check", expression: "highest >= 0"},
+			{name: "checkpoints_applied_check", expression: "applied >= 0"},
+			{name: "checkpoints_quarantined_check", expression: "quarantined >= 0"},
+		},
+	}
 }
 
 func (this expectedTable) primaryKeyName() string { return this.name + "_pkey" }
@@ -282,11 +339,11 @@ func (this expectedTable) primaryKeyName() string { return this.name + "_pkey" }
 // schema and a changed constraint is a diff a person reads rather than a digest
 // nobody can account for. Nothing here is read back out of pg_catalog: a
 // fingerprint computed from the database would agree with the database by
-// construction. Version 1 creates no index that a constraint does not create
-// with its table, so the rendering carries no index line.
+// construction. Neither version creates an index that a constraint does not
+// create with its table, so the rendering carries no index line.
 func (this expectation) rendering() string {
 	lines := []string{
-		"eventpg/schema/v" + strconv.Itoa(SchemaVersion),
+		"eventpg/schema/v" + strconv.Itoa(this.version),
 		"schema " + this.schema.Name,
 		"bounds maxpayload=" + strconv.Itoa(this.schema.MaxPayload) + " maxkey=" + strconv.Itoa(this.schema.MaxKey),
 	}
@@ -355,18 +412,24 @@ func orDash(value string) string {
 	return value
 }
 
-// The statements a deployment's migration step runs, in order. Every one is
-// transactional DDL at schema version 1 — there is no CREATE INDEX CONCURRENTLY
-// among them — so the whole list is safe inside one transaction, which is what
-// MIGRATIONS.md says and what makes a half-created schema unrepresentable.
+// The statements a deployment's migration step runs, in order, and one list does
+// both jobs: it builds version 2 on an empty database and transforms a deployed
+// version 1 into it. Every one is transactional DDL — there is no CREATE INDEX
+// CONCURRENTLY among them — so the whole list is safe inside one transaction,
+// which is what MIGRATIONS.md says and what makes a half-created schema
+// unrepresentable.
 func MigrationStatements(schema Schema) ([]string, error) {
 	resolved, err := schema.Resolved()
 	if err != nil {
 		return nil, err
 	}
-	fingerprint, err := resolved.Fingerprint()
+	fingerprint, err := resolved.fingerprintAt(SchemaVersion)
 	if err != nil {
 		return nil, err
 	}
-	return migrationStatements(expected(resolved), fingerprint), nil
+	previous, err := resolved.fingerprintAt(SchemaVersion - 1)
+	if err != nil {
+		return nil, err
+	}
+	return migrationStatements(expected(resolved, SchemaVersion), fingerprint, previous), nil
 }

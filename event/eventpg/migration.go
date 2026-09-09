@@ -17,26 +17,30 @@ import (
 	"github.com/frostgrove/vv/event"
 )
 
-// The SQLSTATE statement eleven raises. PostgreSQL defines no code for "this
+// The SQLSTATE the assertion raises. PostgreSQL defines no code for "this
 // schema was built by another expectation", and P0001 is every plpgsql RAISE, so
 // a caller that has to tell this refusal from any other would be left comparing
 // message text.
 const schemaMismatchState = "EVPG1"
 
-// The eleven statements, rendered from the same expectation the fingerprint
-// digests. Statement ten mints the log in the database and takes no argument
-// from this process, so a re-run of an already-migrated schema issues no second
-// log and every persisted cursor stays readable.
+// The thirteen statements, rendered from the same expectation the fingerprint
+// digests. The one that mints the log takes no argument from this process, so a
+// re-run of an already-migrated schema issues no second log and every persisted
+// cursor stays readable.
 //
-// Statement eleven records nothing, and the rule is general: a list may record a
-// description only of a schema it can produce. Version 1 creates what is absent
-// and replaces the two functions and the three triggers; it alters no table, so
-// against a schema another expectation built it changes nothing and writing this
-// build's fingerprint would record a fact that is false. It asserts instead, and
-// the raise rolls the whole transaction back. A version N carrying the ALTERs
-// that transform N-1 into N does produce the new description; its last statement
-// is an UPDATE guarded on the version it migrates from, then this assertion.
-func migrationStatements(model expectation, fingerprint string) []string {
+// The stamping UPDATE is guarded on the deployed fingerprint and not on the
+// version alone, and that is the whole of what makes one list safe for both
+// jobs. Version 2 adds a table and alters none, so the CREATE … IF NOT EXISTS
+// list already transforms a deployed version 1 at THESE bounds into it, and the
+// UPDATE records that. Guarded on the version alone, the same list meeting a
+// version-1 schema deployed at other bounds would create the fourth table, stamp
+// its own fingerprint over a schema it did not build, and then pass its own
+// assertion. Guarded on the fingerprint the UPDATE matches nothing, the
+// assertion raises, and the whole transaction rolls back.
+//
+// The assertion is last and records nothing: a list may record a description
+// only of a schema it can produce.
+func migrationStatements(model expectation, fingerprint, previous string) []string {
 	schema := quoteIdentifier(model.schema.Name)
 	statements := []string{"CREATE SCHEMA IF NOT EXISTS " + schema}
 	for _, table := range model.tables {
@@ -51,13 +55,21 @@ func migrationStatements(model expectation, fingerprint string) []string {
 		}
 	}
 	quoted := quoteLiteral(fingerprint)
-	version := strconv.Itoa(SchemaVersion)
-	return append(statements,
+	version := strconv.Itoa(model.version)
+	statements = append(statements,
 		"INSERT INTO "+schema+"."+metaTable+" (singleton, version, log, fingerprint)\n"+
 			"VALUES (true, "+version+", decode(replace(gen_random_uuid()::text, '-', ''), 'hex'), "+quoted+")\n"+
-			"ON CONFLICT (singleton) DO NOTHING",
-		assertMeta(schema, version, fingerprint),
-	)
+			"ON CONFLICT (singleton) DO NOTHING")
+	if model.version > 1 {
+		statements = append(statements, stampMeta(schema, model.version, fingerprint, previous))
+	}
+	return append(statements, assertMeta(schema, version, fingerprint))
+}
+
+func stampMeta(schema string, version int, fingerprint, previous string) string {
+	return "UPDATE " + schema + "." + metaTable + "\n" +
+		"   SET version = " + strconv.Itoa(version) + ", fingerprint = " + quoteLiteral(fingerprint) + "\n" +
+		" WHERE singleton AND version = " + strconv.Itoa(version-1) + " AND fingerprint = " + quoteLiteral(previous)
 }
 
 func assertMeta(schema, version, fingerprint string) string {
@@ -69,7 +81,7 @@ func assertMeta(schema, version, fingerprint string) string {
 		"\t\t\t\tERRCODE = " + quoteLiteral(schemaMismatchState) + ",\n" +
 		"\t\t\t\tMESSAGE = format('eventpg: this schema is version %s at %s', deployed.version, deployed.fingerprint),\n" +
 		"\t\t\t\tDETAIL = " + quoteLiteral("eventpg: this migration builds version "+version+" at "+fingerprint) + ",\n" +
-		"\t\t\t\tHINT = " + quoteLiteral("eventpg: version "+version+" creates and never alters, so it cannot make this schema the one it describes") + ";\n" +
+		"\t\t\t\tHINT = " + quoteLiteral("eventpg: this list creates what is absent and stamps only the version and bounds it can transform, so it cannot make this schema the one it describes") + ";\n" +
 		"\t\tEND IF;\n" +
 		"\tEND\n$eventpg$"
 }
@@ -159,12 +171,21 @@ func (this *Store) Migrate(ctx context.Context) error {
 	if this.closed.Load() {
 		return event.ErrClosed
 	}
-	statements, err := MigrationStatements(this.schema)
+	return migrateSchema(ctx, this.db, this.schema)
+}
+
+// The store and the checkpoint store over one schema are two resources at one
+// schema version, so the deployment work is a function of the schema rather than
+// a method of either. The advisory lock is per schema, so two of them managing
+// one schema in one process serialise on it and the second finds the list
+// idempotent and the assertion satisfied.
+func migrateSchema(ctx context.Context, db *sql.DB, schema Schema) error {
+	statements, err := MigrationStatements(schema)
 	if err != nil {
 		return err
 	}
-	return this.withMigrationLock(ctx, func(conn *sql.Conn) error {
-		return this.migrateOn(ctx, conn, statements)
+	return withMigrationLock(ctx, db, schema, func(conn *sql.Conn) error {
+		return migrateOn(ctx, conn, schema, statements)
 	})
 }
 
@@ -174,10 +195,10 @@ func (this *Store) Migrate(ctx context.Context) error {
 // replicas race CREATE TABLE into a 23505 on pg_type_typname_nsp_index. An
 // unlock that answers false is therefore an error and the connection is
 // discarded rather than returned to the pool holding a lock nobody will release.
-func (this *Store) withMigrationLock(ctx context.Context, work func(*sql.Conn) error) (resultErr error) {
-	conn, err := this.db.Conn(ctx)
+func withMigrationLock(ctx context.Context, db *sql.DB, schema Schema, work func(*sql.Conn) error) (resultErr error) {
+	conn, err := db.Conn(ctx)
 	if err != nil {
-		return fmt.Errorf("eventpg: migrating %q could not check a connection out of the pool: %w", this.schema.Name, err)
+		return fmt.Errorf("eventpg: migrating %q could not check a connection out of the pool: %w", schema.Name, err)
 	}
 	locked := false
 	discard := false
@@ -185,14 +206,14 @@ func (this *Store) withMigrationLock(ctx context.Context, work func(*sql.Conn) e
 		if locked {
 			unlocking, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 			var unlocked bool
-			err := conn.QueryRowContext(unlocking, `SELECT pg_advisory_unlock($1)`, migrationLock(this.schema.Name)).Scan(&unlocked)
+			err := conn.QueryRowContext(unlocking, `SELECT pg_advisory_unlock($1)`, migrationLock(schema.Name)).Scan(&unlocked)
 			cancel()
 			if err == nil && !unlocked {
 				err = errors.New("this session did not hold it, so the lock never serialised anything")
 			}
 			if err != nil {
 				discard = true
-				resultErr = errors.Join(resultErr, fmt.Errorf("eventpg: releasing the migration lock on %q: %w", this.schema.Name, err))
+				resultErr = errors.Join(resultErr, fmt.Errorf("eventpg: releasing the migration lock on %q: %w", schema.Name, err))
 			}
 		}
 		if discard {
@@ -201,9 +222,9 @@ func (this *Store) withMigrationLock(ctx context.Context, work func(*sql.Conn) e
 		resultErr = errors.Join(resultErr, conn.Close())
 	}()
 	for !locked {
-		if err := conn.QueryRowContext(ctx, `SELECT pg_try_advisory_lock($1)`, migrationLock(this.schema.Name)).Scan(&locked); err != nil {
+		if err := conn.QueryRowContext(ctx, `SELECT pg_try_advisory_lock($1)`, migrationLock(schema.Name)).Scan(&locked); err != nil {
 			discard = true
-			return fmt.Errorf("eventpg: taking the migration lock on %q: %w", this.schema.Name, err)
+			return fmt.Errorf("eventpg: taking the migration lock on %q: %w", schema.Name, err)
 		}
 		if locked {
 			break
@@ -219,31 +240,31 @@ func (this *Store) withMigrationLock(ctx context.Context, work func(*sql.Conn) e
 	return work(conn)
 }
 
-func (this *Store) migrateOn(ctx context.Context, conn *sql.Conn, statements []string) error {
+func migrateOn(ctx context.Context, conn *sql.Conn, schema Schema, statements []string) error {
 	tx, err := conn.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("eventpg: migrating %q could not open its transaction: %w", this.schema.Name, err)
+		return fmt.Errorf("eventpg: migrating %q could not open its transaction: %w", schema.Name, err)
 	}
 	defer func() { _ = tx.Rollback() }()
 	for index, statement := range statements {
 		if _, err := tx.ExecContext(ctx, statement); err != nil {
-			return this.migrationFailure(index, len(statements), err)
+			return migrationFailure(schema, index, len(statements), err)
 		}
 	}
 	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("eventpg: migrating %q could not commit: %w", this.schema.Name, err)
+		return fmt.Errorf("eventpg: migrating %q could not commit: %w", schema.Name, err)
 	}
 	return nil
 }
 
-func (this *Store) migrationFailure(index, count int, err error) error {
+func migrationFailure(schema Schema, index, count int, err error) error {
 	if fault := sqlfault.Extract(err); fault != nil && fault.SQLState == schemaMismatchState {
-		fingerprint, failed := this.schema.Fingerprint()
+		fingerprint, failed := schema.Fingerprint()
 		if failed != nil {
 			return failed
 		}
-		return fmt.Errorf("%w: %q is not the schema this build describes at %s, and version %d creates and never alters, so this list cannot make it one: %w",
-			ErrSchemaMismatch, this.schema.Name, fingerprint, SchemaVersion, err)
+		return fmt.Errorf("%w: %q is not the schema this build describes at %s, and version %d creates what is absent and stamps only the version and bounds it can transform, so this list cannot make it one: %w",
+			ErrSchemaMismatch, schema.Name, fingerprint, SchemaVersion, err)
 	}
-	return fmt.Errorf("eventpg: statement %d of %d migrating %q: %w", index+1, count, this.schema.Name, err)
+	return fmt.Errorf("eventpg: statement %d of %d migrating %q: %w", index+1, count, schema.Name, err)
 }

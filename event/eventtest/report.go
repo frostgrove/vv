@@ -55,7 +55,7 @@ func certified(verdicts []verdict) int {
 	return count
 }
 
-func (this *probe) verdict() verdict {
+func (this *recording) verdict() verdict {
 	switch {
 	case this.broke != "":
 		return verdict{section: this.name, word: failed, reason: this.broke}

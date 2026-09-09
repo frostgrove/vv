@@ -46,7 +46,43 @@ func TryDeclare[S, ID, E any](a *Aggregate[S, ID], name string, chain Chain[E], 
 
 func (this *Fact[S, ID, E]) Name() string { return this.name }
 
+func (this *Fact[S, ID, E]) Family() string { return this.aggregate.Family() }
+
 func (this *Fact[S, ID, E]) Revisions() int { return len(this.chain.links) }
+
+// The recorded bytes through this fact's own reader chain and every declared
+// upcaster, in the current reader type: the same decoder Repo.Load folds
+// through, so a consumer that reads one envelope and a replay that folds it
+// cannot read it two ways. The four history-class refusals a replay produces and
+// no other, each naming the type and the revision and neither the key nor the
+// payload.
+//
+// The payload bound here is the kernel's ceiling and not a store's MaxPayload: a
+// Fact holds no store's limits — those arrive at Bind — and this is reached from
+// a consumer that bound none. The store's own read door already refuses a row
+// over its own bound, so this is the second of two rather than the only one.
+//
+// The value may alias envelope.Payload, exactly as a replay's does. Whoever
+// received the envelope owns those bytes and decides whether that is safe.
+func (this *Fact[S, ID, E]) Read(envelope Envelope) (E, error) {
+	var none E
+	if broken := checkName(envelope.Type); broken != "" {
+		return none, fmt.Errorf("%w: %s recorded a type name of %d bytes that %s", ErrUnknownType, envelope.Stream, len(envelope.Type), broken)
+	}
+	if envelope.Stream.Family != this.aggregate.family {
+		return none, fmt.Errorf("%w: %q on %s was read through a fact of the family %q", ErrUnknownType, envelope.Type, envelope.Stream, this.aggregate.family)
+	}
+	if envelope.Type != this.name {
+		return none, fmt.Errorf("%w: %q was read through the fact %q", ErrUnknownType, envelope.Type, this.name)
+	}
+	if len(envelope.Payload) > MaxPayloadBytes {
+		return none, fmt.Errorf("%w: the recorded payload is %d bytes against a bound of %d", ErrPayload, len(envelope.Payload), MaxPayloadBytes)
+	}
+	if envelope.Revision < 1 || envelope.Revision > len(this.chain.links) {
+		return none, fmt.Errorf("%w: revision %d against the %d this fact retains", ErrRevision, envelope.Revision, len(this.chain.links))
+	}
+	return this.chain.links[envelope.Revision-1].decode(envelope.Payload)
+}
 
 // One value, so a slice literal of changes stays writable. The payload is
 // encoded here, at the moment of decision, with the current revision's codec,

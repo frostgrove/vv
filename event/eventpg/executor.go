@@ -47,8 +47,10 @@ func (this *Store) opened(ctx context.Context) (*readiness, error) {
 	return held, nil
 }
 
-func (this *Store) bound(ctx context.Context) (*sql.Tx, error) {
-	held, found := crud.ExecutorFor(ctx, this.source)
+func (this *Store) bound(ctx context.Context) (*sql.Tx, error) { return boundTx(ctx, this.source) }
+
+func boundTx(ctx context.Context, source crud.Source) (*sql.Tx, error) {
+	held, found := crud.ExecutorFor(ctx, source)
 	if !found {
 		return nil, nil
 	}
@@ -82,16 +84,20 @@ type run struct {
 // A checkout failure is not uncertainty: use was never called, so nothing
 // reached a server, and that is proof the write did not land.
 func (this *Store) onExecutor(ctx context.Context, use func(run) error) error {
-	tx, err := this.bound(ctx)
+	return onExecutor(ctx, this.db, this.source, this.schema.Name, use)
+}
+
+func onExecutor(ctx context.Context, db *sql.DB, source crud.Source, name string, use func(run) error) error {
+	tx, err := boundTx(ctx, source)
 	if err != nil {
 		return err
 	}
 	if tx != nil {
 		return use(run{on: tx, joined: true})
 	}
-	conn, err := this.db.Conn(ctx)
+	conn, err := db.Conn(ctx)
 	if err != nil {
-		return fmt.Errorf("eventpg: no connection to %q was checked out of the pool, so nothing was issued: %w", this.schema.Name, err)
+		return fmt.Errorf("eventpg: no connection to %q was checked out of the pool, so nothing was issued: %w", name, err)
 	}
 	defer func() { _ = conn.Close() }()
 	return use(run{on: conn})

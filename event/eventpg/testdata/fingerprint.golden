@@ -1,6 +1,12 @@
-eventpg/schema/v1
+eventpg/schema/v2
 schema frostgrove_events
 bounds maxpayload=65536 maxkey=512
+check checkpoints checkpoints_advance_check CHECK (advance > 0)
+check checkpoints checkpoints_applied_check CHECK (applied >= 0)
+check checkpoints checkpoints_cursor_check CHECK (octet_length(cursor) >= 1 AND octet_length(cursor) <= 4096)
+check checkpoints checkpoints_highest_check CHECK (highest >= 0)
+check checkpoints checkpoints_projection_check CHECK (octet_length(projection) >= 1 AND octet_length(projection) <= 128)
+check checkpoints checkpoints_quarantined_check CHECK (quarantined >= 0)
 check events events_family_check CHECK (octet_length(family) >= 1 AND octet_length(family) <= 128)
 check events events_key_check CHECK (octet_length(key) >= 1 AND octet_length(key) <= 512)
 check events events_payload_check CHECK (octet_length(payload) <= 65536)
@@ -13,6 +19,13 @@ check schema_meta schema_meta_version_check CHECK (version > 0)
 check streams streams_family_check CHECK (octet_length(family) >= 1 AND octet_length(family) <= 128)
 check streams streams_key_check CHECK (octet_length(key) >= 1 AND octet_length(key) <= 512)
 check streams streams_version_check CHECK (version > 0)
+column checkpoints advance 3 bigint true - -
+column checkpoints applied 5 bigint true - -
+column checkpoints cursor 2 bytea true - -
+column checkpoints highest 4 bigint true - -
+column checkpoints projection 1 text true - -
+column checkpoints quarantined 6 bigint true - -
+column checkpoints updated_at 7 timestamp with time zone true - -
 column events family 2 text true - -
 column events key 3 text true - -
 column events payload 7 bytea true - -
@@ -32,15 +45,19 @@ column streams version 3 bigint true - -
 fk events events_stream_fkey (family, key) -> streams (family, key)
 function events_are_append_only BEGIN RAISE EXCEPTION 'eventpg: % on an event row: history is append-only', TG_OP; END
 function events_assign_writer_xid BEGIN PERFORM pg_current_xact_id(); RETURN NULL; END
+persistence checkpoints permanent
 persistence events permanent
 persistence schema_meta permanent
 persistence streams permanent
+pk checkpoints (projection)
 pk events (position)
 pk schema_meta (singleton)
 pk streams (family, key)
+rls checkpoints disabled
 rls events disabled
 rls schema_meta disabled
 rls streams disabled
+rule checkpoints none
 rule events none
 rule schema_meta none
 rule streams none

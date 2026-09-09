@@ -43,13 +43,30 @@ CREATE TABLE IF NOT EXISTS "frostgrove_events".events (
 	CONSTRAINT events_payload_check CHECK (octet_length(payload) <= 65536)
 );
 -- statement 5
+CREATE TABLE IF NOT EXISTS "frostgrove_events".checkpoints (
+	projection text NOT NULL,
+	cursor bytea NOT NULL,
+	advance bigint NOT NULL,
+	highest bigint NOT NULL,
+	applied bigint NOT NULL,
+	quarantined bigint NOT NULL,
+	updated_at timestamp with time zone NOT NULL,
+	CONSTRAINT checkpoints_pkey PRIMARY KEY (projection),
+	CONSTRAINT checkpoints_projection_check CHECK (octet_length(projection) >= 1 AND octet_length(projection) <= 128),
+	CONSTRAINT checkpoints_cursor_check CHECK (octet_length(cursor) >= 1 AND octet_length(cursor) <= 4096),
+	CONSTRAINT checkpoints_advance_check CHECK (advance > 0),
+	CONSTRAINT checkpoints_highest_check CHECK (highest >= 0),
+	CONSTRAINT checkpoints_applied_check CHECK (applied >= 0),
+	CONSTRAINT checkpoints_quarantined_check CHECK (quarantined >= 0)
+);
+-- statement 6
 CREATE OR REPLACE FUNCTION "frostgrove_events".events_are_append_only() RETURNS trigger
 LANGUAGE plpgsql AS $eventpg$
 	BEGIN
 		RAISE EXCEPTION 'eventpg: % on an event row: history is append-only', TG_OP;
 	END
 $eventpg$;
--- statement 6
+-- statement 7
 CREATE OR REPLACE FUNCTION "frostgrove_events".events_assign_writer_xid() RETURNS trigger
 LANGUAGE plpgsql AS $eventpg$
 	BEGIN
@@ -57,7 +74,7 @@ LANGUAGE plpgsql AS $eventpg$
 		RETURN NULL;
 	END
 $eventpg$;
--- statement 7
+-- statement 8
 DO $eventpg$
 	BEGIN
 		DROP TRIGGER IF EXISTS events_append_only_row ON "frostgrove_events".events;
@@ -65,7 +82,7 @@ DO $eventpg$
 			FOR EACH ROW EXECUTE FUNCTION "frostgrove_events".events_are_append_only();
 	END
 $eventpg$;
--- statement 8
+-- statement 9
 DO $eventpg$
 	BEGIN
 		DROP TRIGGER IF EXISTS events_append_only_truncate ON "frostgrove_events".events;
@@ -73,7 +90,7 @@ DO $eventpg$
 			FOR EACH STATEMENT EXECUTE FUNCTION "frostgrove_events".events_are_append_only();
 	END
 $eventpg$;
--- statement 9
+-- statement 10
 DO $eventpg$
 	BEGIN
 		DROP TRIGGER IF EXISTS events_position_needs_xid ON "frostgrove_events".events;
@@ -81,22 +98,26 @@ DO $eventpg$
 			FOR EACH STATEMENT EXECUTE FUNCTION "frostgrove_events".events_assign_writer_xid();
 	END
 $eventpg$;
--- statement 10
-INSERT INTO "frostgrove_events".schema_meta (singleton, version, log, fingerprint)
-VALUES (true, 1, decode(replace(gen_random_uuid()::text, '-', ''), 'hex'), 'sha256:fadfff742d234efabc84f46bccb1caa41aea00dc78237d1a1e7dbeabe097aaeb')
-ON CONFLICT (singleton) DO NOTHING;
 -- statement 11
+INSERT INTO "frostgrove_events".schema_meta (singleton, version, log, fingerprint)
+VALUES (true, 2, decode(replace(gen_random_uuid()::text, '-', ''), 'hex'), 'sha256:12f0154c05860113b0a28fafbee99ef3964aa4ac396617cd5a87dca068769359')
+ON CONFLICT (singleton) DO NOTHING;
+-- statement 12
+UPDATE "frostgrove_events".schema_meta
+   SET version = 2, fingerprint = 'sha256:12f0154c05860113b0a28fafbee99ef3964aa4ac396617cd5a87dca068769359'
+ WHERE singleton AND version = 1 AND fingerprint = 'sha256:fadfff742d234efabc84f46bccb1caa41aea00dc78237d1a1e7dbeabe097aaeb';
+-- statement 13
 DO $eventpg$
 	DECLARE
 		deployed record;
 	BEGIN
 		SELECT version, fingerprint INTO deployed FROM "frostgrove_events".schema_meta WHERE singleton;
-		IF deployed.version IS DISTINCT FROM 1 OR deployed.fingerprint IS DISTINCT FROM 'sha256:fadfff742d234efabc84f46bccb1caa41aea00dc78237d1a1e7dbeabe097aaeb' THEN
+		IF deployed.version IS DISTINCT FROM 2 OR deployed.fingerprint IS DISTINCT FROM 'sha256:12f0154c05860113b0a28fafbee99ef3964aa4ac396617cd5a87dca068769359' THEN
 			RAISE EXCEPTION USING
 				ERRCODE = 'EVPG1',
 				MESSAGE = format('eventpg: this schema is version %s at %s', deployed.version, deployed.fingerprint),
-				DETAIL = 'eventpg: this migration builds version 1 at sha256:fadfff742d234efabc84f46bccb1caa41aea00dc78237d1a1e7dbeabe097aaeb',
-				HINT = 'eventpg: version 1 creates and never alters, so it cannot make this schema the one it describes';
+				DETAIL = 'eventpg: this migration builds version 2 at sha256:12f0154c05860113b0a28fafbee99ef3964aa4ac396617cd5a87dca068769359',
+				HINT = 'eventpg: this list creates what is absent and stamps only the version and bounds it can transform, so it cannot make this schema the one it describes';
 		END IF;
 	END
 $eventpg$;

@@ -195,6 +195,37 @@ func TestVerificationRefusesEveryMutationAndPassesTheIntactSchema(t *testing.T) 
 		names   []string
 	}{
 		{
+			what: "the checkpoints primary key is dropped", scratch: "eventpg_s2_cp_pk",
+			applied: []string{`ALTER TABLE @.checkpoints DROP CONSTRAINT checkpoints_pkey`},
+			names:   []string{"checkpoints_pkey", "missing"},
+		},
+		{
+			what: "the checkpoints cursor bound is altered", scratch: "eventpg_s2_cp_check",
+			applied: []string{
+				`ALTER TABLE @.checkpoints DROP CONSTRAINT checkpoints_cursor_check`,
+				`ALTER TABLE @.checkpoints ADD CONSTRAINT checkpoints_cursor_check CHECK (octet_length(cursor) <= 4096)`,
+			},
+			names: []string{"checkpoints_cursor_check", "octet_length(cursor) >= 1"},
+		},
+		{
+			what: "a trigger is added to the checkpoints table", scratch: "eventpg_s2_cp_trigger",
+			applied: []string{
+				`CREATE FUNCTION @.meddle() RETURNS trigger LANGUAGE plpgsql AS $meddle$ BEGIN RETURN NULL; END $meddle$`,
+				`CREATE TRIGGER checkpoints_meddle BEFORE INSERT ON @.checkpoints FOR EACH STATEMENT EXECUTE FUNCTION @.meddle()`,
+			},
+			names: []string{"checkpoints_meddle", "does not expect"},
+		},
+		{
+			what: "the checkpoints table has row-level security", scratch: "eventpg_s2_cp_rls",
+			applied: []string{`ALTER TABLE @.checkpoints ENABLE ROW LEVEL SECURITY`},
+			names:   []string{"checkpoints", "row-level security"},
+		},
+		{
+			what: "the checkpoints table is gone", scratch: "eventpg_s2_cp_dropped",
+			applied: []string{`DROP TABLE @.checkpoints`},
+			names:   []string{"checkpoints", "missing"},
+		},
+		{
 			what: "the schema is gone", scratch: "eventpg_s2_gone",
 			applied: []string{`DROP SCHEMA @ CASCADE`},
 			names:   []string{metaTable},
@@ -209,8 +240,8 @@ func TestVerificationRefusesEveryMutationAndPassesTheIntactSchema(t *testing.T) 
 		},
 		{
 			what: "the version is one above", scratch: "eventpg_s2_above",
-			applied: []string{`UPDATE @.schema_meta SET version = 2`},
-			names:   []string{"version 2", "version " + strconv.Itoa(SchemaVersion)},
+			applied: []string{`UPDATE @.schema_meta SET version = ` + strconv.Itoa(SchemaVersion+1)},
+			names:   []string{"version " + strconv.Itoa(SchemaVersion+1), "version " + strconv.Itoa(SchemaVersion)},
 		},
 		{
 			what: "the fingerprint is another build's", scratch: "eventpg_s2_print",

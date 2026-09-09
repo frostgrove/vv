@@ -128,6 +128,13 @@ type Log interface {
 	// over another backing, one this store cannot parse, and one in a format it
 	// no longer accepts are all Failure(BadCursor, ...).
 	//
+	// Two orderings, and both are laws rather than options: positions ascend
+	// within a page and across the pages one cursor tiles, and one stream's
+	// events appear here in the order that stream holds them. Capabilities
+	// carries no member for either and never will, because a store denying the
+	// second is one a projector folding per stream is silently wrong against
+	// ([[D-128]]).
+	//
 	// Unlike ReadStream, this does not read the caller's own writes: whether a
 	// read issued while a transaction of this store's backing is bound returns
 	// that transaction's uncommitted events is unspecified. A store reading

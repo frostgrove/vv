@@ -18,6 +18,7 @@ const (
 	reportedAs        = "eventtest: "
 	wideRun           = "^TestTheStoreSatisfiesTheContract$"
 	narrowRun         = "^TestTheStoreSatisfiesTheContractAtNarrowerLimits$"
+	checkpointRun     = "^TestTheCheckpointStoreSatisfiesTheContract$"
 )
 
 const (
@@ -63,20 +64,47 @@ func census() []certification {
 	}
 }
 
-// Both configurations, because a hook is withdrawn from the factory both of them
-// are built from. Each is driven as a subprocess of this binary: a run cannot
+// What a conformance run of the checkpoint store must report, section by
+// section. Without it a run whose transactions section reported not certified —
+// the section that certifies the one-unit half of the whole phase — prints ok
+// and passes, because eleven others certified and the suite's own third
+// anti-vacuity rule does not fire.
+func checkpointCensus() []certification {
+	return []certification{
+		{"binding", certified},
+		{"absence", certified},
+		{"round trip", certified},
+		{"fence", certified},
+		{"forget", certified},
+		{"names", certified},
+		{"bounds", certified},
+		{"refusal classes", certified},
+		{"lifecycle", certified},
+		{"concurrency", certified},
+		{"transactions", certified},
+		{"durability", certified},
+	}
+}
+
+// Every configuration, because a hook is withdrawn from the factory each of them
+// is built from. Each is driven as a subprocess of this binary: a run cannot
 // read the log of the test it is, and the verdicts are t.Log lines.
 func TestBothConformanceRunsCertifyEverySectionButTheOneThisStoreDeclines(t *testing.T) {
-	for _, run := range []struct{ what, pattern string }{
-		{"at this store's own limits", wideRun},
-		{"at narrower ones", narrowRun},
+	for _, run := range []struct {
+		what    string
+		pattern string
+		want    []certification
+	}{
+		{"at this store's own limits", wideRun, census()},
+		{"at narrower ones", narrowRun, census()},
+		{"over the checkpoint store", checkpointRun, checkpointCensus()},
 	} {
 		t.Run(run.what, func(t *testing.T) {
 			output, code := runs(t, run.pattern, os.Environ())
 			if code != 0 {
 				t.Fatalf("the conformance run %s exited %d, so there is no census to read:\n%s", run.what, code, output)
 			}
-			if err := certifies(censusOf(output)); err != nil {
+			if err := certifies(run.want, censusOf(output)); err != nil {
 				t.Fatalf("the conformance run %s is not the run this store is certified by: %v\n%s", run.what, err, output)
 			}
 		})
@@ -98,7 +126,7 @@ func TestADowngradedSectionIsCaughtByTheCensusAndByNothingElse(t *testing.T) {
 
 	for _, one := range held {
 		t.Run(one.name, func(t *testing.T) {
-			output, code := runs(t, narrowRun, append(os.Environ(), downgradeVariable+"="+one.name))
+			output, code := runs(t, one.run, append(os.Environ(), downgradeVariable+"="+one.name))
 			if code != 0 {
 				t.Fatalf("the %s run exited %d, so go test reports this downgrade and the census below is not what catches it:\n%s", one.name, code, output)
 			}
@@ -106,15 +134,14 @@ func TestADowngradedSectionIsCaughtByTheCensusAndByNothingElse(t *testing.T) {
 			if slices.Contains(reported[one.section], certified) {
 				t.Fatalf("the %s run certified the %s section anyway, so this row withdraws nothing:\n%s", one.name, one.section, output)
 			}
-			if err := certifies(reported); err == nil {
+			if err := certifies(one.want, reported); err == nil {
 				t.Fatalf("the census passed the %s run, whose %s section was reported %v, so it counts nothing:\n%s", one.name, one.section, reported[one.section], output)
 			}
 		})
 	}
 }
 
-func certifies(reported map[string][]string) error {
-	want := census()
+func certifies(want []certification, reported map[string][]string) error {
 	for _, one := range want {
 		said := reported[one.section]
 		if len(said) != 1 {
@@ -169,24 +196,60 @@ func verdictIn(line string) (string, string, bool) {
 type withdrawal struct {
 	name    string
 	section string
+	run     string
+	want    []certification
 	from    func(eventtest.Factory) eventtest.Factory
+	over    func(eventtest.CheckpointFactory) eventtest.CheckpointFactory
 }
 
-const withdrawals = 3
+const withdrawals = 5
 
+// A checkpoint hook cannot be withdrawn here — a claimed capability with no hook
+// is fatal before a section runs, which is the point of that gate — so the two
+// checkpoint rows withdraw a claim instead. Each leaves the run green and the
+// census red, which is the property this file's own name is about.
 func downgrades() []withdrawal {
 	return []withdrawal{
-		{"no-fail-hook", "store failure classification", func(factory eventtest.Factory) eventtest.Factory {
-			factory.Fail = nil
-			return factory
-		}},
-		{"no-unconfirmed-failure", "store failure classification", withheld(event.Unconfirmed)},
-		{"no-unparsable-cursor", "resumption", func(factory eventtest.Factory) eventtest.Factory {
-			factory.Unparsable = nil
-			return factory
-		}},
+		{name: "no-fail-hook", section: "store failure classification", run: narrowRun, want: census(),
+			from: func(factory eventtest.Factory) eventtest.Factory {
+				factory.Fail = nil
+				return factory
+			}},
+		{name: "no-unconfirmed-failure", section: "store failure classification", run: narrowRun, want: census(),
+			from: withheld(event.Unconfirmed)},
+		{name: "no-unparsable-cursor", section: "resumption", run: narrowRun, want: census(),
+			from: func(factory eventtest.Factory) eventtest.Factory {
+				factory.Unparsable = nil
+				return factory
+			}},
+		{name: "no-persistence-claim", section: "durability", run: checkpointRun, want: checkpointCensus(),
+			over: unclaiming(event.CheckpointCapabilities{Transactions: event.Supported, Persistence: event.Unsupported})},
+		{name: "no-transactions-claim", section: "transactions", run: checkpointRun, want: checkpointCensus(),
+			over: unclaiming(event.CheckpointCapabilities{Transactions: event.Unsupported, Persistence: event.Supported})},
 	}
 }
+
+// A checkpoint store that keeps and joins everything it always did and says it
+// does not, which is what a claim somebody narrowed looks like from outside.
+func unclaiming(claims event.CheckpointCapabilities) func(eventtest.CheckpointFactory) eventtest.CheckpointFactory {
+	return func(factory eventtest.CheckpointFactory) eventtest.CheckpointFactory {
+		built, beside := factory.New, factory.Sibling
+		factory.New = func(t *testing.T) event.Checkpoints {
+			return claimed{Checkpoints: built(t), claims: claims}
+		}
+		factory.Sibling = func(t *testing.T, c event.Checkpoints) event.Checkpoints {
+			return claimed{Checkpoints: beside(t, c), claims: claims}
+		}
+		return factory
+	}
+}
+
+type claimed struct {
+	event.Checkpoints
+	claims event.CheckpointCapabilities
+}
+
+func (this claimed) Capabilities() event.CheckpointCapabilities { return this.claims }
 
 // wayTo answering nothing for one outcome, which is what a Fail hook that stopped
 // being able to produce it leaves behind: the store is asked, says it cannot, and
@@ -208,10 +271,23 @@ func downgraded(t *testing.T, factory eventtest.Factory) eventtest.Factory {
 		return factory
 	}
 	for _, one := range downgrades() {
-		if one.name == name {
+		if one.name == name && one.from != nil {
 			return one.from(factory)
 		}
 	}
-	t.Fatalf("%s names %q and this harness withdraws no hook of that name", downgradeVariable, name)
+	return factory
+}
+
+func downgradedCheckpoints(t *testing.T, factory eventtest.CheckpointFactory) eventtest.CheckpointFactory {
+	t.Helper()
+	name := os.Getenv(downgradeVariable)
+	if name == "" {
+		return factory
+	}
+	for _, one := range downgrades() {
+		if one.name == name && one.over != nil {
+			return one.over(factory)
+		}
+	}
 	return factory
 }

@@ -10,6 +10,7 @@ import (
 	"errors"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -331,5 +332,30 @@ func auditThenDrop(t *testing.T, schema string) {
 	defer dropSchema(t, schema)
 	for _, finding := range auditOf(t, schema).findings {
 		t.Errorf("the schema a conformance store wrote to is inconsistent: %s", finding)
+	}
+}
+
+// §INV-080, and the case that makes every other claim about checkpoints mean
+// something. A store whose cursor is the highest position its own read returned,
+// rather than the highest one every position below which has settled, is
+// identical to a correct store in a quiescent log — which is why it passed all
+// twenty sections until the resumption section held a writer's transaction open
+// across the walk. The control is the unmodified store, which must pass the same
+// section.
+func TestTheNewestPositionCursorNowFailsResumption(t *testing.T) {
+	output, code := runsTheSuite(t, append(os.Environ(), mutationVariable+"=in-flight-newest-position"))
+	if code == 0 {
+		t.Fatalf("a store answering the newest position its own read returned passed the conformance suite, so a cursor that skips a position a writer still holds is invisible to it:\n%s", output)
+	}
+	if !strings.Contains(output, reportedAs+"resumption: failed") {
+		t.Fatalf("the run failed and the resumption section did not report it — the sections that did are %v:\n%s", sectionsThatFailed(output), output)
+	}
+
+	control, code := runsTheSuite(t, os.Environ())
+	if code != 0 {
+		t.Fatalf("the unmodified store fails the same run, so the failure above is not the cursor's:\n%s", control)
+	}
+	if !strings.Contains(control, reportedAs+"resumption: passed") {
+		t.Fatalf("the unmodified store did not pass the resumption section, so what fails above is the section rather than the store:\n%s", control)
 	}
 }

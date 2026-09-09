@@ -36,7 +36,8 @@ and never rewrites a fact.
 | `Codec[V]` | `Encode` · `Decode` · `CanEncode` — the second extension point |
 | `Compose(parts…)` | a composite identity rendered into one `Key`, byte for byte forever ([[D-125]]) |
 | `Aggregate.Family()` · `Aggregate.Key(id)` · `Aggregate.Fold(id, state, changes…)` | the declaration's own readers; the fold needs no store |
-| `Fact.Name()` · `Fact.Revisions()` · `Fact.New(id, payload)` · `Fact.RoundTrip(byRevision…)` | the fact's identifiers, the decision, and the proxy that proves a payload survives its own codec |
+| `Fact.Name()` · `Fact.Family()` · `Fact.Revisions()` · `Fact.New(id, payload)` · `Fact.RoundTrip(byRevision…)` | the fact's identifiers, the decision, and the proxy that proves a payload survives its own codec |
+| `Fact.Read(envelope)` | a stored envelope decoded through this fact's own reader chain and every declared upcaster, in the current reader type — the same decoder a replay folds through, and the four history-class refusals it produces and no other |
 | `Change[S]` | one decision: `Stream()` and `Err()` |
 | `Declaration` | the one non-generic view of an aggregate |
 
@@ -140,6 +141,36 @@ _, receipt, err := repo.Append(ctx, at, Credit.New(id, Credited{Amount: -amount}
 | `Reader.Events()` | what the last `Next` fetched — yours, including its capacity |
 | `Reader.Cursor()` | safe to persist and to resume from in another process — unless the walk ran on a context carrying a transaction of this backing |
 
+### The checkpoint seam
+
+Where a consumer records that it finished with a page. It is a seam beside the
+store's rather than a part of it: a checkpoint row may live in a database this
+log knows nothing about, and often should.
+
+| | |
+|---|---|
+| `Checkpoints` | `Capabilities()` · `Backing()` · `Transaction(ctx)` · `Load(ctx, name)` · `Save(ctx, checkpoint)` · `Forget(ctx, name)` · `Close()` |
+| `CheckpointCapabilities` | `Transactions` · `Persistence`, each a `Support` |
+| `Checkpoint` | `Projection` · `Cursor` · `Advance` · `Progress`, and `Fresh()` |
+| `Progress` | `Highest` · `Applied` · `Quarantined` · `At` — an observation, and never a resume point |
+| `Track(checkpoints, name)` | a `*Tracker`: the one door onto a `Checkpoints`, as `Read` is onto a `Log` |
+| `Tracker.Load(ctx)` · `Tracker.Save(ctx, cursor, progress)` · `Tracker.Forget(ctx)` | load, present one above the fence, retire the name |
+| `Tracker.Projection()` · `Capabilities()` · `Backing()` · `Transaction(ctx)` | what it holds, and what the store says |
+| `MaxCursorBytes` | 4096 — what a `Log` or a `Checkpoints` may **mint** as a cursor |
+
+`Save` admits a checkpoint if and only if the stored advance is one below the one
+presented, or there is no row and the presented advance is one. A losing save is
+`Failure(Conflict, …)` and never a read-then-write. `Load` answers the **zero**
+`Checkpoint` when there is no row and `Fresh()` says so; the empty cursor is the
+origin of a log, so `Save` refuses one with `Failure(Refused, …)` — a row
+carrying one at a live advance is a readable checkpoint that restarts a consumer
+at the beginning. `Forget` is not fenced. None of the seven opens, commits or
+rolls back anything, and a store classifies its own failure through the same
+seven outcomes a `Store` does.
+
+`event/projection` is the consumer built on this seam; `eventtest.RunCheckpoints`
+is how a third implementation is proved.
+
 ### The store seam
 
 | | |
@@ -184,6 +215,7 @@ depends on either has written to one store rather than to the seam:
 | `MaxPayloadBytes` · `MaxNameBytes` · `MaxKeyBytes` | `1 MiB` · `128` · `2 KiB` |
 | `MaxBatchCount` · `MaxPageCount` | `1024` · `4096` |
 | `MaxResidentBytes` · `ResidentPage(maxPayload)` | `64 MiB`, and the page count it becomes at a payload bound |
+| `MaxCursorBytes` | `4096` — the seventh, and the one that bounds what a store **mints** rather than what it accepts. Deliberately not configurable: a bound a deployment could lower is one that refuses a cursor its own store minted |
 
 A store publishes its own numbers in `Limits` and the framework refuses any of
 them above the ceiling for it, at both doors — `Bind` and `Read`. A store that
@@ -341,6 +373,61 @@ nothing past where it stopped — round-trip a smaller sample of the same type. 
 payload type's own `Equal` is called only at the position above, and its panic is
 `ErrSample` too.
 
+## The log delivers in position order, and that is a law
+
+`ReadAll` answers ascending positions — within a page and across the pages one
+cursor tiles — and one stream's events appear in the log in the order that stream
+holds them. **`Capabilities` carries no member for either and will not get one.**
+`MonotoneVisibility` is a fair capability because a consumer that does not need
+it is still correct without it; delivery order is not that kind of question. A
+projector folding per stream against a store that denied the second is silently
+wrong, with no error on any path, and wrong in the read model rather than in the
+log. A store that cannot hold both is not a conformant store, and `Reader.Next`
+refuses a page that breaks the first with `ErrBackend` for every store
+([[D-128]]).
+
+## What `Progress.Highest` promises
+
+One testable sentence: once a checkpoint carrying `Highest = P` has been saved
+for a projection, a read resumed from that checkpoint's cursor answers only
+positions above `P`, and no event at a position at or below `P` is ever delivered
+to that projection for the first time.
+
+Two clauses are load-bearing. *Delivered*, not *applied*: `Progress.Quarantined`
+is non-zero exactly when the destination has holes, and that is what keeps
+`Highest` from reading as a completeness claim about the read model. And *for the
+first time*: delivery is at least once, so an event at or below `P` may certainly
+arrive again after a crash. `Highest` is a watermark rather than "the highest
+position of the page" — the same number, a different promise — and it means that
+much only because the ordering above is a law.
+
+## The tracker's window, and why a save is settled by one load
+
+A `*Tracker` is one goroutine's, like a `*Reader`. It holds the advance its own
+`Load` answered and presents one above it, so `Checkpoint.Advance` is a field the
+store reads rather than one a caller computes, and `Save` answers the number it
+presented whatever the store said.
+
+What it holds is a **window** rather than one number, because the two ends answer
+different questions. The fence is what a save presents one above; the floor is the
+lowest advance the row can still be at, which is the last one this tracker watched
+a store commit for itself. They part in two situations, and both are ordinary: a
+save the store never confirmed, and a save written inside a transaction this
+tracker does not commit.
+
+- **A `Load` after a save may legitimately answer either end.** Inside the window
+  it is admitted; outside it the tracker is finished with that row and says so
+  with `ErrWrongStore`. Below the floor is a row retired, reset or restored from
+  a dump, and the next save would land at advance 1 over a live read model. Above
+  the fence is a second writer at the same name — taking its advance is what makes
+  two processes take turns over one checkpoint.
+- **A save the store never confirmed is settled by one `Load`, never by a second
+  save.** A second save could only guess which of the two advances the row holds,
+  and the tracker refuses it by name.
+- **A tracker whose row moved outside its window is finished rather than
+  re-seated.** Re-seating a fence downward is a silent restart at the origin
+  against a live destination, with no error on any path.
+
 ## Testing without a store, and testing a store
 
 `Aggregate.Fold` runs your folds over your value with no store at all, so a
@@ -357,13 +444,17 @@ own codec.
 
 There is no query language over history, no list-filter-sort surface, no
 delete and no update: the two reads are one stream in version order and the log
-in commit order. There is no snapshot, no projector, no subscription and no
-publisher — a walk over the log is what those are built from, and what is built
-on it is at least once.
+in commit order. There is no snapshot, no subscription and no publisher — full
+replay is the only authority a folded state has, and the trigger for reopening
+that is measured and recorded ([[D-132]]). There **is** a projector, and it is
+[`event/projection`](projection.md), built on the log walk and this page's
+checkpoint seam: what it delivers is at least once, in both of its modes.
 
 ## See also
 
 - [eventmemory](eventmemory.md) — the store that ships
+- [projection](projection.md) — the consumer built on the log walk and the
+  checkpoint seam
 - [eventtest](eventtest.md) — the conformance suite, and the three proxies
-- [[D-121]] · [[D-122]] · [[D-123]] · [[D-124]] · [[D-125]] · [[FL-036]] ·
-  [[UC-032]]
+- [[D-121]] · [[D-122]] · [[D-123]] · [[D-124]] · [[D-125]] · [[D-128]] ·
+  [[D-129]] · [[D-132]] · [[D-133]] · [[FL-036]] · [[FL-038]] · [[UC-032]]

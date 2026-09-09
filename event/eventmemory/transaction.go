@@ -9,11 +9,17 @@ import (
 )
 
 var (
-	errNotTransaction = errors.New("eventmemory: this context carries no transaction of this store's for this store")
-	errFinished       = errors.New("eventmemory: this transaction has already been committed or rolled back")
-	errStaleClaim     = errors.New("eventmemory: a claimed stream moved while it was claimed")
+	errNotTransaction  = errors.New("eventmemory: this context carries no transaction of this store's for this store")
+	errFinished        = errors.New("eventmemory: this transaction has already been committed or rolled back")
+	errStaleClaim      = errors.New("eventmemory: a claimed stream moved while it was claimed")
+	errStaleCheckpoint = errors.New("eventmemory: a checkpoint row moved between the save this transaction staged and its commit")
 )
 
+// Two staging areas rather than one, and the reason is the arithmetic below:
+// Rollback returns the positions this transaction's envelopes would have taken,
+// and it counts staged. A checkpoint save riding in that slice would burn a
+// position on rollback, so the next append would land one above where it
+// belongs — an event the log will never hold and a gap no reader can explain.
 type Tx struct {
 	log      *Log
 	identity txIdentity
@@ -21,6 +27,7 @@ type Tx struct {
 
 	staged []event.Envelope
 	counts map[event.Stream]int
+	saves  []event.Checkpoint
 }
 
 // What the authority names, and deliberately not the *Tx: a claim is released
@@ -48,6 +55,10 @@ func WithTransaction(ctx context.Context, tx *Tx) context.Context {
 	return context.WithValue(ctx, transactionKey{log: tx.log}, tx)
 }
 
+func (this *Log) begin() *Tx {
+	return &Tx{log: this, identity: this.nameTransaction(), counts: map[event.Stream]int{}}
+}
+
 func (this *Store) Begin(ctx context.Context) (*Tx, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -55,10 +66,10 @@ func (this *Store) Begin(ctx context.Context) (*Tx, error) {
 	if this.closed.Load() {
 		return nil, event.ErrClosed
 	}
-	return &Tx{log: this.log, identity: this.log.nameTransaction(), counts: map[event.Stream]int{}}, nil
+	return this.log.begin(), nil
 }
 
-func (this *Store) Transaction(ctx context.Context) (event.Authority, error) {
+func (this *Log) transaction(ctx context.Context) (event.Authority, error) {
 	tx, err := this.ambient(ctx)
 	if err == nil {
 		err = tx.live()
@@ -66,7 +77,11 @@ func (this *Store) Transaction(ctx context.Context) (event.Authority, error) {
 	if err != nil || tx == nil {
 		return event.Authority{}, err
 	}
-	return event.NewAuthority(this.log.backing, tx.identity)
+	return event.NewAuthority(this.backing, tx.identity)
+}
+
+func (this *Store) Transaction(ctx context.Context) (event.Authority, error) {
+	return this.log.transaction(ctx)
 }
 
 // The two keys: this store's own transaction, and the one bound for no log at
@@ -79,8 +94,12 @@ func (this *Store) Transaction(ctx context.Context) (event.Authority, error) {
 // takes a lock would otherwise hold the log's mutex while acquiring it, and any
 // goroutine holding that lock across an append would hang every reader and
 // writer of the log for good.
-func (this *Store) ambient(ctx context.Context) (*Tx, error) {
-	tx, carried := ctx.Value(transactionKey{log: this.log}).(*Tx)
+//
+// The lookup is the log's rather than a store value's, so the log's other peer
+// — the checkpoint store over it — finds the same unit of work through the same
+// key, and a unit begun through either of them is found by both.
+func (this *Log) ambient(ctx context.Context) (*Tx, error) {
+	tx, carried := ctx.Value(transactionKey{log: this}).(*Tx)
 	if !carried {
 		if _, unattributable := ctx.Value(transactionKey{}).(*Tx); unattributable {
 			return nil, errNotTransaction
@@ -89,6 +108,8 @@ func (this *Store) ambient(ctx context.Context) (*Tx, error) {
 	}
 	return tx, nil
 }
+
+func (this *Store) ambient(ctx context.Context) (*Tx, error) { return this.log.ambient(ctx) }
 
 // A finished transaction is refused rather than run on this store's autocommit:
 // the caller holds a context that reads like a transaction and is not one, and
@@ -117,7 +138,13 @@ func (this *Tx) Commit(context.Context) error {
 	if err := this.revalidate(); err != nil {
 		return err
 	}
+	if err := this.revalidateSaves(); err != nil {
+		return err
+	}
 	this.log.publish(this.staged)
+	for _, held := range this.saves {
+		this.log.recordCheckpoint(held)
+	}
 	this.release()
 	return nil
 }
@@ -147,11 +174,51 @@ func (this *Tx) revalidate() error {
 	return nil
 }
 
+// What the fence taken at Save promises, checked where the rows are published
+// rather than assumed: every staged save still follows the row it was admitted
+// over, so a fence broken between the stage and the commit is an error from
+// Commit rather than a row that overwrote a winner. A staged removal is the
+// advance-zero entry and is not fenced, exactly as Forget is not.
+func (this *Tx) revalidateSaves() error {
+	staged := map[string]event.Checkpoint{}
+	for _, held := range this.saves {
+		over, amended := staged[held.Projection]
+		if !amended {
+			over = this.log.checkpointHeld(held.Projection)
+		}
+		if held.Advance != 0 && held.Advance != over.Advance+1 {
+			return errStaleCheckpoint
+		}
+		staged[held.Projection] = held
+	}
+	return nil
+}
+
+// What this transaction would leave the row at: the last save it staged for the
+// name, or the committed row where it has staged none. A staged removal is the
+// advance-zero entry, and what it would leave behind is no row — handing the
+// entry itself back would name a projection beside no advance, and absence is
+// total.
+func (this *Tx) checkpointHeld(projection string) event.Checkpoint {
+	for index := len(this.saves) - 1; index >= 0; index-- {
+		if this.saves[index].Projection != projection {
+			continue
+		}
+		if this.saves[index].Advance == 0 {
+			return event.Checkpoint{}
+		}
+		return this.saves[index]
+	}
+	return this.log.checkpointHeld(projection)
+}
+
+func (this *Tx) stageSave(held event.Checkpoint) { this.saves = append(this.saves, held) }
+
 func (this *Tx) release() {
 	for stream := range this.counts {
 		delete(this.log.claims, stream)
 	}
-	this.staged, this.counts = nil, nil
+	this.staged, this.counts, this.saves = nil, nil, nil
 	this.finished.Store(true)
 }
 

@@ -4,7 +4,7 @@
 `event.Open` / `event.Bind` (the composition root), `event.Repo.Load` /
 `event.Repo.Append` (the write path), `event.Read` / `event.Reader.Next` (the
 log walk)
-**Governed by:** [[D-121]] [[D-122]] [[D-123]] [[D-124]] [[D-125]]
+**Governed by:** [[D-121]] [[D-122]] [[D-123]] [[D-124]] [[D-125]] [[D-128]]
 
 What happens between an application declaring that an aggregate has facts and
 those facts being an append-only history a later process folds back into a
@@ -16,6 +16,10 @@ belong to.
 the contract written as a suite a store runs against itself. No package under
 `event/` is imported by any other subsystem, which is what makes the whole thing
 optional by the import graph rather than by a paragraph.
+
+[[FL-037]] is the same path over PostgreSQL. [[FL-038]] is the half above the log
+walk: a page a consumer finished with becoming a durable checkpoint row, and the
+`event.Checkpoints` seam beside the `event.Store` one.
 
 ## The declaration, and when it stops being writable
 
@@ -143,6 +147,14 @@ another process. A page whose positions do not ascend is refused before a
 consumer checkpoints past an event it never saw; gaps between positions are
 normal.
 
+That refusal is one half of a kernel law rather than a store's option
+([[D-128]]): positions ascend, and one stream's events reach the log in the order
+that stream holds them. There is no capability for either, and the alternative —
+the reference implementation's `ORDER BY transaction_id, id`, under which
+positions go backwards — is refused because vv's store joins a transaction the
+caller opened ([[D-118]]), so the writing transaction's id can be older than a
+stream predecessor's and that order reverses one stream against itself.
+
 `ReadOnly(store)` hands back a `Log` — the surface with no `Append` — for a
 consumer that must not be able to assert its way back to the write path.
 
@@ -192,6 +204,9 @@ goroutine.
   cannot read back, and it bounds no depth on the decode path.
 - [[D-125]] — `Compose`'s rendering is frozen: it is part of every stream ever
   written under it.
+- [[D-128]] — the log delivers in position order and one stream's order is a
+  subsequence of it; both are laws with no capability, and `Progress.Highest` is
+  a completeness watermark because of them.
 - [[D-061]] — every method of `Store` is required, so the value a composition
   root handed over answers every question and a decorator cannot be walked past.
   `ReadOnly` is the one wrapper here with no `Next`, and taking the surface away
@@ -256,7 +271,7 @@ goroutine.
 | `event/doc.go` | the package sentence |
 | `event/identity.go` | `Key`, `Version`, `Position`, `Cursor`, `Stream`, `Stream.String`, `Compose`, `escapePart` |
 | `event/text.go` | `checkText` — the kernel text rule, `checkName` — that rule plus `fieldOpen`/`fieldClose`, the pair a rendered field is written inside, applied to both declared identifiers, and the two predicates `Compose` reads through |
-| `event/bounds.go` | `MaxPayloadBytes`, `MaxNameBytes`, `MaxKeyBytes`, `MaxBatchCount`, `MaxPageCount`, `MaxResidentBytes`, `ResidentPage` |
+| `event/bounds.go` | `MaxPayloadBytes`, `MaxNameBytes`, `MaxKeyBytes`, `MaxBatchCount`, `MaxPageCount`, `MaxResidentBytes`, `MaxCursorBytes`, `ResidentPage` — the seventh bounds what a store **mints** rather than what it accepts, and is not one of a store's `Limits` ([[FL-038]]) |
 | `event/backing.go` | `Backing`, `NewBacking`, `Backing.Equal`, `nilByAnyRoute` |
 | `event/authority.go` | `Authority`, `NewAuthority`, `Authority.Same`, `Authority.Valid` |
 | `event/marker.go` | `marker`, `withMarker`, `markerFor` — what `Within` leaves and how it is resolved |
@@ -270,31 +285,35 @@ goroutine.
 | `event/chain.go` | `Chain`, `From`, `Then`, `link`, `carry`, `upcastTo` |
 | `event/aggregate.go` | `Aggregate`, `Define`, `TryDefine`, `Aggregate.Family`, `Aggregate.Key`, `Aggregate.Fold`, `locate`, `Declaration` |
 | `event/seal.go` | `Aggregate.seal`, `Aggregate.declare` — and the enumeration of the six readers |
-| `event/fact.go` | `Fact`, `Declare`, `TryDeclare`, `Fact.New`, `Fact.RoundTrip`, `roundTripping`, `Fact.notAliased`, `Fact.readBack`, `applierOf` |
+| `event/fact.go` | `Fact`, `Declare`, `TryDeclare`, `Fact.Name`, `Fact.Family`, `Fact.Revisions`, `Fact.Read`, `Fact.New`, `Fact.RoundTrip`, `roundTripping`, `Fact.notAliased`, `Fact.readBack`, `applierOf` — `Read` is the typed reading seam a consumer of one envelope shares with a replay ([[FL-038]]) |
 | `event/comparison.go` | `valueWalk`, `valueWalkNodes`, `shares`, `same`, `sameFields`, `sameOpaque`, `equalByMethod`, `sameNumber`, `asFloat`, `sameElements`, `sameEntries`, `unanswered`, `singleValued`, `reusesItsBuffer`, `readsBackOnTheWire` — the two walks a round trip makes over an application's own values, the budget they run under, the one position a type's own `Equal` is asked at, and the re-encoding that answers behind the walk where nothing in the value can |
 | `event/change.go` | `Change`, `Change.Err`, `decidedFor` |
 | `event/binding.go` | `Binding`, `Open`, `Bind`, `admit`, `admitLimits`, `admitCapabilities` |
 | `event/repo.go` | `Repo`, `Repo.Load`, `Repo.Append`, `Repo.Within`, `Repo.Authority`, `replay`, `checkPage`, `apply`, `records` |
-| `event/reader.go` | `ReadOnly`, `Read`, `Reader`, `Reader.Next`, `Reader.Events`, `Reader.Cursor` |
+| `event/reader.go` | `ReadOnly`, `Read`, `Reader`, `Reader.Next`, `Reader.Events`, `Reader.Cursor`, `Reader.checkPage` — the page and the cursor it was answered with are one answer, so both are checked before the reader's own cursor moves |
 | `event/eventmemory/log.go` | `Log`, `LogSpec`, `NewLog`, `bound`, `publish`, `claim`, `releaseDeadClaim`, `nameTransaction` — the backing, the two numbers the data depends on, the weak claim a stream is held by, and the name a transaction is known to a receipt by |
 | `event/eventmemory/store.go` | `Spec`, `Store`, `New`, `resident`, `Capabilities`, `Limits`, `Backing`, `Close`, `Check` |
 | `event/eventmemory/append.go` | `Store.Append` — expected-version admission against the committed height plus this transaction's staged records |
 | `event/eventmemory/read.go` | `Store.ReadStream`, `Store.ReadAll`, `handOut` |
 | `event/eventmemory/cursor.go` | `mintCursor`, `readCursor` — a cursor of this log's and no other's |
-| `event/eventmemory/transaction.go` | `Tx`, `txIdentity`, `WithTransaction`, `Store.Begin`, `Store.Transaction`, `ambient`, `Tx.live`, `Tx.Commit`, `Tx.Rollback`, `stage` |
+| `event/eventmemory/transaction.go` | `Tx`, `txIdentity`, `WithTransaction`, `Log.begin`, `Store.Begin`, `Log.transaction`, `Store.Transaction`, `Log.ambient`, `Store.ambient`, `Tx.live`, `Tx.Commit`, `Tx.Rollback`, `revalidateSaves`, `checkpointHeld`, `stageSave`, `stage` — two staging areas, and `Rollback`'s position arithmetic reads only the first |
+| `event/eventmemory/checkpoints.go` | `CheckpointSpec`, `Checkpoints`, `NewCheckpoints`, its `Capabilities`, `Backing`, `Transaction`, `Begin`, `Load`, `Save`, `Forget`, `Close`, `held`, `refusable` — the rows live on the `*Log`, so two values over one log are one checkpoint store |
 | `event/eventmemory/doc.go` | the package sentence, and the two paragraphs about the Log being the backing |
 | `event/eventtest/doc.go` | the package sentence, and what the three words a section reports mean |
-| `event/eventtest/suite.go` | `Run`, `Factory`, `Tx`, `sweep`, `certify`, `admit`, `missing`, `reserve` |
-| `event/eventtest/inventory.go` | `inventory` — the twenty sections and what each needs |
-| `event/eventtest/probe.go` | `probe` — the fixture builder, the store façade and the verdict sink |
+| `event/eventtest/suite.go` | `Run`, `Factory`, `Tx`, `telling`, `report`, `probing`, `sweep`, `certify`, `admit`, `missing`, `reserve` — `sweep` and `certify` are generic over what a section asserts against, because the checkpoint runner reports through the same three rules |
+| `event/eventtest/inventory.go` | `section`, `running`, `inventory` — the twenty sections and what each needs |
+| `event/eventtest/probe.go` | `probe`, `recording` — the fixture builder, the store façade and the verdict sink; `recording` is the half that is about running a section rather than about a `Store` |
 | `event/eventtest/declaration.go` | `ledger`, `accountID`, `opened`, `credited`, `noted`, `rawCodec`, `declaration`, `declare`, `declareRaw`, `declareWith`, `keyOf` — the aggregate every section is driven through |
-| `event/eventtest/report.go` | `word`, `verdict`, `certified` — passed, not certified, failed |
+| `event/eventtest/report.go` | `word`, `verdict`, `certified`, `recording.verdict` — passed, not certified, failed |
+| `event/eventtest/checkpoints.go` | `CheckpointFactory`, `RunCheckpoints`, `tracking`, `checkpoints`, `admitCheckpoints`, `admitInstant`, `missingCheckpointHook`, `checkpointName`, `sameCheckpoint` and the section helpers — the checkpoint store's own runner, under the same three anti-vacuity rules, and `Instant` is where a store declares the grain its own instant column keeps |
+| `event/eventtest/sections_checkpoints.go` | `checkpointInventory`, `needsCheckpointTransactions`, `needsCheckpointPersistence`, `cursorOfWidth`, `firstDifference`, `forgetsInAUnit`, `forgetRacingASave` and the twelve section bodies — `binding`, `absence`, `round trip`, `fence`, `forget`, `names`, `bounds`, `refusal classes`, `lifecycle`, `concurrency`, `transactions`, `durability` |
+| `event/eventtest/defects_checkpoints.go` | `checkpointDefect`, `checkpointDefects`, `unfenced`, `stale`, `absent`, `oneName`, `detaching` — the five broken checkpoint stores the runner is falsified with |
 | `event/eventtest/proxies.go` | `RoundTrip`, `Keys`, `Families` — the three proxies an application runs over its own declaration |
 | `event/eventtest/sections_write.go` | `bindingSection`, `streamIdentitySection`, `expectedVersionSection`, `denseVersionsSection`, `concurrencySection`, `sharedBackingSection` |
-| `event/eventtest/sections_read.go` | `globalOrderSection`, `conservationSection`, `streamPagingSection`, `globalPagingSection`, `boundsSection`, `monotoneVisibilitySection` |
+| `event/eventtest/sections_read.go` | `globalOrderSection`, `conservationSection`, `streamPagingSection`, `globalPagingSection`, `boundsSection`, `monotoneVisibilitySection`, `from`, `reading` |
 | `event/eventtest/sections_lifecycle.go` | `cancellationSection`, `lifecycleSection`, `refusalClassesSection`, `durabilitySection`, `storeFailureSection` |
 | `event/eventtest/sections_transactions.go` | `transactionsSection` — staged, discarded, contended, crossed, the aftermath of a conflict, and an unbound context |
-| `event/eventtest/sections_resumption.go` | `resumptionSection` — a foreign cursor, an unparsable one, and a writer that arrives after the walk started |
+| `event/eventtest/sections_resumption.go` | `resumptionSection`, `acrossTheFlight`, `inFlight`, `heldWriter`, `foreignCursor`, `unparsableCursor` — a foreign cursor, an unparsable one, and a writer whose transaction is held **open** across the resumed walk |
 | `event/eventtest/sections_ownership.go` | `payloadOwnershipSection` — the spilled, inbound and aliased halves of what a payload handed over belongs to |
 | `event/eventtest/defects.go` | `defects` — the inventory of purpose-built broken stores the suite is falsified with |
 | `event/eventtest/defects_write.go` | `drifting`, `truncatedKeys`, `unrecorded`, `lastWriteWins`, `reading`, `cachedStreams` |
@@ -392,6 +411,11 @@ inventory.
 | a store that lies about what it published or what it recorded is not certified | `TestAFactoryWhoseLaterStoresPublishSomethingElseIsRefused`, `TestAStoreWhoseCapabilitiesOrBackingChangeUnderOneValueIsNotCertified`, `TestAStoreThatMintsTheRecordedInstantWhenAnEventIsReadIsNotCertified`, `TestAStoreThatKeepsWhatItWroteIsCertifiedForDurability` |
 | every store call a section makes carries a deadline, and a section reaches a verdict over a log somebody else is writing to | `TestEveryStoreCallASectionMakesCarriesADeadline`, `TestASectionReachesAVerdictOverALogSomebodyElseIsStillWritingTo`, `TestASectionWalksItsOwnTailOfALogSomebodyElseFilled` |
 | no doc promises exactly-once delivery | `TestNoDocPromisesExactlyOnceDelivery`, `TestAPromiseOfExactlyOnceDeliveryIsReportedAndARefusalOfOneIsNot`, `TestTheSentenceBeforeAClaimIsTheOneThePagePutsThere`, `FuzzADeliveryClaimIsReportedAtALineTheDocumentHas` |
+| the memory checkpoint store satisfies the contract, and its rows are the log's rather than a value's | `TestTheCheckpointStoreSatisfiesTheContract`, `TestForgetTouchesOneNameAndAnAbsentOneIsNotARefusal`, `TestTwoCheckpointValuesOverOneLogAreOneStore`, `TestARolledBackUnitStagedBothAndBurntOnlyTheAppends` |
+| absence is total inside a unit that staged a removal, not only outside one | `TestALoadInsideAUnitThatStagedAForgetAnswersTheZeroCheckpoint`, `transactions` |
+| a removal committing while a save is in flight leaves no row behind | `forget` (`forgetRacingASave`), `TestASaveAboveAdvanceOneCannotResurrectARowAForgetRemoved` (FL-037) |
+| the suite measures the round trip of the instant and not one backing's precision | `TestACoarserInstantIsCertifiedWhenTheFactoryDeclaresItsGrainAndNotWhenItDoesNot`, `TestACheckpointFactoryClaimingPersistenceWithNoSiblingFailsBeforeASectionRuns` |
+| the checkpoint suite still detects every defect it was built to detect | `TestEveryCheckpointDefectIsReportedByItsOwnSection`, `TestAStoreThatDoesNotPersistDeclinesDurabilityAndCertifiesTheOtherEleven` |
 
 ### What the four structural checks reach, and what they do not
 
@@ -469,10 +493,16 @@ they *cannot* see is part of what they prove.
   that is what its negation model can classify. The same promise spelled as a
   denial, "no duplicates ever reach your handler", is **not** read: its negation
   is the claim, and "deduplicates on that key" is ordinary prose about a
-  mechanism this tree already writes eleven times. A refusal counts when it is
-  attached to the claim — in the claim's own clause, in the sentence before it,
-  or in a heading that itself refuses — and the same two sentences are what
-  decide whether the phrase is about delivery at all, so a promise whose subject
-  is named one sentence earlier is read rather than missed. Extending the table with a
+  mechanism this tree already writes eleven times. A refusal counts when it
+  **governs** the claim: a negation in the claim's own clause, or a heading that
+  itself refuses, or — further away, in an earlier clause or the sentence before
+  — a negation in a span that also names the claim, by saying *promise*,
+  *guarantee* or *claim*, or by spelling the frequency itself. A negation that
+  merely stands nearby is not a refusal, and the difference is not academic in
+  prose written as negatively as this: "The framework deduplicates nothing" is
+  four words that would otherwise license the sentence after them. The wider
+  two-sentence window still decides whether the phrase is about delivery at all,
+  so a promise whose subject is named one sentence earlier is read rather than
+  missed. Extending the table with a
   de-duplication vocabulary would turn the check red on correct pages, which is
   how a structural check gets loosened on its first run.

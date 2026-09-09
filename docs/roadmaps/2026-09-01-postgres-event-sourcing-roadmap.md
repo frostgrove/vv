@@ -622,15 +622,44 @@ Exit evidence:
 
 ### E2 — projection and evolution
 
-1. Add one idempotent checkpointed local projection only from a concrete read need.
-2. Add mixed old/new reader and writer release rehearsals.
-3. Add a snapshot only after measured replay cost and full-replay equivalence proof.
-4. Define archive/restore and retained-reader policy before beta.
-5. Whatever runs continuously is a `runtime.Runner`; the projector does not own
-   its own lifecycle.
+**The projection half is delivered.** `event.Checkpoints` with `event.Track` as
+its door, `eventmemory.Checkpoints`, `eventpg.Checkpoints` at schema version 2,
+`eventtest.RunCheckpoints` so a third implementation is provable, and
+`event/projection` — a supervised `runtime.Runner` per projection name, two
+advance modes, a typed router, envelope-granular quarantine, and a fence that
+makes two live instances take turns rather than killing one of them
+([[D-129]]–[[D-133]], [[FL-038]]). Delivery is at least once in both modes and
+nothing in the surface says otherwise. The live evidence is
+`event/eventpg`'s tagged suite: the two modes at one kill point, two instances of
+one name over one schema, a read model in a second database, a rebuild beside a
+live projection with the cutover rolled back, and a resume in a second process.
 
-Exit evidence includes duplicate/crash/checkpoint tests, rebuild/cutover rollback,
-snapshot corruption fallback if enabled, and a restore/replay rehearsal.
+**A snapshot is deferred on a measurement, with a recorded owner.** Measured on
+PostgreSQL 17.9 at the deployed defaults, a full replay is 10 – 18 ms at 10 000
+events and 104 – 171 ms at 100 000; paging is a sixth of it — the 391 pages of a
+100 000-event replay cost about 17.6 ms, roughly 45 µs a page. That is inside a
+request's budget at the sizes this framework's own rules encourage, and an
+aggregate that reaches 100 000 events has a consistency boundary drawn too wide
+that a snapshot would hide rather than fix. **The gate is a measured need, not a
+measured cost.** What ships instead is the instrument, `BenchmarkStreamReplay`,
+and the trigger: a snapshot is built when a **deployment** measures its own p99
+aggregate replay above ~50 ms in its own environment — somewhere above
+30 000 – 50 000 events at these rates, or an order of magnitude fewer over a 1 ms
+link. The five things a later phase must get right, and the reference's own
+latent bug not to copy, are recorded in full rather than left to be re-derived
+([[D-132]]).
+
+What is left in this gate:
+
+1. Mixed old/new reader and writer release rehearsals.
+2. Archive/restore and retained-reader policy, before beta. The interlock is
+   against every projection name's stored cursor and never against a time cutoff:
+   a stalled, dead-lettered or newly added projection otherwise has its
+   undelivered events deleted out from under it.
+
+Exit evidence for what is left: a mixed-release rehearsal in which a build
+carrying revision N and one carrying N+1 both read and both write, and a
+restore/replay rehearsal whose cutover is rolled back.
 
 ### E3 — accepted base composition
 

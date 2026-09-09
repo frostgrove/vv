@@ -85,9 +85,9 @@ inside one subsystem is a collision a reader resolves wrongly and silently.
 - **Placement deduplication is not delivery deduplication.** `jobs.Unique`,
   `jobs.Collapse` and `EnqueueOnce` collapse two enqueues into one invocation,
   which is a producer-side guarantee. It says nothing about how many times
-  that invocation reaches a handler. Conflating the two is how an exactly-once
-  claim gets made by accident, and an application that believes it stops
-  writing the idempotency it needs.
+  that invocation reaches a handler. Conflating the two is how a claim this
+  repository never makes — exactly-once delivery — gets made by accident, and
+  an application that believes it stops writing the idempotency it needs.
 
 The consequence belongs in the same breath as the promise: a handler whose
 effect must not happen twice carries its own idempotency key, and the natural

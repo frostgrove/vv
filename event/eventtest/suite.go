@@ -104,12 +104,20 @@ func noVerdictFrom(section string) string {
 }
 
 func Run(t *testing.T, factory Factory) {
-	verdicts := sweep(t, factory, inventory(), func(t *testing.T, given verdict) {
-		t.Log(given.line())
-		if given.word == failed {
-			t.Error(given.reason)
-		}
-	})
+	report(t, sweep(t, inventory(), probing(t, factory, inventory()), telling))
+}
+
+func telling(t *testing.T, given verdict) {
+	t.Log(given.line())
+	if given.word == failed {
+		t.Error(given.reason)
+	}
+}
+
+// The second and third anti-vacuity rules, after the sections have run: a
+// section that never returned a verdict is reported rather than counted, and a
+// run that certified nothing fails.
+func report(t *testing.T, verdicts []verdict) {
 	for _, given := range verdicts {
 		if given.word == unreported {
 			t.Error(noVerdictFrom(given.section))
@@ -120,19 +128,26 @@ func Run(t *testing.T, factory Factory) {
 	}
 }
 
-func sweep(t *testing.T, factory Factory, sections []section, tell func(*testing.T, verdict)) []verdict {
-	opened := admit(t, factory, sections)
+func probing(t *testing.T, factory Factory, sections []section[*probe]) func(*testing.T, string, string) *probe {
+	opened := admit(t, factory, len(sections))
+	return func(t *testing.T, name, mark string) *probe {
+		return &probe{
+			recording: recording{t: t, name: name, mark: mark, window: factory.Window},
+			factory:   factory,
+			opening:   opened,
+		}
+	}
+}
+
+// Generic over what a section asserts against, because the checkpoint suite runs
+// the same three rules over a different subject: what is shared here is running
+// a section and reading its verdict, and neither of those is about a Store.
+func sweep[P running](t *testing.T, sections []section[P], build func(*testing.T, string, string) P, tell func(*testing.T, verdict)) []verdict {
 	verdicts := make([]verdict, 0, len(sections))
 	for index, held := range sections {
 		given := verdict{section: held.name}
 		t.Run(held.name, func(t *testing.T) {
-			given = certify(&probe{
-				t:       t,
-				factory: factory,
-				opening: opened,
-				mark:    markOf(index),
-				name:    held.name,
-			}, held)
+			given = certify(build(t, held.name, markOf(index)), held)
 			tell(t, given)
 		})
 		verdicts = append(verdicts, given)
@@ -140,13 +155,13 @@ func sweep(t *testing.T, factory Factory, sections []section, tell func(*testing
 	return verdicts
 }
 
-func certify(subject *probe, held section) verdict {
+func certify[P running](subject P, held section[P]) verdict {
 	if held.needs != nil {
-		if reason := held.needs(subject.capabilities, subject.factory); reason != "" {
+		if reason := held.needs(subject); reason != "" {
 			return verdict{section: held.name, word: notCertified, reason: reason}
 		}
 	}
-	subject.walk(held.run)
+	subject.walk(func() { held.run(subject) })
 	return subject.verdict()
 }
 
@@ -168,7 +183,7 @@ type opening struct {
 // one property — it says the run cannot be evidence of anything. So is a MaxKey
 // with no room for the suite's own identities, and for the same reason: it is
 // this suite's requirement rather than the store's defect.
-func admit(t *testing.T, factory Factory, sections []section) opening {
+func admit(t *testing.T, factory Factory, sections int) opening {
 	if factory.New == nil {
 		t.Fatal(buildsNoStore)
 	}
@@ -216,8 +231,8 @@ func markOf(index int) string { return "s" + strconv.Itoa(index) + "-" }
 // store's own refusal of a key it never chose.
 const widestLabel = 8
 
-func reserve(sections []section) int {
-	return 1 + len(markOf(max(len(sections)-1, 0))) + widestLabel
+func reserve(sections int) int {
+	return 1 + len(markOf(max(sections-1, 0))) + widestLabel
 }
 
 // Sixteen bytes where the store has room for them, because a collision here is

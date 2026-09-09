@@ -5,7 +5,7 @@ COMMANDS := unit integration test examples up down logs psql mysql mariadb fmt v
 	check check-deps check-tiers check-utils check-triplets check-todo \
 	check-replaces check-tidy \
 	check-otel-schema check-otel-module check-workspace check-otel-consumer \
-	check-event-kernel \
+	check-event-kernel check-event-kernel-baseline check-event-kernel-moved \
 	tidy main-deps corpus generate ent api vuln version release clean
 
 .PHONY: help $(COMMANDS)
