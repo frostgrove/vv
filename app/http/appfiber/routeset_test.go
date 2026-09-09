@@ -1,8 +1,11 @@
 package appfiber_test
 
 import (
+	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -12,9 +15,20 @@ import (
 	"github.com/frostgrove/vv/app/http/appfiber"
 	"github.com/frostgrove/vv/auth"
 	"github.com/frostgrove/vv/auth/http/authhttp"
+	"github.com/frostgrove/vv/errs"
+	"github.com/frostgrove/vv/port/porthttp"
 )
 
 const permRead = auth.Permission("jobs.dead.read")
+
+type frenchRefusals struct{}
+
+func (frenchRefusals) Message(_ context.Context, violation errs.Violation, locale string) (string, bool) {
+	if locale == "fr-CA" && violation.Code == errs.CodeUnauthenticated {
+		return "authentification requise", true
+	}
+	return "", false
+}
 
 func routeFrom(t *testing.T, set *appfiber.RouteSet) func() appfiber.Route {
 	t.Helper()
@@ -127,6 +141,32 @@ func TestAnOperationThatNamesPermissionsRefusesAnAnonymousCaller(t *testing.T) {
 	}
 	if ran {
 		t.Fatal("the handler ran for a caller nobody authenticated")
+	}
+}
+
+func TestARoutePolicyRefusalUsesTheRequestsLanguage(t *testing.T) {
+	set := appfiber.Routes("/ops/jobs", porthttp.WithMessages(frenchRefusals{})).
+		GET("/dead", appfiber.Requires(permRead), answering(new(bool)))
+	mounted := servedBy(t, provide(appfiber.AsRoute(routeFrom(t, set))))
+	r := httptest.NewRequest(http.MethodGet, "/api/v1/ops/jobs/dead", nil)
+	r.Header.Set("Accept-Language", "fr-CA,fr;q=0.9")
+	response, err := mounted.Test(r)
+	if err != nil {
+		t.Fatalf("serving the request: %v", err)
+	}
+	t.Cleanup(func() { _ = response.Body.Close() })
+	var body struct {
+		Errors struct {
+			General []struct {
+				Message string `json:"message"`
+			} `json:"general"`
+		} `json:"errors"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatalf("decoding the refusal: %v", err)
+	}
+	if len(body.Errors.General) != 1 || body.Errors.General[0].Message != "authentification requise" {
+		t.Fatalf("the route policy rendered %#v, want the requested French message", body.Errors.General)
 	}
 }
 

@@ -10,6 +10,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/structpb"
 
 	"github.com/frostgrove/vv/crud"
@@ -482,6 +483,94 @@ func TestAServicePathHopReachesTheRenderedField(t *testing.T) {
 	}
 }
 
+const installedCode errs.Code = "reserved_name"
+
+func installedCodes(t *testing.T) *errs.Codes {
+	t.Helper()
+	codes := errs.NewCodes()
+	if err := codes.Add(installedCode, errs.KindConflict, "the process vocabulary"); err != nil {
+		t.Fatalf("declaring the process code: %v", err)
+	}
+	return codes
+}
+
+func installedMessages(t *testing.T) *errs.Messages {
+	t.Helper()
+	messages := errs.NewMessages(nil)
+	if err := messages.Add("", "label."+string(installedCode), "the resource catalogue"); err != nil {
+		t.Fatalf("declaring the resource message: %v", err)
+	}
+	return messages
+}
+
+func installedFault() error {
+	return errs.Validation().Code(errs.CodeCheck).
+		Field("Name").Code(installedCode).Fault()
+}
+
+func TestEveryGeneratedMethodBubblesToTheInterceptorWithItsHops(t *testing.T) {
+	for _, tc := range []struct {
+		method string
+		body   string
+	}{
+		{"List", `{}`},
+		{"Count", `{}`},
+		{"Get", `{"id":"42"}`},
+		{"Create", `{"label":"bolt","price":250}`},
+		{"Update", `{"id":"42","patch":{"name":"renamed"}}`},
+		{"Replace", `{"id":"42","entity":{"label":"replaced","price":250}}`},
+		{"Delete", `{"id":"42"}`},
+		{"BulkDelete", `{"ids":["42"]}`},
+	} {
+		t.Run(tc.method, func(t *testing.T) {
+			fake := newFake()
+			fake.err = installedFault()
+			handler := NewFor(Repository[Widget, int64, WidgetUpdate](fake), WidgetMapper{}).
+				Rendering(WithMessages(installedMessages(t)))
+			client := serve(t, handler.Desc(resource),
+				grpc.ChainUnaryInterceptor(Errors(WithCodes(installedCodes(t)))))
+
+			st := client.fails(tc.method, doc(t, tc.body))
+			if st.Code() != codes.AlreadyExists {
+				t.Fatalf("%s answered %s, want the process vocabulary's AlreadyExists", tc.method, st.Code())
+			}
+			violations := fieldViolations(t, st)
+			if len(violations) != 1 || violations[0].GetReason() != string(installedCode) || violations[0].GetField() != "label" || violations[0].GetDescription() != "the resource catalogue" {
+				t.Fatalf("%s rendered %+v, want the process code, declared hop, and resource message", tc.method, violations)
+			}
+		})
+	}
+
+	fake := newFake()
+	fake.err = installedFault()
+	plain := serve(t, NewFor(Repository[Widget, int64, WidgetUpdate](fake), WidgetMapper{}).Desc(resource))
+	st := plain.fails("Create", doc(t, `{"label":"bolt","price":250}`))
+	violations := fieldViolations(t, st)
+	if st.Code() != codes.InvalidArgument || len(violations) != 1 || violations[0].GetField() != "label" || violations[0].GetDescription() != string(installedCode) {
+		t.Fatalf("without an interceptor the zero-config method answered %s with %+v", st.Code(), violations)
+	}
+}
+
+type replacementRenderer struct{}
+
+func (replacementRenderer) Render(ctx context.Context, err error) *status.Status {
+	violations := port.Violations(ctx, port.FaultOf(err), nil)
+	return status.New(codes.Aborted, violations[0].Path.String())
+}
+
+func TestAnExplicitResourceRendererStillOwnsTheStatusAndKeepsHops(t *testing.T) {
+	fake := newFake()
+	fake.err = installedFault()
+	handler := NewFor(Repository[Widget, int64, WidgetUpdate](fake), WidgetMapper{},
+		WithRenderer[Widget, int64, WidgetUpdate](replacementRenderer{}))
+	client := serve(t, handler.Desc(resource), grpc.ChainUnaryInterceptor(Errors()))
+
+	st := client.fails("Create", doc(t, `{"label":"bolt","price":250}`))
+	if st.Code() != codes.Aborted || st.Message() != "label" {
+		t.Fatalf("the replacement renderer answered %s with %q", st.Code(), st.Message())
+	}
+}
+
 func TestAServiceShapedOptionOnServingIsRefusedAtDeclaration(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -608,7 +697,7 @@ func TestTheRequestLocaleReachesTheMessageLadder(t *testing.T) {
 		return fieldViolations(t, st)[0].GetDescription()
 	}
 
-	for _, key := range LocaleKeys {
+	for _, key := range LocaleKeys() {
 		t.Run(key, func(t *testing.T) {
 			if got := message(t, metadata.Pairs(key, "fr-CA,fr;q=0.9")); got != "cette adresse est deja prise" {
 				t.Fatalf("with %s the message is %q; the first tag is what the ladder is asked for", key, got)
@@ -621,16 +710,22 @@ func TestTheRequestLocaleReachesTheMessageLadder(t *testing.T) {
 	}
 }
 
-func TestALocalizedMessageNamesTheRequestedLocale(t *testing.T) {
+func TestALocalizedMessageNamesTheTemplateLocale(t *testing.T) {
+	cat := errs.NewMessages(nil)
+	if err := cat.Add("fr", "name.unique", "cette adresse est deja prise"); err != nil {
+		t.Fatal(err)
+	}
 	f := newFake()
 	f.err = errs.Conflict().Code(errs.CodeUnique).
 		Field("name").Code(errs.CodeUnique).Origin(errs.OriginState).Fault()
-	c := serve(t, New[Widget, int64, WidgetUpdate](f).Desc(resource)).
+	h := New[Widget, int64, WidgetUpdate](f,
+		WithRenderer[Widget, int64, WidgetUpdate](NewRenderer(WithMessages(cat))))
+	c := serve(t, h.Desc(resource)).
 		with(metadata.Pairs("grpc-accept-language", "fr-CA,fr;q=0.9"))
 
 	fv := fieldViolations(t, c.fails("Create", doc(t, `{"name":"bolt"}`)))[0]
-	if got := fv.GetLocalizedMessage().GetLocale(); got != "fr-CA" {
-		t.Fatalf("the localized message reports the locale %q, want the one the caller asked for", got)
+	if got := fv.GetLocalizedMessage().GetLocale(); got != "fr" {
+		t.Fatalf("the localized message reports the locale %q, want the fallback template that supplied it", got)
 	}
 
 	plain, plainRepo := mount(t)

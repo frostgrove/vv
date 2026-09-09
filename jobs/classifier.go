@@ -91,7 +91,7 @@ func invokeHandlerContained(ctx context.Context, handler func() error) (result e
 			// is what puts application data into a log line nobody chose the
 			// destination of. A consumer who wants the value takes it from
 			// Recovered() and formats it under its own risk.
-			port.Logger(ctx).Error("jobs: handler panicked",
+			port.Logger(ctx).ErrorContext(ctx, "jobs: handler panicked",
 				"panic_type", fmt.Sprintf("%T", recovered),
 				"stack", string(failure.stack))
 			result = failure

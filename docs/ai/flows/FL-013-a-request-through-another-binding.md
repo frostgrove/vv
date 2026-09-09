@@ -278,6 +278,11 @@ exactly that rather than hiding it.
   pipeline: the copy, the path chain, the sort, the cap and the message ladder
   are `port.Violations`, called by both renderers ([[D-045]], and the follow-up
   it discharged at phase 9).
+- **Only an actual template locale becomes protocol metadata.**
+  `errs.LocalizedMessageSource` extends the old wording seam without replacing
+  it. `port.Violations` records its validated actual locale; gRPC creates
+  `LocalizedMessage` from that value, so `fr-CA → fr` reports `fr`, while a
+  legacy source creates no localization detail.
 - **Two codes collapse on gRPC, and that is a cost rather than a bug.**
   `KindValidation` and `KindBadRequest` both answer `InvalidArgument`, so 422 and
   400 are one code; every conflict answers `AlreadyExists`, including `restrict`
@@ -329,7 +334,7 @@ exactly that rather than hiding it.
 | File | Role |
 |---|---|
 | `crud/http/crudgin/handler.go` | routes, `Mount`/`Register`, query-string reading, body decoding, the six constructors |
-| `crud/http/crudgin/options.go` | the transport-shaped options, `collect`, `rendererFor`, `Status`, `DefaultErrorHandler`, `writeJSON` — the rest is `port.Rules` |
+| `crud/http/crudgin/options.go` | the transport-shaped options, `collect`, `Status`, `DefaultErrorHandler`, `render`, `writeJSON` — the rest is `port.Rules` |
 | `crud/http/crudnet/handler.go` | the same for `net/http`: `Mount`, the pattern set, and the root-path choice |
 | `crud/http/crudnet/options.go` | the same set again; all three carry a `writeJSON` of their own, and that is the point of it ([[D-063]]) |
 | `crud/http/crudfiber/handler.go` | the same for Fiber, plus `Routes` and `bodyLimit` — the standalone app's own cap |
@@ -345,7 +350,7 @@ exactly that rather than hiding it.
 | `crud/rpc/crudgrpc/service.go` | `ServiceName`, `ServicePrefix`, `Desc`, `Register`, and the hand-built `grpc.ServiceDesc` |
 | `crud/rpc/crudgrpc/message.go` | `google.protobuf.Struct` ⇄ Go: `toStruct`, `fromStruct`, `sub`, `queryOf`, `queryIn`, `idOf`, `idsOf`, `countDoc`, `deletedDoc` |
 | `crud/rpc/crudgrpc/status.go` | `Renderer`, `StatusRenderer`, `Code`, `CodeFor`, `KindForCode`, the five `RenderOption`s, and the details |
-| `crud/rpc/crudgrpc/options.go` | the transport-shaped options, `collect`, `rendererFor` — the rest is `port.Rules` |
+| `crud/rpc/crudgrpc/options.go` | the transport-shaped options and `collect` — the rest is `port.Rules`; renderer composition and context tracking live with the interceptor |
 | `port/rules.go` | `Rules`, `Service`, `RefuseServiceOptions` — the five rules every binding shares, once ([[D-045]]) |
 | `port/log.go` | `Logger`, `WithLogger` — where every binding's own lines go ([[D-062]]) |
 | `crud/http/crudnet/middleware.go` | `Errors`, `WithErrors`, `HandlerFunc`, `recorder` — the middleware over a mux carrying hand-rolled routes as well, the double-install guard, and the panic that becomes a silent 500 |
@@ -471,7 +476,7 @@ And the `crudgrpc` half:
 - `TestInstallingTheInterceptorTwiceRendersOnce`,
   `TestTheInterceptorRendersAMethodOfYourOwn`,
   `TestTheRequestLocaleReachesTheMessageLadder` and
-  `TestALocalizedMessageNamesTheRequestedLocale` —
+  `TestALocalizedMessageNamesTheTemplateLocale` —
   `crud/rpc/crudgrpc/handler_test.go`.
 - `TestOnePortServiceAlsoMountsOnGRPC` and
   `TestAClassifiedConflictReachesAGrpcClientWithNothingInternal` —

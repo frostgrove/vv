@@ -65,7 +65,7 @@ func ShuttingDownOnFailure(shutdowner fx.Shutdowner, log *slog.Logger) runtime.O
 }
 
 func watching(spec Spec, registered Registered, shutdowner fx.Shutdowner) runtime.Observer {
-	var watchers observers
+	var watchers []runtime.Observer
 	if registered.Observer != nil {
 		watchers = append(watchers, registered.Observer)
 	}
@@ -75,20 +75,7 @@ func watching(spec Spec, registered Registered, shutdowner fx.Shutdowner) runtim
 	if len(watchers) == 0 {
 		return nil
 	}
-	return watchers
-}
-
-type observers []runtime.Observer
-
-func (this observers) Observed(state runtime.RunnerState) {
-	for _, observer := range this {
-		observe(observer, state)
-	}
-}
-
-func observe(observer runtime.Observer, state runtime.RunnerState) {
-	defer func() { _ = recover() }()
-	observer.Observed(state)
+	return runtime.MustObservers(watchers...)
 }
 
 type stopper struct {

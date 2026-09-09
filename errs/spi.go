@@ -18,6 +18,11 @@ type MessageSource interface {
 	Message(ctx context.Context, v Violation, locale string) (string, bool)
 }
 
+type LocalizedMessageSource interface {
+	MessageSource
+	MessageWithLocale(ctx context.Context, v Violation, locale string) (message, actualLocale string, ok bool)
+}
+
 func Chain(rs ...Resolver) Resolver {
 	return chain(rs)
 }

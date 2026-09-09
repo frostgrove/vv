@@ -119,6 +119,12 @@ the exception ([[D-048]], [[D-055]]).
 | [eventpg](eventpg.md) | `vv/event/eventpg` | **Module** — the store on PostgreSQL: one-statement append, three-level schema verification, an append-only history and a settled-watermark log walk |
 | [eventtest](eventtest.md) | `vv/event/eventtest` | The store contract as a conformance suite, plus three proxies an application runs over its own declaration |
 
+## Internationalization — typed presentation at an explicit locale
+
+| Module | Import | What it is |
+|---|---|---|
+| [i18n](i18n.md) | `github.com/frostgrove/vv/i18n` | **Module** — immutable checked MF2 catalogues, exact typed values, locale and formatting policy, rich/bidi output, error wording, conservative type-aware offline authoring and bounded atomic publication |
+
 ## Observability — tracing and metrics
 
 | Module | Import | What it is |

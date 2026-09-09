@@ -157,6 +157,20 @@ func (this catalogue) Message(_ context.Context, v errs.Violation, _ string) (st
 	return m, ok
 }
 
+type localizedCatalogue struct {
+	message string
+	locale  string
+}
+
+func (this localizedCatalogue) Message(ctx context.Context, v errs.Violation, locale string) (string, bool) {
+	message, _, ok := this.MessageWithLocale(ctx, v, locale)
+	return message, ok
+}
+
+func (this localizedCatalogue) MessageWithLocale(context.Context, errs.Violation, string) (string, string, bool) {
+	return this.message, this.locale, true
+}
+
 type renamer map[string]string
 
 func (this renamer) Resolve(p errs.Path) (errs.Path, bool) {
@@ -188,6 +202,26 @@ func TestTheMessageLadderSeesTheTranslatedPath(t *testing.T) {
 	}
 }
 
+func TestOnlyAResolvedMessageSourceCanNameTheMessagesActualLocale(t *testing.T) {
+	f := errs.Conflict().Code(errs.CodeUnique).Field("email").Code(errs.CodeUnique).Fault()
+	ctx := WithLocale(context.Background(), "fr-CA")
+
+	localized := pipelineCtx(t, ctx, f, ViolationOptions{Messages: localizedCatalogue{message: "déjà pris", locale: "fr"}})
+	if got := localized[0].MessageLocale; got != "fr" {
+		t.Fatalf("the resolved message locale is %q, want fr", got)
+	}
+
+	legacy := pipelineCtx(t, ctx, f, ViolationOptions{Messages: catalogue{"email.unique": "déjà pris"}})
+	if got := legacy[0].MessageLocale; got != "" {
+		t.Fatalf("a legacy source claimed %q from the requested locale", got)
+	}
+
+	unsafe := pipelineCtx(t, ctx, f, ViolationOptions{Messages: localizedCatalogue{message: "déjà pris", locale: "fr, private"}})
+	if got := unsafe[0].MessageLocale; got != "" {
+		t.Fatalf("an invalid actual locale survived as %q", got)
+	}
+}
+
 func TestAMessageFallsBackToTheCodesDefaultAndThenToTheCode(t *testing.T) {
 	f := errs.Conflict().Code(errs.CodeUnique).Field("email").Code(errs.CodeUnique).Fault()
 	if got := pipeline(t, f, ViolationOptions{})[0].Message; got != "this value is already taken" {
@@ -197,6 +231,31 @@ func TestAMessageFallsBackToTheCodesDefaultAndThenToTheCode(t *testing.T) {
 	novel := errs.Validation().Code("too_young").Field("age").Code("too_young").Fault()
 	if got := pipeline(t, novel, ViolationOptions{})[0].Message; got != "too_young" {
 		t.Fatalf("an undeclared code's message is %q, want the code itself", got)
+	}
+}
+
+func TestAParameterizedCodeDefaultIsExpandedBeforeItReachesTheWire(t *testing.T) {
+	codes := errs.NewCodes()
+	if err := codes.Add("quota", errs.KindValidation, "only {remaining} remain"); err != nil {
+		t.Fatalf("declaring the code: %v", err)
+	}
+	f := errs.Validation().Code("quota").
+		Field("items").Code("quota").Params(errs.P{"remaining": 2}).Fault()
+	if got := pipeline(t, f, ViolationOptions{Codes: codes})[0].Message; got != "only 2 remain" {
+		t.Fatalf("the code default rendered as %q, want its parameter expanded", got)
+	}
+
+	missing := errs.Validation().Code("quota").Field("items").Code("quota").Fault()
+	if got := pipeline(t, missing, ViolationOptions{Codes: codes})[0].Message; got != "quota" {
+		t.Fatalf("a missing parameter exposed the raw template as %q", got)
+	}
+	if err := codes.Add("empty_default", errs.KindValidation, "{value}"); err != nil {
+		t.Fatalf("declaring the empty-default control: %v", err)
+	}
+	empty := errs.Validation().Code("empty_default").
+		Field("items").Code("empty_default").Params(errs.P{"value": ""}).Fault()
+	if got := pipeline(t, empty, ViolationOptions{Codes: codes})[0].Message; got != "empty_default" {
+		t.Fatalf("an empty expansion suppressed the fallback as %q", got)
 	}
 }
 

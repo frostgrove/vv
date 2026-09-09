@@ -8,18 +8,18 @@ import (
 	"github.com/frostgrove/vv/crud"
 	"github.com/frostgrove/vv/crud/http/crudhttp"
 	"github.com/frostgrove/vv/crud/query"
-	"github.com/frostgrove/vv/errs"
 	"github.com/frostgrove/vv/port"
 )
 
 type options[M any, ID comparable, U any] struct {
 	crudhttp.Rules
-	renderer     crudhttp.Renderer
-	errorHandler func(*gin.Context, error)
-	transform    func(*gin.Context, M) any
-	scope        func(*gin.Context) ([]crud.Option, error)
-	beforeSave   func(*gin.Context, *M) error
-	beforeUpdate func(*gin.Context, ID, *U) error
+	renderer           crudhttp.Renderer
+	errorHandler       func(*gin.Context, error)
+	customErrorHandler bool
+	transform          func(*gin.Context, M) any
+	scope              func(*gin.Context) ([]crud.Option, error)
+	beforeSave         func(*gin.Context, *M) error
+	beforeUpdate       func(*gin.Context, ID, *U) error
 }
 
 type Option[M any, ID comparable, U any] func(*options[M, ID, U])
@@ -45,7 +45,10 @@ func WithQueryFor[M any, ID comparable, U any](defaultConfig *query.Config, vari
 }
 
 func WithErrorHandler[M any, ID comparable, U any](fn func(*gin.Context, error)) Option[M, ID, U] {
-	return func(o *options[M, ID, U]) { o.errorHandler = fn }
+	return func(o *options[M, ID, U]) {
+		o.errorHandler = fn
+		o.customErrorHandler = true
+	}
 }
 
 func WithRenderer[M any, ID comparable, U any](r crudhttp.Renderer) Option[M, ID, U] {
@@ -94,17 +97,10 @@ type Renderer = crudhttp.Renderer
 
 var defaultRenderer = crudhttp.NewRenderer()
 
-func rendererFor(hops []errs.Resolver) crudhttp.Renderer {
-	if len(hops) == 0 {
-		return defaultRenderer
-	}
-	return crudhttp.NewRenderer(crudhttp.WithResolvers(hops...))
-}
-
 func writeJSON(c *gin.Context, status int, v any) {
 	body, err := json.Marshal(v)
 	if err != nil {
-		port.Logger(c.Request.Context()).Error("crudgin: encoding the response", "err", err)
+		port.Logger(c.Request.Context()).ErrorContext(c.Request.Context(), "crudgin: encoding the response", "err", err)
 		status = http.StatusInternalServerError
 		body, _ = json.Marshal(crudhttp.Internal())
 		c.Abort()
@@ -126,7 +122,10 @@ func render(rd crudhttp.Renderer, c *gin.Context, err error) {
 }
 
 func write(rd crudhttp.Renderer, c *gin.Context, err error) {
-	ctx := crudhttp.WithLocale(c.Request.Context(), crudhttp.AcceptLanguage(c.GetHeader("Accept-Language")))
+	ctx := c.Request.Context()
+	if port.LocaleFrom(ctx) == "" {
+		ctx = crudhttp.WithLocale(ctx, crudhttp.AcceptLanguage(c.GetHeader("Accept-Language")))
+	}
 	status, header, body := rd.Render(ctx, err)
 	for k, vs := range header {
 		for _, v := range vs {

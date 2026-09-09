@@ -2,19 +2,232 @@
 
 package vvotel
 
-import "go.opentelemetry.io/otel/attribute"
+import (
+	"go.opentelemetry.io/otel/attribute"
+	"math"
+	"unicode"
+	"unicode/utf8"
+)
+
+type Signal uint16
+
+type Signals []Signal
+
+const (
+	SignalAuthRefusalEvent          Signal = 27
+	SignalAuthRefusals              Signal = 26
+	SignalAuthenticationDuration    Signal = 25
+	SignalAuthenticationSpan        Signal = 24
+	SignalCacheBackendEvent         Signal = 11
+	SignalCacheChargedBytes         Signal = 17
+	SignalCacheEncodedBytes         Signal = 14
+	SignalCacheEvent                Signal = 10
+	SignalCacheEvents               Signal = 12
+	SignalCacheItems                Signal = 13
+	SignalCacheMemoryActive         Signal = 22
+	SignalCacheMemoryByteLimit      Signal = 21
+	SignalCacheMemoryBytes          Signal = 19
+	SignalCacheMemoryClosed         Signal = 23
+	SignalCacheMemoryEntries        Signal = 18
+	SignalCacheMemoryEntryLimit     Signal = 20
+	SignalCacheOperations           Signal = 9
+	SignalCachePayloadBytes         Signal = 15
+	SignalCacheValueBytes           Signal = 16
+	SignalCommandDuration           Signal = 1
+	SignalCommandSpan               Signal = 2
+	SignalCrudSourceDuration        Signal = 37
+	SignalCrudSourceSpan            Signal = 36
+	SignalHealthChecks              Signal = 28
+	SignalHealthDuration            Signal = 29
+	SignalHealthSpan                Signal = 30
+	SignalJobsEnqueueDuration       Signal = 41
+	SignalJobsEnqueueSpan           Signal = 42
+	SignalJobsEnqueueStagedSpan     Signal = 43
+	SignalJobsHandlerAttempt        Signal = 47
+	SignalJobsHandlerDuration       Signal = 45
+	SignalJobsHandlerSpan           Signal = 44
+	SignalJobsPropagation           Signal = 40
+	SignalJobsQueueDelay            Signal = 46
+	SignalJobsSchedulerCycles       Signal = 56
+	SignalJobsSchedulerDuration     Signal = 55
+	SignalJobsSchedulerResults      Signal = 57
+	SignalJobsWorkerAdmission       Signal = 52
+	SignalJobsWorkerBytes           Signal = 51
+	SignalJobsWorkerDeliveryResults Signal = 53
+	SignalJobsWorkerDispositions    Signal = 54
+	SignalJobsWorkerDuration        Signal = 49
+	SignalJobsWorkerItems           Signal = 50
+	SignalJobsWorkerOperations      Signal = 48
+	SignalJobsWorkerReleased        Signal = 59
+	SignalRemoteDuration            Signal = 39
+	SignalRemoteSpan                Signal = 38
+	SignalRuntimeDuration           Signal = 32
+	SignalRuntimeOperations         Signal = 31
+	SignalRuntimePeriodicDuration   Signal = 35
+	SignalRuntimePeriodicSpan       Signal = 34
+	SignalRuntimeTransitions        Signal = 33
+	SignalStorageCleanupRemoved     Signal = 58
+	SignalStorageDuration           Signal = 3
+	SignalStorageOperationBytes     Signal = 5
+	SignalStorageSpan               Signal = 4
+	SignalStorageStreamBytes        Signal = 7
+	SignalStorageStreamDuration     Signal = 6
+	SignalStorageStreamSpan         Signal = 8
+)
+
+func AllSignals() Signals {
+	return Signals{SignalAuthRefusalEvent, SignalAuthRefusals, SignalAuthenticationDuration, SignalAuthenticationSpan, SignalCacheBackendEvent, SignalCacheChargedBytes, SignalCacheEncodedBytes, SignalCacheEvent, SignalCacheEvents, SignalCacheItems, SignalCacheMemoryActive, SignalCacheMemoryByteLimit, SignalCacheMemoryBytes, SignalCacheMemoryClosed, SignalCacheMemoryEntries, SignalCacheMemoryEntryLimit, SignalCacheOperations, SignalCachePayloadBytes, SignalCacheValueBytes, SignalCommandDuration, SignalCommandSpan, SignalCrudSourceDuration, SignalCrudSourceSpan, SignalHealthChecks, SignalHealthDuration, SignalHealthSpan, SignalJobsEnqueueDuration, SignalJobsEnqueueSpan, SignalJobsEnqueueStagedSpan, SignalJobsHandlerAttempt, SignalJobsHandlerDuration, SignalJobsHandlerSpan, SignalJobsPropagation, SignalJobsQueueDelay, SignalJobsSchedulerCycles, SignalJobsSchedulerDuration, SignalJobsSchedulerResults, SignalJobsWorkerAdmission, SignalJobsWorkerBytes, SignalJobsWorkerDeliveryResults, SignalJobsWorkerDispositions, SignalJobsWorkerDuration, SignalJobsWorkerItems, SignalJobsWorkerOperations, SignalJobsWorkerReleased, SignalRemoteDuration, SignalRemoteSpan, SignalRuntimeDuration, SignalRuntimeOperations, SignalRuntimePeriodicDuration, SignalRuntimePeriodicSpan, SignalRuntimeTransitions, SignalStorageCleanupRemoved, SignalStorageDuration, SignalStorageOperationBytes, SignalStorageSpan, SignalStorageStreamBytes, SignalStorageStreamDuration, SignalStorageStreamSpan}
+}
+
+func (s Signals) Has(signal Signal) bool {
+	for _, current := range s {
+		if current == signal {
+			return true
+		}
+	}
+	return false
+}
+
+func (s Signal) Valid() bool {
+	switch s {
+	case SignalAuthRefusalEvent:
+		return true
+	case SignalAuthRefusals:
+		return true
+	case SignalAuthenticationDuration:
+		return true
+	case SignalAuthenticationSpan:
+		return true
+	case SignalCacheBackendEvent:
+		return true
+	case SignalCacheChargedBytes:
+		return true
+	case SignalCacheEncodedBytes:
+		return true
+	case SignalCacheEvent:
+		return true
+	case SignalCacheEvents:
+		return true
+	case SignalCacheItems:
+		return true
+	case SignalCacheMemoryActive:
+		return true
+	case SignalCacheMemoryByteLimit:
+		return true
+	case SignalCacheMemoryBytes:
+		return true
+	case SignalCacheMemoryClosed:
+		return true
+	case SignalCacheMemoryEntries:
+		return true
+	case SignalCacheMemoryEntryLimit:
+		return true
+	case SignalCacheOperations:
+		return true
+	case SignalCachePayloadBytes:
+		return true
+	case SignalCacheValueBytes:
+		return true
+	case SignalCommandDuration:
+		return true
+	case SignalCommandSpan:
+		return true
+	case SignalCrudSourceDuration:
+		return true
+	case SignalCrudSourceSpan:
+		return true
+	case SignalHealthChecks:
+		return true
+	case SignalHealthDuration:
+		return true
+	case SignalHealthSpan:
+		return true
+	case SignalJobsEnqueueDuration:
+		return true
+	case SignalJobsEnqueueSpan:
+		return true
+	case SignalJobsEnqueueStagedSpan:
+		return true
+	case SignalJobsHandlerAttempt:
+		return true
+	case SignalJobsHandlerDuration:
+		return true
+	case SignalJobsHandlerSpan:
+		return true
+	case SignalJobsPropagation:
+		return true
+	case SignalJobsQueueDelay:
+		return true
+	case SignalJobsSchedulerCycles:
+		return true
+	case SignalJobsSchedulerDuration:
+		return true
+	case SignalJobsSchedulerResults:
+		return true
+	case SignalJobsWorkerAdmission:
+		return true
+	case SignalJobsWorkerBytes:
+		return true
+	case SignalJobsWorkerDeliveryResults:
+		return true
+	case SignalJobsWorkerDispositions:
+		return true
+	case SignalJobsWorkerDuration:
+		return true
+	case SignalJobsWorkerItems:
+		return true
+	case SignalJobsWorkerOperations:
+		return true
+	case SignalJobsWorkerReleased:
+		return true
+	case SignalRemoteDuration:
+		return true
+	case SignalRemoteSpan:
+		return true
+	case SignalRuntimeDuration:
+		return true
+	case SignalRuntimeOperations:
+		return true
+	case SignalRuntimePeriodicDuration:
+		return true
+	case SignalRuntimePeriodicSpan:
+		return true
+	case SignalRuntimeTransitions:
+		return true
+	case SignalStorageCleanupRemoved:
+		return true
+	case SignalStorageDuration:
+		return true
+	case SignalStorageOperationBytes:
+		return true
+	case SignalStorageSpan:
+		return true
+	case SignalStorageStreamBytes:
+		return true
+	case SignalStorageStreamDuration:
+		return true
+	case SignalStorageStreamSpan:
+		return true
+	default:
+		return false
+	}
+}
 
 const (
 	ScopeName       = "github.com/frostgrove/vv/otel"
 	ScopeVersion    = "v0.1.0"
-	ContractVersion = "vv-otel/v1"
-)
-
-const (
+	ContractVersion = "vv-otel/v2"
+	MigrationFrom   = "vv-otel/v1"
+	MigrationTo     = "vv-otel/v2"
 	MigrationStatus = "development"
 	MigrationSince  = "v0.1.0"
-	MigrationPolicy = "ContractVersion is stable schema identity; ScopeVersion follows the published otel module version. Registry changes require regenerated output and a migration note."
+	MigrationPolicy = "Preserve v1 wire names and Go API; append-only integer signal IDs with independent history and explicit retirement. Signal uint16 and Signals []Signal have no 64-signal mask limit."
+	MigrationNote   = "docs/release-notes/2026-09-09-otel-v1-v2.md"
 )
+
+func MigrationWireChanges() []string {
+	return []string{"New signals are planned until their adapters ship; legacy command, storage and cache signal identities are unchanged.", "Cardinality is derived from signal variants; metadata bounds may change as the admitted vocabulary expands.", "A04 span wrappers gain a span-only goroutine_exit/Error terminal without error.type; duration/counter observations remain absent for this non-return path."}
+}
 
 type AttributeMetadata struct {
 	Name             attribute.Key
@@ -25,13 +238,28 @@ type AttributeMetadata struct {
 }
 
 var AttributeMetadataByKey = map[string]AttributeMetadata{
+	"admission_signal":  {Name: AttrAdmissionSignal, Source: "Closed registry vocabulary", PrivacyClass: "safe", CardinalityBound: 6, MetricEligible: true},
 	"cache_layer":       {Name: AttrCacheLayer, Source: "closed cache layer declaration", PrivacyClass: "safe", CardinalityBound: 2, MetricEligible: true},
-	"component":         {Name: AttrComponent, Source: "closed component declaration", PrivacyClass: "safe", CardinalityBound: 4, MetricEligible: true},
+	"command_kind":      {Name: AttrCommandKind, Source: "Closed registry vocabulary", PrivacyClass: "safe", CardinalityBound: 9, MetricEligible: true},
+	"component":         {Name: AttrComponent, Source: "closed component declaration", PrivacyClass: "safe", CardinalityBound: 18, MetricEligible: true},
+	"control":           {Name: AttrControl, Source: "Closed registry vocabulary", PrivacyClass: "safe", CardinalityBound: 3, MetricEligible: true},
+	"disposition":       {Name: AttrDisposition, Source: "Closed registry vocabulary", PrivacyClass: "safe", CardinalityBound: 7, MetricEligible: true},
+	"durability":        {Name: AttrDurability, Source: "Closed registry vocabulary", PrivacyClass: "safe", CardinalityBound: 2, MetricEligible: true},
 	"error_code":        {Name: AttrErrorCode, Source: "registry error code allow-list", PrivacyClass: "bounded", CardinalityBound: 29, MetricEligible: false},
 	"error_type":        {Name: AttrErrorType, Source: "closed failure classifier", PrivacyClass: "safe", CardinalityBound: 9, MetricEligible: true},
-	"operation_name":    {Name: AttrOperationName, Source: "closed operation declaration", PrivacyClass: "safe", CardinalityBound: 34, MetricEligible: true},
-	"operation_outcome": {Name: AttrOperationOutcome, Source: "closed outcome declaration", PrivacyClass: "safe", CardinalityBound: 13, MetricEligible: true},
+	"failure":           {Name: AttrFailure, Source: "Closed registry vocabulary", PrivacyClass: "safe", CardinalityBound: 4, MetricEligible: true},
+	"importance":        {Name: AttrImportance, Source: "Closed registry vocabulary", PrivacyClass: "safe", CardinalityBound: 3, MetricEligible: true},
+	"memoized":          {Name: AttrMemoized, Source: "Closed registry vocabulary", PrivacyClass: "safe", CardinalityBound: 2, MetricEligible: true},
+	"more":              {Name: AttrMore, Source: "closed continuation flag returned by cleanup/recovery", PrivacyClass: "safe", CardinalityBound: 2, MetricEligible: true},
+	"mutation":          {Name: AttrMutation, Source: "Closed registry vocabulary", PrivacyClass: "safe", CardinalityBound: 3, MetricEligible: true},
+	"operation_name":    {Name: AttrOperationName, Source: "closed operation declaration", PrivacyClass: "safe", CardinalityBound: 53, MetricEligible: true},
+	"operation_outcome": {Name: AttrOperationOutcome, Source: "closed outcome declaration", PrivacyClass: "safe", CardinalityBound: 38, MetricEligible: true},
+	"phase":             {Name: AttrPhase, Source: "Closed registry vocabulary", PrivacyClass: "safe", CardinalityBound: 3, MetricEligible: true},
+	"placement":         {Name: AttrPlacement, Source: "Closed registry vocabulary", PrivacyClass: "safe", CardinalityBound: 2, MetricEligible: true},
+	"reason":            {Name: AttrReason, Source: "Closed registry vocabulary", PrivacyClass: "safe", CardinalityBound: 29, MetricEligible: true},
 	"resource_name":     {Name: AttrResourceName, Source: "construction-time logical resource declaration", PrivacyClass: "bounded", CardinalityBound: 32, MetricEligible: false},
+	"result_kind":       {Name: AttrResultKind, Source: "Closed registry vocabulary", PrivacyClass: "safe", CardinalityBound: 4, MetricEligible: true},
+	"state":             {Name: AttrState, Source: "Closed registry vocabulary", PrivacyClass: "safe", CardinalityBound: 2, MetricEligible: true},
 }
 
 type MetricMetadata struct {
@@ -47,139 +275,539 @@ type MetricMetadata struct {
 }
 
 var MetricMetadataByKey = map[string]MetricMetadata{
-	"cache_operations": {Name: "vv.cache.operations", Type: "counter", Unit: "{operation}", Description: "Count of cache terminal phase events", Source: "vvotel cache observers", PrivacyClass: "safe", CardinalityBound: 116, Semconv: "none", Maturity: "development"},
-	"command_duration": {Name: "vv.command.duration", Type: "histogram", Unit: "s", Description: "Duration of service command operations in seconds", Source: "vvotel service decorator", PrivacyClass: "safe", CardinalityBound: 100, Semconv: "none", Maturity: "development"},
+	"auth_refusals":                {Name: "vv.auth.refusals", Type: "counter", Unit: "{refusal}", Description: "Authentication refusals by closed reason, independent of event sampling", Source: "auth.Observer.Refused", PrivacyClass: "safe", CardinalityBound: 5, Semconv: "none", Maturity: "development"},
+	"authentication_duration":      {Name: "vv.authentication.duration", Type: "histogram", Unit: "s", Description: "Duration of the complete authenticator chain", Source: "auth.Authenticator.Authenticate complete chain", PrivacyClass: "safe", CardinalityBound: 11, Semconv: "none", Maturity: "development"},
+	"cache_charged_bytes":          {Name: "vv.cache.event.charged_bytes", Type: "histogram", Unit: "By", Description: "Charged bytes reported by a memory backend phase event; field-present zero sizes are recorded", Source: "cachememory.Observer.Observe", PrivacyClass: "safe", CardinalityBound: 11, Semconv: "none", Maturity: "development"},
+	"cache_encoded_bytes":          {Name: "vv.cache.event.encoded_bytes", Type: "histogram", Unit: "By", Description: "Encoded bytes reported by a facade phase event; field-present zero sizes are recorded", Source: "cache.Observer.Observe; lookup/miss and load paths require EncodedBytes > 0 to distinguish absent encoded envelopes", PrivacyClass: "safe", CardinalityBound: 14, Semconv: "none", Maturity: "development"},
+	"cache_events":                 {Name: "vv.cache.events", Type: "counter", Unit: "{event}", Description: "Terminal cache phase events with closed reasons and facade memoization", Source: "cache.Observer.Observe and cachememory.Observer.Observe", PrivacyClass: "safe", CardinalityBound: 49, Semconv: "none", Maturity: "development"},
+	"cache_items":                  {Name: "vv.cache.event.items", Type: "histogram", Unit: "{item}", Description: "Items affected by one facade or memory-backend phase event", Source: "cache.Observer.Observe and cachememory.Observer.Observe", PrivacyClass: "safe", CardinalityBound: 49, Semconv: "none", Maturity: "development"},
+	"cache_memory_active":          {Name: "vv.cache.memory.active_backends", Type: "observable_gauge", Unit: "{backend}", Description: "Count of active backends in the fixed registration", Source: "cachememory.Backend.Stats aggregate", PrivacyClass: "safe", CardinalityBound: 1, Semconv: "none", Maturity: "development"},
+	"cache_memory_byte_limit":      {Name: "vv.cache.memory.byte_limit", Type: "observable_gauge", Unit: "By", Description: "Aggregate declared byte limits of active backends; omitted when none is active", Source: "cachememory.Backend.Stats aggregate", PrivacyClass: "safe", CardinalityBound: 1, Semconv: "none", Maturity: "development"},
+	"cache_memory_bytes":           {Name: "vv.cache.memory.charged_bytes", Type: "observable_gauge", Unit: "By", Description: "Aggregate charged bytes of active registered backends; omitted when none is active", Source: "cachememory.Backend.Stats aggregate", PrivacyClass: "safe", CardinalityBound: 1, Semconv: "none", Maturity: "development"},
+	"cache_memory_closed":          {Name: "vv.cache.memory.closed_backends", Type: "observable_gauge", Unit: "{backend}", Description: "Count of closed backends in the fixed registration", Source: "cachememory.Backend.Stats aggregate", PrivacyClass: "safe", CardinalityBound: 1, Semconv: "none", Maturity: "development"},
+	"cache_memory_entries":         {Name: "vv.cache.memory.entries", Type: "observable_gauge", Unit: "{entry}", Description: "Aggregate resident entries of active registered backends; omitted when none is active", Source: "cachememory.Backend.Stats aggregate", PrivacyClass: "safe", CardinalityBound: 1, Semconv: "none", Maturity: "development"},
+	"cache_memory_entry_limit":     {Name: "vv.cache.memory.entry_limit", Type: "observable_gauge", Unit: "{entry}", Description: "Aggregate declared entry limits of active backends; omitted when none is active", Source: "cachememory.Backend.Stats aggregate", PrivacyClass: "safe", CardinalityBound: 1, Semconv: "none", Maturity: "development"},
+	"cache_operations":             {Name: "vv.cache.operations", Type: "counter", Unit: "{operation}", Description: "Count of cache terminal phase events", Source: "cache.Observer.Observe and cachememory.Observer.Observe", PrivacyClass: "safe", CardinalityBound: 116, Semconv: "none", Maturity: "development"},
+	"cache_payload_bytes":          {Name: "vv.cache.event.payload_bytes", Type: "histogram", Unit: "By", Description: "Payload bytes reported by a facade phase event; field-present zero sizes are recorded", Source: "cache.Observer.Observe; an existing encoded envelope admits PayloadBytes=0; lookup/miss is excluded because schema-mismatch miss and expired-value miss do not distinguish payload presence", PrivacyClass: "safe", CardinalityBound: 6, Semconv: "none", Maturity: "development"},
+	"cache_value_bytes":            {Name: "vv.cache.event.value_bytes", Type: "histogram", Unit: "By", Description: "Value bytes reported by a memory backend phase event; field-present zero sizes are recorded", Source: "cachememory.Observer.Observe", PrivacyClass: "safe", CardinalityBound: 13, Semconv: "none", Maturity: "development"},
+	"command_duration":             {Name: "vv.command.duration", Type: "histogram", Unit: "s", Description: "Duration of service command operations in seconds", Source: "port.Service / RestorableService", PrivacyClass: "safe", CardinalityBound: 100, Semconv: "none", Maturity: "development"},
+	"crud_source_duration":         {Name: "vv.crud_source.operation.duration", Type: "histogram", Unit: "s", Description: "Duration of a logical crud_source call, excluding rows or wire transport lifetime", Source: "crud.Source and exact optional capabilities", PrivacyClass: "safe", CardinalityBound: 60, Semconv: "none", Maturity: "development"},
+	"health_checks":                {Name: "vv.health.checks", Type: "counter", Unit: "{check}", Description: "Probe invocations already initiated by the health registry", Source: "health.Contribution.Probe.Check", PrivacyClass: "safe", CardinalityBound: 30, Semconv: "none", Maturity: "development"},
+	"health_duration":              {Name: "vv.health.check.duration", Type: "histogram", Unit: "s", Description: "Duration of actual enabled probe invocations", Source: "health.Contribution.Probe.Check", PrivacyClass: "safe", CardinalityBound: 30, Semconv: "none", Maturity: "development"},
+	"jobs_enqueue_duration":        {Name: "vv.jobs.enqueue.duration", Type: "histogram", Unit: "s", Description: "Duration of one enqueue call; staged success does not assert commit", Source: "jobs enqueue call-site functions", PrivacyClass: "safe", CardinalityBound: 42, Semconv: "none", Maturity: "development"},
+	"jobs_handler_attempt":         {Name: "vv.jobs.handler.attempt", Type: "histogram", Unit: "{attempt}", Description: "Attempt ordinal as a measurement, never a metric label", Source: "jobs.AdapterHandler returned invocation; DeliveryMeta requires AttemptOrdinal 1..jobs.MaxAttemptOrdinal", PrivacyClass: "safe", CardinalityBound: 1, Semconv: "none", Maturity: "development"},
+	"jobs_handler_duration":        {Name: "vv.jobs.handler.duration", Type: "histogram", Unit: "s", Description: "Duration of the handler body until return, excluding worker arbitration and final Apply", Source: "jobs.AdapterHandler returned invocation", PrivacyClass: "safe", CardinalityBound: 10, Semconv: "none", Maturity: "development"},
+	"jobs_propagation":             {Name: "vv.jobs.propagation", Type: "counter", Unit: "{operation}", Description: "Trace Context capture and restoration results; trace degradation does not reject identity", Source: "jobs.TrustedContextProvider / TrustedIdentityRestorer", PrivacyClass: "safe", CardinalityBound: 8, Semconv: "none", Maturity: "development"},
+	"jobs_queue_delay":             {Name: "vv.jobs.handler.queue_delay", Type: "histogram", Unit: "s", Description: "Time between eligibility and this handler invocation starting", Source: "jobs.AdapterHandler returned invocation", PrivacyClass: "safe", CardinalityBound: 1, Semconv: "none", Maturity: "development"},
+	"jobs_scheduler_cycles":        {Name: "vv.jobs.scheduler.cycles", Type: "counter", Unit: "{cycle}", Description: "Completed scheduler cycles by bounded outcome", Source: "jobs.Scheduler.RunDue terminal cycle", PrivacyClass: "safe", CardinalityBound: 10, Semconv: "none", Maturity: "development"},
+	"jobs_scheduler_duration":      {Name: "vv.jobs.scheduler.duration", Type: "histogram", Unit: "s", Description: "Duration of one RunDue cycle, with no schedule identity", Source: "jobs.Scheduler.RunDue terminal cycle; each result count is bounded by jobs.MaxDefinitions", PrivacyClass: "safe", CardinalityBound: 10, Semconv: "none", Maturity: "development"},
+	"jobs_scheduler_results":       {Name: "vv.jobs.scheduler.results", Type: "histogram", Unit: "{placement}", Description: "Due, placed, existing and conflict counts from one scheduler cycle", Source: "jobs.Scheduler.RunDue terminal cycle; each result count is bounded by jobs.MaxDefinitions", PrivacyClass: "safe", CardinalityBound: 4, Semconv: "none", Maturity: "development"},
+	"jobs_worker_admission":        {Name: "vv.jobs.worker.admission", Type: "counter", Unit: "{observation}", Description: "Admission observations by closed outcome and signal", Source: "jobs.WorkerObserver.Observe", PrivacyClass: "safe", CardinalityBound: 8, Semconv: "none", Maturity: "development"},
+	"jobs_worker_bytes":            {Name: "vv.jobs.worker.bytes", Type: "histogram", Unit: "By", Description: "Record bytes reported by claim and recovery operations", Source: "jobs.WorkerObserver.Observe", PrivacyClass: "safe", CardinalityBound: 18, Semconv: "none", Maturity: "development"},
+	"jobs_worker_delivery_results": {Name: "vv.jobs.worker.delivery_results", Type: "counter", Unit: "{delivery}", Description: "Delivery result item counts for successful renew and apply calls", Source: "jobs.WorkerObserver.Observe; WorkerDeliveryResultCount requires Items 1..jobs.MaxClaimItems", PrivacyClass: "safe", CardinalityBound: 13, Semconv: "none", Maturity: "development"},
+	"jobs_worker_dispositions":     {Name: "vv.jobs.worker.dispositions", Type: "counter", Unit: "{delivery}", Description: "Delivery apply calls with validated command/disposition/reason; not a claim that mutation applied", Source: "jobs.WorkerObserver.Observe after OT-C05 projects disposition.Reason for nonzero dispositions, command.Reason otherwise", PrivacyClass: "safe", CardinalityBound: 42, Semconv: "none", Maturity: "development"},
+	"jobs_worker_duration":         {Name: "vv.jobs.worker.operation.duration", Type: "histogram", Unit: "s", Description: "Elapsed worker control-plane operations; no polling spans", Source: "jobs.WorkerObserver.Observe WorkerEvent.Elapsed must be positive; zero can mean a failed clock sample and is omitted until the source has explicit elapsed presence.", PrivacyClass: "safe", CardinalityBound: 36, Semconv: "none", Maturity: "development"},
+	"jobs_worker_items":            {Name: "vv.jobs.worker.items", Type: "histogram", Unit: "{item}", Description: "Items reported by one worker operation", Source: "jobs.WorkerObserver.Observe", PrivacyClass: "safe", CardinalityBound: 32, Semconv: "none", Maturity: "development"},
+	"jobs_worker_operations":       {Name: "vv.jobs.worker.operations", Type: "counter", Unit: "{operation}", Description: "Worker control-plane events with closed operation and outcome", Source: "jobs.WorkerObserver.Observe", PrivacyClass: "safe", CardinalityBound: 45, Semconv: "none", Maturity: "development"},
+	"jobs_worker_released":         {Name: "vv.jobs.worker.recovery.released", Type: "histogram", Unit: "{item}", Description: "Delivery leases released by one successful recovery result, not current queue depth", Source: "jobs.WorkerEvent.Released and More for completed or empty recover result", PrivacyClass: "safe", CardinalityBound: 3, Semconv: "none", Maturity: "development"},
+	"remote_duration":              {Name: "vv.remote.duration", Type: "histogram", Unit: "s", Description: "Duration of a logical remote call, excluding rows or wire transport lifetime", Source: "remote.Transport.Do", PrivacyClass: "safe", CardinalityBound: 80, Semconv: "none", Maturity: "development"},
+	"runtime_duration":             {Name: "vv.runtime.operation.duration", Type: "histogram", Unit: "s", Description: "Duration of completed run and drain operations", Source: "runtime.LifecycleObserver.ObservedLifecycle", PrivacyClass: "safe", CardinalityBound: 180, Semconv: "none", Maturity: "development"},
+	"runtime_operations":           {Name: "vv.runtime.operations", Type: "counter", Unit: "{operation}", Description: "Completed run and drain operations", Source: "runtime.LifecycleObserver.ObservedLifecycle", PrivacyClass: "safe", CardinalityBound: 180, Semconv: "none", Maturity: "development"},
+	"runtime_periodic_duration":    {Name: "vv.runtime.periodic.duration", Type: "histogram", Unit: "s", Description: "Duration of one periodic pass", Source: "runtime.PeriodicSpec.Pass", PrivacyClass: "safe", CardinalityBound: 10, Semconv: "none", Maturity: "development"},
+	"runtime_transitions":          {Name: "vv.runtime.transitions", Type: "counter", Unit: "{transition}", Description: "Actual runner phase transitions; constructor-only idle is omitted", Source: "runtime.Observer.Observed", PrivacyClass: "safe", CardinalityBound: 27, Semconv: "none", Maturity: "development"},
+	"storage_cleanup_removed":      {Name: "vv.storage.cleanup.removed", Type: "histogram", Unit: "{item}", Description: "Expired staged objects removed by one successful cleanup result", Source: "storage.CleanupResult.Removed with More after successful storage.Store.CleanupExpired Numeric range is 0..storage.MaxCleanupLimit (1000); larger raw results are not admitted.", PrivacyClass: "safe", CardinalityBound: 2, Semconv: "none", Maturity: "development"},
+	"storage_duration":             {Name: "vv.storage.operation.duration", Type: "histogram", Unit: "s", Description: "Time until a storage method returns, excluding returned stream lifetime", Source: "storage.Store", PrivacyClass: "safe", CardinalityBound: 90, Semconv: "none", Maturity: "development"},
+	"storage_operation_bytes":      {Name: "vv.storage.operation.bytes", Type: "histogram", Unit: "By", Description: "Successfully persisted bytes returned by Put Info.Size or Stage Staged.Info.Size", Source: "storage.Store.Put returned Info.Size / storage.Store.Stage returned Staged.Info.Size; no reader wrapping", PrivacyClass: "safe", CardinalityBound: 2, Semconv: "none", Maturity: "development"},
+	"storage_stream_bytes":         {Name: "vv.storage.stream.bytes", Type: "histogram", Unit: "By", Description: "Valid bytes returned before stream termination; omitted after an invalid Reader count or cumulative overflow", Source: "vvotel.StorageStream Read results admitted only when 0 <= n <= len(p) with checked int64 accumulation, Close and Unwrap", PrivacyClass: "safe", CardinalityBound: 12, Semconv: "none", Maturity: "development"},
+	"storage_stream_duration":      {Name: "vv.storage.stream.duration", Type: "histogram", Unit: "s", Description: "Stream lifetime from first Read or Close until termination", Source: "io.ReadCloser and explicit Unwrap", PrivacyClass: "safe", CardinalityBound: 12, Semconv: "none", Maturity: "development"},
 }
 
 const (
-	AttrCacheLayer       = attribute.Key("vv.cache.layer")
-	AttrComponent        = attribute.Key("vv.component")
-	AttrErrorCode        = attribute.Key("vv.error.code")
-	AttrErrorType        = attribute.Key("error.type")
-	AttrOperationName    = attribute.Key("vv.operation.name")
-	AttrOperationOutcome = attribute.Key("vv.operation.outcome")
-	AttrResourceName     = attribute.Key("vv.resource.name")
+	AttrAdmissionSignal                        = attribute.Key("vv.jobs.admission.signal")
+	AttrCacheLayer                             = attribute.Key("vv.cache.layer")
+	AttrCommandKind                            = attribute.Key("vv.jobs.command.kind")
+	AttrComponent                              = attribute.Key("vv.component")
+	AttrControl                                = attribute.Key("vv.jobs.delivery.control")
+	AttrDisposition                            = attribute.Key("vv.jobs.disposition")
+	AttrDurability                             = attribute.Key("vv.runtime.durability")
+	AttrErrorCode                              = attribute.Key("vv.error.code")
+	AttrErrorType                              = attribute.Key("error.type")
+	AttrFailure                                = attribute.Key("vv.jobs.failure")
+	AttrImportance                             = attribute.Key("vv.health.importance")
+	AttrMemoized                               = attribute.Key("vv.cache.memoized")
+	AttrMore                                   = attribute.Key("vv.operation.more")
+	AttrMutation                               = attribute.Key("vv.jobs.delivery.mutation")
+	AttrOperationName                          = attribute.Key("vv.operation.name")
+	AttrOperationOutcome                       = attribute.Key("vv.operation.outcome")
+	AttrPhase                                  = attribute.Key("vv.runtime.phase")
+	AttrPlacement                              = attribute.Key("vv.runtime.placement")
+	AttrReason                                 = attribute.Key("vv.reason")
+	AttrResourceName                           = attribute.Key("vv.resource.name")
+	AttrResultKind                             = attribute.Key("vv.jobs.scheduler.result")
+	AttrState                                  = attribute.Key("vv.health.state")
+	MaxResourceNameValues                      = 32
+	MaxResourceNameBytes                       = 64
+	ComponentAuthRefusal                       = "auth_refusal"
+	OpAuthRefusalRefuse                        = "refuse"
+	ComponentAuthentication                    = "authentication"
+	OpAuthenticationAuthenticate               = "authenticate"
+	ComponentCache                             = "cache"
+	OpCacheLookup                              = "lookup"
+	OpCacheLookupMany                          = "lookup_many"
+	OpCacheLoad                                = "load"
+	OpCacheLoadMany                            = "load_many"
+	OpCachePut                                 = "put"
+	OpCacheForget                              = "forget"
+	CacheLayerFacade                           = "facade"
+	ComponentCacheBackend                      = "cache_backend"
+	OpCacheBackendGet                          = "get"
+	OpCacheBackendGetMany                      = "get_many"
+	OpCacheBackendPut                          = "put"
+	OpCacheBackendDelete                       = "delete"
+	OpCacheBackendEvict                        = "evict"
+	OpCacheBackendReset                        = "reset"
+	OpCacheBackendClose                        = "close"
+	CacheBackendLayerMemoryBackend             = "memory_backend"
+	ComponentCacheMemory                       = "cache_memory"
+	ComponentCommand                           = "command"
+	OpCommandList                              = "list"
+	OpCommandCount                             = "count"
+	OpCommandGet                               = "get"
+	OpCommandCreate                            = "create"
+	OpCommandUpdate                            = "update"
+	OpCommandReplace                           = "replace"
+	OpCommandDelete                            = "delete"
+	OpCommandDeleteMany                        = "delete_many"
+	OpCommandRestore                           = "restore"
+	OpCommandRestoreMany                       = "restore_many"
+	ComponentCrudSource                        = "crud_source"
+	OpCrudSourceExec                           = "exec"
+	OpCrudSourceQuery                          = "query"
+	OpCrudSourceBegin                          = "begin"
+	OpCrudSourceCommit                         = "commit"
+	OpCrudSourceRollback                       = "rollback"
+	OpCrudSourceUnsafeBulkInsert               = "unsafe_bulk_insert"
+	ComponentHealth                            = "health"
+	OpHealthCheck                              = "check"
+	ComponentJobsEnqueue                       = "jobs_enqueue"
+	OpJobsEnqueueEnqueue                       = "enqueue"
+	OpJobsEnqueueEnqueueOnce                   = "enqueue_once"
+	OpJobsEnqueueEnqueueIn                     = "enqueue_in"
+	OpJobsEnqueueEnqueueOnceIn                 = "enqueue_once_in"
+	ComponentJobsHandler                       = "jobs_handler"
+	OpJobsHandlerHandle                        = "handle"
+	ComponentJobsPropagation                   = "jobs_propagation"
+	OpJobsPropagationInject                    = "inject"
+	OpJobsPropagationExtract                   = "extract"
+	ComponentJobsScheduler                     = "jobs_scheduler"
+	OpJobsSchedulerRunDue                      = "run_due"
+	ComponentJobsWorker                        = "jobs_worker"
+	OpJobsWorkerRun                            = "run"
+	OpJobsWorkerDrain                          = "drain"
+	OpJobsWorkerClaim                          = "claim"
+	OpJobsWorkerRecover                        = "recover"
+	OpJobsWorkerRenew                          = "renew"
+	OpJobsWorkerApply                          = "apply"
+	OpJobsWorkerAdmission                      = "admission"
+	ComponentRemote                            = "remote"
+	OpRemoteList                               = "list"
+	OpRemoteCount                              = "count"
+	OpRemoteGet                                = "get"
+	OpRemoteCreate                             = "create"
+	OpRemoteUpdate                             = "update"
+	OpRemoteReplace                            = "replace"
+	OpRemoteDelete                             = "delete"
+	OpRemoteDeleteMany                         = "delete_many"
+	ComponentRuntimeLifecycle                  = "runtime_lifecycle"
+	OpRuntimeLifecycleRun                      = "run"
+	OpRuntimeLifecycleDrain                    = "drain"
+	ComponentRuntimePeriodic                   = "runtime_periodic"
+	OpRuntimePeriodicPass                      = "pass"
+	ComponentStorage                           = "storage"
+	OpStoragePut                               = "put"
+	OpStorageOpen                              = "open"
+	OpStorageHead                              = "head"
+	OpStorageDelete                            = "delete"
+	OpStorageStage                             = "stage"
+	OpStoragePromote                           = "promote"
+	OpStorageAbort                             = "abort"
+	OpStorageCleanupExpired                    = "cleanup_expired"
+	OpStorageTemporaryUrl                      = "temporary_url"
+	ComponentStorageStream                     = "storage_stream"
+	OpStorageStreamConsume                     = "consume"
+	ErrorCodeBadQuery                          = "bad_query"
+	ErrorCodeCheck                             = "check"
+	ErrorCodeConflict                          = "conflict"
+	ErrorCodeDeadlock                          = "deadlock"
+	ErrorCodeExclusion                         = "exclusion"
+	ErrorCodeForbidden                         = "forbidden"
+	ErrorCodeForeignKey                        = "foreign_key"
+	ErrorCodeInternal                          = "internal"
+	ErrorCodeInvalidEnum                       = "invalid_enum"
+	ErrorCodeInvalidFormat                     = "invalid_format"
+	ErrorCodeInvalidId                         = "invalid_id"
+	ErrorCodeLockTimeout                       = "lock_timeout"
+	ErrorCodeMalformedBody                     = "malformed_body"
+	ErrorCodeMethodNotAllowed                  = "method_not_allowed"
+	ErrorCodeNotFound                          = "not_found"
+	ErrorCodeNotUnique                         = "not_unique"
+	ErrorCodeOutOfRange                        = "out_of_range"
+	ErrorCodeRequired                          = "required"
+	ErrorCodeRestrict                          = "restrict"
+	ErrorCodeSchemaNotReady                    = "schema_not_ready"
+	ErrorCodeSerializationFailure              = "serialization_failure"
+	ErrorCodeStaleVersion                      = "stale_version"
+	ErrorCodeTooLarge                          = "too_large"
+	ErrorCodeTooLong                           = "too_long"
+	ErrorCodeTransactionAborted                = "transaction_aborted"
+	ErrorCodeUnauthenticated                   = "unauthenticated"
+	ErrorCodeUnavailable                       = "unavailable"
+	ErrorCodeUnique                            = "unique"
+	ErrorCodeUnknownField                      = "unknown_field"
+	ErrorTypeCanceled                          = "canceled"
+	ErrorTypeConflict                          = "conflict"
+	ErrorTypeForbidden                         = "forbidden"
+	ErrorTypeInternal                          = "internal"
+	ErrorTypeInvalid                           = "invalid"
+	ErrorTypeNotFound                          = "not_found"
+	ErrorTypePanic                             = "panic"
+	ErrorTypeStaleVersion                      = "stale_version"
+	ErrorTypeTimeout                           = "timeout"
+	OutcomeCanceled                            = "canceled"
+	OutcomeError                               = "error"
+	OutcomeGoroutineExit                       = "goroutine_exit"
+	OutcomeOk                                  = "ok"
+	OutcomeTimeout                             = "timeout"
+	LogSpanIDKey                               = "span_id"
+	LogTraceFlagsKey                           = "trace_flags"
+	LogTraceIDKey                              = "trace_id"
+	EventAuthRefusal                           = "auth.refusal"
+	MetricAuthRefusals                         = "vv.auth.refusals"
+	MetricAuthRefusalsDescription              = "Authentication refusals by closed reason, independent of event sampling"
+	MetricAuthRefusalsUnit                     = "{refusal}"
+	MetricAuthenticationDuration               = "vv.authentication.duration"
+	MetricAuthenticationDurationDescription    = "Duration of the complete authenticator chain"
+	MetricAuthenticationDurationUnit           = "s"
+	SpanAuthentication                         = "vv.auth authenticate"
+	EventCacheBackend                          = "cache_backend.event"
+	MetricCacheChargedBytes                    = "vv.cache.event.charged_bytes"
+	MetricCacheChargedBytesDescription         = "Charged bytes reported by a memory backend phase event; field-present zero sizes are recorded"
+	MetricCacheChargedBytesUnit                = "By"
+	MetricCacheEncodedBytes                    = "vv.cache.event.encoded_bytes"
+	MetricCacheEncodedBytesDescription         = "Encoded bytes reported by a facade phase event; field-present zero sizes are recorded"
+	MetricCacheEncodedBytesUnit                = "By"
+	EventCache                                 = "cache.event"
+	MetricCacheEvents                          = "vv.cache.events"
+	MetricCacheEventsDescription               = "Terminal cache phase events with closed reasons and facade memoization"
+	MetricCacheEventsUnit                      = "{event}"
+	MetricCacheItems                           = "vv.cache.event.items"
+	MetricCacheItemsDescription                = "Items affected by one facade or memory-backend phase event"
+	MetricCacheItemsUnit                       = "{item}"
+	MetricCacheMemoryActive                    = "vv.cache.memory.active_backends"
+	MetricCacheMemoryActiveDescription         = "Count of active backends in the fixed registration"
+	MetricCacheMemoryActiveUnit                = "{backend}"
+	MetricCacheMemoryByteLimit                 = "vv.cache.memory.byte_limit"
+	MetricCacheMemoryByteLimitDescription      = "Aggregate declared byte limits of active backends; omitted when none is active"
+	MetricCacheMemoryByteLimitUnit             = "By"
+	MetricCacheMemoryBytes                     = "vv.cache.memory.charged_bytes"
+	MetricCacheMemoryBytesDescription          = "Aggregate charged bytes of active registered backends; omitted when none is active"
+	MetricCacheMemoryBytesUnit                 = "By"
+	MetricCacheMemoryClosed                    = "vv.cache.memory.closed_backends"
+	MetricCacheMemoryClosedDescription         = "Count of closed backends in the fixed registration"
+	MetricCacheMemoryClosedUnit                = "{backend}"
+	MetricCacheMemoryEntries                   = "vv.cache.memory.entries"
+	MetricCacheMemoryEntriesDescription        = "Aggregate resident entries of active registered backends; omitted when none is active"
+	MetricCacheMemoryEntriesUnit               = "{entry}"
+	MetricCacheMemoryEntryLimit                = "vv.cache.memory.entry_limit"
+	MetricCacheMemoryEntryLimitDescription     = "Aggregate declared entry limits of active backends; omitted when none is active"
+	MetricCacheMemoryEntryLimitUnit            = "{entry}"
+	MetricCacheOperations                      = "vv.cache.operations"
+	MetricCacheOperationsDescription           = "Count of cache terminal phase events"
+	MetricCacheOperationsUnit                  = "{operation}"
+	MetricCachePayloadBytes                    = "vv.cache.event.payload_bytes"
+	MetricCachePayloadBytesDescription         = "Payload bytes reported by a facade phase event; field-present zero sizes are recorded"
+	MetricCachePayloadBytesUnit                = "By"
+	MetricCacheValueBytes                      = "vv.cache.event.value_bytes"
+	MetricCacheValueBytesDescription           = "Value bytes reported by a memory backend phase event; field-present zero sizes are recorded"
+	MetricCacheValueBytesUnit                  = "By"
+	MetricCommandDuration                      = "vv.command.duration"
+	MetricCommandDurationDescription           = "Duration of service command operations in seconds"
+	MetricCommandDurationUnit                  = "s"
+	SpanCommand                                = "vv.command"
+	MetricCrudSourceDuration                   = "vv.crud_source.operation.duration"
+	MetricCrudSourceDurationDescription        = "Duration of a logical crud_source call, excluding rows or wire transport lifetime"
+	MetricCrudSourceDurationUnit               = "s"
+	SpanCrudSource                             = "vv.crud_source"
+	MetricHealthChecks                         = "vv.health.checks"
+	MetricHealthChecksDescription              = "Probe invocations already initiated by the health registry"
+	MetricHealthChecksUnit                     = "{check}"
+	MetricHealthDuration                       = "vv.health.check.duration"
+	MetricHealthDurationDescription            = "Duration of actual enabled probe invocations"
+	MetricHealthDurationUnit                   = "s"
+	SpanHealth                                 = "vv.health check"
+	MetricJobsEnqueueDuration                  = "vv.jobs.enqueue.duration"
+	MetricJobsEnqueueDurationDescription       = "Duration of one enqueue call; staged success does not assert commit"
+	MetricJobsEnqueueDurationUnit              = "s"
+	SpanJobsEnqueue                            = "vv.jobs"
+	SpanJobsEnqueueStaged                      = "vv.jobs"
+	MetricJobsHandlerAttempt                   = "vv.jobs.handler.attempt"
+	MetricJobsHandlerAttemptDescription        = "Attempt ordinal as a measurement, never a metric label"
+	MetricJobsHandlerAttemptUnit               = "{attempt}"
+	MetricJobsHandlerDuration                  = "vv.jobs.handler.duration"
+	MetricJobsHandlerDurationDescription       = "Duration of the handler body until return, excluding worker arbitration and final Apply"
+	MetricJobsHandlerDurationUnit              = "s"
+	SpanJobsHandler                            = "vv.jobs handle"
+	MetricJobsPropagation                      = "vv.jobs.propagation"
+	MetricJobsPropagationDescription           = "Trace Context capture and restoration results; trace degradation does not reject identity"
+	MetricJobsPropagationUnit                  = "{operation}"
+	MetricJobsQueueDelay                       = "vv.jobs.handler.queue_delay"
+	MetricJobsQueueDelayDescription            = "Time between eligibility and this handler invocation starting"
+	MetricJobsQueueDelayUnit                   = "s"
+	MetricJobsSchedulerCycles                  = "vv.jobs.scheduler.cycles"
+	MetricJobsSchedulerCyclesDescription       = "Completed scheduler cycles by bounded outcome"
+	MetricJobsSchedulerCyclesUnit              = "{cycle}"
+	MetricJobsSchedulerDuration                = "vv.jobs.scheduler.duration"
+	MetricJobsSchedulerDurationDescription     = "Duration of one RunDue cycle, with no schedule identity"
+	MetricJobsSchedulerDurationUnit            = "s"
+	MetricJobsSchedulerResults                 = "vv.jobs.scheduler.results"
+	MetricJobsSchedulerResultsDescription      = "Due, placed, existing and conflict counts from one scheduler cycle"
+	MetricJobsSchedulerResultsUnit             = "{placement}"
+	MetricJobsWorkerAdmission                  = "vv.jobs.worker.admission"
+	MetricJobsWorkerAdmissionDescription       = "Admission observations by closed outcome and signal"
+	MetricJobsWorkerAdmissionUnit              = "{observation}"
+	MetricJobsWorkerBytes                      = "vv.jobs.worker.bytes"
+	MetricJobsWorkerBytesDescription           = "Record bytes reported by claim and recovery operations"
+	MetricJobsWorkerBytesUnit                  = "By"
+	MetricJobsWorkerDeliveryResults            = "vv.jobs.worker.delivery_results"
+	MetricJobsWorkerDeliveryResultsDescription = "Delivery result item counts for successful renew and apply calls"
+	MetricJobsWorkerDeliveryResultsUnit        = "{delivery}"
+	MetricJobsWorkerDispositions               = "vv.jobs.worker.dispositions"
+	MetricJobsWorkerDispositionsDescription    = "Delivery apply calls with validated command/disposition/reason; not a claim that mutation applied"
+	MetricJobsWorkerDispositionsUnit           = "{delivery}"
+	MetricJobsWorkerDuration                   = "vv.jobs.worker.operation.duration"
+	MetricJobsWorkerDurationDescription        = "Elapsed worker control-plane operations; no polling spans"
+	MetricJobsWorkerDurationUnit               = "s"
+	MetricJobsWorkerItems                      = "vv.jobs.worker.items"
+	MetricJobsWorkerItemsDescription           = "Items reported by one worker operation"
+	MetricJobsWorkerItemsUnit                  = "{item}"
+	MetricJobsWorkerOperations                 = "vv.jobs.worker.operations"
+	MetricJobsWorkerOperationsDescription      = "Worker control-plane events with closed operation and outcome"
+	MetricJobsWorkerOperationsUnit             = "{operation}"
+	MetricJobsWorkerReleased                   = "vv.jobs.worker.recovery.released"
+	MetricJobsWorkerReleasedDescription        = "Delivery leases released by one successful recovery result, not current queue depth"
+	MetricJobsWorkerReleasedUnit               = "{item}"
+	MetricRemoteDuration                       = "vv.remote.duration"
+	MetricRemoteDurationDescription            = "Duration of a logical remote call, excluding rows or wire transport lifetime"
+	MetricRemoteDurationUnit                   = "s"
+	SpanRemote                                 = "vv.remote"
+	MetricRuntimeDuration                      = "vv.runtime.operation.duration"
+	MetricRuntimeDurationDescription           = "Duration of completed run and drain operations"
+	MetricRuntimeDurationUnit                  = "s"
+	MetricRuntimeOperations                    = "vv.runtime.operations"
+	MetricRuntimeOperationsDescription         = "Completed run and drain operations"
+	MetricRuntimeOperationsUnit                = "{operation}"
+	MetricRuntimePeriodicDuration              = "vv.runtime.periodic.duration"
+	MetricRuntimePeriodicDurationDescription   = "Duration of one periodic pass"
+	MetricRuntimePeriodicDurationUnit          = "s"
+	SpanRuntimePeriodic                        = "vv.runtime pass"
+	MetricRuntimeTransitions                   = "vv.runtime.transitions"
+	MetricRuntimeTransitionsDescription        = "Actual runner phase transitions; constructor-only idle is omitted"
+	MetricRuntimeTransitionsUnit               = "{transition}"
+	MetricStorageCleanupRemoved                = "vv.storage.cleanup.removed"
+	MetricStorageCleanupRemovedDescription     = "Expired staged objects removed by one successful cleanup result"
+	MetricStorageCleanupRemovedUnit            = "{item}"
+	MetricStorageDuration                      = "vv.storage.operation.duration"
+	MetricStorageDurationDescription           = "Time until a storage method returns, excluding returned stream lifetime"
+	MetricStorageDurationUnit                  = "s"
+	MetricStorageOperationBytes                = "vv.storage.operation.bytes"
+	MetricStorageOperationBytesDescription     = "Successfully persisted bytes returned by Put Info.Size or Stage Staged.Info.Size"
+	MetricStorageOperationBytesUnit            = "By"
+	SpanStorage                                = "vv.storage"
+	MetricStorageStreamBytes                   = "vv.storage.stream.bytes"
+	MetricStorageStreamBytesDescription        = "Valid bytes returned before stream termination; omitted after an invalid Reader count or cumulative overflow"
+	MetricStorageStreamBytesUnit               = "By"
+	MetricStorageStreamDuration                = "vv.storage.stream.duration"
+	MetricStorageStreamDurationDescription     = "Stream lifetime from first Read or Close until termination"
+	MetricStorageStreamDurationUnit            = "s"
+	SpanStorageStream                          = "vv.storage stream"
 )
 
-const MaxResourceNameValues = 32
+func ValidResourceName(value string) bool {
+	if len(value) == 0 || len(value) > MaxResourceNameBytes || !utf8.ValidString(value) {
+		return false
+	}
+	for _, r := range value {
+		if !unicode.IsLetter(r) && !unicode.IsDigit(r) && r != '.' && r != '_' && r != '-' {
+			return false
+		}
+	}
+	return true
+}
 
-const (
-	ComponentCommand      = "command"
-	ComponentStorage      = "storage"
-	ComponentCache        = "cache"
-	ComponentCacheBackend = "cache_backend"
-)
+func MetricAuthenticationDurationBoundaries() []float64 {
+	return []float64{0.005, 0.01, 0.025, 0.05, 0.075, 0.1, 0.25, 0.5, 0.75, 1, 2.5, 5, 7.5, 10}
+}
 
-const (
-	OpCacheLookup           = "lookup"
-	OpCacheLookupMany       = "lookup_many"
-	OpCacheLoad             = "load"
-	OpCacheLoadMany         = "load_many"
-	OpCachePut              = "put"
-	OpCacheForget           = "forget"
-	OpCacheBackendGet       = "get"
-	OpCacheBackendGetMany   = "get_many"
-	OpCacheBackendPut       = "put"
-	OpCacheBackendDelete    = "delete"
-	OpCacheBackendEvict     = "evict"
-	OpCacheBackendReset     = "reset"
-	OpCacheBackendClose     = "close"
-	OpCommandList           = "list"
-	OpCommandCount          = "count"
-	OpCommandGet            = "get"
-	OpCommandCreate         = "create"
-	OpCommandUpdate         = "update"
-	OpCommandReplace        = "replace"
-	OpCommandDelete         = "delete"
-	OpCommandDeleteMany     = "delete_many"
-	OpCommandRestore        = "restore"
-	OpCommandRestoreMany    = "restore_many"
-	OpStoragePut            = "put"
-	OpStorageOpen           = "open"
-	OpStorageHead           = "head"
-	OpStorageDelete         = "delete"
-	OpStorageStage          = "stage"
-	OpStoragePromote        = "promote"
-	OpStorageAbort          = "abort"
-	OpStorageCleanupExpired = "cleanup_expired"
-	OpStorageTemporaryUrl   = "temporary_url"
-)
+func MetricCacheChargedBytesBoundaries() []float64 {
+	return []float64{0, 64, 256, 1024, 4096, 16384, 65536, 262144, 1.048576e+06}
+}
 
-const (
-	OutcomeOk       = "ok"
-	OutcomeError    = "error"
-	OutcomeCanceled = "canceled"
-	OutcomeTimeout  = "timeout"
-)
+func MetricCacheEncodedBytesBoundaries() []float64 {
+	return []float64{0, 64, 256, 1024, 4096, 16384, 65536, 262144, 1.048576e+06}
+}
 
-const (
-	ErrorTypeInvalid      = "invalid"
-	ErrorTypeNotFound     = "not_found"
-	ErrorTypeForbidden    = "forbidden"
-	ErrorTypeConflict     = "conflict"
-	ErrorTypeStaleVersion = "stale_version"
-	ErrorTypeInternal     = "internal"
-	ErrorTypeCanceled     = "canceled"
-	ErrorTypeTimeout      = "timeout"
-	ErrorTypePanic        = "panic"
-)
+func MetricCacheItemsBoundaries() []float64 {
+	return []float64{0, 1, 2, 4, 8, 16, 32, 64, 128, 256, 1024}
+}
 
-const (
-	ErrorCodeUnique               = "unique"
-	ErrorCodeNotUnique            = "not_unique"
-	ErrorCodeForeignKey           = "foreign_key"
-	ErrorCodeRestrict             = "restrict"
-	ErrorCodeRequired             = "required"
-	ErrorCodeCheck                = "check"
-	ErrorCodeExclusion            = "exclusion"
-	ErrorCodeTooLong              = "too_long"
-	ErrorCodeOutOfRange           = "out_of_range"
-	ErrorCodeInvalidFormat        = "invalid_format"
-	ErrorCodeInvalidEnum          = "invalid_enum"
-	ErrorCodeStaleVersion         = "stale_version"
-	ErrorCodeMalformedBody        = "malformed_body"
-	ErrorCodeInvalidId            = "invalid_id"
-	ErrorCodeUnknownField         = "unknown_field"
-	ErrorCodeBadQuery             = "bad_query"
-	ErrorCodeTooLarge             = "too_large"
-	ErrorCodeConflict             = "conflict"
-	ErrorCodeNotFound             = "not_found"
-	ErrorCodeForbidden            = "forbidden"
-	ErrorCodeMethodNotAllowed     = "method_not_allowed"
-	ErrorCodeUnauthenticated      = "unauthenticated"
-	ErrorCodeDeadlock             = "deadlock"
-	ErrorCodeSerializationFailure = "serialization_failure"
-	ErrorCodeLockTimeout          = "lock_timeout"
-	ErrorCodeTransactionAborted   = "transaction_aborted"
-	ErrorCodeUnavailable          = "unavailable"
-	ErrorCodeSchemaNotReady       = "schema_not_ready"
-	ErrorCodeInternal             = "internal"
-)
+func MetricCachePayloadBytesBoundaries() []float64 {
+	return []float64{0, 64, 256, 1024, 4096, 16384, 65536, 262144, 1.048576e+06}
+}
 
-const (
-	MetricCacheOperations            = "vv.cache.operations"
-	MetricCacheOperationsDescription = "Count of cache terminal phase events"
-	MetricCacheOperationsUnit        = "{operation}"
-	MetricCommandDuration            = "vv.command.duration"
-	MetricCommandDurationDescription = "Duration of service command operations in seconds"
-	MetricCommandDurationUnit        = "s"
-)
+func MetricCacheValueBytesBoundaries() []float64 {
+	return []float64{0, 64, 256, 1024, 4096, 16384, 65536, 262144, 1.048576e+06}
+}
 
-var defaultDurationBoundaries = []float64{
-	0.005,
-	0.01,
-	0.025,
-	0.05,
-	0.075,
-	0.1,
-	0.25,
-	0.5,
-	0.75,
-	1,
-	2.5,
-	5,
-	7.5,
-	10,
+func MetricCommandDurationBoundaries() []float64 {
+	return []float64{0.005, 0.01, 0.025, 0.05, 0.075, 0.1, 0.25, 0.5, 0.75, 1, 2.5, 5, 7.5, 10}
+}
+
+func MetricCrudSourceDurationBoundaries() []float64 {
+	return []float64{0.005, 0.01, 0.025, 0.05, 0.075, 0.1, 0.25, 0.5, 0.75, 1, 2.5, 5, 7.5, 10}
+}
+
+func MetricHealthDurationBoundaries() []float64 {
+	return []float64{0.005, 0.01, 0.025, 0.05, 0.075, 0.1, 0.25, 0.5, 0.75, 1, 2.5, 5, 7.5, 10}
+}
+
+func MetricJobsEnqueueDurationBoundaries() []float64 {
+	return []float64{0.005, 0.01, 0.025, 0.05, 0.075, 0.1, 0.25, 0.5, 0.75, 1, 2.5, 5, 7.5, 10}
+}
+
+func MetricJobsHandlerAttemptBoundaries() []float64 {
+	return []float64{1, 2, 4, 8, 16, 32, 64, 128, 256, 1024}
+}
+
+func MetricJobsHandlerDurationBoundaries() []float64 {
+	return []float64{0.005, 0.01, 0.025, 0.05, 0.075, 0.1, 0.25, 0.5, 0.75, 1, 2.5, 5, 7.5, 10}
+}
+
+func MetricJobsQueueDelayBoundaries() []float64 {
+	return []float64{0.005, 0.01, 0.025, 0.05, 0.075, 0.1, 0.25, 0.5, 0.75, 1, 2.5, 5, 7.5, 10}
+}
+
+func MetricJobsSchedulerDurationBoundaries() []float64 {
+	return []float64{0.005, 0.01, 0.025, 0.05, 0.075, 0.1, 0.25, 0.5, 0.75, 1, 2.5, 5, 7.5, 10}
+}
+
+func MetricJobsSchedulerResultsBoundaries() []float64 {
+	return []float64{0, 1, 2, 4, 8, 16, 32, 64, 128, 256, 1024, 4096}
+}
+
+func MetricJobsWorkerBytesBoundaries() []float64 {
+	return []float64{0, 64, 256, 1024, 4096, 16384, 65536, 262144, 1.048576e+06}
+}
+
+func MetricJobsWorkerDurationBoundaries() []float64 {
+	return []float64{0.005, 0.01, 0.025, 0.05, 0.075, 0.1, 0.25, 0.5, 0.75, 1, 2.5, 5, 7.5, 10}
+}
+
+func MetricJobsWorkerItemsBoundaries() []float64 {
+	return []float64{0, 1, 2, 4, 8, 16, 32, 64, 128, 256, 1000}
+}
+
+func MetricJobsWorkerReleasedBoundaries() []float64 {
+	return []float64{0, 1, 2, 4, 8, 16, 32, 64, 128, 256, 1000}
+}
+
+func MetricRemoteDurationBoundaries() []float64 {
+	return []float64{0.005, 0.01, 0.025, 0.05, 0.075, 0.1, 0.25, 0.5, 0.75, 1, 2.5, 5, 7.5, 10}
+}
+
+func MetricRuntimeDurationBoundaries() []float64 {
+	return []float64{0.005, 0.01, 0.025, 0.05, 0.075, 0.1, 0.25, 0.5, 0.75, 1, 2.5, 5, 7.5, 10}
+}
+
+func MetricRuntimePeriodicDurationBoundaries() []float64 {
+	return []float64{0.005, 0.01, 0.025, 0.05, 0.075, 0.1, 0.25, 0.5, 0.75, 1, 2.5, 5, 7.5, 10}
+}
+
+func MetricStorageCleanupRemovedBoundaries() []float64 {
+	return []float64{0, 1, 2, 4, 8, 16, 32, 64, 128, 256, 1000}
+}
+
+func MetricStorageDurationBoundaries() []float64 {
+	return []float64{0.005, 0.01, 0.025, 0.05, 0.075, 0.1, 0.25, 0.5, 0.75, 1, 2.5, 5, 7.5, 10}
+}
+
+func MetricStorageOperationBytesBoundaries() []float64 {
+	return []float64{0, 64, 256, 1024, 4096, 16384, 65536, 262144, 1.048576e+06}
+}
+
+func MetricStorageStreamBytesBoundaries() []float64 {
+	return []float64{0, 64, 256, 1024, 4096, 16384, 65536, 262144, 1.048576e+06}
+}
+
+func MetricStorageStreamDurationBoundaries() []float64 {
+	return []float64{0.005, 0.01, 0.025, 0.05, 0.075, 0.1, 0.25, 0.5, 0.75, 1, 2.5, 5, 7.5, 10}
+}
+
+var defaultDurationBoundaries = MetricCommandDurationBoundaries()
+
+func AuthRefusalReasonName(value string) (string, bool) {
+	switch value {
+	case "ambiguous_credential":
+		return "ambiguous_credential", true
+	case "guard_unusable":
+		return "guard_unusable", true
+	case "no_credential":
+		return "no_credential", true
+	case "no_principal":
+		return "no_principal", true
+	case "rejected":
+		return "rejected", true
+	default:
+		return "", false
+	}
+}
+
+func AuthenticationOperationsName(value string) (string, bool) {
+	switch value {
+	case "Authenticate":
+		return "authenticate", true
+	default:
+		return "", false
+	}
+}
+
+func AuthenticationOutcomeName(value string) (string, bool) {
+	switch value {
+	case "canceled":
+		return "canceled", true
+	case "error":
+		return "error", true
+	case "goroutine_exit":
+		return "goroutine_exit", true
+	case "ok":
+		return "ok", true
+	case "refused":
+		return "refused", true
+	case "timeout":
+		return "timeout", true
+	default:
+		return "", false
+	}
+}
+
+func CacheMemoizedName(value string) (string, bool) {
+	switch value {
+	case "false":
+		return "false", true
+	case "true":
+		return "true", true
+	default:
+		return "", false
+	}
 }
 
 func CacheOperationName(value string) (string, bool) {
@@ -223,6 +851,21 @@ func CacheOutcomeName(value string) (string, bool) {
 		return "stored", true
 	case "superseded":
 		return "superseded", true
+	default:
+		return "", false
+	}
+}
+
+func CacheReasonName(value string) (string, bool) {
+	switch value {
+	case "backend":
+		return "backend", true
+	case "corrupt":
+		return "corrupt", true
+	case "limit":
+		return "limit", true
+	case "runtime":
+		return "runtime", true
 	default:
 		return "", false
 	}
@@ -272,75 +915,1883 @@ func CacheBackendOutcomeName(value string) (string, bool) {
 	}
 }
 
-func AllowedErrorCode(value string) (string, bool) {
+func CacheBackendReasonName(value string) (string, bool) {
 	switch value {
-	case "unique":
-		return "unique", true
-	case "not_unique":
-		return "not_unique", true
-	case "foreign_key":
-		return "foreign_key", true
-	case "restrict":
-		return "restrict", true
-	case "required":
-		return "required", true
-	case "check":
-		return "check", true
-	case "exclusion":
-		return "exclusion", true
-	case "too_long":
-		return "too_long", true
-	case "out_of_range":
-		return "out_of_range", true
-	case "invalid_format":
-		return "invalid_format", true
-	case "invalid_enum":
-		return "invalid_enum", true
-	case "stale_version":
-		return "stale_version", true
-	case "malformed_body":
-		return "malformed_body", true
-	case "invalid_id":
-		return "invalid_id", true
-	case "unknown_field":
-		return "unknown_field", true
-	case "bad_query":
-		return "bad_query", true
-	case "too_large":
-		return "too_large", true
-	case "conflict":
-		return "conflict", true
-	case "not_found":
-		return "not_found", true
-	case "forbidden":
-		return "forbidden", true
-	case "method_not_allowed":
-		return "method_not_allowed", true
-	case "unauthenticated":
-		return "unauthenticated", true
-	case "deadlock":
-		return "deadlock", true
-	case "serialization_failure":
-		return "serialization_failure", true
-	case "lock_timeout":
-		return "lock_timeout", true
-	case "transaction_aborted":
-		return "transaction_aborted", true
-	case "unavailable":
-		return "unavailable", true
-	case "schema_not_ready":
-		return "schema_not_ready", true
-	case "internal":
-		return "internal", true
+	case "batch_item_limit":
+		return "batch_item_limit", true
+	case "batch_total_limit":
+		return "batch_total_limit", true
+	case "close":
+		return "close", true
+	case "expired":
+		return "expired", true
+	case "max_bytes":
+		return "max_bytes", true
+	case "max_entries":
+		return "max_entries", true
+	case "max_item_bytes":
+		return "max_item_bytes", true
+	case "read_limit":
+		return "read_limit", true
+	case "reset":
+		return "reset", true
 	default:
 		return "", false
 	}
 }
 
-func CommandSpanName(op string) string {
-	return "vv.command" + " " + op
+func CommandFailureName(value string) (string, bool) {
+	switch value {
+	case "bad_request":
+		return "invalid", true
+	case "conflict":
+		return "conflict", true
+	case "forbidden":
+		return "forbidden", true
+	case "internal":
+		return "internal", true
+	case "method_not_allowed":
+		return "invalid", true
+	case "not_found":
+		return "not_found", true
+	case "retryable":
+		return "internal", true
+	case "too_large":
+		return "invalid", true
+	case "unauthorized":
+		return "forbidden", true
+	case "validation":
+		return "invalid", true
+	default:
+		return "internal", true
+	}
 }
 
-func StorageSpanName(op string) string {
-	return "vv.storage" + " " + op
+func CommandOperationsName(value string) (string, bool) {
+	switch value {
+	case "Count":
+		return "count", true
+	case "Create":
+		return "create", true
+	case "Delete":
+		return "delete", true
+	case "DeleteMany":
+		return "delete_many", true
+	case "Get":
+		return "get", true
+	case "List":
+		return "list", true
+	case "Replace":
+		return "replace", true
+	case "Restore":
+		return "restore", true
+	case "RestoreMany":
+		return "restore_many", true
+	case "Update":
+		return "update", true
+	default:
+		return "", false
+	}
+}
+
+func CrudSourceOperationsName(value string) (string, bool) {
+	switch value {
+	case "Begin":
+		return "begin", true
+	case "Commit":
+		return "commit", true
+	case "Exec":
+		return "exec", true
+	case "Query":
+		return "query", true
+	case "Rollback":
+		return "rollback", true
+	case "UnsafeBulkInsert":
+		return "unsafe_bulk_insert", true
+	default:
+		return "", false
+	}
+}
+
+func HealthImportanceName(value string) (string, bool) {
+	switch value {
+	case "degrading":
+		return "degrading", true
+	case "informational":
+		return "informational", true
+	case "required":
+		return "required", true
+	default:
+		return "", false
+	}
+}
+
+func HealthOperationsName(value string) (string, bool) {
+	switch value {
+	case "Check":
+		return "check", true
+	default:
+		return "", false
+	}
+}
+
+func HealthStateName(value string) (string, bool) {
+	switch value {
+	case "failing":
+		return "failing", true
+	case "passing":
+		return "passing", true
+	default:
+		return "", false
+	}
+}
+
+func JobsOnceOutcomeName(value string) (string, bool) {
+	switch value {
+	case "conflict":
+		return "conflict", true
+	case "created":
+		return "created", true
+	case "existing_same_payload":
+		return "existing_same_payload", true
+	default:
+		return "", false
+	}
+}
+
+func JobsEnqueueOnceOutcomeName(value string) (string, bool) {
+	switch value {
+	case "conflict":
+		return "conflict", true
+	case "created":
+		return "created", true
+	case "existing_same_payload":
+		return "existing_same_payload", true
+	default:
+		return "", false
+	}
+}
+
+func JobsEnqueueOperationsName(value string) (string, bool) {
+	switch value {
+	case "Enqueue":
+		return "enqueue", true
+	case "EnqueueIn":
+		return "enqueue_in", true
+	case "EnqueueOnce":
+		return "enqueue_once", true
+	case "EnqueueOnceIn":
+		return "enqueue_once_in", true
+	default:
+		return "", false
+	}
+}
+
+func JobsEnqueueOutcomeName(value string) (string, bool) {
+	switch value {
+	case "canceled":
+		return "canceled", true
+	case "conflict":
+		return "conflict", true
+	case "created":
+		return "created", true
+	case "error":
+		return "error", true
+	case "existing_same_payload":
+		return "existing_same_payload", true
+	case "goroutine_exit":
+		return "goroutine_exit", true
+	case "ok":
+		return "ok", true
+	case "staged":
+		return "staged", true
+	case "timeout":
+		return "timeout", true
+	default:
+		return "", false
+	}
+}
+
+func JobsPlacementOutcomeName(value string) (string, bool) {
+	switch value {
+	case "collapsed":
+		return "collapsed", true
+	case "conflict":
+		return "conflict", true
+	case "created":
+		return "created", true
+	case "existing":
+		return "existing", true
+	case "existing_same_payload":
+		return "existing_same_payload", true
+	default:
+		return "", false
+	}
+}
+
+func JobsPropagationOperationName(value string) (string, bool) {
+	switch value {
+	case "extract":
+		return "extract", true
+	case "inject":
+		return "inject", true
+	default:
+		return "", false
+	}
+}
+
+func JobsPropagationOutcomeName(value string) (string, bool) {
+	switch value {
+	case "absent":
+		return "absent", true
+	case "extracted":
+		return "extracted", true
+	case "injected":
+		return "injected", true
+	case "traceparent_dropped":
+		return "traceparent_dropped", true
+	case "tracestate_dropped":
+		return "tracestate_dropped", true
+	default:
+		return "", false
+	}
+}
+
+func JobsSchedulerOperationName(value string) (string, bool) {
+	switch value {
+	case "run_due":
+		return "run_due", true
+	default:
+		return "", false
+	}
+}
+
+func JobsSchedulerResultName(value string) (string, bool) {
+	switch value {
+	case "conflicts":
+		return "conflicts", true
+	case "due":
+		return "due", true
+	case "existing":
+		return "existing", true
+	case "placed":
+		return "placed", true
+	default:
+		return "", false
+	}
+}
+
+func JobsWorkerAdmissionSignalName(value string) (string, bool) {
+	switch value {
+	case "held":
+		return "held", true
+	case "invalid":
+		return "invalid", true
+	case "ready":
+		return "ready", true
+	case "stale":
+		return "stale", true
+	case "uninitialized":
+		return "uninitialized", true
+	case "unrestricted":
+		return "unrestricted", true
+	default:
+		return "", false
+	}
+}
+
+func JobsWorkerCommandKindName(value string) (string, bool) {
+	switch value {
+	case "arbitrate_attempt_deadline":
+		return "arbitrate_attempt_deadline", true
+	case "begin_attempt":
+		return "begin_attempt", true
+	case "defer_delivery":
+		return "defer_delivery", true
+	case "finish_attempt":
+		return "finish_attempt", true
+	case "finish_delivery":
+		return "finish_delivery", true
+	case "progress":
+		return "progress", true
+	case "reject_corrupt":
+		return "reject_corrupt", true
+	case "release_unchanged":
+		return "release_unchanged", true
+	case "revoke_attempt":
+		return "revoke_attempt", true
+	default:
+		return "", false
+	}
+}
+
+func JobsWorkerControlName(value string) (string, bool) {
+	switch value {
+	case "cancel_requested":
+		return "cancel_requested", true
+	case "none":
+		return "none", true
+	case "terminated":
+		return "terminated", true
+	default:
+		return "", false
+	}
+}
+
+func JobsWorkerDispositionName(value string) (string, bool) {
+	switch value {
+	case "cancelled":
+		return "canceled", true
+	case "deferred":
+		return "deferred", true
+	case "discard":
+		return "discard", true
+	case "permanent_failure":
+		return "permanent_failure", true
+	case "quarantine":
+		return "quarantine", true
+	case "retry":
+		return "retry", true
+	case "succeeded":
+		return "succeeded", true
+	case "terminated":
+		return "terminated", true
+	default:
+		return "", false
+	}
+}
+
+func JobsWorkerFailureName(value string) (string, bool) {
+	switch value {
+	case "driver":
+		return "driver", true
+	case "driver_contract":
+		return "driver_contract", true
+	case "driver_panic":
+		return "driver_panic", true
+	case "none":
+		return "none", true
+	case "runtime":
+		return "runtime", true
+	default:
+		return "", false
+	}
+}
+
+func JobsWorkerMutationName(value string) (string, bool) {
+	switch value {
+	case "ambiguous":
+		return "ambiguous", true
+	case "applied":
+		return "applied", true
+	case "lease_lost":
+		return "lease_lost", true
+	default:
+		return "", false
+	}
+}
+
+func JobsWorkerOperationName(value string) (string, bool) {
+	switch value {
+	case "admission":
+		return "admission", true
+	case "apply":
+		return "apply", true
+	case "claim":
+		return "claim", true
+	case "drain":
+		return "drain", true
+	case "recover":
+		return "recover", true
+	case "renew":
+		return "renew", true
+	case "run":
+		return "run", true
+	default:
+		return "", false
+	}
+}
+
+func JobsWorkerOutcomeName(value string) (string, bool) {
+	switch value {
+	case "cancelled":
+		return "canceled", true
+	case "complete":
+		return "complete", true
+	case "empty":
+		return "empty", true
+	case "failed":
+		return "failed", true
+	case "forced":
+		return "forced", true
+	case "held":
+		return "held", true
+	case "invalid":
+		return "invalid", true
+	case "ready":
+		return "ready", true
+	case "saturated":
+		return "saturated", true
+	case "stale":
+		return "stale", true
+	case "started":
+		return "started", true
+	case "timed_out":
+		return "timeout", true
+	default:
+		return "", false
+	}
+}
+
+func JobsWorkerReasonName(value string) (string, bool) {
+	switch value {
+	case "admission":
+		return "admission", true
+	case "attempt_timeout":
+		return "attempt_timeout", true
+	case "attempts_exhausted":
+		return "attempts_exhausted", true
+	case "cancel_requested":
+		return "cancel_requested", true
+	case "classifier":
+		return "classifier", true
+	case "compatibility":
+		return "compatibility", true
+	case "deferrals_exhausted":
+		return "deferrals_exhausted", true
+	case "dependency":
+		return "dependency", true
+	case "handler_failure":
+		return "handler_failure", true
+	case "lease_lost":
+		return "lease_lost", true
+	case "max_elapsed":
+		return "max_elapsed", true
+	case "none":
+		return "none", true
+	case "operator_terminated":
+		return "operator_terminated", true
+	case "panic":
+		return "panic", true
+	case "payload":
+		return "payload", true
+	case "progress_timeout":
+		return "progress_timeout", true
+	case "retry_exhausted":
+		return "retry_exhausted", true
+	case "shutdown":
+		return "shutdown", true
+	case "start_before":
+		return "start_before", true
+	default:
+		return "", false
+	}
+}
+
+func RemoteOperationName(value string) (string, bool) {
+	switch value {
+	case "BulkDelete":
+		return "delete_many", true
+	case "Count":
+		return "count", true
+	case "Create":
+		return "create", true
+	case "Delete":
+		return "delete", true
+	case "Get":
+		return "get", true
+	case "List":
+		return "list", true
+	case "Replace":
+		return "replace", true
+	case "Update":
+		return "update", true
+	default:
+		return "", false
+	}
+}
+
+func RuntimeDurabilityName(value string) (string, bool) {
+	switch value {
+	case "durable":
+		return "durable", true
+	case "non-durable":
+		return "non_durable", true
+	default:
+		return "", false
+	}
+}
+
+func RuntimeLifecycleOperationName(value string) (string, bool) {
+	switch value {
+	case "drain":
+		return "drain", true
+	case "run":
+		return "run", true
+	default:
+		return "", false
+	}
+}
+
+func RuntimePhaseName(value string) (string, bool) {
+	switch value {
+	case "failed":
+		return "failed", true
+	case "running":
+		return "running", true
+	case "stopped":
+		return "stopped", true
+	default:
+		return "", false
+	}
+}
+
+func RuntimePlacementName(value string) (string, bool) {
+	switch value {
+	case "per-replica":
+		return "per_replica", true
+	case "singleton":
+		return "singleton", true
+	default:
+		return "", false
+	}
+}
+
+func StorageFailureName(value string) (string, bool) {
+	switch value {
+	case "already_exists":
+		return "conflict", true
+	case "cancelled":
+		return "canceled", true
+	case "conflict":
+		return "conflict", true
+	case "expired":
+		return "stale_version", true
+	case "forbidden":
+		return "forbidden", true
+	case "internal":
+		return "internal", true
+	case "invalid":
+		return "invalid", true
+	case "not_found":
+		return "not_found", true
+	case "precondition_failed":
+		return "invalid", true
+	case "source":
+		return "internal", true
+	case "temporary":
+		return "internal", true
+	case "unavailable":
+		return "internal", true
+	case "unsupported":
+		return "invalid", true
+	default:
+		return "internal", true
+	}
+}
+
+func StorageOperationsName(value string) (string, bool) {
+	switch value {
+	case "Abort":
+		return "abort", true
+	case "CleanupExpired":
+		return "cleanup_expired", true
+	case "Delete":
+		return "delete", true
+	case "Head":
+		return "head", true
+	case "Open":
+		return "open", true
+	case "Promote":
+		return "promote", true
+	case "Put":
+		return "put", true
+	case "Stage":
+		return "stage", true
+	case "TemporaryURL":
+		return "temporary_url", true
+	default:
+		return "", false
+	}
+}
+
+func StorageStreamOutcomeName(value string) (string, bool) {
+	switch value {
+	case "closed":
+		return "closed", true
+	case "eof":
+		return "eof", true
+	case "error":
+		return "error", true
+	case "goroutine_exit":
+		return "goroutine_exit", true
+	case "unwrapped":
+		return "unwrapped", true
+	default:
+		return "", false
+	}
+}
+
+func AllowedErrorCode(value string) (string, bool) {
+	switch value {
+	case "bad_query":
+		return "bad_query", true
+	case "check":
+		return "check", true
+	case "conflict":
+		return "conflict", true
+	case "deadlock":
+		return "deadlock", true
+	case "exclusion":
+		return "exclusion", true
+	case "forbidden":
+		return "forbidden", true
+	case "foreign_key":
+		return "foreign_key", true
+	case "internal":
+		return "internal", true
+	case "invalid_enum":
+		return "invalid_enum", true
+	case "invalid_format":
+		return "invalid_format", true
+	case "invalid_id":
+		return "invalid_id", true
+	case "lock_timeout":
+		return "lock_timeout", true
+	case "malformed_body":
+		return "malformed_body", true
+	case "method_not_allowed":
+		return "method_not_allowed", true
+	case "not_found":
+		return "not_found", true
+	case "not_unique":
+		return "not_unique", true
+	case "out_of_range":
+		return "out_of_range", true
+	case "required":
+		return "required", true
+	case "restrict":
+		return "restrict", true
+	case "schema_not_ready":
+		return "schema_not_ready", true
+	case "serialization_failure":
+		return "serialization_failure", true
+	case "stale_version":
+		return "stale_version", true
+	case "too_large":
+		return "too_large", true
+	case "too_long":
+		return "too_long", true
+	case "transaction_aborted":
+		return "transaction_aborted", true
+	case "unauthenticated":
+		return "unauthenticated", true
+	case "unavailable":
+		return "unavailable", true
+	case "unique":
+		return "unique", true
+	case "unknown_field":
+		return "unknown_field", true
+	default:
+		return "", false
+	}
+}
+
+func CommandSpanName(op string) string { return "vv.command" + " " + op }
+
+func StorageSpanName(op string) string { return "vv.storage" + " " + op }
+
+func SpanCommandName(value string) (string, bool) {
+	switch value {
+	case "count":
+		return "vv.command count", true
+	case "create":
+		return "vv.command create", true
+	case "delete":
+		return "vv.command delete", true
+	case "delete_many":
+		return "vv.command delete_many", true
+	case "get":
+		return "vv.command get", true
+	case "list":
+		return "vv.command list", true
+	case "replace":
+		return "vv.command replace", true
+	case "restore":
+		return "vv.command restore", true
+	case "restore_many":
+		return "vv.command restore_many", true
+	case "update":
+		return "vv.command update", true
+	default:
+		return "", false
+	}
+}
+
+func SpanCrudSourceName(value string) (string, bool) {
+	switch value {
+	case "begin":
+		return "vv.crud_source begin", true
+	case "commit":
+		return "vv.crud_source commit", true
+	case "exec":
+		return "vv.crud_source exec", true
+	case "query":
+		return "vv.crud_source query", true
+	case "rollback":
+		return "vv.crud_source rollback", true
+	case "unsafe_bulk_insert":
+		return "vv.crud_source unsafe_bulk_insert", true
+	default:
+		return "", false
+	}
+}
+
+func SpanJobsEnqueueName(value string) (string, bool) {
+	switch value {
+	case "enqueue":
+		return "vv.jobs enqueue", true
+	case "enqueue_once":
+		return "vv.jobs enqueue_once", true
+	default:
+		return "", false
+	}
+}
+
+func SpanJobsEnqueueStagedName(value string) (string, bool) {
+	switch value {
+	case "enqueue_in":
+		return "vv.jobs enqueue_in", true
+	case "enqueue_once_in":
+		return "vv.jobs enqueue_once_in", true
+	default:
+		return "", false
+	}
+}
+
+func SpanRemoteName(value string) (string, bool) {
+	switch value {
+	case "count":
+		return "vv.remote count", true
+	case "create":
+		return "vv.remote create", true
+	case "delete":
+		return "vv.remote delete", true
+	case "delete_many":
+		return "vv.remote delete_many", true
+	case "get":
+		return "vv.remote get", true
+	case "list":
+		return "vv.remote list", true
+	case "replace":
+		return "vv.remote replace", true
+	case "update":
+		return "vv.remote update", true
+	default:
+		return "", false
+	}
+}
+
+func SpanStorageName(value string) (string, bool) {
+	switch value {
+	case "abort":
+		return "vv.storage abort", true
+	case "cleanup_expired":
+		return "vv.storage cleanup_expired", true
+	case "delete":
+		return "vv.storage delete", true
+	case "head":
+		return "vv.storage head", true
+	case "open":
+		return "vv.storage open", true
+	case "promote":
+		return "vv.storage promote", true
+	case "put":
+		return "vv.storage put", true
+	case "stage":
+		return "vv.storage stage", true
+	case "temporary_url":
+		return "vv.storage temporary_url", true
+	default:
+		return "", false
+	}
+}
+
+type SignalSourceFact uint16
+type SignalSourceValue struct {
+	Fact  SignalSourceFact
+	Value int64
+}
+type SignalSourceFacts []SignalSourceValue
+type SignalSourcePredicate struct {
+	Fact     SignalSourceFact
+	Operator string
+	Value    int64
+}
+
+const (
+	SourceFactCacheEncodedBytes SignalSourceFact = 1
+	SourceFactJobsWorkerElapsed SignalSourceFact = 2
+)
+
+func (f SignalSourceFact) Valid() bool {
+	switch f {
+	case SourceFactCacheEncodedBytes:
+		return true
+	case SourceFactJobsWorkerElapsed:
+		return true
+	default:
+		return false
+	}
+}
+func signalSourceFacts(signal Signal) []SignalSourceFact {
+	switch signal {
+	case SignalAuthRefusalEvent:
+		return []SignalSourceFact{}
+	case SignalAuthRefusals:
+		return []SignalSourceFact{}
+	case SignalAuthenticationDuration:
+		return []SignalSourceFact{}
+	case SignalAuthenticationSpan:
+		return []SignalSourceFact{}
+	case SignalCacheBackendEvent:
+		return []SignalSourceFact{}
+	case SignalCacheChargedBytes:
+		return []SignalSourceFact{}
+	case SignalCacheEncodedBytes:
+		return []SignalSourceFact{SourceFactCacheEncodedBytes}
+	case SignalCacheEvent:
+		return []SignalSourceFact{}
+	case SignalCacheEvents:
+		return []SignalSourceFact{}
+	case SignalCacheItems:
+		return []SignalSourceFact{}
+	case SignalCacheMemoryActive:
+		return []SignalSourceFact{}
+	case SignalCacheMemoryByteLimit:
+		return []SignalSourceFact{}
+	case SignalCacheMemoryBytes:
+		return []SignalSourceFact{}
+	case SignalCacheMemoryClosed:
+		return []SignalSourceFact{}
+	case SignalCacheMemoryEntries:
+		return []SignalSourceFact{}
+	case SignalCacheMemoryEntryLimit:
+		return []SignalSourceFact{}
+	case SignalCacheOperations:
+		return []SignalSourceFact{}
+	case SignalCachePayloadBytes:
+		return []SignalSourceFact{SourceFactCacheEncodedBytes}
+	case SignalCacheValueBytes:
+		return []SignalSourceFact{}
+	case SignalCommandDuration:
+		return []SignalSourceFact{}
+	case SignalCommandSpan:
+		return []SignalSourceFact{}
+	case SignalCrudSourceDuration:
+		return []SignalSourceFact{}
+	case SignalCrudSourceSpan:
+		return []SignalSourceFact{}
+	case SignalHealthChecks:
+		return []SignalSourceFact{}
+	case SignalHealthDuration:
+		return []SignalSourceFact{}
+	case SignalHealthSpan:
+		return []SignalSourceFact{}
+	case SignalJobsEnqueueDuration:
+		return []SignalSourceFact{}
+	case SignalJobsEnqueueSpan:
+		return []SignalSourceFact{}
+	case SignalJobsEnqueueStagedSpan:
+		return []SignalSourceFact{}
+	case SignalJobsHandlerAttempt:
+		return []SignalSourceFact{}
+	case SignalJobsHandlerDuration:
+		return []SignalSourceFact{}
+	case SignalJobsHandlerSpan:
+		return []SignalSourceFact{}
+	case SignalJobsPropagation:
+		return []SignalSourceFact{}
+	case SignalJobsQueueDelay:
+		return []SignalSourceFact{}
+	case SignalJobsSchedulerCycles:
+		return []SignalSourceFact{}
+	case SignalJobsSchedulerDuration:
+		return []SignalSourceFact{}
+	case SignalJobsSchedulerResults:
+		return []SignalSourceFact{}
+	case SignalJobsWorkerAdmission:
+		return []SignalSourceFact{}
+	case SignalJobsWorkerBytes:
+		return []SignalSourceFact{}
+	case SignalJobsWorkerDeliveryResults:
+		return []SignalSourceFact{}
+	case SignalJobsWorkerDispositions:
+		return []SignalSourceFact{}
+	case SignalJobsWorkerDuration:
+		return []SignalSourceFact{SourceFactJobsWorkerElapsed}
+	case SignalJobsWorkerItems:
+		return []SignalSourceFact{}
+	case SignalJobsWorkerOperations:
+		return []SignalSourceFact{}
+	case SignalJobsWorkerReleased:
+		return []SignalSourceFact{}
+	case SignalRemoteDuration:
+		return []SignalSourceFact{}
+	case SignalRemoteSpan:
+		return []SignalSourceFact{}
+	case SignalRuntimeDuration:
+		return []SignalSourceFact{}
+	case SignalRuntimeOperations:
+		return []SignalSourceFact{}
+	case SignalRuntimePeriodicDuration:
+		return []SignalSourceFact{}
+	case SignalRuntimePeriodicSpan:
+		return []SignalSourceFact{}
+	case SignalRuntimeTransitions:
+		return []SignalSourceFact{}
+	case SignalStorageCleanupRemoved:
+		return []SignalSourceFact{}
+	case SignalStorageDuration:
+		return []SignalSourceFact{}
+	case SignalStorageOperationBytes:
+		return []SignalSourceFact{}
+	case SignalStorageSpan:
+		return []SignalSourceFact{}
+	case SignalStorageStreamBytes:
+		return []SignalSourceFact{}
+	case SignalStorageStreamDuration:
+		return []SignalSourceFact{}
+	case SignalStorageStreamSpan:
+		return []SignalSourceFact{}
+	default:
+		return nil
+	}
+}
+
+type SignalAttributeDescriptor struct {
+	Key       attribute.Key
+	Type      string
+	Values    []string
+	Optional  bool
+	Declared  bool
+	MaxValues int
+	MaxBytes  int
+	Charset   string
+}
+type SignalVariantDescriptor struct {
+	Attributes []SignalAttributeDescriptor
+	Absent     []attribute.Key
+	Status     string
+	When       []SignalSourcePredicate
+}
+
+func signalVariants(signal Signal) []SignalVariantDescriptor {
+	switch signal {
+	case SignalAuthRefusalEvent:
+		return []SignalVariantDescriptor{
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"auth_refusal"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"refuse"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"refused"}}, {Key: "vv.reason", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"ambiguous_credential", "guard_unusable", "no_credential", "no_principal", "rejected"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+		}
+	case SignalAuthRefusals:
+		return []SignalVariantDescriptor{
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"auth_refusal"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"refuse"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"refused"}}, {Key: "vv.reason", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"ambiguous_credential", "guard_unusable", "no_credential", "no_principal", "rejected"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+		}
+	case SignalAuthenticationDuration:
+		return []SignalVariantDescriptor{
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"authentication"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"authenticate"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"ok"}}}, Absent: []attribute.Key{"error.type"}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "error.type", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"conflict", "forbidden", "internal", "invalid", "not_found", "panic", "stale_version"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"authentication"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"authenticate"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"error"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "error.type", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"canceled"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"authentication"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"authenticate"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"canceled"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "error.type", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"timeout"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"authentication"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"authenticate"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"timeout"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"authentication"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"authenticate"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"refused"}}}, Absent: []attribute.Key{"error.type"}, Status: "", When: []SignalSourcePredicate{}},
+		}
+	case SignalAuthenticationSpan:
+		return []SignalVariantDescriptor{
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"authentication"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"authenticate"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"ok"}}}, Absent: []attribute.Key{"error.type"}, Status: "unset", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "error.type", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"conflict", "forbidden", "internal", "invalid", "not_found", "panic", "stale_version"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"authentication"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"authenticate"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"error"}}}, Absent: []attribute.Key{}, Status: "error", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "error.type", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"canceled"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"authentication"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"authenticate"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"canceled"}}}, Absent: []attribute.Key{}, Status: "error", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "error.type", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"timeout"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"authentication"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"authenticate"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"timeout"}}}, Absent: []attribute.Key{}, Status: "error", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"authentication"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"authenticate"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"refused"}}}, Absent: []attribute.Key{"error.type"}, Status: "unset", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"authentication"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"authenticate"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"goroutine_exit"}}}, Absent: []attribute.Key{"error.type"}, Status: "error", When: []SignalSourcePredicate{}},
+		}
+	case SignalCacheBackendEvent:
+		return []SignalVariantDescriptor{
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"memory_backend"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache_backend"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"close", "delete", "evict", "get", "get_many", "put", "reset"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"complete", "deleted", "evicted", "hit", "miss", "rejected", "replaced", "stored"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+		}
+	case SignalCacheChargedBytes:
+		return []SignalVariantDescriptor{
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"memory_backend"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache_backend"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"get"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"hit"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"memory_backend"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache_backend"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"get_many"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"complete"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"memory_backend"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache_backend"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"put"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"stored"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"memory_backend"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache_backend"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"put"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"replaced"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"memory_backend"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache_backend"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"put"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"rejected"}}, {Key: "vv.reason", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"max_bytes"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"memory_backend"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache_backend"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"delete"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"deleted"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"memory_backend"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache_backend"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"evict"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"evicted"}}, {Key: "vv.reason", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"expired"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"memory_backend"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache_backend"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"evict"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"evicted"}}, {Key: "vv.reason", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"max_entries"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"memory_backend"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache_backend"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"evict"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"evicted"}}, {Key: "vv.reason", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"max_bytes"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"memory_backend"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache_backend"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"reset"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"complete"}}, {Key: "vv.reason", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"reset"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"memory_backend"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache_backend"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"close"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"complete"}}, {Key: "vv.reason", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"close"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+		}
+	case SignalCacheEncodedBytes:
+		return []SignalVariantDescriptor{
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"facade"}}, {Key: "vv.cache.memoized", Type: "bool", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"false"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"lookup"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"hit"}}}, Absent: []attribute.Key{"vv.reason"}, Status: "", When: []SignalSourcePredicate{{Fact: SourceFactCacheEncodedBytes, Operator: "gt", Value: 0}}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"facade"}}, {Key: "vv.cache.memoized", Type: "bool", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"false"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"lookup"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"miss"}}}, Absent: []attribute.Key{"vv.reason"}, Status: "", When: []SignalSourcePredicate{{Fact: SourceFactCacheEncodedBytes, Operator: "gt", Value: 0}}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"facade"}}, {Key: "vv.cache.memoized", Type: "bool", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"false"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"lookup"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"negative"}}}, Absent: []attribute.Key{"vv.reason"}, Status: "", When: []SignalSourcePredicate{{Fact: SourceFactCacheEncodedBytes, Operator: "gt", Value: 0}}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"facade"}}, {Key: "vv.cache.memoized", Type: "bool", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"false"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"lookup"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"stale"}}}, Absent: []attribute.Key{"vv.reason"}, Status: "", When: []SignalSourcePredicate{{Fact: SourceFactCacheEncodedBytes, Operator: "gt", Value: 0}}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"facade"}}, {Key: "vv.cache.memoized", Type: "bool", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"true"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"lookup"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"hit"}}}, Absent: []attribute.Key{"vv.reason"}, Status: "", When: []SignalSourcePredicate{{Fact: SourceFactCacheEncodedBytes, Operator: "gt", Value: 0}}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"facade"}}, {Key: "vv.cache.memoized", Type: "bool", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"true"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"lookup"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"miss"}}}, Absent: []attribute.Key{"vv.reason"}, Status: "", When: []SignalSourcePredicate{{Fact: SourceFactCacheEncodedBytes, Operator: "gt", Value: 0}}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"facade"}}, {Key: "vv.cache.memoized", Type: "bool", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"true"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"lookup"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"negative"}}}, Absent: []attribute.Key{"vv.reason"}, Status: "", When: []SignalSourcePredicate{{Fact: SourceFactCacheEncodedBytes, Operator: "gt", Value: 0}}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"facade"}}, {Key: "vv.cache.memoized", Type: "bool", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"true"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"lookup"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"stale"}}}, Absent: []attribute.Key{"vv.reason"}, Status: "", When: []SignalSourcePredicate{{Fact: SourceFactCacheEncodedBytes, Operator: "gt", Value: 0}}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"facade"}}, {Key: "vv.cache.memoized", Type: "bool", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"false"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"lookup_many"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"complete"}}}, Absent: []attribute.Key{"vv.reason"}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"facade"}}, {Key: "vv.cache.memoized", Type: "bool", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"false"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"load"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"loaded"}}}, Absent: []attribute.Key{"vv.reason"}, Status: "", When: []SignalSourcePredicate{{Fact: SourceFactCacheEncodedBytes, Operator: "gt", Value: 0}}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"facade"}}, {Key: "vv.cache.memoized", Type: "bool", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"false"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"load"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"negative"}}}, Absent: []attribute.Key{"vv.reason"}, Status: "", When: []SignalSourcePredicate{{Fact: SourceFactCacheEncodedBytes, Operator: "gt", Value: 0}}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"facade"}}, {Key: "vv.cache.memoized", Type: "bool", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"false"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"load_many"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"complete"}}}, Absent: []attribute.Key{"vv.reason"}, Status: "", When: []SignalSourcePredicate{{Fact: SourceFactCacheEncodedBytes, Operator: "gt", Value: 0}}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"facade"}}, {Key: "vv.cache.memoized", Type: "bool", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"false"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"load_many"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"stored"}}}, Absent: []attribute.Key{"vv.reason"}, Status: "", When: []SignalSourcePredicate{{Fact: SourceFactCacheEncodedBytes, Operator: "gt", Value: 0}}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"facade"}}, {Key: "vv.cache.memoized", Type: "bool", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"false"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"put"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"stored"}}}, Absent: []attribute.Key{"vv.reason"}, Status: "", When: []SignalSourcePredicate{{Fact: SourceFactCacheEncodedBytes, Operator: "gt", Value: 0}}},
+		}
+	case SignalCacheEvent:
+		return []SignalVariantDescriptor{
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"facade"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"forget", "load", "load_many", "lookup", "lookup_many", "put"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"complete", "deleted", "error", "hit", "loaded", "miss", "negative", "stale", "stored", "superseded"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+		}
+	case SignalCacheEvents:
+		return []SignalVariantDescriptor{
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"facade"}}, {Key: "vv.cache.memoized", Type: "bool", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"false"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"lookup"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"hit"}}}, Absent: []attribute.Key{"vv.reason"}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"facade"}}, {Key: "vv.cache.memoized", Type: "bool", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"false"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"lookup"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"miss"}}}, Absent: []attribute.Key{"vv.reason"}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"facade"}}, {Key: "vv.cache.memoized", Type: "bool", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"false"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"lookup"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"negative"}}}, Absent: []attribute.Key{"vv.reason"}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"facade"}}, {Key: "vv.cache.memoized", Type: "bool", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"false"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"lookup"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"stale"}}}, Absent: []attribute.Key{"vv.reason"}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"facade"}}, {Key: "vv.cache.memoized", Type: "bool", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"true"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"lookup"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"hit"}}}, Absent: []attribute.Key{"vv.reason"}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"facade"}}, {Key: "vv.cache.memoized", Type: "bool", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"true"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"lookup"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"miss"}}}, Absent: []attribute.Key{"vv.reason"}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"facade"}}, {Key: "vv.cache.memoized", Type: "bool", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"true"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"lookup"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"negative"}}}, Absent: []attribute.Key{"vv.reason"}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"facade"}}, {Key: "vv.cache.memoized", Type: "bool", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"true"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"lookup"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"stale"}}}, Absent: []attribute.Key{"vv.reason"}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"facade"}}, {Key: "vv.cache.memoized", Type: "bool", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"false"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"lookup"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"error"}}, {Key: "vv.reason", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"backend"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"facade"}}, {Key: "vv.cache.memoized", Type: "bool", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"false"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"lookup"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"error"}}, {Key: "vv.reason", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"corrupt"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"facade"}}, {Key: "vv.cache.memoized", Type: "bool", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"false"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"lookup"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"error"}}, {Key: "vv.reason", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"runtime"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"facade"}}, {Key: "vv.cache.memoized", Type: "bool", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"true"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"lookup"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"error"}}, {Key: "vv.reason", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"runtime"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"facade"}}, {Key: "vv.cache.memoized", Type: "bool", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"false"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"lookup_many"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"error"}}, {Key: "vv.reason", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"backend"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"facade"}}, {Key: "vv.cache.memoized", Type: "bool", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"false"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"lookup_many"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"error"}}, {Key: "vv.reason", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"corrupt"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"facade"}}, {Key: "vv.cache.memoized", Type: "bool", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"false"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"lookup_many"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"error"}}, {Key: "vv.reason", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"limit"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"facade"}}, {Key: "vv.cache.memoized", Type: "bool", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"false"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"lookup_many"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"error"}}, {Key: "vv.reason", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"runtime"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"facade"}}, {Key: "vv.cache.memoized", Type: "bool", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"false"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"lookup_many"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"complete"}}}, Absent: []attribute.Key{"vv.reason"}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"facade"}}, {Key: "vv.cache.memoized", Type: "bool", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"false"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"load"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"loaded"}}}, Absent: []attribute.Key{"vv.reason"}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"facade"}}, {Key: "vv.cache.memoized", Type: "bool", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"false"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"load"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"negative"}}}, Absent: []attribute.Key{"vv.reason"}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"facade"}}, {Key: "vv.cache.memoized", Type: "bool", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"false"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"load"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"error"}}}, Absent: []attribute.Key{"vv.reason"}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"facade"}}, {Key: "vv.cache.memoized", Type: "bool", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"false"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"load"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"superseded"}}}, Absent: []attribute.Key{"vv.reason"}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"facade"}}, {Key: "vv.cache.memoized", Type: "bool", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"false"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"load_many"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"complete"}}}, Absent: []attribute.Key{"vv.reason"}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"facade"}}, {Key: "vv.cache.memoized", Type: "bool", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"false"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"load_many"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"stored"}}}, Absent: []attribute.Key{"vv.reason"}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"facade"}}, {Key: "vv.cache.memoized", Type: "bool", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"false"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"load_many"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"error"}}}, Absent: []attribute.Key{"vv.reason"}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"facade"}}, {Key: "vv.cache.memoized", Type: "bool", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"false"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"load_many"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"error"}}, {Key: "vv.reason", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"limit"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"facade"}}, {Key: "vv.cache.memoized", Type: "bool", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"false"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"load_many"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"error"}}, {Key: "vv.reason", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"backend"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"facade"}}, {Key: "vv.cache.memoized", Type: "bool", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"false"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"put"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"stored"}}}, Absent: []attribute.Key{"vv.reason"}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"facade"}}, {Key: "vv.cache.memoized", Type: "bool", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"false"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"put"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"superseded"}}}, Absent: []attribute.Key{"vv.reason"}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"facade"}}, {Key: "vv.cache.memoized", Type: "bool", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"false"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"put"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"error"}}, {Key: "vv.reason", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"backend"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"facade"}}, {Key: "vv.cache.memoized", Type: "bool", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"false"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"forget"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"deleted"}}}, Absent: []attribute.Key{"vv.reason"}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"facade"}}, {Key: "vv.cache.memoized", Type: "bool", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"false"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"forget"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"error"}}, {Key: "vv.reason", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"backend"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"memory_backend"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache_backend"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"get"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"hit"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"memory_backend"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache_backend"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"get"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"miss"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"memory_backend"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache_backend"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"get"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"miss"}}, {Key: "vv.reason", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"expired"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"memory_backend"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache_backend"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"get"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"rejected"}}, {Key: "vv.reason", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"read_limit"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"memory_backend"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache_backend"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"get_many"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"complete"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"memory_backend"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache_backend"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"get_many"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"rejected"}}, {Key: "vv.reason", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"batch_item_limit"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"memory_backend"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache_backend"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"get_many"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"rejected"}}, {Key: "vv.reason", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"batch_total_limit"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"memory_backend"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache_backend"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"put"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"stored"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"memory_backend"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache_backend"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"put"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"replaced"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"memory_backend"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache_backend"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"put"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"rejected"}}, {Key: "vv.reason", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"max_item_bytes"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"memory_backend"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache_backend"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"put"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"rejected"}}, {Key: "vv.reason", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"max_bytes"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"memory_backend"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache_backend"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"delete"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"miss"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"memory_backend"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache_backend"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"delete"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"deleted"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"memory_backend"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache_backend"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"evict"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"evicted"}}, {Key: "vv.reason", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"expired"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"memory_backend"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache_backend"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"evict"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"evicted"}}, {Key: "vv.reason", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"max_entries"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"memory_backend"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache_backend"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"evict"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"evicted"}}, {Key: "vv.reason", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"max_bytes"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"memory_backend"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache_backend"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"reset"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"complete"}}, {Key: "vv.reason", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"reset"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"memory_backend"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache_backend"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"close"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"complete"}}, {Key: "vv.reason", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"close"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+		}
+	case SignalCacheItems:
+		return []SignalVariantDescriptor{
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"facade"}}, {Key: "vv.cache.memoized", Type: "bool", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"false"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"lookup"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"hit"}}}, Absent: []attribute.Key{"vv.reason"}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"facade"}}, {Key: "vv.cache.memoized", Type: "bool", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"false"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"lookup"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"miss"}}}, Absent: []attribute.Key{"vv.reason"}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"facade"}}, {Key: "vv.cache.memoized", Type: "bool", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"false"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"lookup"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"negative"}}}, Absent: []attribute.Key{"vv.reason"}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"facade"}}, {Key: "vv.cache.memoized", Type: "bool", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"false"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"lookup"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"stale"}}}, Absent: []attribute.Key{"vv.reason"}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"facade"}}, {Key: "vv.cache.memoized", Type: "bool", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"true"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"lookup"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"hit"}}}, Absent: []attribute.Key{"vv.reason"}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"facade"}}, {Key: "vv.cache.memoized", Type: "bool", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"true"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"lookup"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"miss"}}}, Absent: []attribute.Key{"vv.reason"}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"facade"}}, {Key: "vv.cache.memoized", Type: "bool", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"true"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"lookup"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"negative"}}}, Absent: []attribute.Key{"vv.reason"}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"facade"}}, {Key: "vv.cache.memoized", Type: "bool", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"true"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"lookup"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"stale"}}}, Absent: []attribute.Key{"vv.reason"}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"facade"}}, {Key: "vv.cache.memoized", Type: "bool", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"false"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"lookup"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"error"}}, {Key: "vv.reason", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"backend"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"facade"}}, {Key: "vv.cache.memoized", Type: "bool", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"false"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"lookup"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"error"}}, {Key: "vv.reason", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"corrupt"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"facade"}}, {Key: "vv.cache.memoized", Type: "bool", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"false"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"lookup"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"error"}}, {Key: "vv.reason", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"runtime"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"facade"}}, {Key: "vv.cache.memoized", Type: "bool", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"true"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"lookup"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"error"}}, {Key: "vv.reason", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"runtime"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"facade"}}, {Key: "vv.cache.memoized", Type: "bool", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"false"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"lookup_many"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"error"}}, {Key: "vv.reason", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"backend"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"facade"}}, {Key: "vv.cache.memoized", Type: "bool", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"false"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"lookup_many"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"error"}}, {Key: "vv.reason", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"corrupt"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"facade"}}, {Key: "vv.cache.memoized", Type: "bool", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"false"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"lookup_many"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"error"}}, {Key: "vv.reason", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"limit"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"facade"}}, {Key: "vv.cache.memoized", Type: "bool", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"false"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"lookup_many"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"error"}}, {Key: "vv.reason", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"runtime"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"facade"}}, {Key: "vv.cache.memoized", Type: "bool", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"false"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"lookup_many"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"complete"}}}, Absent: []attribute.Key{"vv.reason"}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"facade"}}, {Key: "vv.cache.memoized", Type: "bool", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"false"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"load"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"loaded"}}}, Absent: []attribute.Key{"vv.reason"}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"facade"}}, {Key: "vv.cache.memoized", Type: "bool", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"false"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"load"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"negative"}}}, Absent: []attribute.Key{"vv.reason"}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"facade"}}, {Key: "vv.cache.memoized", Type: "bool", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"false"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"load"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"error"}}}, Absent: []attribute.Key{"vv.reason"}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"facade"}}, {Key: "vv.cache.memoized", Type: "bool", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"false"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"load"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"superseded"}}}, Absent: []attribute.Key{"vv.reason"}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"facade"}}, {Key: "vv.cache.memoized", Type: "bool", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"false"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"load_many"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"complete"}}}, Absent: []attribute.Key{"vv.reason"}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"facade"}}, {Key: "vv.cache.memoized", Type: "bool", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"false"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"load_many"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"stored"}}}, Absent: []attribute.Key{"vv.reason"}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"facade"}}, {Key: "vv.cache.memoized", Type: "bool", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"false"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"load_many"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"error"}}}, Absent: []attribute.Key{"vv.reason"}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"facade"}}, {Key: "vv.cache.memoized", Type: "bool", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"false"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"load_many"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"error"}}, {Key: "vv.reason", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"limit"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"facade"}}, {Key: "vv.cache.memoized", Type: "bool", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"false"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"load_many"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"error"}}, {Key: "vv.reason", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"backend"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"facade"}}, {Key: "vv.cache.memoized", Type: "bool", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"false"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"put"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"stored"}}}, Absent: []attribute.Key{"vv.reason"}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"facade"}}, {Key: "vv.cache.memoized", Type: "bool", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"false"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"put"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"superseded"}}}, Absent: []attribute.Key{"vv.reason"}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"facade"}}, {Key: "vv.cache.memoized", Type: "bool", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"false"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"put"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"error"}}, {Key: "vv.reason", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"backend"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"facade"}}, {Key: "vv.cache.memoized", Type: "bool", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"false"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"forget"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"deleted"}}}, Absent: []attribute.Key{"vv.reason"}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"facade"}}, {Key: "vv.cache.memoized", Type: "bool", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"false"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"forget"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"error"}}, {Key: "vv.reason", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"backend"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"memory_backend"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache_backend"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"get"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"hit"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"memory_backend"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache_backend"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"get"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"miss"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"memory_backend"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache_backend"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"get"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"miss"}}, {Key: "vv.reason", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"expired"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"memory_backend"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache_backend"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"get"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"rejected"}}, {Key: "vv.reason", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"read_limit"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"memory_backend"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache_backend"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"get_many"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"complete"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"memory_backend"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache_backend"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"get_many"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"rejected"}}, {Key: "vv.reason", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"batch_item_limit"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"memory_backend"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache_backend"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"get_many"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"rejected"}}, {Key: "vv.reason", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"batch_total_limit"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"memory_backend"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache_backend"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"put"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"stored"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"memory_backend"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache_backend"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"put"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"replaced"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"memory_backend"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache_backend"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"put"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"rejected"}}, {Key: "vv.reason", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"max_item_bytes"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"memory_backend"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache_backend"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"put"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"rejected"}}, {Key: "vv.reason", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"max_bytes"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"memory_backend"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache_backend"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"delete"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"miss"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"memory_backend"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache_backend"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"delete"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"deleted"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"memory_backend"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache_backend"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"evict"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"evicted"}}, {Key: "vv.reason", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"expired"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"memory_backend"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache_backend"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"evict"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"evicted"}}, {Key: "vv.reason", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"max_entries"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"memory_backend"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache_backend"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"evict"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"evicted"}}, {Key: "vv.reason", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"max_bytes"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"memory_backend"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache_backend"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"reset"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"complete"}}, {Key: "vv.reason", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"reset"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"memory_backend"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache_backend"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"close"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"complete"}}, {Key: "vv.reason", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"close"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+		}
+	case SignalCacheMemoryActive:
+		return []SignalVariantDescriptor{
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache_memory"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+		}
+	case SignalCacheMemoryByteLimit:
+		return []SignalVariantDescriptor{
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache_memory"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+		}
+	case SignalCacheMemoryBytes:
+		return []SignalVariantDescriptor{
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache_memory"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+		}
+	case SignalCacheMemoryClosed:
+		return []SignalVariantDescriptor{
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache_memory"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+		}
+	case SignalCacheMemoryEntries:
+		return []SignalVariantDescriptor{
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache_memory"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+		}
+	case SignalCacheMemoryEntryLimit:
+		return []SignalVariantDescriptor{
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache_memory"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+		}
+	case SignalCacheOperations:
+		return []SignalVariantDescriptor{
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"facade"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"forget", "load", "load_many", "lookup", "lookup_many", "put"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"complete", "deleted", "error", "hit", "loaded", "miss", "negative", "stale", "stored", "superseded"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"memory_backend"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache_backend"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"close", "delete", "evict", "get", "get_many", "put", "reset"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"complete", "deleted", "evicted", "hit", "miss", "rejected", "replaced", "stored"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+		}
+	case SignalCachePayloadBytes:
+		return []SignalVariantDescriptor{
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"facade"}}, {Key: "vv.cache.memoized", Type: "bool", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"false"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"lookup"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"hit"}}}, Absent: []attribute.Key{"vv.reason"}, Status: "", When: []SignalSourcePredicate{{Fact: SourceFactCacheEncodedBytes, Operator: "gt", Value: 0}}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"facade"}}, {Key: "vv.cache.memoized", Type: "bool", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"false"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"lookup"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"stale"}}}, Absent: []attribute.Key{"vv.reason"}, Status: "", When: []SignalSourcePredicate{{Fact: SourceFactCacheEncodedBytes, Operator: "gt", Value: 0}}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"facade"}}, {Key: "vv.cache.memoized", Type: "bool", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"true"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"lookup"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"hit"}}}, Absent: []attribute.Key{"vv.reason"}, Status: "", When: []SignalSourcePredicate{{Fact: SourceFactCacheEncodedBytes, Operator: "gt", Value: 0}}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"facade"}}, {Key: "vv.cache.memoized", Type: "bool", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"true"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"lookup"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"stale"}}}, Absent: []attribute.Key{"vv.reason"}, Status: "", When: []SignalSourcePredicate{{Fact: SourceFactCacheEncodedBytes, Operator: "gt", Value: 0}}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"facade"}}, {Key: "vv.cache.memoized", Type: "bool", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"false"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"lookup_many"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"complete"}}}, Absent: []attribute.Key{"vv.reason"}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"facade"}}, {Key: "vv.cache.memoized", Type: "bool", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"false"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"load"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"loaded"}}}, Absent: []attribute.Key{"vv.reason"}, Status: "", When: []SignalSourcePredicate{{Fact: SourceFactCacheEncodedBytes, Operator: "gt", Value: 0}}},
+		}
+	case SignalCacheValueBytes:
+		return []SignalVariantDescriptor{
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"memory_backend"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache_backend"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"get"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"hit"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"memory_backend"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache_backend"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"get"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"rejected"}}, {Key: "vv.reason", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"read_limit"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"memory_backend"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache_backend"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"get_many"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"complete"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"memory_backend"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache_backend"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"get_many"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"rejected"}}, {Key: "vv.reason", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"batch_item_limit"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"memory_backend"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache_backend"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"get_many"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"rejected"}}, {Key: "vv.reason", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"batch_total_limit"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"memory_backend"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache_backend"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"put"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"stored"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"memory_backend"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache_backend"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"put"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"replaced"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"memory_backend"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache_backend"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"put"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"rejected"}}, {Key: "vv.reason", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"max_item_bytes"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"memory_backend"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache_backend"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"put"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"rejected"}}, {Key: "vv.reason", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"max_bytes"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"memory_backend"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache_backend"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"delete"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"deleted"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"memory_backend"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache_backend"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"evict"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"evicted"}}, {Key: "vv.reason", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"expired"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"memory_backend"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache_backend"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"evict"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"evicted"}}, {Key: "vv.reason", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"max_entries"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.cache.layer", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"memory_backend"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cache_backend"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"evict"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"evicted"}}, {Key: "vv.reason", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"max_bytes"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+		}
+	case SignalCommandDuration:
+		return []SignalVariantDescriptor{
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"command"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"count", "create", "delete", "delete_many", "get", "list", "replace", "restore", "restore_many", "update"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"ok"}}}, Absent: []attribute.Key{"error.type"}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "error.type", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"conflict", "forbidden", "internal", "invalid", "not_found", "panic", "stale_version"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"command"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"count", "create", "delete", "delete_many", "get", "list", "replace", "restore", "restore_many", "update"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"error"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "error.type", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"canceled"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"command"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"count", "create", "delete", "delete_many", "get", "list", "replace", "restore", "restore_many", "update"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"canceled"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "error.type", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"timeout"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"command"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"count", "create", "delete", "delete_many", "get", "list", "replace", "restore", "restore_many", "update"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"timeout"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+		}
+	case SignalCommandSpan:
+		return []SignalVariantDescriptor{
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"command"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"count", "create", "delete", "delete_many", "get", "list", "replace", "restore", "restore_many", "update"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"ok"}}, {Key: "vv.resource.name", Type: "string", Optional: true, Declared: true, MaxValues: 32, MaxBytes: 64, Charset: "unicode_letter_digit_dot_underscore_hyphen", Values: []string{}}}, Absent: []attribute.Key{"error.type", "vv.error.code"}, Status: "unset", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "error.type", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"conflict", "forbidden", "internal", "invalid", "not_found", "panic", "stale_version"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"command"}}, {Key: "vv.error.code", Type: "string", Optional: true, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"bad_query", "check", "conflict", "deadlock", "exclusion", "forbidden", "foreign_key", "internal", "invalid_enum", "invalid_format", "invalid_id", "lock_timeout", "malformed_body", "method_not_allowed", "not_found", "not_unique", "out_of_range", "required", "restrict", "schema_not_ready", "serialization_failure", "stale_version", "too_large", "too_long", "transaction_aborted", "unauthenticated", "unavailable", "unique", "unknown_field"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"count", "create", "delete", "delete_many", "get", "list", "replace", "restore", "restore_many", "update"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"error"}}, {Key: "vv.resource.name", Type: "string", Optional: true, Declared: true, MaxValues: 32, MaxBytes: 64, Charset: "unicode_letter_digit_dot_underscore_hyphen", Values: []string{}}}, Absent: []attribute.Key{}, Status: "error", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "error.type", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"canceled"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"command"}}, {Key: "vv.error.code", Type: "string", Optional: true, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"bad_query", "check", "conflict", "deadlock", "exclusion", "forbidden", "foreign_key", "internal", "invalid_enum", "invalid_format", "invalid_id", "lock_timeout", "malformed_body", "method_not_allowed", "not_found", "not_unique", "out_of_range", "required", "restrict", "schema_not_ready", "serialization_failure", "stale_version", "too_large", "too_long", "transaction_aborted", "unauthenticated", "unavailable", "unique", "unknown_field"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"count", "create", "delete", "delete_many", "get", "list", "replace", "restore", "restore_many", "update"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"canceled"}}, {Key: "vv.resource.name", Type: "string", Optional: true, Declared: true, MaxValues: 32, MaxBytes: 64, Charset: "unicode_letter_digit_dot_underscore_hyphen", Values: []string{}}}, Absent: []attribute.Key{}, Status: "error", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "error.type", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"timeout"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"command"}}, {Key: "vv.error.code", Type: "string", Optional: true, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"bad_query", "check", "conflict", "deadlock", "exclusion", "forbidden", "foreign_key", "internal", "invalid_enum", "invalid_format", "invalid_id", "lock_timeout", "malformed_body", "method_not_allowed", "not_found", "not_unique", "out_of_range", "required", "restrict", "schema_not_ready", "serialization_failure", "stale_version", "too_large", "too_long", "transaction_aborted", "unauthenticated", "unavailable", "unique", "unknown_field"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"count", "create", "delete", "delete_many", "get", "list", "replace", "restore", "restore_many", "update"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"timeout"}}, {Key: "vv.resource.name", Type: "string", Optional: true, Declared: true, MaxValues: 32, MaxBytes: 64, Charset: "unicode_letter_digit_dot_underscore_hyphen", Values: []string{}}}, Absent: []attribute.Key{}, Status: "error", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"command"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"count", "create", "delete", "delete_many", "get", "list", "replace", "restore", "restore_many", "update"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"goroutine_exit"}}, {Key: "vv.resource.name", Type: "string", Optional: true, Declared: true, MaxValues: 32, MaxBytes: 64, Charset: "unicode_letter_digit_dot_underscore_hyphen", Values: []string{}}}, Absent: []attribute.Key{"error.type", "vv.error.code"}, Status: "error", When: []SignalSourcePredicate{}},
+		}
+	case SignalCrudSourceDuration:
+		return []SignalVariantDescriptor{
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"crud_source"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"begin", "commit", "exec", "query", "rollback", "unsafe_bulk_insert"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"ok"}}}, Absent: []attribute.Key{"error.type"}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "error.type", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"conflict", "forbidden", "internal", "invalid", "not_found", "panic", "stale_version"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"crud_source"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"begin", "commit", "exec", "query", "rollback", "unsafe_bulk_insert"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"error"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "error.type", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"canceled"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"crud_source"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"begin", "commit", "exec", "query", "rollback", "unsafe_bulk_insert"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"canceled"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "error.type", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"timeout"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"crud_source"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"begin", "commit", "exec", "query", "rollback", "unsafe_bulk_insert"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"timeout"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+		}
+	case SignalCrudSourceSpan:
+		return []SignalVariantDescriptor{
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"crud_source"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"begin", "commit", "exec", "query", "rollback", "unsafe_bulk_insert"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"ok"}}}, Absent: []attribute.Key{"error.type"}, Status: "unset", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "error.type", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"conflict", "forbidden", "internal", "invalid", "not_found", "panic", "stale_version"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"crud_source"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"begin", "commit", "exec", "query", "rollback", "unsafe_bulk_insert"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"error"}}}, Absent: []attribute.Key{}, Status: "error", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "error.type", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"canceled"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"crud_source"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"begin", "commit", "exec", "query", "rollback", "unsafe_bulk_insert"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"canceled"}}}, Absent: []attribute.Key{}, Status: "error", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "error.type", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"timeout"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"crud_source"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"begin", "commit", "exec", "query", "rollback", "unsafe_bulk_insert"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"timeout"}}}, Absent: []attribute.Key{}, Status: "error", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"crud_source"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"begin", "commit", "exec", "query", "rollback", "unsafe_bulk_insert"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"goroutine_exit"}}}, Absent: []attribute.Key{"error.type"}, Status: "error", When: []SignalSourcePredicate{}},
+		}
+	case SignalHealthChecks:
+		return []SignalVariantDescriptor{
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"health"}}, {Key: "vv.health.importance", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"degrading", "informational", "required"}}, {Key: "vv.health.state", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"passing"}}}, Absent: []attribute.Key{"error.type"}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "error.type", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"canceled", "conflict", "forbidden", "internal", "invalid", "not_found", "panic", "stale_version", "timeout"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"health"}}, {Key: "vv.health.importance", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"degrading", "informational", "required"}}, {Key: "vv.health.state", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"failing"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+		}
+	case SignalHealthDuration:
+		return []SignalVariantDescriptor{
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"health"}}, {Key: "vv.health.importance", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"degrading", "informational", "required"}}, {Key: "vv.health.state", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"passing"}}}, Absent: []attribute.Key{"error.type"}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "error.type", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"canceled", "conflict", "forbidden", "internal", "invalid", "not_found", "panic", "stale_version", "timeout"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"health"}}, {Key: "vv.health.importance", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"degrading", "informational", "required"}}, {Key: "vv.health.state", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"failing"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+		}
+	case SignalHealthSpan:
+		return []SignalVariantDescriptor{
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"health"}}, {Key: "vv.health.importance", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"degrading", "informational", "required"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"check"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"ok"}}, {Key: "vv.resource.name", Type: "string", Optional: true, Declared: true, MaxValues: 32, MaxBytes: 64, Charset: "unicode_letter_digit_dot_underscore_hyphen", Values: []string{}}}, Absent: []attribute.Key{"error.type"}, Status: "unset", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "error.type", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"conflict", "forbidden", "internal", "invalid", "not_found", "panic", "stale_version"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"health"}}, {Key: "vv.health.importance", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"degrading", "informational", "required"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"check"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"error"}}, {Key: "vv.resource.name", Type: "string", Optional: true, Declared: true, MaxValues: 32, MaxBytes: 64, Charset: "unicode_letter_digit_dot_underscore_hyphen", Values: []string{}}}, Absent: []attribute.Key{}, Status: "error", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "error.type", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"canceled"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"health"}}, {Key: "vv.health.importance", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"degrading", "informational", "required"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"check"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"canceled"}}, {Key: "vv.resource.name", Type: "string", Optional: true, Declared: true, MaxValues: 32, MaxBytes: 64, Charset: "unicode_letter_digit_dot_underscore_hyphen", Values: []string{}}}, Absent: []attribute.Key{}, Status: "error", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "error.type", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"timeout"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"health"}}, {Key: "vv.health.importance", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"degrading", "informational", "required"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"check"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"timeout"}}, {Key: "vv.resource.name", Type: "string", Optional: true, Declared: true, MaxValues: 32, MaxBytes: 64, Charset: "unicode_letter_digit_dot_underscore_hyphen", Values: []string{}}}, Absent: []attribute.Key{}, Status: "error", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"health"}}, {Key: "vv.health.importance", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"degrading", "informational", "required"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"check"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"goroutine_exit"}}, {Key: "vv.resource.name", Type: "string", Optional: true, Declared: true, MaxValues: 32, MaxBytes: 64, Charset: "unicode_letter_digit_dot_underscore_hyphen", Values: []string{}}}, Absent: []attribute.Key{"error.type"}, Status: "error", When: []SignalSourcePredicate{}},
+		}
+	case SignalJobsEnqueueDuration:
+		return []SignalVariantDescriptor{
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_enqueue"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"enqueue"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"ok"}}}, Absent: []attribute.Key{"error.type"}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "error.type", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"conflict", "forbidden", "internal", "invalid", "not_found", "panic", "stale_version"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_enqueue"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"enqueue"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"error"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "error.type", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"canceled"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_enqueue"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"enqueue"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"canceled"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "error.type", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"timeout"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_enqueue"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"enqueue"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"timeout"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_enqueue"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"enqueue_once"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"created"}}}, Absent: []attribute.Key{"error.type"}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_enqueue"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"enqueue_once"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"existing_same_payload"}}}, Absent: []attribute.Key{"error.type"}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_enqueue"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"enqueue_once"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"conflict"}}}, Absent: []attribute.Key{"error.type"}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "error.type", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"conflict", "forbidden", "internal", "invalid", "not_found", "panic", "stale_version"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_enqueue"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"enqueue_once"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"error"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "error.type", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"canceled"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_enqueue"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"enqueue_once"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"canceled"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "error.type", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"timeout"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_enqueue"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"enqueue_once"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"timeout"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_enqueue"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"enqueue_in"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"staged"}}}, Absent: []attribute.Key{"error.type"}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "error.type", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"conflict", "forbidden", "internal", "invalid", "not_found", "panic", "stale_version"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_enqueue"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"enqueue_in"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"error"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "error.type", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"canceled"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_enqueue"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"enqueue_in"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"canceled"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "error.type", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"timeout"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_enqueue"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"enqueue_in"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"timeout"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_enqueue"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"enqueue_once_in"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"staged"}}}, Absent: []attribute.Key{"error.type"}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "error.type", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"conflict", "forbidden", "internal", "invalid", "not_found", "panic", "stale_version"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_enqueue"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"enqueue_once_in"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"error"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "error.type", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"canceled"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_enqueue"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"enqueue_once_in"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"canceled"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "error.type", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"timeout"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_enqueue"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"enqueue_once_in"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"timeout"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+		}
+	case SignalJobsEnqueueSpan:
+		return []SignalVariantDescriptor{
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_enqueue"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"enqueue"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"ok"}}}, Absent: []attribute.Key{"error.type"}, Status: "unset", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "error.type", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"conflict", "forbidden", "internal", "invalid", "not_found", "panic", "stale_version"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_enqueue"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"enqueue"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"error"}}}, Absent: []attribute.Key{}, Status: "error", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "error.type", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"canceled"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_enqueue"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"enqueue"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"canceled"}}}, Absent: []attribute.Key{}, Status: "error", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "error.type", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"timeout"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_enqueue"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"enqueue"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"timeout"}}}, Absent: []attribute.Key{}, Status: "error", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_enqueue"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"enqueue_once"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"created"}}}, Absent: []attribute.Key{"error.type"}, Status: "unset", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_enqueue"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"enqueue_once"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"existing_same_payload"}}}, Absent: []attribute.Key{"error.type"}, Status: "unset", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_enqueue"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"enqueue_once"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"conflict"}}}, Absent: []attribute.Key{"error.type"}, Status: "unset", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "error.type", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"conflict", "forbidden", "internal", "invalid", "not_found", "panic", "stale_version"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_enqueue"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"enqueue_once"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"error"}}}, Absent: []attribute.Key{}, Status: "error", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "error.type", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"canceled"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_enqueue"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"enqueue_once"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"canceled"}}}, Absent: []attribute.Key{}, Status: "error", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "error.type", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"timeout"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_enqueue"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"enqueue_once"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"timeout"}}}, Absent: []attribute.Key{}, Status: "error", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_enqueue"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"enqueue"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"goroutine_exit"}}}, Absent: []attribute.Key{"error.type"}, Status: "error", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_enqueue"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"enqueue_once"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"goroutine_exit"}}}, Absent: []attribute.Key{"error.type"}, Status: "error", When: []SignalSourcePredicate{}},
+		}
+	case SignalJobsEnqueueStagedSpan:
+		return []SignalVariantDescriptor{
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_enqueue"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"enqueue_in"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"staged"}}}, Absent: []attribute.Key{"error.type"}, Status: "unset", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "error.type", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"conflict", "forbidden", "internal", "invalid", "not_found", "panic", "stale_version"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_enqueue"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"enqueue_in"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"error"}}}, Absent: []attribute.Key{}, Status: "error", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "error.type", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"canceled"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_enqueue"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"enqueue_in"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"canceled"}}}, Absent: []attribute.Key{}, Status: "error", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "error.type", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"timeout"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_enqueue"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"enqueue_in"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"timeout"}}}, Absent: []attribute.Key{}, Status: "error", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_enqueue"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"enqueue_once_in"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"staged"}}}, Absent: []attribute.Key{"error.type"}, Status: "unset", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "error.type", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"conflict", "forbidden", "internal", "invalid", "not_found", "panic", "stale_version"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_enqueue"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"enqueue_once_in"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"error"}}}, Absent: []attribute.Key{}, Status: "error", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "error.type", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"canceled"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_enqueue"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"enqueue_once_in"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"canceled"}}}, Absent: []attribute.Key{}, Status: "error", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "error.type", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"timeout"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_enqueue"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"enqueue_once_in"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"timeout"}}}, Absent: []attribute.Key{}, Status: "error", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_enqueue"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"enqueue_in"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"goroutine_exit"}}}, Absent: []attribute.Key{"error.type"}, Status: "error", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_enqueue"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"enqueue_once_in"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"goroutine_exit"}}}, Absent: []attribute.Key{"error.type"}, Status: "error", When: []SignalSourcePredicate{}},
+		}
+	case SignalJobsHandlerAttempt:
+		return []SignalVariantDescriptor{
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_handler"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"handle"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+		}
+	case SignalJobsHandlerDuration:
+		return []SignalVariantDescriptor{
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_handler"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"handle"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"ok"}}}, Absent: []attribute.Key{"error.type"}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "error.type", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"conflict", "forbidden", "internal", "invalid", "not_found", "panic", "stale_version"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_handler"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"handle"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"error"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "error.type", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"canceled"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_handler"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"handle"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"canceled"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "error.type", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"timeout"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_handler"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"handle"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"timeout"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+		}
+	case SignalJobsHandlerSpan:
+		return []SignalVariantDescriptor{
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_handler"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"handle"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"ok"}}}, Absent: []attribute.Key{"error.type"}, Status: "unset", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "error.type", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"conflict", "forbidden", "internal", "invalid", "not_found", "panic", "stale_version"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_handler"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"handle"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"error"}}}, Absent: []attribute.Key{}, Status: "error", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "error.type", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"canceled"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_handler"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"handle"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"canceled"}}}, Absent: []attribute.Key{}, Status: "error", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "error.type", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"timeout"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_handler"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"handle"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"timeout"}}}, Absent: []attribute.Key{}, Status: "error", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_handler"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"handle"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"goroutine_exit"}}}, Absent: []attribute.Key{"error.type"}, Status: "error", When: []SignalSourcePredicate{}},
+		}
+	case SignalJobsPropagation:
+		return []SignalVariantDescriptor{
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_propagation"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"inject"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"injected"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_propagation"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"inject"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"absent"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_propagation"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"inject"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"traceparent_dropped"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_propagation"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"inject"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"tracestate_dropped"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_propagation"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"extract"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"extracted"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_propagation"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"extract"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"absent"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_propagation"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"extract"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"traceparent_dropped"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_propagation"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"extract"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"tracestate_dropped"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+		}
+	case SignalJobsQueueDelay:
+		return []SignalVariantDescriptor{
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_handler"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"handle"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+		}
+	case SignalJobsSchedulerCycles:
+		return []SignalVariantDescriptor{
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_scheduler"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"run_due"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"ok"}}}, Absent: []attribute.Key{"error.type"}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "error.type", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"conflict", "forbidden", "internal", "invalid", "not_found", "panic", "stale_version"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_scheduler"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"run_due"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"error"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "error.type", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"canceled"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_scheduler"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"run_due"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"canceled"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "error.type", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"timeout"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_scheduler"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"run_due"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"timeout"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+		}
+	case SignalJobsSchedulerDuration:
+		return []SignalVariantDescriptor{
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_scheduler"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"run_due"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"ok"}}}, Absent: []attribute.Key{"error.type"}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "error.type", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"conflict", "forbidden", "internal", "invalid", "not_found", "panic", "stale_version"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_scheduler"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"run_due"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"error"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "error.type", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"canceled"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_scheduler"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"run_due"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"canceled"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "error.type", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"timeout"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_scheduler"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"run_due"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"timeout"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+		}
+	case SignalJobsSchedulerResults:
+		return []SignalVariantDescriptor{
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_scheduler"}}, {Key: "vv.jobs.scheduler.result", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"conflicts", "due", "existing", "placed"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"run_due"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+		}
+	case SignalJobsWorkerAdmission:
+		return []SignalVariantDescriptor{
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.jobs.admission.signal", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"ready"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"admission"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"ready"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.jobs.admission.signal", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"unrestricted"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"admission"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"ready"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.jobs.admission.signal", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"ready"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"admission"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"saturated"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.jobs.admission.signal", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"unrestricted"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"admission"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"saturated"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.jobs.admission.signal", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"held"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"admission"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"held"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.jobs.admission.signal", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"stale"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"admission"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"stale"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.jobs.admission.signal", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"uninitialized"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"admission"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"invalid"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.jobs.admission.signal", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"invalid"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"admission"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"invalid"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+		}
+	case SignalJobsWorkerBytes:
+		return []SignalVariantDescriptor{
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"claim"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"complete"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"claim"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"empty"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"claim"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"saturated"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"claim"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"timeout"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"claim"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"canceled"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.jobs.failure", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"driver", "driver_contract", "driver_panic", "runtime"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"claim"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"failed"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"recover"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"complete"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"recover"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"empty"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"recover"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"saturated"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"recover"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"timeout"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"recover"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"canceled"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.jobs.failure", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"driver", "driver_contract", "driver_panic", "runtime"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"recover"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"failed"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+		}
+	case SignalJobsWorkerDeliveryResults:
+		return []SignalVariantDescriptor{
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.jobs.delivery.control", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"none"}}, {Key: "vv.jobs.delivery.mutation", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"applied"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"renew"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.jobs.delivery.control", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cancel_requested"}}, {Key: "vv.jobs.delivery.mutation", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"applied"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"renew"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.jobs.delivery.control", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"none"}}, {Key: "vv.jobs.delivery.mutation", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"lease_lost"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"renew"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.jobs.delivery.control", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cancel_requested"}}, {Key: "vv.jobs.delivery.mutation", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"lease_lost"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"renew"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.jobs.delivery.control", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"terminated"}}, {Key: "vv.jobs.delivery.mutation", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"lease_lost"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"renew"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.jobs.delivery.control", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"none"}}, {Key: "vv.jobs.delivery.mutation", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"ambiguous"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"renew"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.jobs.delivery.control", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"none"}}, {Key: "vv.jobs.delivery.mutation", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"applied"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"apply"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.jobs.delivery.control", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cancel_requested"}}, {Key: "vv.jobs.delivery.mutation", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"applied"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"apply"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.jobs.delivery.control", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"terminated"}}, {Key: "vv.jobs.delivery.mutation", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"applied"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"apply"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.jobs.delivery.control", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"none"}}, {Key: "vv.jobs.delivery.mutation", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"lease_lost"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"apply"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.jobs.delivery.control", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cancel_requested"}}, {Key: "vv.jobs.delivery.mutation", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"lease_lost"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"apply"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.jobs.delivery.control", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"terminated"}}, {Key: "vv.jobs.delivery.mutation", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"lease_lost"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"apply"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.jobs.delivery.control", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"none"}}, {Key: "vv.jobs.delivery.mutation", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"ambiguous"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"apply"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+		}
+	case SignalJobsWorkerDispositions:
+		return []SignalVariantDescriptor{
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.jobs.command.kind", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"begin_attempt"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"apply"}}, {Key: "vv.reason", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"none"}}}, Absent: []attribute.Key{"vv.jobs.disposition"}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.jobs.command.kind", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"progress"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"apply"}}, {Key: "vv.reason", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"none"}}}, Absent: []attribute.Key{"vv.jobs.disposition"}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.jobs.command.kind", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"reject_corrupt"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"apply"}}, {Key: "vv.reason", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"none"}}}, Absent: []attribute.Key{"vv.jobs.disposition"}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.jobs.command.kind", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"arbitrate_attempt_deadline"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"apply"}}, {Key: "vv.reason", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"none"}}}, Absent: []attribute.Key{"vv.jobs.disposition"}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.jobs.command.kind", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"release_unchanged"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"apply"}}, {Key: "vv.reason", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"compatibility"}}}, Absent: []attribute.Key{"vv.jobs.disposition"}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.jobs.command.kind", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"release_unchanged"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"apply"}}, {Key: "vv.reason", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"shutdown"}}}, Absent: []attribute.Key{"vv.jobs.disposition"}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.jobs.command.kind", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"release_unchanged"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"apply"}}, {Key: "vv.reason", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"admission"}}}, Absent: []attribute.Key{"vv.jobs.disposition"}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.jobs.command.kind", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"defer_delivery"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"apply"}}, {Key: "vv.reason", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"admission"}}}, Absent: []attribute.Key{"vv.jobs.disposition"}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.jobs.command.kind", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"defer_delivery"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"apply"}}, {Key: "vv.reason", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"compatibility"}}}, Absent: []attribute.Key{"vv.jobs.disposition"}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.jobs.command.kind", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"defer_delivery"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"apply"}}, {Key: "vv.reason", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"dependency"}}}, Absent: []attribute.Key{"vv.jobs.disposition"}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.jobs.command.kind", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"defer_delivery"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"apply"}}, {Key: "vv.reason", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"shutdown"}}}, Absent: []attribute.Key{"vv.jobs.disposition"}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.jobs.command.kind", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"defer_delivery"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"apply"}}, {Key: "vv.reason", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"lease_lost"}}}, Absent: []attribute.Key{"vv.jobs.disposition"}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.jobs.command.kind", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"finish_delivery"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"apply"}}, {Key: "vv.reason", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"payload"}}}, Absent: []attribute.Key{"vv.jobs.disposition"}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.jobs.command.kind", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"finish_delivery"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"apply"}}, {Key: "vv.reason", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"compatibility"}}}, Absent: []attribute.Key{"vv.jobs.disposition"}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.jobs.command.kind", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"revoke_attempt"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"apply"}}, {Key: "vv.reason", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"shutdown"}}}, Absent: []attribute.Key{"vv.jobs.disposition"}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.jobs.command.kind", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"revoke_attempt"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"apply"}}, {Key: "vv.reason", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"lease_lost"}}}, Absent: []attribute.Key{"vv.jobs.disposition"}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.jobs.command.kind", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"finish_attempt"}}, {Key: "vv.jobs.disposition", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"succeeded"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"apply"}}, {Key: "vv.reason", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"none"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.jobs.command.kind", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"finish_attempt"}}, {Key: "vv.jobs.disposition", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"retry"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"apply"}}, {Key: "vv.reason", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"handler_failure"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.jobs.command.kind", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"finish_attempt"}}, {Key: "vv.jobs.disposition", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"retry"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"apply"}}, {Key: "vv.reason", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"panic"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.jobs.command.kind", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"finish_attempt"}}, {Key: "vv.jobs.disposition", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"retry"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"apply"}}, {Key: "vv.reason", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"shutdown"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.jobs.command.kind", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"finish_attempt"}}, {Key: "vv.jobs.disposition", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"retry"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"apply"}}, {Key: "vv.reason", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"lease_lost"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.jobs.command.kind", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"finish_attempt"}}, {Key: "vv.jobs.disposition", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"retry"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"apply"}}, {Key: "vv.reason", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"classifier"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.jobs.command.kind", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"finish_attempt"}}, {Key: "vv.jobs.disposition", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"permanent_failure"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"apply"}}, {Key: "vv.reason", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"handler_failure"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.jobs.command.kind", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"finish_attempt"}}, {Key: "vv.jobs.disposition", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"permanent_failure"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"apply"}}, {Key: "vv.reason", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"panic"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.jobs.command.kind", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"finish_attempt"}}, {Key: "vv.jobs.disposition", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"permanent_failure"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"apply"}}, {Key: "vv.reason", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"dependency"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.jobs.command.kind", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"finish_attempt"}}, {Key: "vv.jobs.disposition", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"permanent_failure"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"apply"}}, {Key: "vv.reason", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"shutdown"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.jobs.command.kind", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"finish_attempt"}}, {Key: "vv.jobs.disposition", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"permanent_failure"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"apply"}}, {Key: "vv.reason", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"lease_lost"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.jobs.command.kind", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"finish_attempt"}}, {Key: "vv.jobs.disposition", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"permanent_failure"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"apply"}}, {Key: "vv.reason", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"classifier"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.jobs.command.kind", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"finish_attempt"}}, {Key: "vv.jobs.disposition", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"discard"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"apply"}}, {Key: "vv.reason", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"handler_failure"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.jobs.command.kind", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"finish_attempt"}}, {Key: "vv.jobs.disposition", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"discard"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"apply"}}, {Key: "vv.reason", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"panic"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.jobs.command.kind", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"finish_attempt"}}, {Key: "vv.jobs.disposition", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"discard"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"apply"}}, {Key: "vv.reason", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"dependency"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.jobs.command.kind", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"finish_attempt"}}, {Key: "vv.jobs.disposition", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"discard"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"apply"}}, {Key: "vv.reason", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"shutdown"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.jobs.command.kind", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"finish_attempt"}}, {Key: "vv.jobs.disposition", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"discard"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"apply"}}, {Key: "vv.reason", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"lease_lost"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.jobs.command.kind", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"finish_attempt"}}, {Key: "vv.jobs.disposition", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"discard"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"apply"}}, {Key: "vv.reason", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"classifier"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.jobs.command.kind", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"finish_attempt"}}, {Key: "vv.jobs.disposition", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"quarantine"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"apply"}}, {Key: "vv.reason", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"handler_failure"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.jobs.command.kind", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"finish_attempt"}}, {Key: "vv.jobs.disposition", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"quarantine"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"apply"}}, {Key: "vv.reason", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"panic"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.jobs.command.kind", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"finish_attempt"}}, {Key: "vv.jobs.disposition", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"quarantine"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"apply"}}, {Key: "vv.reason", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"dependency"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.jobs.command.kind", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"finish_attempt"}}, {Key: "vv.jobs.disposition", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"quarantine"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"apply"}}, {Key: "vv.reason", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"shutdown"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.jobs.command.kind", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"finish_attempt"}}, {Key: "vv.jobs.disposition", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"quarantine"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"apply"}}, {Key: "vv.reason", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"lease_lost"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.jobs.command.kind", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"finish_attempt"}}, {Key: "vv.jobs.disposition", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"quarantine"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"apply"}}, {Key: "vv.reason", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"classifier"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.jobs.command.kind", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"finish_attempt"}}, {Key: "vv.jobs.disposition", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"deferred"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"apply"}}, {Key: "vv.reason", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"dependency"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.jobs.command.kind", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"finish_attempt"}}, {Key: "vv.jobs.disposition", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"canceled"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"apply"}}, {Key: "vv.reason", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cancel_requested"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+		}
+	case SignalJobsWorkerDuration:
+		return []SignalVariantDescriptor{
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"run"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"complete"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{{Fact: SourceFactJobsWorkerElapsed, Operator: "gt", Value: 0}}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"run"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"canceled"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{{Fact: SourceFactJobsWorkerElapsed, Operator: "gt", Value: 0}}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.jobs.failure", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"runtime"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"run"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"failed"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{{Fact: SourceFactJobsWorkerElapsed, Operator: "gt", Value: 0}}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"drain"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"complete"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{{Fact: SourceFactJobsWorkerElapsed, Operator: "gt", Value: 0}}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"drain"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"forced"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{{Fact: SourceFactJobsWorkerElapsed, Operator: "gt", Value: 0}}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.jobs.failure", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"runtime"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"drain"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"failed"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{{Fact: SourceFactJobsWorkerElapsed, Operator: "gt", Value: 0}}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"claim"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"complete"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{{Fact: SourceFactJobsWorkerElapsed, Operator: "gt", Value: 0}}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"claim"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"empty"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{{Fact: SourceFactJobsWorkerElapsed, Operator: "gt", Value: 0}}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"claim"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"timeout"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{{Fact: SourceFactJobsWorkerElapsed, Operator: "gt", Value: 0}}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"claim"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"canceled"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{{Fact: SourceFactJobsWorkerElapsed, Operator: "gt", Value: 0}}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.jobs.failure", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"driver", "driver_contract", "driver_panic", "runtime"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"claim"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"failed"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{{Fact: SourceFactJobsWorkerElapsed, Operator: "gt", Value: 0}}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"recover"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"complete"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{{Fact: SourceFactJobsWorkerElapsed, Operator: "gt", Value: 0}}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"recover"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"empty"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{{Fact: SourceFactJobsWorkerElapsed, Operator: "gt", Value: 0}}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"recover"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"timeout"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{{Fact: SourceFactJobsWorkerElapsed, Operator: "gt", Value: 0}}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"recover"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"canceled"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{{Fact: SourceFactJobsWorkerElapsed, Operator: "gt", Value: 0}}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.jobs.failure", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"driver", "driver_contract", "driver_panic", "runtime"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"recover"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"failed"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{{Fact: SourceFactJobsWorkerElapsed, Operator: "gt", Value: 0}}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"renew"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"complete"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{{Fact: SourceFactJobsWorkerElapsed, Operator: "gt", Value: 0}}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"renew"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"timeout"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{{Fact: SourceFactJobsWorkerElapsed, Operator: "gt", Value: 0}}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"renew"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"canceled"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{{Fact: SourceFactJobsWorkerElapsed, Operator: "gt", Value: 0}}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.jobs.failure", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"driver", "driver_contract", "driver_panic", "runtime"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"renew"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"failed"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{{Fact: SourceFactJobsWorkerElapsed, Operator: "gt", Value: 0}}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"apply"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"complete"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{{Fact: SourceFactJobsWorkerElapsed, Operator: "gt", Value: 0}}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"apply"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"timeout"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{{Fact: SourceFactJobsWorkerElapsed, Operator: "gt", Value: 0}}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"apply"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"canceled"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{{Fact: SourceFactJobsWorkerElapsed, Operator: "gt", Value: 0}}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.jobs.failure", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"driver", "driver_contract", "driver_panic", "runtime"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"apply"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"failed"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{{Fact: SourceFactJobsWorkerElapsed, Operator: "gt", Value: 0}}},
+		}
+	case SignalJobsWorkerItems:
+		return []SignalVariantDescriptor{
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"claim"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"complete"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"claim"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"empty"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"claim"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"saturated"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"claim"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"timeout"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"claim"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"canceled"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.jobs.failure", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"driver", "driver_contract", "driver_panic", "runtime"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"claim"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"failed"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"recover"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"complete"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"recover"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"empty"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"recover"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"saturated"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"recover"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"timeout"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"recover"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"canceled"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.jobs.failure", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"driver", "driver_contract", "driver_panic", "runtime"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"recover"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"failed"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"renew"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"complete"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"renew"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"timeout"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"renew"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"canceled"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.jobs.failure", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"driver", "driver_contract", "driver_panic", "runtime"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"renew"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"failed"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"apply"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"complete"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"apply"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"timeout"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"apply"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"canceled"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.jobs.failure", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"driver", "driver_contract", "driver_panic", "runtime"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"apply"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"failed"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+		}
+	case SignalJobsWorkerOperations:
+		return []SignalVariantDescriptor{
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"run"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"started"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"run"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"complete"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"run"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"canceled"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.jobs.failure", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"runtime"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"run"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"failed"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"drain"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"started"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"drain"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"complete"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"drain"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"forced"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.jobs.failure", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"runtime"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"drain"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"failed"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"claim"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"complete"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"claim"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"empty"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"claim"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"saturated"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"claim"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"timeout"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"claim"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"canceled"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.jobs.failure", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"driver", "driver_contract", "driver_panic", "runtime"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"claim"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"failed"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"recover"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"complete"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"recover"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"empty"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"recover"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"saturated"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"recover"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"timeout"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"recover"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"canceled"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.jobs.failure", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"driver", "driver_contract", "driver_panic", "runtime"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"recover"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"failed"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"renew"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"complete"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"renew"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"timeout"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"renew"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"canceled"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.jobs.failure", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"driver", "driver_contract", "driver_panic", "runtime"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"renew"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"failed"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"apply"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"complete"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"apply"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"timeout"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"apply"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"canceled"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.jobs.failure", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"driver", "driver_contract", "driver_panic", "runtime"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"apply"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"failed"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"admission"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"ready"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"admission"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"held"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"admission"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"stale"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"admission"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"invalid"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"admission"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"saturated"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+		}
+	case SignalJobsWorkerReleased:
+		return []SignalVariantDescriptor{
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.operation.more", Type: "bool", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"false", "true"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"recover"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"complete"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"jobs_worker"}}, {Key: "vv.operation.more", Type: "bool", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"false"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"recover"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"empty"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+		}
+	case SignalRemoteDuration:
+		return []SignalVariantDescriptor{
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"remote"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"count", "create", "delete", "delete_many", "get", "list", "replace", "update"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"ok"}}}, Absent: []attribute.Key{"error.type"}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "error.type", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"conflict", "forbidden", "internal", "invalid", "not_found", "panic", "stale_version"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"remote"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"count", "create", "delete", "delete_many", "get", "list", "replace", "update"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"error"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "error.type", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"canceled"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"remote"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"count", "create", "delete", "delete_many", "get", "list", "replace", "update"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"canceled"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "error.type", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"timeout"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"remote"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"count", "create", "delete", "delete_many", "get", "list", "replace", "update"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"timeout"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+		}
+	case SignalRemoteSpan:
+		return []SignalVariantDescriptor{
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"remote"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"count", "create", "delete", "delete_many", "get", "list", "replace", "update"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"ok"}}}, Absent: []attribute.Key{"error.type"}, Status: "unset", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "error.type", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"conflict", "forbidden", "internal", "invalid", "not_found", "panic", "stale_version"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"remote"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"count", "create", "delete", "delete_many", "get", "list", "replace", "update"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"error"}}}, Absent: []attribute.Key{}, Status: "error", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "error.type", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"canceled"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"remote"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"count", "create", "delete", "delete_many", "get", "list", "replace", "update"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"canceled"}}}, Absent: []attribute.Key{}, Status: "error", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "error.type", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"timeout"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"remote"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"count", "create", "delete", "delete_many", "get", "list", "replace", "update"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"timeout"}}}, Absent: []attribute.Key{}, Status: "error", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"remote"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"count", "create", "delete", "delete_many", "get", "list", "replace", "update"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"goroutine_exit"}}}, Absent: []attribute.Key{"error.type"}, Status: "error", When: []SignalSourcePredicate{}},
+		}
+	case SignalRuntimeDuration:
+		return []SignalVariantDescriptor{
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"runtime_lifecycle"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"drain", "run"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"ok"}}, {Key: "vv.runtime.durability", Type: "string", Optional: true, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"durable", "non_durable"}}, {Key: "vv.runtime.placement", Type: "string", Optional: true, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"per_replica", "singleton"}}}, Absent: []attribute.Key{"error.type"}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "error.type", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"conflict", "forbidden", "internal", "invalid", "not_found", "panic", "stale_version"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"runtime_lifecycle"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"drain", "run"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"error"}}, {Key: "vv.runtime.durability", Type: "string", Optional: true, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"durable", "non_durable"}}, {Key: "vv.runtime.placement", Type: "string", Optional: true, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"per_replica", "singleton"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "error.type", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"canceled"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"runtime_lifecycle"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"drain", "run"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"canceled"}}, {Key: "vv.runtime.durability", Type: "string", Optional: true, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"durable", "non_durable"}}, {Key: "vv.runtime.placement", Type: "string", Optional: true, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"per_replica", "singleton"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "error.type", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"timeout"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"runtime_lifecycle"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"drain", "run"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"timeout"}}, {Key: "vv.runtime.durability", Type: "string", Optional: true, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"durable", "non_durable"}}, {Key: "vv.runtime.placement", Type: "string", Optional: true, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"per_replica", "singleton"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+		}
+	case SignalRuntimeOperations:
+		return []SignalVariantDescriptor{
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"runtime_lifecycle"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"drain", "run"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"ok"}}, {Key: "vv.runtime.durability", Type: "string", Optional: true, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"durable", "non_durable"}}, {Key: "vv.runtime.placement", Type: "string", Optional: true, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"per_replica", "singleton"}}}, Absent: []attribute.Key{"error.type"}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "error.type", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"conflict", "forbidden", "internal", "invalid", "not_found", "panic", "stale_version"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"runtime_lifecycle"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"drain", "run"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"error"}}, {Key: "vv.runtime.durability", Type: "string", Optional: true, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"durable", "non_durable"}}, {Key: "vv.runtime.placement", Type: "string", Optional: true, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"per_replica", "singleton"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "error.type", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"canceled"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"runtime_lifecycle"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"drain", "run"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"canceled"}}, {Key: "vv.runtime.durability", Type: "string", Optional: true, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"durable", "non_durable"}}, {Key: "vv.runtime.placement", Type: "string", Optional: true, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"per_replica", "singleton"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "error.type", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"timeout"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"runtime_lifecycle"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"drain", "run"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"timeout"}}, {Key: "vv.runtime.durability", Type: "string", Optional: true, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"durable", "non_durable"}}, {Key: "vv.runtime.placement", Type: "string", Optional: true, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"per_replica", "singleton"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+		}
+	case SignalRuntimePeriodicDuration:
+		return []SignalVariantDescriptor{
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"runtime_periodic"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"pass"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"ok"}}}, Absent: []attribute.Key{"error.type"}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "error.type", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"conflict", "forbidden", "internal", "invalid", "not_found", "panic", "stale_version"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"runtime_periodic"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"pass"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"error"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "error.type", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"canceled"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"runtime_periodic"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"pass"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"canceled"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "error.type", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"timeout"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"runtime_periodic"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"pass"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"timeout"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+		}
+	case SignalRuntimePeriodicSpan:
+		return []SignalVariantDescriptor{
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"runtime_periodic"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"pass"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"ok"}}, {Key: "vv.resource.name", Type: "string", Optional: true, Declared: true, MaxValues: 32, MaxBytes: 64, Charset: "unicode_letter_digit_dot_underscore_hyphen", Values: []string{}}}, Absent: []attribute.Key{"error.type"}, Status: "unset", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "error.type", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"conflict", "forbidden", "internal", "invalid", "not_found", "panic", "stale_version"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"runtime_periodic"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"pass"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"error"}}, {Key: "vv.resource.name", Type: "string", Optional: true, Declared: true, MaxValues: 32, MaxBytes: 64, Charset: "unicode_letter_digit_dot_underscore_hyphen", Values: []string{}}}, Absent: []attribute.Key{}, Status: "error", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "error.type", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"canceled"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"runtime_periodic"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"pass"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"canceled"}}, {Key: "vv.resource.name", Type: "string", Optional: true, Declared: true, MaxValues: 32, MaxBytes: 64, Charset: "unicode_letter_digit_dot_underscore_hyphen", Values: []string{}}}, Absent: []attribute.Key{}, Status: "error", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "error.type", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"timeout"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"runtime_periodic"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"pass"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"timeout"}}, {Key: "vv.resource.name", Type: "string", Optional: true, Declared: true, MaxValues: 32, MaxBytes: 64, Charset: "unicode_letter_digit_dot_underscore_hyphen", Values: []string{}}}, Absent: []attribute.Key{}, Status: "error", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"runtime_periodic"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"pass"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"goroutine_exit"}}, {Key: "vv.resource.name", Type: "string", Optional: true, Declared: true, MaxValues: 32, MaxBytes: 64, Charset: "unicode_letter_digit_dot_underscore_hyphen", Values: []string{}}}, Absent: []attribute.Key{"error.type"}, Status: "error", When: []SignalSourcePredicate{}},
+		}
+	case SignalRuntimeTransitions:
+		return []SignalVariantDescriptor{
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"runtime_lifecycle"}}, {Key: "vv.runtime.durability", Type: "string", Optional: true, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"durable", "non_durable"}}, {Key: "vv.runtime.phase", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"failed", "running", "stopped"}}, {Key: "vv.runtime.placement", Type: "string", Optional: true, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"per_replica", "singleton"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+		}
+	case SignalStorageCleanupRemoved:
+		return []SignalVariantDescriptor{
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"storage"}}, {Key: "vv.operation.more", Type: "bool", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"false", "true"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"cleanup_expired"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"ok"}}}, Absent: []attribute.Key{"error.type"}, Status: "", When: []SignalSourcePredicate{}},
+		}
+	case SignalStorageDuration:
+		return []SignalVariantDescriptor{
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"storage"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"abort", "cleanup_expired", "delete", "head", "open", "promote", "put", "stage", "temporary_url"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"ok"}}}, Absent: []attribute.Key{"error.type"}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "error.type", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"conflict", "forbidden", "internal", "invalid", "not_found", "panic", "stale_version"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"storage"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"abort", "cleanup_expired", "delete", "head", "open", "promote", "put", "stage", "temporary_url"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"error"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "error.type", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"canceled"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"storage"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"abort", "cleanup_expired", "delete", "head", "open", "promote", "put", "stage", "temporary_url"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"canceled"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "error.type", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"timeout"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"storage"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"abort", "cleanup_expired", "delete", "head", "open", "promote", "put", "stage", "temporary_url"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"timeout"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+		}
+	case SignalStorageOperationBytes:
+		return []SignalVariantDescriptor{
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"storage"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"put", "stage"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"ok"}}}, Absent: []attribute.Key{"error.type"}, Status: "", When: []SignalSourcePredicate{}},
+		}
+	case SignalStorageSpan:
+		return []SignalVariantDescriptor{
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"storage"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"abort", "cleanup_expired", "delete", "head", "open", "promote", "put", "stage", "temporary_url"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"ok"}}, {Key: "vv.resource.name", Type: "string", Optional: true, Declared: true, MaxValues: 32, MaxBytes: 64, Charset: "unicode_letter_digit_dot_underscore_hyphen", Values: []string{}}}, Absent: []attribute.Key{"error.type"}, Status: "unset", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "error.type", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"conflict", "forbidden", "internal", "invalid", "not_found", "panic", "stale_version"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"storage"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"abort", "cleanup_expired", "delete", "head", "open", "promote", "put", "stage", "temporary_url"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"error"}}, {Key: "vv.resource.name", Type: "string", Optional: true, Declared: true, MaxValues: 32, MaxBytes: 64, Charset: "unicode_letter_digit_dot_underscore_hyphen", Values: []string{}}}, Absent: []attribute.Key{}, Status: "error", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "error.type", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"canceled"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"storage"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"abort", "cleanup_expired", "delete", "head", "open", "promote", "put", "stage", "temporary_url"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"canceled"}}, {Key: "vv.resource.name", Type: "string", Optional: true, Declared: true, MaxValues: 32, MaxBytes: 64, Charset: "unicode_letter_digit_dot_underscore_hyphen", Values: []string{}}}, Absent: []attribute.Key{}, Status: "error", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "error.type", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"timeout"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"storage"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"abort", "cleanup_expired", "delete", "head", "open", "promote", "put", "stage", "temporary_url"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"timeout"}}, {Key: "vv.resource.name", Type: "string", Optional: true, Declared: true, MaxValues: 32, MaxBytes: 64, Charset: "unicode_letter_digit_dot_underscore_hyphen", Values: []string{}}}, Absent: []attribute.Key{}, Status: "error", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"storage"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"abort", "cleanup_expired", "delete", "head", "open", "promote", "put", "stage", "temporary_url"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"goroutine_exit"}}, {Key: "vv.resource.name", Type: "string", Optional: true, Declared: true, MaxValues: 32, MaxBytes: 64, Charset: "unicode_letter_digit_dot_underscore_hyphen", Values: []string{}}}, Absent: []attribute.Key{"error.type"}, Status: "error", When: []SignalSourcePredicate{}},
+		}
+	case SignalStorageStreamBytes:
+		return []SignalVariantDescriptor{
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"storage_stream"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"consume"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"eof"}}}, Absent: []attribute.Key{"error.type"}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"storage_stream"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"consume"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"closed"}}}, Absent: []attribute.Key{"error.type"}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"storage_stream"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"consume"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"unwrapped"}}}, Absent: []attribute.Key{"error.type"}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "error.type", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"canceled", "conflict", "forbidden", "internal", "invalid", "not_found", "panic", "stale_version", "timeout"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"storage_stream"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"consume"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"error"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+		}
+	case SignalStorageStreamDuration:
+		return []SignalVariantDescriptor{
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"storage_stream"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"consume"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"eof"}}}, Absent: []attribute.Key{"error.type"}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"storage_stream"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"consume"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"closed"}}}, Absent: []attribute.Key{"error.type"}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"storage_stream"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"consume"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"unwrapped"}}}, Absent: []attribute.Key{"error.type"}, Status: "", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "error.type", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"canceled", "conflict", "forbidden", "internal", "invalid", "not_found", "panic", "stale_version", "timeout"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"storage_stream"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"consume"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"error"}}}, Absent: []attribute.Key{}, Status: "", When: []SignalSourcePredicate{}},
+		}
+	case SignalStorageStreamSpan:
+		return []SignalVariantDescriptor{
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"storage_stream"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"consume"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"eof"}}}, Absent: []attribute.Key{"error.type"}, Status: "unset", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"storage_stream"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"consume"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"closed"}}}, Absent: []attribute.Key{"error.type"}, Status: "unset", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"storage_stream"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"consume"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"unwrapped"}}}, Absent: []attribute.Key{"error.type"}, Status: "unset", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "error.type", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"canceled", "conflict", "forbidden", "internal", "invalid", "not_found", "panic", "stale_version", "timeout"}}, {Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"storage_stream"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"consume"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"error"}}}, Absent: []attribute.Key{}, Status: "error", When: []SignalSourcePredicate{}},
+			{Attributes: []SignalAttributeDescriptor{{Key: "vv.component", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"storage_stream"}}, {Key: "vv.operation.name", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"consume"}}, {Key: "vv.operation.outcome", Type: "string", Optional: false, Declared: false, MaxValues: 0, MaxBytes: 0, Charset: "", Values: []string{"goroutine_exit"}}}, Absent: []attribute.Key{"error.type"}, Status: "error", When: []SignalSourcePredicate{}},
+		}
+	default:
+		return nil
+	}
+}
+
+func matchesSignal(signal Signal, status string, attributes []attribute.KeyValue, facts SignalSourceFacts) bool {
+	return signalFactsAdmitted(signal, facts) && matchesVariants(signalVariants(signal), status, attributes, facts)
+}
+func (s SignalDescriptor) Accepts(status string, attributes []attribute.KeyValue, facts ...SignalSourceValue) bool {
+	return signalFactsAdmitted(s.SignalID, facts) && matchesVariants(s.Variants, status, attributes, facts)
+}
+func (s SignalDescriptor) AcceptsInt64(value int64) bool {
+	if s.Kind != "metric" || s.NumberType != "int64" || s.HasMinimum && value < s.MinimumInt64 || s.HasMaximum && value > s.MaximumInt64 {
+		return false
+	}
+	return s.RecordWhen == "non_negative" && value >= 0 || s.RecordWhen == "positive" && value > 0
+}
+func (s SignalDescriptor) AcceptsFloat64(value float64) bool {
+	if s.Kind != "metric" || s.NumberType != "float64" || math.IsNaN(value) || math.IsInf(value, 0) || s.HasMinimum && value < s.Minimum || s.HasMaximum && value > s.Maximum {
+		return false
+	}
+	return s.RecordWhen == "non_negative" && value >= 0 || s.RecordWhen == "positive" && value > 0
+}
+func (s SignalDescriptor) AcceptsValue(value float64) bool {
+	if s.NumberType == "float64" {
+		return s.AcceptsFloat64(value)
+	}
+	if s.NumberType != "int64" || math.IsNaN(value) || math.IsInf(value, 0) || value != math.Trunc(value) || value < -9007199254740991 || value > 9007199254740991 {
+		return false
+	}
+	return s.AcceptsInt64(int64(value))
+}
+func signalFactsAdmitted(signal Signal, facts SignalSourceFacts) bool {
+	allowed := signalSourceFacts(signal)
+	for _, fact := range facts {
+		found := false
+		for _, candidate := range allowed {
+			if fact.Fact == candidate {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return signal.Valid()
+}
+func matchesVariants(variants []SignalVariantDescriptor, status string, attributes []attribute.KeyValue, facts SignalSourceFacts) bool {
+	for i, fact := range facts {
+		if !fact.Fact.Valid() || fact.Value < 0 {
+			return false
+		}
+		for _, prior := range facts[:i] {
+			if prior.Fact == fact.Fact {
+				return false
+			}
+		}
+	}
+	for i, a := range attributes {
+		for _, prior := range attributes[:i] {
+			if prior.Key == a.Key {
+				return false
+			}
+		}
+	}
+	matches := 0
+	for _, variant := range variants {
+		if variant.Status != status {
+			continue
+		}
+		if !sourcePredicatesMatch(variant.When, facts) {
+			continue
+		}
+		matched := true
+		for _, a := range attributes {
+			found := false
+			for _, spec := range variant.Attributes {
+				if spec.Key == a.Key {
+					found = signalAttributeAccepts(spec, a.Value)
+					break
+				}
+			}
+			if !found {
+				matched = false
+				break
+			}
+		}
+		if !matched {
+			continue
+		}
+		for _, spec := range variant.Attributes {
+			if spec.Optional {
+				continue
+			}
+			found := false
+			for _, a := range attributes {
+				if a.Key == spec.Key {
+					found = true
+					break
+				}
+			}
+			if !found {
+				matched = false
+				break
+			}
+		}
+		if !matched {
+			continue
+		}
+		for _, key := range variant.Absent {
+			for _, a := range attributes {
+				if a.Key == key {
+					matched = false
+					break
+				}
+			}
+		}
+		if matched {
+			matches++
+		}
+	}
+	return matches == 1
+}
+func sourcePredicatesMatch(predicates []SignalSourcePredicate, facts SignalSourceFacts) bool {
+	for _, predicate := range predicates {
+		matched := false
+		for _, fact := range facts {
+			if fact.Fact == predicate.Fact {
+				matched = predicate.Operator == "gt" && fact.Value > predicate.Value || predicate.Operator == "eq" && fact.Value == predicate.Value
+				break
+			}
+		}
+		if !matched {
+			return false
+		}
+	}
+	return true
+}
+func signalAttributeAccepts(spec SignalAttributeDescriptor, value attribute.Value) bool {
+	if spec.Type == "string" && value.Type() != attribute.STRING ||
+		spec.Type == "bool" && value.Type() != attribute.BOOL ||
+		spec.Type == "int64" && value.Type() != attribute.INT64 {
+		return false
+	}
+	rendered := value.Emit()
+	if spec.Declared {
+		if spec.Type != "string" || len(rendered) == 0 || len(rendered) > spec.MaxBytes || !utf8.ValidString(rendered) || spec.Charset != "unicode_letter_digit_dot_underscore_hyphen" {
+			return false
+		}
+		for _, r := range rendered {
+			if !unicode.IsLetter(r) && !unicode.IsDigit(r) && r != '.' && r != '_' && r != '-' {
+				return false
+			}
+		}
+		return true
+	}
+	for _, allowed := range spec.Values {
+		if rendered == allowed {
+			return true
+		}
+	}
+	return false
+}
+
+type SignalDescriptor struct {
+	Key              string
+	Name             string
+	Names            []string
+	Description      string
+	Boundaries       []float64
+	Minimum          float64
+	Maximum          float64
+	MinimumInt64     int64
+	MaximumInt64     int64
+	HasMinimum       bool
+	HasMaximum       bool
+	Variants         []SignalVariantDescriptor
+	Kind             string
+	Instrument       string
+	NumberType       string
+	Unit             string
+	Component        string
+	Availability     string
+	CardinalityBound int
+	SeriesBudget     int
+	SignalID         Signal
+	Provider         string
+	APIKind          string
+	RecordWhen       string
+	SpanKind         string
+	Source           string
+	PrivacyClass     string
+	Maturity         string
+	Semconv          string
+	NameDomain       string
+	Inputs           []string
+	DeclaredSources  map[string][]string
+	ValueSource      string
+	ComputedSource   string
+}
+
+func SignalDescriptors() []SignalDescriptor {
+	return []SignalDescriptor{
+		{Key: "auth_refusal_event", Name: "auth.refusal", Names: []string{"auth.refusal"}, Description: "Bounded auth_refusal observation", Boundaries: []float64{}, Minimum: 0, Maximum: 0, MinimumInt64: 0, MaximumInt64: 0, HasMinimum: false, HasMaximum: false, Variants: signalVariants(SignalAuthRefusalEvent), Kind: "span_event", Instrument: "", NumberType: "", Unit: "", Component: "auth_refusal", Availability: "implemented", CardinalityBound: 0, SeriesBudget: 0, SignalID: SignalAuthRefusalEvent, Provider: "context_only", APIKind: "", RecordWhen: "", SpanKind: "", Source: "auth.Observer.Refused", PrivacyClass: "safe", Maturity: "development", Semconv: "none", NameDomain: "", Inputs: []string{"auth_observer.Refused", "auth_reason.Kind"}, DeclaredSources: map[string][]string{}, ValueSource: "", ComputedSource: "logical_call"},
+		{Key: "auth_refusals", Name: "vv.auth.refusals", Names: []string{"vv.auth.refusals"}, Description: "Authentication refusals by closed reason, independent of event sampling", Boundaries: []float64{}, Minimum: 0, Maximum: 0, MinimumInt64: 0, MaximumInt64: 0, HasMinimum: true, HasMaximum: false, Variants: signalVariants(SignalAuthRefusals), Kind: "metric", Instrument: "counter", NumberType: "int64", Unit: "{refusal}", Component: "auth_refusal", Availability: "implemented", CardinalityBound: 5, SeriesBudget: 32, SignalID: SignalAuthRefusals, Provider: "meter", APIKind: "int64_counter", RecordWhen: "non_negative", SpanKind: "", Source: "auth.Observer.Refused", PrivacyClass: "safe", Maturity: "development", Semconv: "none", NameDomain: "", Inputs: []string{"auth_observer.Refused", "auth_reason.Kind"}, DeclaredSources: map[string][]string{}, ValueSource: "", ComputedSource: "event_count"},
+		{Key: "authentication_duration", Name: "vv.authentication.duration", Names: []string{"vv.authentication.duration"}, Description: "Duration of the complete authenticator chain", Boundaries: []float64{0.005, 0.01, 0.025, 0.05, 0.075, 0.1, 0.25, 0.5, 0.75, 1, 2.5, 5, 7.5, 10}, Minimum: 0, Maximum: 0, MinimumInt64: 0, MaximumInt64: 0, HasMinimum: true, HasMaximum: false, Variants: signalVariants(SignalAuthenticationDuration), Kind: "metric", Instrument: "histogram", NumberType: "float64", Unit: "s", Component: "authentication", Availability: "implemented", CardinalityBound: 11, SeriesBudget: 32, SignalID: SignalAuthenticationDuration, Provider: "meter", APIKind: "float64_histogram", RecordWhen: "non_negative", SpanKind: "", Source: "auth.Authenticator.Authenticate complete chain", PrivacyClass: "safe", Maturity: "development", Semconv: "none", NameDomain: "", Inputs: []string{"auth_authenticator.Authenticate"}, DeclaredSources: map[string][]string{}, ValueSource: "", ComputedSource: "elapsed"},
+		{Key: "authentication_span", Name: "vv.auth authenticate", Names: []string{"vv.auth authenticate"}, Description: "Logical authentication operation", Boundaries: []float64{}, Minimum: 0, Maximum: 0, MinimumInt64: 0, MaximumInt64: 0, HasMinimum: false, HasMaximum: false, Variants: signalVariants(SignalAuthenticationSpan), Kind: "span", Instrument: "", NumberType: "", Unit: "", Component: "authentication", Availability: "implemented", CardinalityBound: 0, SeriesBudget: 0, SignalID: SignalAuthenticationSpan, Provider: "tracer", APIKind: "", RecordWhen: "", SpanKind: "internal", Source: "auth.Authenticator.Authenticate complete chain A04 terminal Goexit ends this span with goroutine_exit/Error, no error.type, and suppresses associated metric samples; wrapper upgrade is owed.", PrivacyClass: "safe", Maturity: "development", Semconv: "none", NameDomain: "authentication.operations", Inputs: []string{"auth_authenticator.Authenticate"}, DeclaredSources: map[string][]string{}, ValueSource: "", ComputedSource: "logical_call"},
+		{Key: "cache_backend_event", Name: "cache_backend.event", Names: []string{"cache_backend.event"}, Description: "Bounded cache_backend observation", Boundaries: []float64{}, Minimum: 0, Maximum: 0, MinimumInt64: 0, MaximumInt64: 0, HasMinimum: false, HasMaximum: false, Variants: signalVariants(SignalCacheBackendEvent), Kind: "span_event", Instrument: "", NumberType: "", Unit: "", Component: "cache_backend", Availability: "implemented", CardinalityBound: 0, SeriesBudget: 0, SignalID: SignalCacheBackendEvent, Provider: "context_only", APIKind: "", RecordWhen: "", SpanKind: "", Source: "cachememory.Observer.Observe", PrivacyClass: "safe", Maturity: "development", Semconv: "none", NameDomain: "", Inputs: []string{"cache_memory_observer.Observe", "cache_backend_event.Operation", "cache_backend_event.Outcome"}, DeclaredSources: map[string][]string{}, ValueSource: "", ComputedSource: "logical_call"},
+		{Key: "cache_charged_bytes", Name: "vv.cache.event.charged_bytes", Names: []string{"vv.cache.event.charged_bytes"}, Description: "Charged bytes reported by a memory backend phase event; field-present zero sizes are recorded", Boundaries: []float64{0, 64, 256, 1024, 4096, 16384, 65536, 262144, 1.048576e+06}, Minimum: 0, Maximum: 0, MinimumInt64: 0, MaximumInt64: 0, HasMinimum: true, HasMaximum: false, Variants: signalVariants(SignalCacheChargedBytes), Kind: "metric", Instrument: "histogram", NumberType: "int64", Unit: "By", Component: "cache_backend", Availability: "planned", CardinalityBound: 11, SeriesBudget: 1024, SignalID: SignalCacheChargedBytes, Provider: "meter", APIKind: "int64_histogram", RecordWhen: "non_negative", SpanKind: "", Source: "cachememory.Observer.Observe", PrivacyClass: "safe", Maturity: "development", Semconv: "none", NameDomain: "", Inputs: []string{"cache_memory_observer.Observe", "cache_backend_event.ChargedBytes", "cache_backend_event.Operation", "cache_backend_event.Outcome", "cache_backend_event.Reason"}, DeclaredSources: map[string][]string{}, ValueSource: "cache_backend_event.ChargedBytes", ComputedSource: ""},
+		{Key: "cache_encoded_bytes", Name: "vv.cache.event.encoded_bytes", Names: []string{"vv.cache.event.encoded_bytes"}, Description: "Encoded bytes reported by a facade phase event; field-present zero sizes are recorded", Boundaries: []float64{0, 64, 256, 1024, 4096, 16384, 65536, 262144, 1.048576e+06}, Minimum: 0, Maximum: 0, MinimumInt64: 0, MaximumInt64: 0, HasMinimum: true, HasMaximum: false, Variants: signalVariants(SignalCacheEncodedBytes), Kind: "metric", Instrument: "histogram", NumberType: "int64", Unit: "By", Component: "cache", Availability: "planned", CardinalityBound: 14, SeriesBudget: 1024, SignalID: SignalCacheEncodedBytes, Provider: "meter", APIKind: "int64_histogram", RecordWhen: "non_negative", SpanKind: "", Source: "cache.Observer.Observe; lookup/miss and load paths require EncodedBytes > 0 to distinguish absent encoded envelopes", PrivacyClass: "safe", Maturity: "development", Semconv: "none", NameDomain: "", Inputs: []string{"cache_observer.Observe", "cache_event.EncodedBytes", "cache_event.Memoized", "cache_event.Operation", "cache_event.Outcome"}, DeclaredSources: map[string][]string{}, ValueSource: "cache_event.EncodedBytes", ComputedSource: ""},
+		{Key: "cache_event", Name: "cache.event", Names: []string{"cache.event"}, Description: "Bounded cache observation", Boundaries: []float64{}, Minimum: 0, Maximum: 0, MinimumInt64: 0, MaximumInt64: 0, HasMinimum: false, HasMaximum: false, Variants: signalVariants(SignalCacheEvent), Kind: "span_event", Instrument: "", NumberType: "", Unit: "", Component: "cache", Availability: "implemented", CardinalityBound: 0, SeriesBudget: 0, SignalID: SignalCacheEvent, Provider: "context_only", APIKind: "", RecordWhen: "", SpanKind: "", Source: "cache.Observer.Observe", PrivacyClass: "safe", Maturity: "development", Semconv: "none", NameDomain: "", Inputs: []string{"cache_observer.Observe", "cache_event.Operation", "cache_event.Outcome"}, DeclaredSources: map[string][]string{}, ValueSource: "", ComputedSource: "logical_call"},
+		{Key: "cache_events", Name: "vv.cache.events", Names: []string{"vv.cache.events"}, Description: "Terminal cache phase events with closed reasons and facade memoization", Boundaries: []float64{}, Minimum: 0, Maximum: 0, MinimumInt64: 0, MaximumInt64: 0, HasMinimum: true, HasMaximum: false, Variants: signalVariants(SignalCacheEvents), Kind: "metric", Instrument: "counter", NumberType: "int64", Unit: "{event}", Component: "cache", Availability: "planned", CardinalityBound: 49, SeriesBudget: 1024, SignalID: SignalCacheEvents, Provider: "meter", APIKind: "int64_counter", RecordWhen: "non_negative", SpanKind: "", Source: "cache.Observer.Observe and cachememory.Observer.Observe", PrivacyClass: "safe", Maturity: "development", Semconv: "none", NameDomain: "", Inputs: []string{"cache_memory_observer.Observe", "cache_backend_event.Operation", "cache_backend_event.Outcome", "cache_backend_event.Reason", "cache_observer.Observe", "cache_event.Memoized", "cache_event.Operation", "cache_event.Outcome", "cache_event.Reason"}, DeclaredSources: map[string][]string{}, ValueSource: "", ComputedSource: "event_count"},
+		{Key: "cache_items", Name: "vv.cache.event.items", Names: []string{"vv.cache.event.items"}, Description: "Items affected by one facade or memory-backend phase event", Boundaries: []float64{0, 1, 2, 4, 8, 16, 32, 64, 128, 256, 1024}, Minimum: 0, Maximum: 0, MinimumInt64: 0, MaximumInt64: 0, HasMinimum: true, HasMaximum: false, Variants: signalVariants(SignalCacheItems), Kind: "metric", Instrument: "histogram", NumberType: "int64", Unit: "{item}", Component: "cache", Availability: "planned", CardinalityBound: 49, SeriesBudget: 1024, SignalID: SignalCacheItems, Provider: "meter", APIKind: "int64_histogram", RecordWhen: "non_negative", SpanKind: "", Source: "cache.Observer.Observe and cachememory.Observer.Observe", PrivacyClass: "safe", Maturity: "development", Semconv: "none", NameDomain: "", Inputs: []string{"cache_memory_observer.Observe", "cache_backend_event.Items", "cache_backend_event.Operation", "cache_backend_event.Outcome", "cache_backend_event.Reason", "cache_observer.Observe", "cache_event.Items", "cache_event.Memoized", "cache_event.Operation", "cache_event.Outcome", "cache_event.Reason"}, DeclaredSources: map[string][]string{}, ValueSource: "", ComputedSource: "event_measurement"},
+		{Key: "cache_memory_active", Name: "vv.cache.memory.active_backends", Names: []string{"vv.cache.memory.active_backends"}, Description: "Count of active backends in the fixed registration", Boundaries: []float64{}, Minimum: 0, Maximum: 0, MinimumInt64: 0, MaximumInt64: 0, HasMinimum: true, HasMaximum: false, Variants: signalVariants(SignalCacheMemoryActive), Kind: "metric", Instrument: "observable_gauge", NumberType: "int64", Unit: "{backend}", Component: "cache_memory", Availability: "planned", CardinalityBound: 1, SeriesBudget: 1, SignalID: SignalCacheMemoryActive, Provider: "meter", APIKind: "int64_observable_gauge", RecordWhen: "non_negative", SpanKind: "", Source: "cachememory.Backend.Stats aggregate", PrivacyClass: "safe", Maturity: "development", Semconv: "none", NameDomain: "", Inputs: []string{"cache_memory_backend.Stats", "cache_memory_stats.Closed"}, DeclaredSources: map[string][]string{}, ValueSource: "", ComputedSource: "aggregate"},
+		{Key: "cache_memory_byte_limit", Name: "vv.cache.memory.byte_limit", Names: []string{"vv.cache.memory.byte_limit"}, Description: "Aggregate declared byte limits of active backends; omitted when none is active", Boundaries: []float64{}, Minimum: 0, Maximum: 0, MinimumInt64: 0, MaximumInt64: 0, HasMinimum: true, HasMaximum: false, Variants: signalVariants(SignalCacheMemoryByteLimit), Kind: "metric", Instrument: "observable_gauge", NumberType: "int64", Unit: "By", Component: "cache_memory", Availability: "planned", CardinalityBound: 1, SeriesBudget: 1, SignalID: SignalCacheMemoryByteLimit, Provider: "meter", APIKind: "int64_observable_gauge", RecordWhen: "non_negative", SpanKind: "", Source: "cachememory.Backend.Stats aggregate", PrivacyClass: "safe", Maturity: "development", Semconv: "none", NameDomain: "", Inputs: []string{"cache_memory_backend.Stats", "cache_memory_limits.MaxBytes", "cache_memory_stats.Closed"}, DeclaredSources: map[string][]string{}, ValueSource: "", ComputedSource: "aggregate"},
+		{Key: "cache_memory_bytes", Name: "vv.cache.memory.charged_bytes", Names: []string{"vv.cache.memory.charged_bytes"}, Description: "Aggregate charged bytes of active registered backends; omitted when none is active", Boundaries: []float64{}, Minimum: 0, Maximum: 0, MinimumInt64: 0, MaximumInt64: 0, HasMinimum: true, HasMaximum: false, Variants: signalVariants(SignalCacheMemoryBytes), Kind: "metric", Instrument: "observable_gauge", NumberType: "int64", Unit: "By", Component: "cache_memory", Availability: "planned", CardinalityBound: 1, SeriesBudget: 1, SignalID: SignalCacheMemoryBytes, Provider: "meter", APIKind: "int64_observable_gauge", RecordWhen: "non_negative", SpanKind: "", Source: "cachememory.Backend.Stats aggregate", PrivacyClass: "safe", Maturity: "development", Semconv: "none", NameDomain: "", Inputs: []string{"cache_memory_backend.Stats", "cache_memory_stats.ChargedBytes", "cache_memory_stats.Closed"}, DeclaredSources: map[string][]string{}, ValueSource: "", ComputedSource: "aggregate"},
+		{Key: "cache_memory_closed", Name: "vv.cache.memory.closed_backends", Names: []string{"vv.cache.memory.closed_backends"}, Description: "Count of closed backends in the fixed registration", Boundaries: []float64{}, Minimum: 0, Maximum: 0, MinimumInt64: 0, MaximumInt64: 0, HasMinimum: true, HasMaximum: false, Variants: signalVariants(SignalCacheMemoryClosed), Kind: "metric", Instrument: "observable_gauge", NumberType: "int64", Unit: "{backend}", Component: "cache_memory", Availability: "planned", CardinalityBound: 1, SeriesBudget: 1, SignalID: SignalCacheMemoryClosed, Provider: "meter", APIKind: "int64_observable_gauge", RecordWhen: "non_negative", SpanKind: "", Source: "cachememory.Backend.Stats aggregate", PrivacyClass: "safe", Maturity: "development", Semconv: "none", NameDomain: "", Inputs: []string{"cache_memory_backend.Stats", "cache_memory_stats.Closed"}, DeclaredSources: map[string][]string{}, ValueSource: "", ComputedSource: "aggregate"},
+		{Key: "cache_memory_entries", Name: "vv.cache.memory.entries", Names: []string{"vv.cache.memory.entries"}, Description: "Aggregate resident entries of active registered backends; omitted when none is active", Boundaries: []float64{}, Minimum: 0, Maximum: 0, MinimumInt64: 0, MaximumInt64: 0, HasMinimum: true, HasMaximum: false, Variants: signalVariants(SignalCacheMemoryEntries), Kind: "metric", Instrument: "observable_gauge", NumberType: "int64", Unit: "{entry}", Component: "cache_memory", Availability: "planned", CardinalityBound: 1, SeriesBudget: 1, SignalID: SignalCacheMemoryEntries, Provider: "meter", APIKind: "int64_observable_gauge", RecordWhen: "non_negative", SpanKind: "", Source: "cachememory.Backend.Stats aggregate", PrivacyClass: "safe", Maturity: "development", Semconv: "none", NameDomain: "", Inputs: []string{"cache_memory_backend.Stats", "cache_memory_stats.Closed", "cache_memory_stats.Entries"}, DeclaredSources: map[string][]string{}, ValueSource: "", ComputedSource: "aggregate"},
+		{Key: "cache_memory_entry_limit", Name: "vv.cache.memory.entry_limit", Names: []string{"vv.cache.memory.entry_limit"}, Description: "Aggregate declared entry limits of active backends; omitted when none is active", Boundaries: []float64{}, Minimum: 0, Maximum: 0, MinimumInt64: 0, MaximumInt64: 0, HasMinimum: true, HasMaximum: false, Variants: signalVariants(SignalCacheMemoryEntryLimit), Kind: "metric", Instrument: "observable_gauge", NumberType: "int64", Unit: "{entry}", Component: "cache_memory", Availability: "planned", CardinalityBound: 1, SeriesBudget: 1, SignalID: SignalCacheMemoryEntryLimit, Provider: "meter", APIKind: "int64_observable_gauge", RecordWhen: "non_negative", SpanKind: "", Source: "cachememory.Backend.Stats aggregate", PrivacyClass: "safe", Maturity: "development", Semconv: "none", NameDomain: "", Inputs: []string{"cache_memory_backend.Stats", "cache_memory_limits.MaxEntries", "cache_memory_stats.Closed"}, DeclaredSources: map[string][]string{}, ValueSource: "", ComputedSource: "aggregate"},
+		{Key: "cache_operations", Name: "vv.cache.operations", Names: []string{"vv.cache.operations"}, Description: "Count of cache terminal phase events", Boundaries: []float64{}, Minimum: 0, Maximum: 0, MinimumInt64: 0, MaximumInt64: 0, HasMinimum: true, HasMaximum: false, Variants: signalVariants(SignalCacheOperations), Kind: "metric", Instrument: "counter", NumberType: "int64", Unit: "{operation}", Component: "cache", Availability: "implemented", CardinalityBound: 116, SeriesBudget: 116, SignalID: SignalCacheOperations, Provider: "meter", APIKind: "int64_counter", RecordWhen: "non_negative", SpanKind: "", Source: "cache.Observer.Observe and cachememory.Observer.Observe", PrivacyClass: "safe", Maturity: "development", Semconv: "none", NameDomain: "", Inputs: []string{"cache_memory_observer.Observe", "cache_backend_event.Operation", "cache_backend_event.Outcome", "cache_observer.Observe", "cache_event.Operation", "cache_event.Outcome"}, DeclaredSources: map[string][]string{}, ValueSource: "", ComputedSource: "event_count"},
+		{Key: "cache_payload_bytes", Name: "vv.cache.event.payload_bytes", Names: []string{"vv.cache.event.payload_bytes"}, Description: "Payload bytes reported by a facade phase event; field-present zero sizes are recorded", Boundaries: []float64{0, 64, 256, 1024, 4096, 16384, 65536, 262144, 1.048576e+06}, Minimum: 0, Maximum: 0, MinimumInt64: 0, MaximumInt64: 0, HasMinimum: true, HasMaximum: false, Variants: signalVariants(SignalCachePayloadBytes), Kind: "metric", Instrument: "histogram", NumberType: "int64", Unit: "By", Component: "cache", Availability: "planned", CardinalityBound: 6, SeriesBudget: 1024, SignalID: SignalCachePayloadBytes, Provider: "meter", APIKind: "int64_histogram", RecordWhen: "non_negative", SpanKind: "", Source: "cache.Observer.Observe; an existing encoded envelope admits PayloadBytes=0; lookup/miss is excluded because schema-mismatch miss and expired-value miss do not distinguish payload presence", PrivacyClass: "safe", Maturity: "development", Semconv: "none", NameDomain: "", Inputs: []string{"cache_observer.Observe", "cache_event.EncodedBytes", "cache_event.Memoized", "cache_event.Operation", "cache_event.Outcome", "cache_event.PayloadBytes"}, DeclaredSources: map[string][]string{}, ValueSource: "cache_event.PayloadBytes", ComputedSource: ""},
+		{Key: "cache_value_bytes", Name: "vv.cache.event.value_bytes", Names: []string{"vv.cache.event.value_bytes"}, Description: "Value bytes reported by a memory backend phase event; field-present zero sizes are recorded", Boundaries: []float64{0, 64, 256, 1024, 4096, 16384, 65536, 262144, 1.048576e+06}, Minimum: 0, Maximum: 0, MinimumInt64: 0, MaximumInt64: 0, HasMinimum: true, HasMaximum: false, Variants: signalVariants(SignalCacheValueBytes), Kind: "metric", Instrument: "histogram", NumberType: "int64", Unit: "By", Component: "cache_backend", Availability: "planned", CardinalityBound: 13, SeriesBudget: 1024, SignalID: SignalCacheValueBytes, Provider: "meter", APIKind: "int64_histogram", RecordWhen: "non_negative", SpanKind: "", Source: "cachememory.Observer.Observe", PrivacyClass: "safe", Maturity: "development", Semconv: "none", NameDomain: "", Inputs: []string{"cache_memory_observer.Observe", "cache_backend_event.Operation", "cache_backend_event.Outcome", "cache_backend_event.Reason", "cache_backend_event.ValueBytes"}, DeclaredSources: map[string][]string{}, ValueSource: "cache_backend_event.ValueBytes", ComputedSource: ""},
+		{Key: "command_duration", Name: "vv.command.duration", Names: []string{"vv.command.duration"}, Description: "Duration of service command operations in seconds", Boundaries: []float64{0.005, 0.01, 0.025, 0.05, 0.075, 0.1, 0.25, 0.5, 0.75, 1, 2.5, 5, 7.5, 10}, Minimum: 0, Maximum: 0, MinimumInt64: 0, MaximumInt64: 0, HasMinimum: true, HasMaximum: false, Variants: signalVariants(SignalCommandDuration), Kind: "metric", Instrument: "histogram", NumberType: "float64", Unit: "s", Component: "command", Availability: "implemented", CardinalityBound: 100, SeriesBudget: 100, SignalID: SignalCommandDuration, Provider: "meter", APIKind: "float64_histogram", RecordWhen: "non_negative", SpanKind: "", Source: "port.Service / RestorableService", PrivacyClass: "safe", Maturity: "development", Semconv: "none", NameDomain: "", Inputs: []string{"command_restorable_service.Restore", "command_restorable_service.RestoreMany", "command_service.Count", "command_service.Create", "command_service.Delete", "command_service.DeleteMany", "command_service.Get", "command_service.List", "command_service.Replace", "command_service.Update"}, DeclaredSources: map[string][]string{}, ValueSource: "", ComputedSource: "elapsed"},
+		{Key: "command_span", Name: "vv.command", Names: []string{"vv.command count", "vv.command create", "vv.command delete", "vv.command delete_many", "vv.command get", "vv.command list", "vv.command replace", "vv.command restore", "vv.command restore_many", "vv.command update"}, Description: "Logical command operation", Boundaries: []float64{}, Minimum: 0, Maximum: 0, MinimumInt64: 0, MaximumInt64: 0, HasMinimum: false, HasMaximum: false, Variants: signalVariants(SignalCommandSpan), Kind: "span", Instrument: "", NumberType: "", Unit: "", Component: "command", Availability: "implemented", CardinalityBound: 0, SeriesBudget: 0, SignalID: SignalCommandSpan, Provider: "tracer", APIKind: "", RecordWhen: "", SpanKind: "internal", Source: "port.Service / RestorableService; runtime.Goexit ends this span with goroutine_exit/Error, no error.type, and suppresses the associated command-duration sample.", PrivacyClass: "safe", Maturity: "development", Semconv: "none", NameDomain: "command.operations", Inputs: []string{"command_restorable_service.Restore", "command_restorable_service.RestoreMany", "command_service.Count", "command_service.Create", "command_service.Delete", "command_service.DeleteMany", "command_service.Get", "command_service.List", "command_service.Replace", "command_service.Update", "otel_config.ResourceName", "otel_service_functions.WithServiceResource"}, DeclaredSources: map[string][]string{"resource_name": []string{"otel_config.ResourceName", "otel_service_functions.WithServiceResource"}}, ValueSource: "", ComputedSource: "logical_call"},
+		{Key: "crud_source_duration", Name: "vv.crud_source.operation.duration", Names: []string{"vv.crud_source.operation.duration"}, Description: "Duration of a logical crud_source call, excluding rows or wire transport lifetime", Boundaries: []float64{0.005, 0.01, 0.025, 0.05, 0.075, 0.1, 0.25, 0.5, 0.75, 1, 2.5, 5, 7.5, 10}, Minimum: 0, Maximum: 0, MinimumInt64: 0, MaximumInt64: 0, HasMinimum: true, HasMaximum: false, Variants: signalVariants(SignalCrudSourceDuration), Kind: "metric", Instrument: "histogram", NumberType: "float64", Unit: "s", Component: "crud_source", Availability: "implemented", CardinalityBound: 60, SeriesBudget: 128, SignalID: SignalCrudSourceDuration, Provider: "meter", APIKind: "float64_histogram", RecordWhen: "non_negative", SpanKind: "", Source: "crud.Source and exact optional capabilities", PrivacyClass: "safe", Maturity: "development", Semconv: "none", NameDomain: "", Inputs: []string{"crud_beginner.Begin", "crud_source_interface.Exec", "crud_source_interface.Query", "crud_transaction.Commit", "crud_transaction.Exec", "crud_transaction.Query", "crud_transaction.Rollback", "crud_unsafe_bulk_inserter.UnsafeBulkInsert"}, DeclaredSources: map[string][]string{}, ValueSource: "", ComputedSource: "elapsed"},
+		{Key: "crud_source_span", Name: "vv.crud_source", Names: []string{"vv.crud_source begin", "vv.crud_source commit", "vv.crud_source exec", "vv.crud_source query", "vv.crud_source rollback", "vv.crud_source unsafe_bulk_insert"}, Description: "Logical crud_source operation", Boundaries: []float64{}, Minimum: 0, Maximum: 0, MinimumInt64: 0, MaximumInt64: 0, HasMinimum: false, HasMaximum: false, Variants: signalVariants(SignalCrudSourceSpan), Kind: "span", Instrument: "", NumberType: "", Unit: "", Component: "crud_source", Availability: "implemented", CardinalityBound: 0, SeriesBudget: 0, SignalID: SignalCrudSourceSpan, Provider: "tracer", APIKind: "", RecordWhen: "", SpanKind: "internal", Source: "crud.Source and exact optional capabilities A04 terminal Goexit ends this span with goroutine_exit/Error, no error.type, and suppresses associated metric samples; wrapper upgrade is owed.", PrivacyClass: "safe", Maturity: "development", Semconv: "none", NameDomain: "crud_source.operations", Inputs: []string{"crud_beginner.Begin", "crud_source_interface.Exec", "crud_source_interface.Query", "crud_transaction.Commit", "crud_transaction.Exec", "crud_transaction.Query", "crud_transaction.Rollback", "crud_unsafe_bulk_inserter.UnsafeBulkInsert"}, DeclaredSources: map[string][]string{}, ValueSource: "", ComputedSource: "logical_call"},
+		{Key: "health_checks", Name: "vv.health.checks", Names: []string{"vv.health.checks"}, Description: "Probe invocations already initiated by the health registry", Boundaries: []float64{}, Minimum: 0, Maximum: 0, MinimumInt64: 0, MaximumInt64: 0, HasMinimum: true, HasMaximum: false, Variants: signalVariants(SignalHealthChecks), Kind: "metric", Instrument: "counter", NumberType: "int64", Unit: "{check}", Component: "health", Availability: "implemented", CardinalityBound: 30, SeriesBudget: 32, SignalID: SignalHealthChecks, Provider: "meter", APIKind: "int64_counter", RecordWhen: "non_negative", SpanKind: "", Source: "health.Contribution.Probe.Check", PrivacyClass: "safe", Maturity: "development", Semconv: "none", NameDomain: "", Inputs: []string{"health_contribution.Importance", "health_probe.Check"}, DeclaredSources: map[string][]string{}, ValueSource: "", ComputedSource: "event_count"},
+		{Key: "health_duration", Name: "vv.health.check.duration", Names: []string{"vv.health.check.duration"}, Description: "Duration of actual enabled probe invocations", Boundaries: []float64{0.005, 0.01, 0.025, 0.05, 0.075, 0.1, 0.25, 0.5, 0.75, 1, 2.5, 5, 7.5, 10}, Minimum: 0, Maximum: 0, MinimumInt64: 0, MaximumInt64: 0, HasMinimum: true, HasMaximum: false, Variants: signalVariants(SignalHealthDuration), Kind: "metric", Instrument: "histogram", NumberType: "float64", Unit: "s", Component: "health", Availability: "implemented", CardinalityBound: 30, SeriesBudget: 32, SignalID: SignalHealthDuration, Provider: "meter", APIKind: "float64_histogram", RecordWhen: "non_negative", SpanKind: "", Source: "health.Contribution.Probe.Check", PrivacyClass: "safe", Maturity: "development", Semconv: "none", NameDomain: "", Inputs: []string{"health_contribution.Importance", "health_probe.Check"}, DeclaredSources: map[string][]string{}, ValueSource: "", ComputedSource: "elapsed"},
+		{Key: "health_span", Name: "vv.health check", Names: []string{"vv.health check"}, Description: "Logical health operation", Boundaries: []float64{}, Minimum: 0, Maximum: 0, MinimumInt64: 0, MaximumInt64: 0, HasMinimum: false, HasMaximum: false, Variants: signalVariants(SignalHealthSpan), Kind: "span", Instrument: "", NumberType: "", Unit: "", Component: "health", Availability: "implemented", CardinalityBound: 0, SeriesBudget: 0, SignalID: SignalHealthSpan, Provider: "tracer", APIKind: "", RecordWhen: "", SpanKind: "internal", Source: "health.Contribution.Probe.Check A04 terminal Goexit ends this span with goroutine_exit/Error, no error.type, and suppresses associated metric samples; wrapper upgrade is owed.", PrivacyClass: "safe", Maturity: "development", Semconv: "none", NameDomain: "health.operations", Inputs: []string{"health_contribution.Importance", "health_probe.Check", "otel_config.ResourceName", "otel_health_functions.WithHealthResource"}, DeclaredSources: map[string][]string{"resource_name": []string{"otel_config.ResourceName", "otel_health_functions.WithHealthResource"}}, ValueSource: "", ComputedSource: "logical_call"},
+		{Key: "jobs_enqueue_duration", Name: "vv.jobs.enqueue.duration", Names: []string{"vv.jobs.enqueue.duration"}, Description: "Duration of one enqueue call; staged success does not assert commit", Boundaries: []float64{0.005, 0.01, 0.025, 0.05, 0.075, 0.1, 0.25, 0.5, 0.75, 1, 2.5, 5, 7.5, 10}, Minimum: 0, Maximum: 0, MinimumInt64: 0, MaximumInt64: 0, HasMinimum: true, HasMaximum: false, Variants: signalVariants(SignalJobsEnqueueDuration), Kind: "metric", Instrument: "histogram", NumberType: "float64", Unit: "s", Component: "jobs_enqueue", Availability: "implemented", CardinalityBound: 42, SeriesBudget: 64, SignalID: SignalJobsEnqueueDuration, Provider: "meter", APIKind: "float64_histogram", RecordWhen: "non_negative", SpanKind: "", Source: "jobs enqueue call-site functions", PrivacyClass: "safe", Maturity: "development", Semconv: "none", NameDomain: "", Inputs: []string{"jobs_enqueue_functions.Enqueue", "jobs_enqueue_functions.EnqueueIn", "jobs_enqueue_functions.EnqueueOnce", "jobs_enqueue_functions.EnqueueOnceIn", "jobs_enqueue_once_outcome.String"}, DeclaredSources: map[string][]string{}, ValueSource: "", ComputedSource: "elapsed"},
+		{Key: "jobs_enqueue_span", Name: "vv.jobs", Names: []string{"vv.jobs enqueue", "vv.jobs enqueue_once"}, Description: "Logical jobs_enqueue operation", Boundaries: []float64{}, Minimum: 0, Maximum: 0, MinimumInt64: 0, MaximumInt64: 0, HasMinimum: false, HasMaximum: false, Variants: signalVariants(SignalJobsEnqueueSpan), Kind: "span", Instrument: "", NumberType: "", Unit: "", Component: "jobs_enqueue", Availability: "implemented", CardinalityBound: 0, SeriesBudget: 0, SignalID: SignalJobsEnqueueSpan, Provider: "tracer", APIKind: "", RecordWhen: "", SpanKind: "producer", Source: "jobs enqueue call-site functions A04 terminal Goexit ends this span with goroutine_exit/Error, no error.type, and suppresses associated metric samples; wrapper upgrade is owed.", PrivacyClass: "safe", Maturity: "development", Semconv: "none", NameDomain: "jobs_enqueue.direct", Inputs: []string{"jobs_enqueue_functions.Enqueue", "jobs_enqueue_functions.EnqueueOnce", "jobs_enqueue_once_outcome.String"}, DeclaredSources: map[string][]string{}, ValueSource: "", ComputedSource: "logical_call"},
+		{Key: "jobs_enqueue_staged_span", Name: "vv.jobs", Names: []string{"vv.jobs enqueue_in", "vv.jobs enqueue_once_in"}, Description: "Logical jobs_enqueue operation", Boundaries: []float64{}, Minimum: 0, Maximum: 0, MinimumInt64: 0, MaximumInt64: 0, HasMinimum: false, HasMaximum: false, Variants: signalVariants(SignalJobsEnqueueStagedSpan), Kind: "span", Instrument: "", NumberType: "", Unit: "", Component: "jobs_enqueue", Availability: "implemented", CardinalityBound: 0, SeriesBudget: 0, SignalID: SignalJobsEnqueueStagedSpan, Provider: "tracer", APIKind: "", RecordWhen: "", SpanKind: "internal", Source: "jobs enqueue call-site functions A04 terminal Goexit ends this span with goroutine_exit/Error, no error.type, and suppresses associated metric samples; wrapper upgrade is owed.", PrivacyClass: "safe", Maturity: "development", Semconv: "none", NameDomain: "jobs_enqueue.staged", Inputs: []string{"jobs_enqueue_functions.EnqueueIn", "jobs_enqueue_functions.EnqueueOnceIn"}, DeclaredSources: map[string][]string{}, ValueSource: "", ComputedSource: "logical_call"},
+		{Key: "jobs_handler_attempt", Name: "vv.jobs.handler.attempt", Names: []string{"vv.jobs.handler.attempt"}, Description: "Attempt ordinal as a measurement, never a metric label", Boundaries: []float64{1, 2, 4, 8, 16, 32, 64, 128, 256, 1024}, Minimum: 1, Maximum: 4129, MinimumInt64: 1, MaximumInt64: 4129, HasMinimum: true, HasMaximum: true, Variants: signalVariants(SignalJobsHandlerAttempt), Kind: "metric", Instrument: "histogram", NumberType: "int64", Unit: "{attempt}", Component: "jobs_handler", Availability: "implemented", CardinalityBound: 1, SeriesBudget: 32, SignalID: SignalJobsHandlerAttempt, Provider: "meter", APIKind: "int64_histogram", RecordWhen: "positive", SpanKind: "", Source: "jobs.AdapterHandler returned invocation; DeliveryMeta requires AttemptOrdinal 1..jobs.MaxAttemptOrdinal", PrivacyClass: "safe", Maturity: "development", Semconv: "none", NameDomain: "", Inputs: []string{"jobs_adapter_handler.Invoke", "jobs_delivery_meta.AttemptOrdinal"}, DeclaredSources: map[string][]string{}, ValueSource: "", ComputedSource: "handler"},
+		{Key: "jobs_handler_duration", Name: "vv.jobs.handler.duration", Names: []string{"vv.jobs.handler.duration"}, Description: "Duration of the handler body until return, excluding worker arbitration and final Apply", Boundaries: []float64{0.005, 0.01, 0.025, 0.05, 0.075, 0.1, 0.25, 0.5, 0.75, 1, 2.5, 5, 7.5, 10}, Minimum: 0, Maximum: 0, MinimumInt64: 0, MaximumInt64: 0, HasMinimum: true, HasMaximum: false, Variants: signalVariants(SignalJobsHandlerDuration), Kind: "metric", Instrument: "histogram", NumberType: "float64", Unit: "s", Component: "jobs_handler", Availability: "implemented", CardinalityBound: 10, SeriesBudget: 32, SignalID: SignalJobsHandlerDuration, Provider: "meter", APIKind: "float64_histogram", RecordWhen: "non_negative", SpanKind: "", Source: "jobs.AdapterHandler returned invocation", PrivacyClass: "safe", Maturity: "development", Semconv: "none", NameDomain: "", Inputs: []string{"jobs_adapter_handler.Invoke", "jobs_handler_callback.Invoke"}, DeclaredSources: map[string][]string{}, ValueSource: "", ComputedSource: "elapsed"},
+		{Key: "jobs_handler_span", Name: "vv.jobs handle", Names: []string{"vv.jobs handle"}, Description: "Logical jobs_handler operation", Boundaries: []float64{}, Minimum: 0, Maximum: 0, MinimumInt64: 0, MaximumInt64: 0, HasMinimum: false, HasMaximum: false, Variants: signalVariants(SignalJobsHandlerSpan), Kind: "span", Instrument: "", NumberType: "", Unit: "", Component: "jobs_handler", Availability: "implemented", CardinalityBound: 0, SeriesBudget: 0, SignalID: SignalJobsHandlerSpan, Provider: "tracer", APIKind: "", RecordWhen: "", SpanKind: "consumer", Source: "jobs.AdapterHandler returned invocation A04 terminal Goexit ends this span with goroutine_exit/Error, no error.type, and suppresses associated metric samples; wrapper upgrade is owed.", PrivacyClass: "safe", Maturity: "development", Semconv: "none", NameDomain: "jobs_handler.operations", Inputs: []string{"jobs_adapter_handler.Invoke", "jobs_handler_callback.Invoke"}, DeclaredSources: map[string][]string{}, ValueSource: "", ComputedSource: "logical_call"},
+		{Key: "jobs_propagation", Name: "vv.jobs.propagation", Names: []string{"vv.jobs.propagation"}, Description: "Trace Context capture and restoration results; trace degradation does not reject identity", Boundaries: []float64{}, Minimum: 0, Maximum: 0, MinimumInt64: 0, MaximumInt64: 0, HasMinimum: true, HasMaximum: false, Variants: signalVariants(SignalJobsPropagation), Kind: "metric", Instrument: "counter", NumberType: "int64", Unit: "{operation}", Component: "jobs_propagation", Availability: "implemented", CardinalityBound: 8, SeriesBudget: 32, SignalID: SignalJobsPropagation, Provider: "meter", APIKind: "int64_counter", RecordWhen: "non_negative", SpanKind: "", Source: "jobs.TrustedContextProvider / TrustedIdentityRestorer", PrivacyClass: "safe", Maturity: "development", Semconv: "none", NameDomain: "", Inputs: []string{"jobs_context_capture.Trace", "jobs_context_capture.WithTrace", "jobs_identity_restore_request.Trace", "jobs_restored_identity.Context", "jobs_restored_identity.WithContext", "jobs_trace_carrier.TraceParent", "jobs_trace_carrier.TraceState", "jobs_trace_carrier_spec.TraceParent", "jobs_trace_carrier_spec.TraceState", "jobs_trusted_context_provider.Capture", "jobs_trusted_identity_restorer.RestoreIdentity"}, DeclaredSources: map[string][]string{}, ValueSource: "", ComputedSource: "event_count"},
+		{Key: "jobs_queue_delay", Name: "vv.jobs.handler.queue_delay", Names: []string{"vv.jobs.handler.queue_delay"}, Description: "Time between eligibility and this handler invocation starting", Boundaries: []float64{0.005, 0.01, 0.025, 0.05, 0.075, 0.1, 0.25, 0.5, 0.75, 1, 2.5, 5, 7.5, 10}, Minimum: 0, Maximum: 0, MinimumInt64: 0, MaximumInt64: 0, HasMinimum: true, HasMaximum: false, Variants: signalVariants(SignalJobsQueueDelay), Kind: "metric", Instrument: "histogram", NumberType: "float64", Unit: "s", Component: "jobs_handler", Availability: "implemented", CardinalityBound: 1, SeriesBudget: 32, SignalID: SignalJobsQueueDelay, Provider: "meter", APIKind: "float64_histogram", RecordWhen: "non_negative", SpanKind: "", Source: "jobs.AdapterHandler returned invocation", PrivacyClass: "safe", Maturity: "development", Semconv: "none", NameDomain: "", Inputs: []string{"jobs_adapter_handler.Invoke", "jobs_delivery_meta.EligibleAt", "jobs_delivery_meta.StartedAt"}, DeclaredSources: map[string][]string{}, ValueSource: "", ComputedSource: "elapsed"},
+		{Key: "jobs_scheduler_cycles", Name: "vv.jobs.scheduler.cycles", Names: []string{"vv.jobs.scheduler.cycles"}, Description: "Completed scheduler cycles by bounded outcome", Boundaries: []float64{}, Minimum: 0, Maximum: 0, MinimumInt64: 0, MaximumInt64: 0, HasMinimum: true, HasMaximum: false, Variants: signalVariants(SignalJobsSchedulerCycles), Kind: "metric", Instrument: "counter", NumberType: "int64", Unit: "{cycle}", Component: "jobs_scheduler", Availability: "implemented", CardinalityBound: 10, SeriesBudget: 32, SignalID: SignalJobsSchedulerCycles, Provider: "meter", APIKind: "int64_counter", RecordWhen: "non_negative", SpanKind: "", Source: "jobs.Scheduler.RunDue terminal cycle", PrivacyClass: "safe", Maturity: "development", Semconv: "none", NameDomain: "", Inputs: []string{"jobs_schedule_event.Err", "jobs_schedule_observer.Observe"}, DeclaredSources: map[string][]string{}, ValueSource: "", ComputedSource: "event_count"},
+		{Key: "jobs_scheduler_duration", Name: "vv.jobs.scheduler.duration", Names: []string{"vv.jobs.scheduler.duration"}, Description: "Duration of one RunDue cycle, with no schedule identity", Boundaries: []float64{0.005, 0.01, 0.025, 0.05, 0.075, 0.1, 0.25, 0.5, 0.75, 1, 2.5, 5, 7.5, 10}, Minimum: 0, Maximum: 0, MinimumInt64: 0, MaximumInt64: 0, HasMinimum: true, HasMaximum: false, Variants: signalVariants(SignalJobsSchedulerDuration), Kind: "metric", Instrument: "histogram", NumberType: "float64", Unit: "s", Component: "jobs_scheduler", Availability: "implemented", CardinalityBound: 10, SeriesBudget: 32, SignalID: SignalJobsSchedulerDuration, Provider: "meter", APIKind: "float64_histogram", RecordWhen: "non_negative", SpanKind: "", Source: "jobs.Scheduler.RunDue terminal cycle; each result count is bounded by jobs.MaxDefinitions", PrivacyClass: "safe", Maturity: "development", Semconv: "none", NameDomain: "", Inputs: []string{"jobs_schedule_event.Elapsed", "jobs_schedule_event.Err", "jobs_schedule_observer.Observe"}, DeclaredSources: map[string][]string{}, ValueSource: "", ComputedSource: "elapsed"},
+		{Key: "jobs_scheduler_results", Name: "vv.jobs.scheduler.results", Names: []string{"vv.jobs.scheduler.results"}, Description: "Due, placed, existing and conflict counts from one scheduler cycle", Boundaries: []float64{0, 1, 2, 4, 8, 16, 32, 64, 128, 256, 1024, 4096}, Minimum: 0, Maximum: 4096, MinimumInt64: 0, MaximumInt64: 4096, HasMinimum: true, HasMaximum: true, Variants: signalVariants(SignalJobsSchedulerResults), Kind: "metric", Instrument: "histogram", NumberType: "int64", Unit: "{placement}", Component: "jobs_scheduler", Availability: "implemented", CardinalityBound: 4, SeriesBudget: 32, SignalID: SignalJobsSchedulerResults, Provider: "meter", APIKind: "int64_histogram", RecordWhen: "non_negative", SpanKind: "", Source: "jobs.Scheduler.RunDue terminal cycle; each result count is bounded by jobs.MaxDefinitions", PrivacyClass: "safe", Maturity: "development", Semconv: "none", NameDomain: "", Inputs: []string{"jobs_schedule_event.Result", "jobs_schedule_observer.Observe", "jobs_schedule_result.Conflicts", "jobs_schedule_result.Due", "jobs_schedule_result.Existing", "jobs_schedule_result.Placed"}, DeclaredSources: map[string][]string{}, ValueSource: "", ComputedSource: "classified_result"},
+		{Key: "jobs_worker_admission", Name: "vv.jobs.worker.admission", Names: []string{"vv.jobs.worker.admission"}, Description: "Admission observations by closed outcome and signal", Boundaries: []float64{}, Minimum: 0, Maximum: 0, MinimumInt64: 0, MaximumInt64: 0, HasMinimum: true, HasMaximum: false, Variants: signalVariants(SignalJobsWorkerAdmission), Kind: "metric", Instrument: "counter", NumberType: "int64", Unit: "{observation}", Component: "jobs_worker", Availability: "implemented", CardinalityBound: 8, SeriesBudget: 128, SignalID: SignalJobsWorkerAdmission, Provider: "meter", APIKind: "int64_counter", RecordWhen: "non_negative", SpanKind: "", Source: "jobs.WorkerObserver.Observe", PrivacyClass: "safe", Maturity: "development", Semconv: "none", NameDomain: "", Inputs: []string{"jobs_worker_event.AdmissionSignal", "jobs_worker_event.Operation", "jobs_worker_event.Outcome", "jobs_worker_observer.Observe"}, DeclaredSources: map[string][]string{}, ValueSource: "", ComputedSource: "event_count"},
+		{Key: "jobs_worker_bytes", Name: "vv.jobs.worker.bytes", Names: []string{"vv.jobs.worker.bytes"}, Description: "Record bytes reported by claim and recovery operations", Boundaries: []float64{0, 64, 256, 1024, 4096, 16384, 65536, 262144, 1.048576e+06}, Minimum: 0, Maximum: 6.7108864e+07, MinimumInt64: 0, MaximumInt64: 67108864, HasMinimum: true, HasMaximum: true, Variants: signalVariants(SignalJobsWorkerBytes), Kind: "metric", Instrument: "histogram", NumberType: "int64", Unit: "By", Component: "jobs_worker", Availability: "implemented", CardinalityBound: 18, SeriesBudget: 128, SignalID: SignalJobsWorkerBytes, Provider: "meter", APIKind: "int64_histogram", RecordWhen: "non_negative", SpanKind: "", Source: "jobs.WorkerObserver.Observe", PrivacyClass: "safe", Maturity: "development", Semconv: "none", NameDomain: "", Inputs: []string{"jobs_worker_event.Bytes", "jobs_worker_event.Failure", "jobs_worker_event.Operation", "jobs_worker_event.Outcome", "jobs_worker_observer.Observe"}, DeclaredSources: map[string][]string{}, ValueSource: "jobs_worker_event.Bytes", ComputedSource: ""},
+		{Key: "jobs_worker_delivery_results", Name: "vv.jobs.worker.delivery_results", Names: []string{"vv.jobs.worker.delivery_results"}, Description: "Delivery result item counts for successful renew and apply calls", Boundaries: []float64{}, Minimum: 1, Maximum: 256, MinimumInt64: 1, MaximumInt64: 256, HasMinimum: true, HasMaximum: true, Variants: signalVariants(SignalJobsWorkerDeliveryResults), Kind: "metric", Instrument: "counter", NumberType: "int64", Unit: "{delivery}", Component: "jobs_worker", Availability: "implemented", CardinalityBound: 13, SeriesBudget: 128, SignalID: SignalJobsWorkerDeliveryResults, Provider: "meter", APIKind: "int64_counter", RecordWhen: "positive", SpanKind: "", Source: "jobs.WorkerObserver.Observe; WorkerDeliveryResultCount requires Items 1..jobs.MaxClaimItems", PrivacyClass: "safe", Maturity: "development", Semconv: "none", NameDomain: "", Inputs: []string{"jobs_worker_delivery_result_count.Control", "jobs_worker_delivery_result_count.Items", "jobs_worker_delivery_result_count.Mutation", "jobs_worker_event.Operation", "jobs_worker_event.Outcome", "jobs_worker_event.Results", "jobs_worker_observer.Observe"}, DeclaredSources: map[string][]string{}, ValueSource: "jobs_worker_delivery_result_count.Items", ComputedSource: ""},
+		{Key: "jobs_worker_dispositions", Name: "vv.jobs.worker.dispositions", Names: []string{"vv.jobs.worker.dispositions"}, Description: "Delivery apply calls with validated command/disposition/reason; not a claim that mutation applied", Boundaries: []float64{}, Minimum: 0, Maximum: 0, MinimumInt64: 0, MaximumInt64: 0, HasMinimum: true, HasMaximum: false, Variants: signalVariants(SignalJobsWorkerDispositions), Kind: "metric", Instrument: "counter", NumberType: "int64", Unit: "{delivery}", Component: "jobs_worker", Availability: "implemented", CardinalityBound: 42, SeriesBudget: 2048, SignalID: SignalJobsWorkerDispositions, Provider: "meter", APIKind: "int64_counter", RecordWhen: "non_negative", SpanKind: "", Source: "jobs.WorkerObserver.Observe after OT-C05 projects disposition.Reason for nonzero dispositions, command.Reason otherwise", PrivacyClass: "safe", Maturity: "development", Semconv: "none", NameDomain: "", Inputs: []string{"jobs_worker_event.CommandKind", "jobs_worker_event.Disposition", "jobs_worker_event.Operation", "jobs_worker_event.Outcome", "jobs_worker_event.Reason", "jobs_worker_observer.Observe"}, DeclaredSources: map[string][]string{}, ValueSource: "", ComputedSource: "event_count"},
+		{Key: "jobs_worker_duration", Name: "vv.jobs.worker.operation.duration", Names: []string{"vv.jobs.worker.operation.duration"}, Description: "Elapsed worker control-plane operations; no polling spans", Boundaries: []float64{0.005, 0.01, 0.025, 0.05, 0.075, 0.1, 0.25, 0.5, 0.75, 1, 2.5, 5, 7.5, 10}, Minimum: 0, Maximum: 0, MinimumInt64: 0, MaximumInt64: 0, HasMinimum: true, HasMaximum: false, Variants: signalVariants(SignalJobsWorkerDuration), Kind: "metric", Instrument: "histogram", NumberType: "float64", Unit: "s", Component: "jobs_worker", Availability: "implemented", CardinalityBound: 36, SeriesBudget: 128, SignalID: SignalJobsWorkerDuration, Provider: "meter", APIKind: "float64_histogram", RecordWhen: "non_negative", SpanKind: "", Source: "jobs.WorkerObserver.Observe WorkerEvent.Elapsed must be positive; zero can mean a failed clock sample and is omitted until the source has explicit elapsed presence.", PrivacyClass: "safe", Maturity: "development", Semconv: "none", NameDomain: "", Inputs: []string{"jobs_worker_event.Elapsed", "jobs_worker_event.Failure", "jobs_worker_event.Operation", "jobs_worker_event.Outcome", "jobs_worker_observer.Observe"}, DeclaredSources: map[string][]string{}, ValueSource: "", ComputedSource: "elapsed"},
+		{Key: "jobs_worker_items", Name: "vv.jobs.worker.items", Names: []string{"vv.jobs.worker.items"}, Description: "Items reported by one worker operation", Boundaries: []float64{0, 1, 2, 4, 8, 16, 32, 64, 128, 256, 1000}, Minimum: 0, Maximum: 1000, MinimumInt64: 0, MaximumInt64: 1000, HasMinimum: true, HasMaximum: true, Variants: signalVariants(SignalJobsWorkerItems), Kind: "metric", Instrument: "histogram", NumberType: "int64", Unit: "{item}", Component: "jobs_worker", Availability: "implemented", CardinalityBound: 32, SeriesBudget: 128, SignalID: SignalJobsWorkerItems, Provider: "meter", APIKind: "int64_histogram", RecordWhen: "non_negative", SpanKind: "", Source: "jobs.WorkerObserver.Observe", PrivacyClass: "safe", Maturity: "development", Semconv: "none", NameDomain: "", Inputs: []string{"jobs_worker_event.Failure", "jobs_worker_event.Items", "jobs_worker_event.Operation", "jobs_worker_event.Outcome", "jobs_worker_observer.Observe"}, DeclaredSources: map[string][]string{}, ValueSource: "jobs_worker_event.Items", ComputedSource: ""},
+		{Key: "jobs_worker_operations", Name: "vv.jobs.worker.operations", Names: []string{"vv.jobs.worker.operations"}, Description: "Worker control-plane events with closed operation and outcome", Boundaries: []float64{}, Minimum: 0, Maximum: 0, MinimumInt64: 0, MaximumInt64: 0, HasMinimum: true, HasMaximum: false, Variants: signalVariants(SignalJobsWorkerOperations), Kind: "metric", Instrument: "counter", NumberType: "int64", Unit: "{operation}", Component: "jobs_worker", Availability: "implemented", CardinalityBound: 45, SeriesBudget: 128, SignalID: SignalJobsWorkerOperations, Provider: "meter", APIKind: "int64_counter", RecordWhen: "non_negative", SpanKind: "", Source: "jobs.WorkerObserver.Observe", PrivacyClass: "safe", Maturity: "development", Semconv: "none", NameDomain: "", Inputs: []string{"jobs_worker_observer.Observe", "jobs_worker_event.Failure", "jobs_worker_event.Operation", "jobs_worker_event.Outcome"}, DeclaredSources: map[string][]string{}, ValueSource: "", ComputedSource: "event_count"},
+		{Key: "jobs_worker_released", Name: "vv.jobs.worker.recovery.released", Names: []string{"vv.jobs.worker.recovery.released"}, Description: "Delivery leases released by one successful recovery result, not current queue depth", Boundaries: []float64{0, 1, 2, 4, 8, 16, 32, 64, 128, 256, 1000}, Minimum: 0, Maximum: 1000, MinimumInt64: 0, MaximumInt64: 1000, HasMinimum: true, HasMaximum: true, Variants: signalVariants(SignalJobsWorkerReleased), Kind: "metric", Instrument: "histogram", NumberType: "int64", Unit: "{item}", Component: "jobs_worker", Availability: "implemented", CardinalityBound: 3, SeriesBudget: 16, SignalID: SignalJobsWorkerReleased, Provider: "meter", APIKind: "int64_histogram", RecordWhen: "non_negative", SpanKind: "", Source: "jobs.WorkerEvent.Released and More for completed or empty recover result", PrivacyClass: "safe", Maturity: "development", Semconv: "none", NameDomain: "", Inputs: []string{"jobs_worker_event.More", "jobs_worker_event.Operation", "jobs_worker_event.Outcome", "jobs_worker_event.Released", "jobs_worker_observer.Observe"}, DeclaredSources: map[string][]string{}, ValueSource: "jobs_worker_event.Released", ComputedSource: ""},
+		{Key: "remote_duration", Name: "vv.remote.duration", Names: []string{"vv.remote.duration"}, Description: "Duration of a logical remote call, excluding rows or wire transport lifetime", Boundaries: []float64{0.005, 0.01, 0.025, 0.05, 0.075, 0.1, 0.25, 0.5, 0.75, 1, 2.5, 5, 7.5, 10}, Minimum: 0, Maximum: 0, MinimumInt64: 0, MaximumInt64: 0, HasMinimum: true, HasMaximum: false, Variants: signalVariants(SignalRemoteDuration), Kind: "metric", Instrument: "histogram", NumberType: "float64", Unit: "s", Component: "remote", Availability: "implemented", CardinalityBound: 80, SeriesBudget: 128, SignalID: SignalRemoteDuration, Provider: "meter", APIKind: "float64_histogram", RecordWhen: "non_negative", SpanKind: "", Source: "remote.Transport.Do", PrivacyClass: "safe", Maturity: "development", Semconv: "none", NameDomain: "", Inputs: []string{"remote_call.Method", "remote_transport.Do"}, DeclaredSources: map[string][]string{}, ValueSource: "", ComputedSource: "elapsed"},
+		{Key: "remote_span", Name: "vv.remote", Names: []string{"vv.remote count", "vv.remote create", "vv.remote delete", "vv.remote delete_many", "vv.remote get", "vv.remote list", "vv.remote replace", "vv.remote update"}, Description: "Logical remote operation", Boundaries: []float64{}, Minimum: 0, Maximum: 0, MinimumInt64: 0, MaximumInt64: 0, HasMinimum: false, HasMaximum: false, Variants: signalVariants(SignalRemoteSpan), Kind: "span", Instrument: "", NumberType: "", Unit: "", Component: "remote", Availability: "implemented", CardinalityBound: 0, SeriesBudget: 0, SignalID: SignalRemoteSpan, Provider: "tracer", APIKind: "", RecordWhen: "", SpanKind: "internal", Source: "remote.Transport.Do A04 terminal Goexit ends this span with goroutine_exit/Error, no error.type, and suppresses associated metric samples; wrapper upgrade is owed.", PrivacyClass: "safe", Maturity: "development", Semconv: "none", NameDomain: "remote.operations", Inputs: []string{"remote_call.Method", "remote_transport.Do"}, DeclaredSources: map[string][]string{}, ValueSource: "", ComputedSource: "logical_call"},
+		{Key: "runtime_duration", Name: "vv.runtime.operation.duration", Names: []string{"vv.runtime.operation.duration"}, Description: "Duration of completed run and drain operations", Boundaries: []float64{0.005, 0.01, 0.025, 0.05, 0.075, 0.1, 0.25, 0.5, 0.75, 1, 2.5, 5, 7.5, 10}, Minimum: 0, Maximum: 0, MinimumInt64: 0, MaximumInt64: 0, HasMinimum: true, HasMaximum: false, Variants: signalVariants(SignalRuntimeDuration), Kind: "metric", Instrument: "histogram", NumberType: "float64", Unit: "s", Component: "runtime_lifecycle", Availability: "implemented", CardinalityBound: 180, SeriesBudget: 256, SignalID: SignalRuntimeDuration, Provider: "meter", APIKind: "float64_histogram", RecordWhen: "non_negative", SpanKind: "", Source: "runtime.LifecycleObserver.ObservedLifecycle", PrivacyClass: "safe", Maturity: "development", Semconv: "none", NameDomain: "", Inputs: []string{"runtime_declaration.Durability", "runtime_declaration.Placement", "runtime_lifecycle_event.Elapsed", "runtime_lifecycle_event.Err", "runtime_lifecycle_event.Operation", "runtime_lifecycle_event.Outcome", "runtime_lifecycle_observer.ObservedLifecycle"}, DeclaredSources: map[string][]string{}, ValueSource: "", ComputedSource: "elapsed"},
+		{Key: "runtime_operations", Name: "vv.runtime.operations", Names: []string{"vv.runtime.operations"}, Description: "Completed run and drain operations", Boundaries: []float64{}, Minimum: 0, Maximum: 0, MinimumInt64: 0, MaximumInt64: 0, HasMinimum: true, HasMaximum: false, Variants: signalVariants(SignalRuntimeOperations), Kind: "metric", Instrument: "counter", NumberType: "int64", Unit: "{operation}", Component: "runtime_lifecycle", Availability: "implemented", CardinalityBound: 180, SeriesBudget: 256, SignalID: SignalRuntimeOperations, Provider: "meter", APIKind: "int64_counter", RecordWhen: "non_negative", SpanKind: "", Source: "runtime.LifecycleObserver.ObservedLifecycle", PrivacyClass: "safe", Maturity: "development", Semconv: "none", NameDomain: "", Inputs: []string{"runtime_declaration.Durability", "runtime_declaration.Placement", "runtime_lifecycle_event.Err", "runtime_lifecycle_event.Operation", "runtime_lifecycle_event.Outcome", "runtime_lifecycle_observer.ObservedLifecycle"}, DeclaredSources: map[string][]string{}, ValueSource: "", ComputedSource: "event_count"},
+		{Key: "runtime_periodic_duration", Name: "vv.runtime.periodic.duration", Names: []string{"vv.runtime.periodic.duration"}, Description: "Duration of one periodic pass", Boundaries: []float64{0.005, 0.01, 0.025, 0.05, 0.075, 0.1, 0.25, 0.5, 0.75, 1, 2.5, 5, 7.5, 10}, Minimum: 0, Maximum: 0, MinimumInt64: 0, MaximumInt64: 0, HasMinimum: true, HasMaximum: false, Variants: signalVariants(SignalRuntimePeriodicDuration), Kind: "metric", Instrument: "histogram", NumberType: "float64", Unit: "s", Component: "runtime_periodic", Availability: "implemented", CardinalityBound: 10, SeriesBudget: 32, SignalID: SignalRuntimePeriodicDuration, Provider: "meter", APIKind: "float64_histogram", RecordWhen: "non_negative", SpanKind: "", Source: "runtime.PeriodicSpec.Pass", PrivacyClass: "safe", Maturity: "development", Semconv: "none", NameDomain: "", Inputs: []string{"runtime_periodic_spec.Pass"}, DeclaredSources: map[string][]string{}, ValueSource: "", ComputedSource: "elapsed"},
+		{Key: "runtime_periodic_span", Name: "vv.runtime pass", Names: []string{"vv.runtime pass"}, Description: "Logical runtime_periodic operation", Boundaries: []float64{}, Minimum: 0, Maximum: 0, MinimumInt64: 0, MaximumInt64: 0, HasMinimum: false, HasMaximum: false, Variants: signalVariants(SignalRuntimePeriodicSpan), Kind: "span", Instrument: "", NumberType: "", Unit: "", Component: "runtime_periodic", Availability: "implemented", CardinalityBound: 0, SeriesBudget: 0, SignalID: SignalRuntimePeriodicSpan, Provider: "tracer", APIKind: "", RecordWhen: "", SpanKind: "internal", Source: "runtime.PeriodicSpec.Pass A04 terminal Goexit ends this span with goroutine_exit/Error, no error.type, and suppresses associated metric samples; wrapper upgrade is owed.", PrivacyClass: "safe", Maturity: "development", Semconv: "none", NameDomain: "runtime_periodic.operations", Inputs: []string{"otel_config.ResourceName", "otel_periodic_functions.WithPeriodicResource", "runtime_periodic_spec.Pass"}, DeclaredSources: map[string][]string{"resource_name": []string{"otel_config.ResourceName", "otel_periodic_functions.WithPeriodicResource"}}, ValueSource: "", ComputedSource: "logical_call"},
+		{Key: "runtime_transitions", Name: "vv.runtime.transitions", Names: []string{"vv.runtime.transitions"}, Description: "Actual runner phase transitions; constructor-only idle is omitted", Boundaries: []float64{}, Minimum: 0, Maximum: 0, MinimumInt64: 0, MaximumInt64: 0, HasMinimum: true, HasMaximum: false, Variants: signalVariants(SignalRuntimeTransitions), Kind: "metric", Instrument: "counter", NumberType: "int64", Unit: "{transition}", Component: "runtime_lifecycle", Availability: "implemented", CardinalityBound: 27, SeriesBudget: 256, SignalID: SignalRuntimeTransitions, Provider: "meter", APIKind: "int64_counter", RecordWhen: "non_negative", SpanKind: "", Source: "runtime.Observer.Observed", PrivacyClass: "safe", Maturity: "development", Semconv: "none", NameDomain: "", Inputs: []string{"runtime_declaration.Durability", "runtime_declaration.Placement", "runtime_observer.Observed", "runtime_runner_state.Phase"}, DeclaredSources: map[string][]string{}, ValueSource: "", ComputedSource: "event_count"},
+		{Key: "storage_cleanup_removed", Name: "vv.storage.cleanup.removed", Names: []string{"vv.storage.cleanup.removed"}, Description: "Expired staged objects removed by one successful cleanup result", Boundaries: []float64{0, 1, 2, 4, 8, 16, 32, 64, 128, 256, 1000}, Minimum: 0, Maximum: 1000, MinimumInt64: 0, MaximumInt64: 1000, HasMinimum: true, HasMaximum: true, Variants: signalVariants(SignalStorageCleanupRemoved), Kind: "metric", Instrument: "histogram", NumberType: "int64", Unit: "{item}", Component: "storage", Availability: "implemented", CardinalityBound: 2, SeriesBudget: 16, SignalID: SignalStorageCleanupRemoved, Provider: "meter", APIKind: "int64_histogram", RecordWhen: "non_negative", SpanKind: "", Source: "storage.CleanupResult.Removed with More after successful storage.Store.CleanupExpired Numeric range is 0..storage.MaxCleanupLimit (1000); larger raw results are not admitted.", PrivacyClass: "safe", Maturity: "development", Semconv: "none", NameDomain: "", Inputs: []string{"storage_cleanup_result.More", "storage_cleanup_result.Removed", "storage_store.CleanupExpired"}, DeclaredSources: map[string][]string{}, ValueSource: "storage_cleanup_result.Removed", ComputedSource: ""},
+		{Key: "storage_duration", Name: "vv.storage.operation.duration", Names: []string{"vv.storage.operation.duration"}, Description: "Time until a storage method returns, excluding returned stream lifetime", Boundaries: []float64{0.005, 0.01, 0.025, 0.05, 0.075, 0.1, 0.25, 0.5, 0.75, 1, 2.5, 5, 7.5, 10}, Minimum: 0, Maximum: 0, MinimumInt64: 0, MaximumInt64: 0, HasMinimum: true, HasMaximum: false, Variants: signalVariants(SignalStorageDuration), Kind: "metric", Instrument: "histogram", NumberType: "float64", Unit: "s", Component: "storage", Availability: "implemented", CardinalityBound: 90, SeriesBudget: 128, SignalID: SignalStorageDuration, Provider: "meter", APIKind: "float64_histogram", RecordWhen: "non_negative", SpanKind: "", Source: "storage.Store", PrivacyClass: "safe", Maturity: "development", Semconv: "none", NameDomain: "", Inputs: []string{"storage_store.Abort", "storage_store.CleanupExpired", "storage_store.Delete", "storage_store.Head", "storage_store.Open", "storage_store.Promote", "storage_store.Put", "storage_store.Stage", "storage_store.TemporaryURL"}, DeclaredSources: map[string][]string{}, ValueSource: "", ComputedSource: "elapsed"},
+		{Key: "storage_operation_bytes", Name: "vv.storage.operation.bytes", Names: []string{"vv.storage.operation.bytes"}, Description: "Successfully persisted bytes returned by Put Info.Size or Stage Staged.Info.Size", Boundaries: []float64{0, 64, 256, 1024, 4096, 16384, 65536, 262144, 1.048576e+06}, Minimum: 0, Maximum: 0, MinimumInt64: 0, MaximumInt64: 0, HasMinimum: true, HasMaximum: false, Variants: signalVariants(SignalStorageOperationBytes), Kind: "metric", Instrument: "histogram", NumberType: "int64", Unit: "By", Component: "storage", Availability: "implemented", CardinalityBound: 2, SeriesBudget: 128, SignalID: SignalStorageOperationBytes, Provider: "meter", APIKind: "int64_histogram", RecordWhen: "non_negative", SpanKind: "", Source: "storage.Store.Put returned Info.Size / storage.Store.Stage returned Staged.Info.Size; no reader wrapping", PrivacyClass: "safe", Maturity: "development", Semconv: "none", NameDomain: "", Inputs: []string{"storage_info.Size", "storage_store.Put", "storage_store.Stage"}, DeclaredSources: map[string][]string{}, ValueSource: "storage_info.Size", ComputedSource: ""},
+		{Key: "storage_span", Name: "vv.storage", Names: []string{"vv.storage abort", "vv.storage cleanup_expired", "vv.storage delete", "vv.storage head", "vv.storage open", "vv.storage promote", "vv.storage put", "vv.storage stage", "vv.storage temporary_url"}, Description: "Logical storage operation", Boundaries: []float64{}, Minimum: 0, Maximum: 0, MinimumInt64: 0, MaximumInt64: 0, HasMinimum: false, HasMaximum: false, Variants: signalVariants(SignalStorageSpan), Kind: "span", Instrument: "", NumberType: "", Unit: "", Component: "storage", Availability: "implemented", CardinalityBound: 0, SeriesBudget: 0, SignalID: SignalStorageSpan, Provider: "tracer", APIKind: "", RecordWhen: "", SpanKind: "internal", Source: "storage.Store; runtime.Goexit ends this span with goroutine_exit/Error, no error.type, and suppresses associated metric samples.", PrivacyClass: "safe", Maturity: "development", Semconv: "none", NameDomain: "storage.operations", Inputs: []string{"otel_config.ResourceName", "otel_storage_functions.WithStorageResource", "storage_store.Abort", "storage_store.CleanupExpired", "storage_store.Delete", "storage_store.Head", "storage_store.Open", "storage_store.Promote", "storage_store.Put", "storage_store.Stage", "storage_store.TemporaryURL"}, DeclaredSources: map[string][]string{"resource_name": []string{"otel_config.ResourceName", "otel_storage_functions.WithStorageResource"}}, ValueSource: "", ComputedSource: "logical_call"},
+		{Key: "storage_stream_bytes", Name: "vv.storage.stream.bytes", Names: []string{"vv.storage.stream.bytes"}, Description: "Valid bytes returned before stream termination; omitted after an invalid Reader count or cumulative overflow", Boundaries: []float64{0, 64, 256, 1024, 4096, 16384, 65536, 262144, 1.048576e+06}, Minimum: 0, Maximum: 0, MinimumInt64: 0, MaximumInt64: 0, HasMinimum: true, HasMaximum: false, Variants: signalVariants(SignalStorageStreamBytes), Kind: "metric", Instrument: "histogram", NumberType: "int64", Unit: "By", Component: "storage_stream", Availability: "planned", CardinalityBound: 12, SeriesBudget: 32, SignalID: SignalStorageStreamBytes, Provider: "meter", APIKind: "int64_histogram", RecordWhen: "non_negative", SpanKind: "", Source: "vvotel.StorageStream Read results admitted only when 0 <= n <= len(p) with checked int64 accumulation, Close and Unwrap", PrivacyClass: "safe", Maturity: "development", Semconv: "none", NameDomain: "", Inputs: []string{"storage_store.Open", "storage_stream.Close", "storage_stream.Read", "storage_stream.Unwrap"}, DeclaredSources: map[string][]string{}, ValueSource: "", ComputedSource: "stream"},
+		{Key: "storage_stream_duration", Name: "vv.storage.stream.duration", Names: []string{"vv.storage.stream.duration"}, Description: "Stream lifetime from first Read or Close until termination", Boundaries: []float64{0.005, 0.01, 0.025, 0.05, 0.075, 0.1, 0.25, 0.5, 0.75, 1, 2.5, 5, 7.5, 10}, Minimum: 0, Maximum: 0, MinimumInt64: 0, MaximumInt64: 0, HasMinimum: true, HasMaximum: false, Variants: signalVariants(SignalStorageStreamDuration), Kind: "metric", Instrument: "histogram", NumberType: "float64", Unit: "s", Component: "storage_stream", Availability: "planned", CardinalityBound: 12, SeriesBudget: 32, SignalID: SignalStorageStreamDuration, Provider: "meter", APIKind: "float64_histogram", RecordWhen: "non_negative", SpanKind: "", Source: "io.ReadCloser and explicit Unwrap", PrivacyClass: "safe", Maturity: "development", Semconv: "none", NameDomain: "", Inputs: []string{"storage_store.Open", "storage_stream.Close", "storage_stream.Read", "storage_stream.Unwrap"}, DeclaredSources: map[string][]string{}, ValueSource: "", ComputedSource: "elapsed"},
+		{Key: "storage_stream_span", Name: "vv.storage stream", Names: []string{"vv.storage stream"}, Description: "Logical storage_stream operation", Boundaries: []float64{}, Minimum: 0, Maximum: 0, MinimumInt64: 0, MaximumInt64: 0, HasMinimum: false, HasMaximum: false, Variants: signalVariants(SignalStorageStreamSpan), Kind: "span", Instrument: "", NumberType: "", Unit: "", Component: "storage_stream", Availability: "planned", CardinalityBound: 0, SeriesBudget: 0, SignalID: SignalStorageStreamSpan, Provider: "tracer", APIKind: "", RecordWhen: "", SpanKind: "internal", Source: "vvotel.StorageStream Read, Close and Unwrap A04 terminal Goexit ends this span with goroutine_exit/Error, no error.type, and suppresses associated metric samples; wrapper upgrade is owed.", PrivacyClass: "safe", Maturity: "development", Semconv: "none", NameDomain: "storage_stream.span_names", Inputs: []string{"storage_store.Open", "storage_stream.Close", "storage_stream.Read", "storage_stream.Unwrap"}, DeclaredSources: map[string][]string{}, ValueSource: "", ComputedSource: "logical_call"},
+	}
 }

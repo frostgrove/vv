@@ -486,16 +486,21 @@ type RestoredIdentity struct {
 	context context.Context
 	tenant  ProducerPartition
 	actor   ProducerActor
+	lineage *byte
 }
+
+type restoredIdentityLineageKey struct{}
 
 func NewRestoredIdentity(ctx context.Context, tenant ProducerPartition, actor ProducerActor) (RestoredIdentity, error) {
 	if nilInterface(ctx) || !tenant.IsZero() && !tenant.valid() || !actor.IsZero() && !actor.valid() {
 		return RestoredIdentity{}, invalid("restored identity")
 	}
+	lineage := new(byte)
 	return RestoredIdentity{
-		context: ctx,
+		context: context.WithValue(ctx, restoredIdentityLineageKey{}, lineage),
 		tenant:  ProducerPartition{value: strings.Clone(tenant.value)},
 		actor:   ProducerActor{value: strings.Clone(actor.value)},
+		lineage: lineage,
 	}, nil
 }
 
@@ -509,7 +514,7 @@ func (RestoredIdentity) MarshalJSON() ([]byte, error) {
 	return nil, fmt.Errorf("%w: restored identity cannot be serialized", ErrUnsupported)
 }
 func (r RestoredIdentity) validFor(request IdentityRestoreRequest) bool {
-	if nilInterface(r.context) || !request.valid() {
+	if nilInterface(r.context) || r.lineage == nil || r.context.Value(restoredIdentityLineageKey{}) != r.lineage || !request.valid() {
 		return false
 	}
 	if request.durable.scope == ContextTenant {

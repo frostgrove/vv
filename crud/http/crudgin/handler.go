@@ -30,6 +30,10 @@ type ResourceFor[M any, ID comparable, U any, In any, P any, R any] struct {
 	patcher   PatchMapper[P, U]
 	presenter Presenter[M, R]
 	opt       options[M, ID, U]
+	hops      []errs.Resolver
+	renderer  crudhttp.Renderer
+	rendering bool
+	renderOps []crudhttp.RenderOption
 }
 
 type HandlerFor[M any, ID comparable, U any, In any] = ResourceFor[M, ID, U, In, U, M]
@@ -71,15 +75,31 @@ func ServingWire[In, P, R, M any, ID comparable, U any](service Service[M, ID, U
 
 func build[M any, ID comparable, U any, In any, P any, R any](service Service[M, ID, U], mapper Mapper[In, M], patcher PatchMapper[P, U], presenter Presenter[M, R], o options[M, ID, U]) *ResourceFor[M, ID, U, In, P, R] {
 	o.RefuseContradictions("crudgin")
-	h := &ResourceFor[M, ID, U, In, P, R]{service: service, mapper: mapper, patcher: patcher, presenter: presenter, opt: o}
+	h := &ResourceFor[M, ID, U, In, P, R]{
+		service: service, mapper: mapper, patcher: patcher, presenter: presenter, opt: o,
+		hops: port.Hops(service, mapper), renderer: o.renderer,
+	}
 	if h.opt.errorHandler == nil {
 		rd := h.opt.renderer
 		if rd == nil {
-			rd = rendererFor(port.Hops(service, mapper))
+			rd = defaultRenderer
 		}
 		h.opt.errorHandler = func(c *gin.Context, err error) { render(rd, c, err) }
 	}
 	return h
+}
+
+func (this *ResourceFor[M, ID, U, In, P, R]) Rendering(options ...crudhttp.RenderOption) *ResourceFor[M, ID, U, In, P, R] {
+	this.renderOps = append([]crudhttp.RenderOption(nil), options...)
+	this.rendering = true
+	this.renderer = nil
+	rd := crudhttp.Renderer(defaultRenderer)
+	if len(options) > 0 {
+		rd = crudhttp.NewRenderer(options...)
+	}
+	this.opt.errorHandler = func(c *gin.Context, err error) { render(rd, c, err) }
+	this.opt.customErrorHandler = false
+	return this
 }
 
 func (this *ResourceFor[M, ID, U, In, P, R]) Mount(r gin.IRouter, prefix string) {
@@ -121,6 +141,7 @@ func (this *ResourceFor[M, ID, U, In, P, R]) Register(r gin.IRoutes) {
 }
 
 func (this *ResourceFor[M, ID, U, In, P, R]) List(c *gin.Context) {
+	this.install(c)
 	request, err := this.parseQueryString(c)
 	if err != nil {
 		this.fail(c, err)
@@ -130,6 +151,7 @@ func (this *ResourceFor[M, ID, U, In, P, R]) List(c *gin.Context) {
 }
 
 func (this *ResourceFor[M, ID, U, In, P, R]) Query(c *gin.Context) {
+	this.install(c)
 	request, err := this.parseBody(c)
 	if err != nil {
 		this.fail(c, err)
@@ -159,6 +181,7 @@ func (this *ResourceFor[M, ID, U, In, P, R]) list(c *gin.Context, request *query
 }
 
 func (this *ResourceFor[M, ID, U, In, P, R]) CountGet(c *gin.Context) {
+	this.install(c)
 	request, err := this.parseQueryString(c)
 	if err != nil {
 		this.fail(c, err)
@@ -168,6 +191,7 @@ func (this *ResourceFor[M, ID, U, In, P, R]) CountGet(c *gin.Context) {
 }
 
 func (this *ResourceFor[M, ID, U, In, P, R]) CountPost(c *gin.Context) {
+	this.install(c)
 	request, err := this.parseBody(c)
 	if err != nil {
 		this.fail(c, err)
@@ -191,6 +215,7 @@ func (this *ResourceFor[M, ID, U, In, P, R]) count(c *gin.Context, request *quer
 }
 
 func (this *ResourceFor[M, ID, U, In, P, R]) GetByID(c *gin.Context) {
+	this.install(c)
 	id, err := this.id(c)
 	if err != nil {
 		this.fail(c, err)
@@ -215,6 +240,7 @@ func (this *ResourceFor[M, ID, U, In, P, R]) GetByID(c *gin.Context) {
 }
 
 func (this *ResourceFor[M, ID, U, In, P, R]) Create(c *gin.Context) {
+	this.install(c)
 	var in In
 	raw, err := this.decode(c.Request.Body, &in)
 	keep(c, raw)
@@ -236,6 +262,7 @@ func (this *ResourceFor[M, ID, U, In, P, R]) Create(c *gin.Context) {
 }
 
 func (this *ResourceFor[M, ID, U, In, P, R]) Update(c *gin.Context) {
+	this.install(c)
 	id, err := this.id(c)
 	if err != nil {
 		this.fail(c, err)
@@ -257,6 +284,7 @@ func (this *ResourceFor[M, ID, U, In, P, R]) Update(c *gin.Context) {
 }
 
 func (this *ResourceFor[M, ID, U, In, P, R]) Replace(c *gin.Context) {
+	this.install(c)
 	id, err := this.id(c)
 	if err != nil {
 		this.fail(c, err)
@@ -283,6 +311,7 @@ func (this *ResourceFor[M, ID, U, In, P, R]) Replace(c *gin.Context) {
 }
 
 func (this *ResourceFor[M, ID, U, In, P, R]) Delete(c *gin.Context) {
+	this.install(c)
 	id, err := this.id(c)
 	if err != nil {
 		this.fail(c, err)
@@ -299,6 +328,7 @@ func (this *ResourceFor[M, ID, U, In, P, R]) Delete(c *gin.Context) {
 type BulkDeleteRequest[ID comparable] = crudhttp.BulkDeleteRequest[ID]
 
 func (this *ResourceFor[M, ID, U, In, P, R]) BulkDelete(c *gin.Context) {
+	this.install(c)
 	var request BulkDeleteRequest[ID]
 	if err := this.decodeOnly(c.Request.Body, &request); err != nil {
 		this.fail(c, err)
@@ -371,7 +401,35 @@ func (this *ResourceFor[M, ID, U, In, P, R]) entity(c *gin.Context, status int, 
 }
 
 func (this *ResourceFor[M, ID, U, In, P, R]) fail(c *gin.Context, err error) {
+	if this.opt.customErrorHandler {
+		this.opt.errorHandler(c, err)
+		return
+	}
+	if errorsInstalled(c.Request.Context()) {
+		_ = c.Error(err)
+		return
+	}
 	this.opt.errorHandler(c, err)
+}
+
+func (this *ResourceFor[M, ID, U, In, P, R]) install(c *gin.Context) {
+	ctx := c.Request.Context()
+	changed := false
+	if len(this.hops) > 0 {
+		ctx = port.WithHops(ctx, this.hops)
+		changed = true
+	}
+	if this.renderer != nil || this.rendering {
+		ctx = withResourceRendering(ctx, resourceRendering{
+			renderer: this.renderer,
+			standard: this.rendering,
+			options:  this.renderOps,
+		})
+		changed = true
+	}
+	if changed {
+		c.Request = c.Request.WithContext(ctx)
+	}
 }
 
 func keep(c *gin.Context, raw []byte) {

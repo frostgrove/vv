@@ -28,6 +28,10 @@ type ResourceFor[M any, ID comparable, U any, In any, P any, R any] struct {
 	presenter Presenter[M, R]
 	opt       options[M, ID, U]
 	render    Renderer
+	hops      []errs.Resolver
+	replace   Renderer
+	rendering bool
+	renderOps []RenderOption
 }
 
 type HandlerFor[M any, ID comparable, U any, In any] = ResourceFor[M, ID, U, In, U, M]
@@ -69,14 +73,29 @@ func ServingWire[In, P, R, M any, ID comparable, U any](service Service[M, ID, U
 
 func build[M any, ID comparable, U any, In any, P any, R any](service Service[M, ID, U], mapper Mapper[In, M], patcher PatchMapper[P, U], presenter Presenter[M, R], o options[M, ID, U]) *ResourceFor[M, ID, U, In, P, R] {
 	o.RefuseContradictions("crudgrpc")
-	h := &ResourceFor[M, ID, U, In, P, R]{service: service, mapper: mapper, patcher: patcher, presenter: presenter, opt: o, render: o.renderer}
+	h := &ResourceFor[M, ID, U, In, P, R]{
+		service: service, mapper: mapper, patcher: patcher, presenter: presenter, opt: o,
+		render: o.renderer, hops: port.Hops(service, mapper), replace: o.renderer,
+	}
 	if h.render == nil {
-		h.render = rendererFor(port.Hops(service, mapper))
+		h.render = defaultRenderer
 	}
 	return h
 }
 
+func (this *ResourceFor[M, ID, U, In, P, R]) Rendering(options ...RenderOption) *ResourceFor[M, ID, U, In, P, R] {
+	this.renderOps = append([]RenderOption(nil), options...)
+	this.rendering = true
+	this.replace = nil
+	this.render = defaultRenderer
+	if len(options) > 0 {
+		this.render = NewRenderer(options...)
+	}
+	return this
+}
+
 func (this *ResourceFor[M, ID, U, In, P, R]) List(ctx context.Context, request *structpb.Struct) (*structpb.Struct, error) {
+	ctx = this.install(ctx)
 	q, err := queryOf(request, this.service.Meta())
 	if err != nil {
 		return nil, this.fail(ctx, err)
@@ -96,6 +115,7 @@ func (this *ResourceFor[M, ID, U, In, P, R]) List(ctx context.Context, request *
 }
 
 func (this *ResourceFor[M, ID, U, In, P, R]) Count(ctx context.Context, request *structpb.Struct) (*structpb.Struct, error) {
+	ctx = this.install(ctx)
 	q, err := queryOf(request, this.service.Meta())
 	if err != nil {
 		return nil, this.fail(ctx, err)
@@ -112,6 +132,7 @@ func (this *ResourceFor[M, ID, U, In, P, R]) Count(ctx context.Context, request 
 }
 
 func (this *ResourceFor[M, ID, U, In, P, R]) Get(ctx context.Context, request *structpb.Struct) (*structpb.Struct, error) {
+	ctx = this.install(ctx)
 	id, err := idOf[ID](request, "id")
 	if err != nil {
 		return nil, this.fail(ctx, err)
@@ -132,6 +153,7 @@ func (this *ResourceFor[M, ID, U, In, P, R]) Get(ctx context.Context, request *s
 }
 
 func (this *ResourceFor[M, ID, U, In, P, R]) Create(ctx context.Context, request *structpb.Struct) (*structpb.Struct, error) {
+	ctx = this.install(ctx)
 	var in In
 	if err := fromStruct(request, &in); err != nil {
 		return nil, this.fail(ctx, err)
@@ -148,6 +170,7 @@ func (this *ResourceFor[M, ID, U, In, P, R]) Create(ctx context.Context, request
 }
 
 func (this *ResourceFor[M, ID, U, In, P, R]) Update(ctx context.Context, request *structpb.Struct) (*structpb.Struct, error) {
+	ctx = this.install(ctx)
 	id, err := idOf[ID](request, "id")
 	if err != nil {
 		return nil, this.fail(ctx, err)
@@ -168,6 +191,7 @@ func (this *ResourceFor[M, ID, U, In, P, R]) Update(ctx context.Context, request
 }
 
 func (this *ResourceFor[M, ID, U, In, P, R]) Replace(ctx context.Context, request *structpb.Struct) (*structpb.Struct, error) {
+	ctx = this.install(ctx)
 	id, err := idOf[ID](request, "id")
 	if err != nil {
 		return nil, this.fail(ctx, err)
@@ -192,6 +216,7 @@ func (this *ResourceFor[M, ID, U, In, P, R]) Replace(ctx context.Context, reques
 }
 
 func (this *ResourceFor[M, ID, U, In, P, R]) Delete(ctx context.Context, request *structpb.Struct) (*structpb.Struct, error) {
+	ctx = this.install(ctx)
 	id, err := idOf[ID](request, "id")
 	if err != nil {
 		return nil, this.fail(ctx, err)
@@ -204,6 +229,7 @@ func (this *ResourceFor[M, ID, U, In, P, R]) Delete(ctx context.Context, request
 }
 
 func (this *ResourceFor[M, ID, U, In, P, R]) BulkDelete(ctx context.Context, request *structpb.Struct) (*structpb.Struct, error) {
+	ctx = this.install(ctx)
 	ids, err := idsOf[ID](request, "ids")
 	if err != nil {
 		return nil, this.fail(ctx, err)
@@ -270,5 +296,22 @@ func (this *ResourceFor[M, ID, U, In, P, R]) answer(ctx context.Context, v any) 
 }
 
 func (this *ResourceFor[M, ID, U, In, P, R]) fail(ctx context.Context, err error) error {
+	if errorsInstalled(ctx) {
+		return ContextError(ctx, err)
+	}
 	return this.render.Render(withRequestLocale(ctx), err).Err()
+}
+
+func (this *ResourceFor[M, ID, U, In, P, R]) install(ctx context.Context) context.Context {
+	if len(this.hops) > 0 {
+		ctx = port.WithHops(ctx, this.hops)
+	}
+	if this.replace != nil || this.rendering {
+		ctx = withResourceRendering(ctx, resourceRendering{
+			renderer: this.replace,
+			standard: this.rendering,
+			options:  this.renderOps,
+		})
+	}
+	return ctx
 }

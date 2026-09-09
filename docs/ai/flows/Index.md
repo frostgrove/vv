@@ -53,10 +53,12 @@ through it.
 | a background worker, a ticker, a supervisor, a drain, or how a runner is activated | [[FL-028]] |
 | a module definition, a deployment profile, a contribution role, the catalog, or what a doctor prints | [[FL-030]] |
 | `module.manifest.yml`, an inferred contribution kind, or where a module's constructor list comes from | [[FL-032]] |
-| command or storage telemetry spans, duration metrics or cache observers | [[FL-034]] |
+| OTel construction/schema, any Frostgrove telemetry adapter, durable trace propagation or log correlation | [[FL-034]] |
 | a transactional enqueue, a staged placement, a lease, a takeover, or an effect that must not outlive a rollback | [[FL-035]] |
 | an aggregate declaration, a fact, a reader chain, an expected-version append, a stream replay, a log walk or an event store | [[FL-036]] |
 | the PostgreSQL event schema, its migration or verification, the one-statement append, the settled-watermark cursor or the conformance run | [[FL-037]] |
+| an i18n declaration, locale resolver, MF2 template, typed message, usage extraction, catalogue artifact, overlay, render, error source or publication controller | [[FL-038]] |
+| the audit trace registry, semantic or completeness authority, tagged design import, or section checkpoint | [[FL-039]] |
 
 **A code change that alters a path must update its flow document in the same
 change.** Not afterwards, not in a follow-up. A flow that describes a path the
@@ -106,19 +108,21 @@ phase 3 landed FL-014 and before phase 5 landed FL-015.
 | [FL-031](FL-031-a-guard-becomes-a-declared-operation.md) | A guard becomes a declared operation | `internal/codegen.RunRoutes` | [[UC-014]] |
 | [FL-032](FL-032-a-package-tree-becomes-a-confirmed-module.md) | A package tree becomes a confirmed module | `internal/codegen.RunModule` | [[UC-014]] |
 | [FL-033](FL-033-a-request-becomes-a-tenant-bound-statement.md) | A request becomes a tenant-bound statement, and a job becomes one again | `tenancy.Authority.Bind` / `tenancyjobs.IdentityRestorer` | [[UC-004]] [[UC-012]] |
-| [FL-034](FL-034-command-telemetry-lifecycle.md) | Command and storage telemetry lifecycle | `otel/service.go:executeCommand` / `otel/storage.go:executeStorage` | [[UC-030]] |
+| [FL-034](FL-034-an-operation-becomes-opentelemetry-signals.md) | A Frostgrove operation becomes OpenTelemetry signals | current: v2 schema + fail-fast `vvotel.New`/`Must` + four adapters/6 emitted signals; owed: 53 signals/remaining adapters | [[UC-030]] |
 | [FL-035](FL-035-a-committed-decision-becomes-a-delivered-effect.md) | A committed decision becomes a delivered effect | `jobs.Enqueue` / `jobs.EnqueueIn` / `jobspg.Driver.Place` | [[UC-031]] |
 | [FL-036](FL-036-a-decision-becomes-a-recorded-fact.md) | A decision becomes a recorded fact | `event.Define` / `event.Bind` / `event.Repo.Load` / `event.Repo.Append` | [[UC-032]] |
 | [FL-037](FL-037-a-recorded-fact-becomes-a-postgresql-row.md) | A recorded fact becomes a PostgreSQL row | `eventpg.New` / `eventpg.Store.Prepare` / `eventpg.Store.Append` / `eventpg.Store.ReadAll` | [[UC-032]] |
+| [FL-038](FL-038-a-message-declaration-becomes-rendered-presentation.md) | A message declaration becomes rendered presentation | `i18n.New` / `vv-i18n extract|merge` / `Snapshot.Resolve` / `Snapshot.Bind` / `DefineStruct` / `View.Render` / `NewFormatter` / `Controller.Activate` | [[UC-033]] |
+| [FL-039](FL-039-an-audit-contract-becomes-an-executable-checkpoint.md) | An audit contract becomes an executable checkpoint | `scripts/audit-trace.sh` / `scripts/audit_trace_test.go:TestAuditTraceRegistry` / `scripts/audit_trace_import_test.go:TestAuditTraceDesignImport` | [[UC-034]] |
 
 ## By file — which flows touch this file
 
 | File | Flows |
 |---|---|
 | `crud/adapter/crudpgx/conflict.go` | FL-003, FL-011, FL-014 |
-| `crud/adapter/crudpgx/crudpgx.go` | FL-003, FL-009, FL-011, FL-014 |
+| `crud/adapter/crudpgx/crudpgx.go` | FL-003, FL-009, FL-011, FL-014, FL-034 |
 | `crud/adapter/crudsql/conflict.go` | FL-003, FL-011, FL-014 |
-| `crud/adapter/crudsql/crudsql.go` | FL-009, FL-011, FL-014, FL-035 |
+| `crud/adapter/crudsql/crudsql.go` | FL-009, FL-011, FL-014, FL-034, FL-035 |
 | `app/doc.go` | FL-024 |
 | `app/ordered.go` | FL-024 |
 | `app/seed.go` | FL-024 |
@@ -136,33 +140,85 @@ phase 3 landed FL-014 and before phase 5 landed FL-015.
 | `app/http/appfiber/combine.go` | FL-024 |
 | `app/http/appfiber/unchecked.go` | FL-024 |
 | `app/http/appfiber/health.go` | FL-027, FL-024 |
-| `health/health.go` | FL-027 |
-| `health/registry.go` | FL-027 |
+| `health/health.go` | FL-027, FL-034 |
+| `health/registry.go` | FL-027, FL-034 |
 | `health/healthfx/healthfx.go` | FL-027 |
-| `runtime/runner.go` | FL-028 |
-| `runtime/supervisor.go` | FL-028 |
-| `runtime/periodic.go` | FL-028 |
+| `runtime/runner.go` | FL-028, FL-034 |
+| `runtime/observer.go` | FL-034 |
+| `runtime/supervisor.go` | FL-028, FL-034 |
+| `runtime/periodic.go` | FL-028, FL-034 |
 | `runtime/loop.go` | FL-028 |
-| `runtime/runtimefx/runtimefx.go` | FL-028 |
+| `runtime/runtimefx/runtimefx.go` | FL-028, FL-034 |
 | `runtime/runtimecheck/emptyinvoke.go` | FL-028 |
 | `jobs/jobsfx/jobsfx.go` | FL-028 |
 | `jobs/jobsfx/runner.go` | FL-028 |
 | `jobs/jobspg/jobspgfx/application.go` | FL-028 |
 | `jobs/jobspg/jobspgfx/jobspgfx.go` | FL-028 |
 | `jobs/jobspg/jobspgfx/retention.go` | FL-028 |
-| `jobs/queue.go` | FL-033, FL-035 |
+| `jobs/queue.go` | FL-033, FL-034, FL-035 |
 | `jobs/jobspg/driver.go` | FL-035 |
 | `jobs/jobspg/stager.go` | FL-035 |
 | `jobs/jobspg/config.go` | FL-035 |
-| `jobs/delivery_command.go` | FL-035 |
-| `jobs/delivery_meta.go` | FL-035 |
+| `jobs/delivery_command.go` | FL-034, FL-035 |
+| `jobs/delivery_meta.go` | FL-034, FL-035 |
 | `jobs/delivery_driver.go` | FL-035 |
 | `jobs/fenced_transaction.go` | FL-035 |
-| `jobs/disposition.go` | FL-035 |
+| `jobs/disposition.go` | FL-034, FL-035 |
 | `jobs/scope.go` | FL-035 |
 | `jobs/bounds.go` | FL-035 |
+| `jobs/admission.go` | FL-034 |
+| `jobs/classifier.go` | FL-034 |
+| `jobs/durable_context.go` | FL-033, FL-034 |
+| `jobs/schedule.go` | FL-034 |
+| `jobs/schedule_observer.go` (**owed**) | FL-034 |
+| `jobs/worker_observer.go` | FL-034 |
+| `jobs/worker_observer_runtime.go` | FL-034 |
+| `jobs/workers_run.go` | FL-034 |
+| `internal/otelreg/registry.json` | FL-034 |
+| `internal/otelreg/history.go` | FL-034 |
+| `internal/otelreg/signal_history.json` | FL-034 |
+| `internal/otelreg/availability_history.json` | FL-034 |
+| `cmd/vv-otel-gen/main.go` | FL-034 |
+| `cmd/vv-otel-gen/main_test.go` | FL-034 |
+| `cmd/vv-otel-gen/compatibility_test.go` | FL-034 |
+| `cmd/vv-otel-gen/facts.go` | FL-034 |
+| `cmd/vv-otel-gen/inventory.go` | FL-034 |
+| `cmd/vv-otel-gen/inventory_test.go` | FL-034 |
+| `cmd/vv-otel-gen/ownership.go` | FL-034 |
+| `cmd/vv-otel-gen/semantics_test.go` | FL-034 |
+| `cmd/vv-otel-gen/shapes.go` | FL-034 |
+| `cmd/vv-otel-gen/shapes_test.go` | FL-034 |
+| `cmd/vv-otel-gen/testdata/v1_api.go.txt` | FL-034 |
+| `cmd/vv-otel-gen/variants.go` | FL-034 |
+| `otel/telemetry.go` | FL-034 |
+| `otel/assembly.go` | FL-034 |
+| `otel/assembly_test.go` | FL-034 |
+| `otel/assembly_internal_test.go` | FL-034 |
+| `otel/doc.go` | FL-034 |
+| `otel/schema_gen.go` | FL-034 |
+| `otel/schema_test.go` | FL-034 |
+| `otel/cardinality_test.go` | FL-034 |
+| `otel/wire_manifest.json` | FL-034 |
+| `otel/safe.go` | FL-034 |
 | `otel/service.go` | FL-034 |
 | `otel/storage.go` | FL-034 |
+| `otel/cache.go` | FL-034 |
+| `otel/cachememory.go` | FL-034 |
+| `otel/crud.go` | FL-034 |
+| `otel/remote.go` (**owed**) | FL-034 |
+| `otel/auth.go` (**owed**) | FL-034 |
+| `otel/health.go` (**owed**) | FL-034 |
+| `otel/runtime.go` (**owed**) | FL-034 |
+| `scripts/checks.sh` | FL-034 |
+| `scripts/modules.sh` | FL-034 |
+| `scripts/vv` | FL-034 |
+| `Makefile` | FL-034 |
+| `otel/slog.go` (**owed**) | FL-034 |
+| `otel/jobs_context.go` (**owed**) | FL-034 |
+| `otel/jobs_enqueue.go` (**owed**) | FL-034 |
+| `otel/jobs_handler.go` (**owed**) | FL-034 |
+| `otel/jobs_workers.go` | FL-034 |
+| `otel/jobs_scheduler.go` (**owed**) | FL-034 |
 | `cache/declaration.go` | FL-025 |
 | `cache/activation.go` | FL-025 |
 | `cache/cachefx/cachefx.go` | FL-025 |
@@ -183,8 +239,9 @@ phase 3 landed FL-014 and before phase 5 landed FL-015.
 | `cache/envelope.go` | FL-025 |
 | `cache/codec.go` | FL-025 |
 | `cache/context.go` | FL-025 |
-| `cache/runtime.go` | FL-025 |
-| `cache/cachememory/backend.go` | FL-025 |
+| `cache/runtime.go` | FL-025, FL-034 |
+| `cache/cachememory/backend.go` | FL-025, FL-034 |
+| `cache/cachememory/observer.go` | FL-025, FL-034 |
 | `auth/http/authhttp/surface.go` | FL-024, FL-019, FL-031 |
 | `auth/http/authhttp/preflight.go` | FL-019 |
 | `auth/http/authfiber/surface.go` | FL-024 |
@@ -198,22 +255,22 @@ phase 3 landed FL-014 and before phase 5 landed FL-015.
 | `auth/doc.go` | FL-019 |
 | `auth/principal.go` | FL-019, FL-020 |
 | `auth/context.go` | FL-019, FL-020 |
-| `auth/credential.go` | FL-019 |
+| `auth/credential.go` | FL-019, FL-034 |
 | `auth/guard.go` | FL-019 |
 | `auth/errors.go` | FL-019, FL-011 |
-| `auth/refusal.go` | FL-019 |
+| `auth/refusal.go` | FL-019, FL-034 |
 | `auth/apikey/apikey.go` | FL-019 |
 | `auth/authjwt/parser.go` | FL-019 |
 | `auth/authjwt/key.go` | FL-019 |
 | `auth/authjwt/jwks.go` | FL-019 |
 | `auth/authjwt/claims.go` | FL-019 |
 | `auth/authjwt/authenticator.go` | FL-019 |
-| `auth/http/authhttp/authhttp.go` | FL-019, FL-011 |
+| `auth/http/authhttp/authhttp.go` | FL-019, FL-011, FL-034, FL-038 |
 | `auth/http/authhttp/cookie.go` | FL-019, FL-023 |
 | `auth/http/authnet/authnet.go` | FL-019, FL-013 |
 | `auth/http/authgin/authgin.go` | FL-019, FL-013 |
 | `auth/http/authfiber/authfiber.go` | FL-019, FL-013 |
-| `auth/http/authfiber/locale.go` | FL-019 |
+| `auth/http/authfiber/locale.go` | FL-019, FL-038 |
 | `auth/rpc/authgrpc/interceptor.go` | FL-019, FL-013 |
 | `crud/decorators/security/principal.go` | FL-020, FL-007, FL-008 |
 | `cmd/vv/main.go` | FL-010, FL-029, FL-031, FL-032 |
@@ -249,22 +306,23 @@ phase 3 landed FL-014 and before phase 5 landed FL-015.
 | `tenancy/tenancyrow/row.go` | FL-033 |
 | `tenancy/tenancydb/database.go` | FL-033 |
 | `tenancy/tenancyjobs/jobs.go` | FL-033 |
-| `jobs/durable_context.go` | FL-033 |
 | `jobs/worker_delivery.go` | FL-033 |
 | `tenancy/tenancystorage/storage.go` | FL-033 |
 | `tenancy/tenancycache/cache.go` | FL-033 |
+| `storage/store.go` | FL-034 |
+| `storage/errors.go` | FL-034 |
 | `crud/crudtest/recorder.go` | FL-009, FL-016 |
 | `crud/dialect.go` | FL-002, FL-003, FL-009, FL-017 |
 | `crud/errors.go` | FL-002, FL-003, FL-008, FL-009, FL-011 |
-| `crud/executor.go` | FL-002, FL-003, FL-008, FL-009, FL-016, FL-017, FL-035 |
+| `crud/executor.go` | FL-002, FL-003, FL-008, FL-009, FL-016, FL-017, FL-034, FL-035 |
 | `errs/doc.go` | FL-011 |
-| `errs/code.go` | FL-011 |
+| `errs/code.go` | FL-011, FL-034 |
 | `errs/codes.go` | FL-011, FL-014 |
 | `errs/path.go` | FL-011, FL-018 |
 | `errs/violation.go` | FL-011, FL-014, FL-017 |
 | `errs/fault.go` | FL-011, FL-014, FL-017 |
 | `errs/build.go` | FL-011, FL-014 |
-| `errs/spi.go` | FL-011, FL-014 |
+| `errs/spi.go` | FL-011, FL-014, FL-038 |
 | `errs/message.go` | FL-011 |
 | `errs/catalogue.go` | FL-011 |
 | `errs/bridge.go` | FL-011 |
@@ -292,18 +350,18 @@ phase 3 landed FL-014 and before phase 5 landed FL-015.
 | `crud/scope.go` | FL-004, FL-005, FL-006, FL-007 |
 | `crud/update.go` | FL-002, FL-004, FL-008, FL-010, FL-017 |
 | `*/vv_gen.go` — ten checked-in files under `test/` and `_examples/` | FL-010 |
-| `crud/http/crudfiber/handler.go` | FL-001, FL-002, FL-003, FL-011, FL-012, FL-013, FL-015, FL-029 |
+| `crud/http/crudfiber/handler.go` | FL-001, FL-002, FL-003, FL-011, FL-012, FL-013, FL-015, FL-029, FL-038 |
 | `crud/http/crudfiber/routing_test.go` | FL-013 |
 | `crud/http/crudgin/routing_test.go` | FL-013 |
 | `crud/http/crudnet/routing_test.go` | FL-013 |
-| `crud/http/crudfiber/options.go` | FL-002, FL-011, FL-013, FL-015 |
-| `crud/http/crudfiber/middleware.go` | FL-013 |
-| `crud/http/crudgin/middleware.go` | FL-013 |
-| `crud/http/crudnet/middleware.go` | FL-013 |
-| `crud/http/crudgin/handler.go` | FL-001, FL-002, FL-003, FL-011, FL-012, FL-013, FL-015, FL-029 |
-| `crud/http/crudgin/options.go` | FL-002, FL-011, FL-013, FL-015 |
-| `crud/http/crudnet/handler.go` | FL-001, FL-002, FL-003, FL-011, FL-012, FL-013, FL-015, FL-029 |
-| `crud/http/crudnet/options.go` | FL-002, FL-011, FL-013, FL-015 |
+| `crud/http/crudfiber/options.go` | FL-002, FL-011, FL-013, FL-015, FL-034, FL-038 |
+| `crud/http/crudfiber/middleware.go` | FL-013, FL-034, FL-038 |
+| `crud/http/crudgin/middleware.go` | FL-013, FL-034, FL-038 |
+| `crud/http/crudnet/middleware.go` | FL-013, FL-034, FL-038 |
+| `crud/http/crudgin/handler.go` | FL-001, FL-002, FL-003, FL-011, FL-012, FL-013, FL-015, FL-029, FL-038 |
+| `crud/http/crudgin/options.go` | FL-002, FL-011, FL-013, FL-015, FL-034, FL-038 |
+| `crud/http/crudnet/handler.go` | FL-001, FL-002, FL-003, FL-011, FL-012, FL-013, FL-015, FL-029, FL-038 |
+| `crud/http/crudnet/options.go` | FL-002, FL-011, FL-013, FL-015, FL-034, FL-038 |
 | `crud/http/crudhttp/doc.go` | FL-013, FL-015 |
 | `auth/http/authnet/binding_test.go` | FL-019 |
 | `auth/http/authgin/binding_test.go` | FL-019 |
@@ -315,7 +373,7 @@ phase 3 landed FL-014 and before phase 5 landed FL-015.
 | `crud/http/crudhttp/request.go` | FL-001, FL-002, FL-012, FL-013, FL-015 |
 | `crud/http/crudhttp/porthttp.go` | FL-011, FL-013, FL-015 |
 | `port/porthttp/errors.go` | FL-011, FL-013, FL-014, FL-015, FL-018 |
-| `port/porthttp/render.go` | FL-011, FL-015 |
+| `port/porthttp/render.go` | FL-011, FL-015, FL-038 |
 | `port/porthttp/envelope.go` | FL-011 |
 | `port/porthttp/decode.go` | FL-013, FL-018 |
 | `port/porthttp/bodyindex.go` | FL-011, FL-015 |
@@ -324,8 +382,8 @@ phase 3 landed FL-014 and before phase 5 landed FL-015.
 | `port/doc.go` | FL-015 |
 | `port/operations.go` | FL-013, FL-015, FL-024 |
 | `port/rules.go` | FL-013, FL-015 |
-| `port/log.go` | FL-013, FL-019 |
-| `port/service.go` | FL-001, FL-002, FL-003, FL-011, FL-015 |
+| `port/log.go` | FL-013, FL-019, FL-034 |
+| `port/service.go` | FL-001, FL-002, FL-003, FL-011, FL-015, FL-034 |
 | `port/command.go` | FL-002, FL-015 |
 | `port/mapper.go` | FL-015 |
 | `port/path.go` | FL-011, FL-015 |
@@ -336,22 +394,22 @@ phase 3 landed FL-014 and before phase 5 landed FL-015.
 | `port/request.go` | FL-001, FL-002, FL-012, FL-013, FL-015, FL-018 |
 | `port/sentinel.go` | FL-011, FL-015 |
 | `port/kind.go` | FL-011, FL-014, FL-015, FL-018 |
-| `port/violations.go` | FL-011, FL-013, FL-015 |
-| `port/locale.go` | FL-011, FL-013, FL-015 |
+| `port/violations.go` | FL-011, FL-013, FL-015, FL-038 |
+| `port/locale.go` | FL-011, FL-013, FL-015, FL-038 |
 | `remote/dto.go` | FL-018 |
 | `remote/options.go` | FL-018 |
 | `remote/resource.go` | FL-018 |
-| `remote/transport.go` | FL-018 |
+| `remote/transport.go` | FL-018, FL-034 |
 | `remote/remotehttp/doc.go` | FL-018 |
 | `remote/remotehttp/transport.go` | FL-018 |
 | `crud/rpc/crudgrpc/doc.go` | FL-013 |
-| `crud/rpc/crudgrpc/handler.go` | FL-013, FL-015, FL-029 |
+| `crud/rpc/crudgrpc/handler.go` | FL-013, FL-015, FL-029, FL-038 |
 | `crud/rpc/crudgrpc/service.go` | FL-013 |
 | `crud/rpc/crudgrpc/message.go` | FL-013 |
-| `crud/rpc/crudgrpc/status.go` | FL-011, FL-013, FL-015, FL-018 |
+| `crud/rpc/crudgrpc/status.go` | FL-011, FL-013, FL-015, FL-018, FL-034, FL-038 |
 | `crud/rpc/crudgrpc/options.go` | FL-011, FL-013, FL-015 |
-| `crud/rpc/crudgrpc/interceptor.go` | FL-013 |
-| `crud/rpc/crudgrpc/locale.go` | FL-011, FL-013 |
+| `crud/rpc/crudgrpc/interceptor.go` | FL-013, FL-038 |
+| `crud/rpc/crudgrpc/locale.go` | FL-011, FL-013, FL-038 |
 | `crud/rpc/crudgrpc/transport.go` | FL-018 |
 | `crud/probe/doc.go` | FL-017 |
 | `crud/probe/probe.go` | FL-017 |
@@ -399,6 +457,8 @@ phase 3 landed FL-014 and before phase 5 landed FL-015.
 | `test/integration/rpc_grpc_test.go` | FL-011, FL-013, FL-015 |
 | `test/portmount/mount_test.go` | FL-013, FL-015 |
 | `test/portmount/grpcmount_test.go` | FL-011, FL-013, FL-015 |
+| `_examples/otel-sdk-bootstrap/main.go` | FL-034 |
+| `test/oteltelemetry/real_sdk_test.go` | FL-034 |
 | `test/dsn/dsn_test.go` | FL-021 |
 | `test/integration/vvdb_test.go` | FL-021 |
 | `utils/vvcfg/vvcfg.go` | FL-026 |
@@ -516,6 +576,53 @@ phase 3 landed FL-014 and before phase 5 landed FL-015.
 | `event/eventpg/append.go` | FL-037 |
 | `event/eventpg/read.go` | FL-037 |
 | `event/eventpg/cursor.go` | FL-037 |
+| `i18n/go.mod` | FL-038 |
+| `i18n/catalog.go` | FL-038 |
+| `i18n/source.go` | FL-038 |
+| `i18n/merge.go` | FL-038 |
+| `i18n/check.go` | FL-038 |
+| `i18n/artifact.go` | FL-038 |
+| `i18n/locale.go` | FL-038 |
+| `i18n/value.go` | FL-038 |
+| `i18n/optional.go` | FL-038 |
+| `i18n/struct_definition.go` | FL-038 |
+| `i18n/numeric.go` | FL-038 |
+| `i18n/datetime.go` | FL-038 |
+| `i18n/formatlocale.go` | FL-038 |
+| `i18n/work.go` | FL-038 |
+| `i18n/bounded_text.go` | FL-038 |
+| `i18n/render.go` | FL-038 |
+| `i18n/formatter.go` | FL-038 |
+| `i18n/formatters.go` | FL-038 |
+| `i18n/errorsource.go` | FL-038 |
+| `i18n/overlay.go` | FL-038 |
+| `i18n/controller.go` | FL-038 |
+| `i18n/pseudo.go` | FL-038 |
+| `i18n/generate.go` | FL-038 |
+| `i18n/export.go` | FL-038 |
+| `i18n/observer.go` | FL-038 |
+| `i18n/problem.go` | FL-038 |
+| `i18n/cmd/vv-i18n/main.go` | FL-038 |
+| `i18n/cmd/vv-i18n/usage.go` | FL-038 |
+| `i18n/cmd/vv-i18n/extract.go` | FL-038 |
+| `i18n/cmd/vv-i18n/extract_analysis.go` | FL-038 |
+| `i18n/cmd/vv-i18n/extract_loader.go` | FL-038 |
+| `i18n/cmd/vv-i18n/merge.go` | FL-038 |
+| `i18n/cmd/vv-i18n/review.go` | FL-038 |
+| `i18n/cmd/vv-i18n/limits.go` | FL-038 |
+| `i18n/cmd/vv-i18n/publication.go` | FL-038 |
+| `i18n/cmd/vv-i18n/atomic.go` | FL-038 |
+| `test/i18nflow/` | FL-038 |
+| `scripts/i18n-consumer.sh` | FL-038 |
+| `scripts/i18n_test.go` | FL-038 |
+| `scripts/i18n_release_test.go` | FL-038 |
+| `scripts/audit-trace.sh` | FL-039 |
+| `scripts/audit_trace_test.go` | FL-039 |
+| `scripts/audit_trace_model_test.go` | FL-039 |
+| `scripts/audit_trace_import_test.go` | FL-039 |
+| `scripts/testdata/audit_trace.tsv` | FL-039 |
+| `scripts/testdata/audit_trace_semantics.json` | FL-039 |
+| `scripts/testdata/audit_trace_anchor.json` | FL-039 |
 
 `crud/sqlrepo/repository.go` is in eleven of them. It is the layer everything else
 decorates, and almost no change to it is local.

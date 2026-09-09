@@ -214,8 +214,9 @@ func scheduleIntent(description ScheduleDescription, due time.Time) string {
 }
 
 type SchedulerSpec struct {
-	Queue *Queue
-	Clock Clock
+	Queue    *Queue
+	Clock    Clock
+	Observer ScheduleObserver
 }
 
 type ScheduleRunResult struct {
@@ -228,6 +229,7 @@ type ScheduleRunResult struct {
 type Scheduler struct {
 	queue     *Queue
 	clock     *workerClock
+	observer  ScheduleObserver
 	schedules []scheduleEntry
 	placed    map[int]time.Time
 	cycle     atomic.Bool
@@ -270,19 +272,27 @@ func NewScheduler(spec SchedulerSpec, schedules ...Schedule) (*Scheduler, error)
 		names[description.Name] = struct{}{}
 		entries[index] = entry
 	}
-	return &Scheduler{queue: spec.Queue, clock: guarded, schedules: entries, placed: make(map[int]time.Time, len(entries))}, nil
+	return &Scheduler{queue: spec.Queue, clock: guarded, observer: spec.Observer, schedules: entries, placed: make(map[int]time.Time, len(entries))}, nil
 }
 
-func (scheduler *Scheduler) RunDue(ctx context.Context) (ScheduleRunResult, error) {
+func (scheduler *Scheduler) RunDue(ctx context.Context) (result ScheduleRunResult, err error) {
 	if scheduler == nil || nilInterface(ctx) || !scheduler.cycle.CompareAndSwap(false, true) {
 		return ScheduleRunResult{}, ErrConflict
 	}
-	defer scheduler.cycle.Store(false)
-	if err := ctx.Err(); err != nil {
+	started := time.Now()
+	defer func() {
+		elapsed := time.Since(started)
+		if elapsed < 0 {
+			elapsed = 0
+		}
+		observeSchedule(scheduler.observer, ctx, ScheduleEvent{result: result, err: err, elapsed: elapsed})
+		scheduler.cycle.Store(false)
+	}()
+	if err = ctx.Err(); err != nil {
 		return ScheduleRunResult{}, err
 	}
-	now, err := scheduler.clock.Now()
-	if err != nil {
+	now, clockErr := scheduler.clock.Now()
+	if clockErr != nil {
 		return ScheduleRunResult{}, ErrInvalid
 	}
 	return scheduler.runDue(ctx, now)

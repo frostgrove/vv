@@ -6,7 +6,7 @@ the aggregate report before probing, never the per-dimension reports, so the
 judgement below is independent of how each finding was argued.
 
 **Method:** every verdict is backed by a Go program in a scratch module with
-`replace github.com/frostgrove/vv => /home/user/ws/gd/lease/frostgrove/vv/framework`,
+`replace github.com/frostgrove/vv => /home/user/ws/gd/lease/frostgrove/framework`,
 or by a mutation run against a private copy, or by a grep whose full output is
 pasted. Probes live in
 `/tmp/claude-1000/-home-user-ws-gd-lease/82a92a15-ac6c-4104-9609-680bbbcbfeb1/scratchpad/verify/`.

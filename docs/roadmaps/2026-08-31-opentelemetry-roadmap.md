@@ -1,5 +1,8 @@
 # OpenTelemetry roadmap — 2026-08-31
 
+> Historical first-delivery roadmap. Current work is governed by
+> [the 2026-09-08 maximal OTel roadmap](2026-09-08-opentelemetry-maximal-roadmap.md).
+
 **Status:** implementation landed in the working tree; publication remains gated
 by the lockstep root/`otel` consumer check. Accepted [[D-048]] continues to
 refuse a shared framework telemetry contract.

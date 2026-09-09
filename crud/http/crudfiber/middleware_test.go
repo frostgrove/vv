@@ -2,7 +2,9 @@ package crudfiber
 
 import (
 	"context"
+	"io"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/gofiber/fiber/v3"
@@ -10,6 +12,7 @@ import (
 	"github.com/frostgrove/vv/crud"
 	"github.com/frostgrove/vv/crud/http/crudhttp"
 	"github.com/frostgrove/vv/errs"
+	"github.com/frostgrove/vv/port"
 )
 
 func serve(t *testing.T, h fiber.Handler, mw ...fiber.Handler) response {
@@ -90,10 +93,77 @@ func TestTheMiddlewareCoversAHandRolledRoute(t *testing.T) {
 	}
 }
 
+func TestWithErrorHandlerStillWinsInsideErrorsMiddleware(t *testing.T) {
+	fake := newFake()
+	fake.err = crud.ErrNotFound
+	app := fiber.New()
+	app.Use(Errors())
+	app.Use("/widgets", New[Widget, int64, WidgetUpdate](fake, WithErrorHandler[Widget, int64, WidgetUpdate](
+		func(c fiber.Ctx, _ error) error {
+			return c.Status(http.StatusGone).JSON(fiber.Map{"custom": true})
+		},
+	)).Routes())
+
+	r := do(t, app, http.MethodGet, "/widgets/42", "")
+
+	if r.status != http.StatusGone || string(r.body) != `{"custom":true}` {
+		t.Fatalf("the explicit resource handler lost to the middleware: %d %s", r.status, r.body)
+	}
+}
+
 type panicky struct{}
 
 func (panicky) Message(context.Context, errs.Violation, string) (string, bool) {
 	panic("the catalogue is not loaded")
+}
+
+type localeEcho struct{}
+
+func (localeEcho) Message(_ context.Context, _ errs.Violation, locale string) (string, bool) {
+	return "locale:" + locale, true
+}
+
+func TestHTTPRenderingOnlyDerivesLocaleWhenNoneIsBound(t *testing.T) {
+	fault := errs.Validation().Field("name").Code(errs.CodeRequired).Fault()
+	message := func(t *testing.T, bound, header string) string {
+		t.Helper()
+		app := fiber.New()
+		app.Use(func(c fiber.Ctx) error {
+			if bound != "" {
+				c.SetContext(port.WithLocale(c.Context(), bound))
+			}
+			return c.Next()
+		})
+		app.Use(Errors(crudhttp.WithMessages(localeEcho{})))
+		app.Get("/anything", func(fiber.Ctx) error { return fault })
+		request := httptest.NewRequest(http.MethodGet, "/anything", nil)
+		request.Header.Set("Accept-Language", header)
+		httpResponse, err := app.Test(request, fiber.TestConfig{Timeout: 0})
+		if err != nil {
+			t.Fatalf("serving the request: %v", err)
+		}
+		defer httpResponse.Body.Close()
+		raw, err := io.ReadAll(httpResponse.Body)
+		if err != nil {
+			t.Fatalf("reading the response: %v", err)
+		}
+		return failed(t, response{status: httpResponse.StatusCode, body: raw, header: httpResponse.Header}).Message
+	}
+
+	for _, tc := range []struct {
+		name, bound, header, want string
+	}{
+		{"a prebound locale wins", "fr", "ja", "locale:fr"},
+		{"the header fills an empty context", "", "ja-JP,ja;q=0.9", "locale:ja-JP"},
+		{"an empty header does not erase a locale", "fr", "", "locale:fr"},
+		{"the control has no locale", "", "", "locale:"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := message(t, tc.bound, tc.header); got != tc.want {
+				t.Fatalf("bound %q and header %q produced %q, want %q", tc.bound, tc.header, got, tc.want)
+			}
+		})
+	}
 }
 
 func TestAPanicInTheRendererBecomesASilent500(t *testing.T) {

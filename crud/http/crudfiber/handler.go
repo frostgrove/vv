@@ -30,6 +30,10 @@ type ResourceFor[M any, ID comparable, U any, In any, P any, R any] struct {
 	patcher   PatchMapper[P, U]
 	presenter Presenter[M, R]
 	opt       options[M, ID, U]
+	hops      []errs.Resolver
+	renderer  crudhttp.Renderer
+	rendering bool
+	renderOps []crudhttp.RenderOption
 }
 
 type HandlerFor[M any, ID comparable, U any, In any] = ResourceFor[M, ID, U, In, U, M]
@@ -71,15 +75,31 @@ func ServingWire[In, P, R, M any, ID comparable, U any](service Service[M, ID, U
 
 func build[M any, ID comparable, U any, In any, P any, R any](service Service[M, ID, U], mapper Mapper[In, M], patcher PatchMapper[P, U], presenter Presenter[M, R], o options[M, ID, U]) *ResourceFor[M, ID, U, In, P, R] {
 	o.RefuseContradictions("crudfiber")
-	h := &ResourceFor[M, ID, U, In, P, R]{service: service, mapper: mapper, patcher: patcher, presenter: presenter, opt: o}
+	h := &ResourceFor[M, ID, U, In, P, R]{
+		service: service, mapper: mapper, patcher: patcher, presenter: presenter, opt: o,
+		hops: port.Hops(service, mapper), renderer: o.renderer,
+	}
 	if h.opt.errorHandler == nil {
 		rd := h.opt.renderer
 		if rd == nil {
-			rd = rendererFor(port.Hops(service, mapper))
+			rd = defaultRenderer
 		}
 		h.opt.errorHandler = func(c fiber.Ctx, err error) error { return render(rd, c, err) }
 	}
 	return h
+}
+
+func (this *ResourceFor[M, ID, U, In, P, R]) Rendering(options ...crudhttp.RenderOption) *ResourceFor[M, ID, U, In, P, R] {
+	this.renderOps = append([]crudhttp.RenderOption(nil), options...)
+	this.rendering = true
+	this.renderer = nil
+	rd := crudhttp.Renderer(defaultRenderer)
+	if len(options) > 0 {
+		rd = crudhttp.NewRenderer(options...)
+	}
+	this.opt.errorHandler = func(c fiber.Ctx, err error) error { return render(rd, c, err) }
+	this.opt.customErrorHandler = false
+	return this
 }
 
 func (this *ResourceFor[M, ID, U, In, P, R]) Routes() *fiber.App {
@@ -130,6 +150,7 @@ func (this *ResourceFor[M, ID, U, In, P, R]) Register(r fiber.Router) {
 }
 
 func (this *ResourceFor[M, ID, U, In, P, R]) List(c fiber.Ctx) error {
+	this.install(c)
 	request, err := this.parseQueryString(c)
 	if err != nil {
 		return this.fail(c, err)
@@ -138,6 +159,7 @@ func (this *ResourceFor[M, ID, U, In, P, R]) List(c fiber.Ctx) error {
 }
 
 func (this *ResourceFor[M, ID, U, In, P, R]) Query(c fiber.Ctx) error {
+	this.install(c)
 	request, err := this.parseBody(c)
 	if err != nil {
 		return this.fail(c, err)
@@ -163,6 +185,7 @@ func (this *ResourceFor[M, ID, U, In, P, R]) list(c fiber.Ctx, request *query.Re
 }
 
 func (this *ResourceFor[M, ID, U, In, P, R]) CountGet(c fiber.Ctx) error {
+	this.install(c)
 	request, err := this.parseQueryString(c)
 	if err != nil {
 		return this.fail(c, err)
@@ -171,6 +194,7 @@ func (this *ResourceFor[M, ID, U, In, P, R]) CountGet(c fiber.Ctx) error {
 }
 
 func (this *ResourceFor[M, ID, U, In, P, R]) CountPost(c fiber.Ctx) error {
+	this.install(c)
 	request, err := this.parseBody(c)
 	if err != nil {
 		return this.fail(c, err)
@@ -191,6 +215,7 @@ func (this *ResourceFor[M, ID, U, In, P, R]) count(c fiber.Ctx, request *query.R
 }
 
 func (this *ResourceFor[M, ID, U, In, P, R]) GetByID(c fiber.Ctx) error {
+	this.install(c)
 	id, err := this.id(c)
 	if err != nil {
 		return this.fail(c, err)
@@ -211,6 +236,7 @@ func (this *ResourceFor[M, ID, U, In, P, R]) GetByID(c fiber.Ctx) error {
 }
 
 func (this *ResourceFor[M, ID, U, In, P, R]) Create(c fiber.Ctx) error {
+	this.install(c)
 	var in In
 	raw, err := this.decode(c, &in)
 	keep(c, raw)
@@ -229,6 +255,7 @@ func (this *ResourceFor[M, ID, U, In, P, R]) Create(c fiber.Ctx) error {
 }
 
 func (this *ResourceFor[M, ID, U, In, P, R]) Update(c fiber.Ctx) error {
+	this.install(c)
 	id, err := this.id(c)
 	if err != nil {
 		return this.fail(c, err)
@@ -247,6 +274,7 @@ func (this *ResourceFor[M, ID, U, In, P, R]) Update(c fiber.Ctx) error {
 }
 
 func (this *ResourceFor[M, ID, U, In, P, R]) Replace(c fiber.Ctx) error {
+	this.install(c)
 	id, err := this.id(c)
 	if err != nil {
 		return this.fail(c, err)
@@ -269,6 +297,7 @@ func (this *ResourceFor[M, ID, U, In, P, R]) Replace(c fiber.Ctx) error {
 }
 
 func (this *ResourceFor[M, ID, U, In, P, R]) Delete(c fiber.Ctx) error {
+	this.install(c)
 	id, err := this.id(c)
 	if err != nil {
 		return this.fail(c, err)
@@ -283,6 +312,7 @@ func (this *ResourceFor[M, ID, U, In, P, R]) Delete(c fiber.Ctx) error {
 type BulkDeleteRequest[ID comparable] = crudhttp.BulkDeleteRequest[ID]
 
 func (this *ResourceFor[M, ID, U, In, P, R]) BulkDelete(c fiber.Ctx) error {
+	this.install(c)
 	var request BulkDeleteRequest[ID]
 	if err := this.decodeOnly(c, &request); err != nil {
 		return this.fail(c, err)
@@ -359,7 +389,33 @@ func (this *ResourceFor[M, ID, U, In, P, R]) entity(c fiber.Ctx, status int, m M
 }
 
 func (this *ResourceFor[M, ID, U, In, P, R]) fail(c fiber.Ctx, err error) error {
+	if this.opt.customErrorHandler {
+		return this.opt.errorHandler(c, err)
+	}
+	if errorsInstalled(c.Context()) || processErrorHandlerInstalled(c) {
+		return err
+	}
 	return this.opt.errorHandler(c, err)
+}
+
+func (this *ResourceFor[M, ID, U, In, P, R]) install(c fiber.Ctx) {
+	ctx := c.Context()
+	changed := false
+	if len(this.hops) > 0 {
+		ctx = port.WithHops(ctx, this.hops)
+		changed = true
+	}
+	if this.renderer != nil || this.rendering {
+		ctx = withResourceRendering(ctx, resourceRendering{
+			renderer: this.renderer,
+			standard: this.rendering,
+			options:  this.renderOps,
+		})
+		changed = true
+	}
+	if changed {
+		c.SetContext(ctx)
+	}
 }
 
 type bodyKeyType struct{}

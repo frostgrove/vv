@@ -7,6 +7,8 @@
 vv never owns a transaction it did not open, never guesses which pool a foreign
 transaction came from, and never lets an unresolved binding fall back to a pool.
 The application states the missing association once at the transaction boundary.
+Callers that need transaction authority rather than ordinary statement routing
+use the exact source-binding and root-provenance results described below.
 
 ## The safe foreign-transaction path
 
@@ -67,6 +69,10 @@ pool and reproduce the outside-rollback write the safe API exists to prevent.
    the executor must be non-nil. Invalid declarations push a failing executor,
    so the first repository resolution returns `ErrExecutorScope` before a pool,
    replica or foreign handle is touched. `NewSession` is the eager-error form.
+   `SourceBoundExecutorFor` reads this same private stack without accepting its
+   source-less fallback: an exact association returns the executor, no match is
+   absent, and unsafe fallback, poison or strict mismatch is an explicit scope
+   error. It does not change `ExecutorFor`'s legacy behavior.
 
 5. **Legacy names** — `WithExecutor` is deprecated and strict. It infers an
    identity from its executor. A foreign transaction identifies `*sql.Tx` or
@@ -156,6 +162,17 @@ one-statement plan goes through the wrapper's `Exec`; chunked plans execute on
 the transaction handle and need transaction-aware or driver instrumentation for
 complete visibility ([[D-061]], [[D-062]], [[D-083]]).
 
+## Exact database/sql root provenance
+
+`crudsql.TopLevelTransaction` accepts only the direct `*crudsql.Tx` produced by
+`crudsql.DB.Begin`. It also verifies that the private `*sql.Tx` is the same
+value held by the root's embedded executor. It does not use the executor wrapper
+walk: a framework savepoint, `crudsql.From(rawTx)`, a declared wrapper, a pool,
+a nil root or a root whose embedded executor was replaced returns not found.
+`crudsql.Transaction` remains the deliberately broader raw-handle helper and is
+the positive control: it continues to normalise savepoints, `From` and declared
+executor wrappers.
+
 ## Savepoints and ownership
 
 `OwnedExecutorFor` resolves the same binding and reports whether vv opened it.
@@ -203,6 +220,8 @@ issues ([[D-017]]).
 | What goes wrong | Where caught | Result |
 |---|---|---|
 | source-less `WithExecutor` carries a transaction handle | strict resolution | typed `ErrExecutorScope`; no datasource call |
+| exact provenance is requested from a sole `WithUnsafeExecutor` fallback | `SourceBoundExecutorFor` | `missing_source`; no executor is returned |
+| exact provenance sees only unrelated safe sessions | `SourceBoundExecutorFor` | not found, no error |
 | transaction used as the `BindExecutor` source | `NewSession` | `transaction_source`; no datasource call |
 | transaction passed directly as the `InTx` source | `inNewTx` | `transaction_source`; callback not run |
 | nil, unidentified or uncomparable session source | `NewSession` / `InTx` | typed scope error before use / before `Begin` |
@@ -213,6 +232,7 @@ issues ([[D-017]]).
 | exact pgx native method is called on a pool while a tx exists only in `ctx` | caller selected exact handle | pool call; use the repository or `UnsafeBulkInsertFor` |
 | source cannot begin | `InTx` | `ErrNoTxSupport`; callback not run |
 | stale committed/rolled-back session | driver | driver error; never pool fallback |
+| savepoint, raw `From`, wrapper or tampered database/sql root is offered as top-level authority | `crudsql.TopLevelTransaction` | not found |
 | callback error or panic | `InTx` | bounded detached rollback; panic re-raised |
 | rollback also fails | `InTx` | joined errors, both inspectable |
 
@@ -220,10 +240,10 @@ issues ([[D-017]]).
 
 | File | Role |
 |---|---|
-| `crud/executor.go` | contracts, identity walk, `Session`, binding resolution, ownership, transaction lifecycle and context-bound raw helpers |
+| `crud/executor.go` | contracts, identity walk, `Session`, ordinary and exact source-bound resolution, ownership, transaction lifecycle and context-bound raw helpers |
 | `crud/errors.go` | `ErrNoTxSupport`, `ErrExecutorScope`, typed reasons |
 | `crud/sqlrepo/repository.go` | every statement's `exec`/`read` resolution and `Tx` |
-| `crud/adapter/crudsql/crudsql.go` | database/sql executor/source/transaction/savepoints and `DB.BindExecutor` |
+| `crud/adapter/crudsql/crudsql.go` | database/sql executor/source/transaction/savepoints, `DB.BindExecutor`, and exact top-level root proof |
 | `crud/adapter/crudpgx/crudpgx.go` | pgx executor/source/transaction/savepoints and `Executor.BindExecutor` |
 | `crud/crudtest/recorder.go` | in-memory source identified by its own pointer |
 | `crud/decorators/faults/probe.go` | owned savepoint consumer |
@@ -234,6 +254,8 @@ issues ([[D-017]]).
 - `crud/executor_test.go` — safe session matching, strict legacy mismatch,
   transaction-source refusal, nested bindings, unsafe opt-out, ownership,
   identity validation and bounded rollback.
+- `crud/source_bound_executor_test.go` — exact match, unrelated-safe absence,
+  unsafe/poison/strict refusal, complete-chain validation, and legacy controls.
 - `crud/wrapsource_test.go` — wrapper and `ReadWrite` identity, safe session and
   owned transaction scoping.
 - `crud/crudtest/recorder_test.go` — one recorder is one datasource.
@@ -250,6 +272,9 @@ issues ([[D-017]]).
 - `crud/executor_effect_test.go` and `crud/sqlrepo/insert_batch_test.go` — raw
   helper scoping, native capability selection inside owned/ambient sessions and
   portable fallback on the ambient executor.
+- `crud/adapter/crudsql/top_level_transaction_test.go` — direct framework root
+  versus nil, savepoint, `From`, wrapper, pool and tampered neighbors, with the
+  broader `Transaction` behavior as control.
 - `test/integration/edge_test.go` — savepoints, stale transactions, isolation
   and commit classification.
 

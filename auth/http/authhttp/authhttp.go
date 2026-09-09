@@ -22,7 +22,11 @@ func Locale(r *http.Request) context.Context {
 	if r == nil {
 		return context.Background()
 	}
-	return porthttp.WithLocale(r.Context(), porthttp.AcceptLanguage(r.Header.Get("Accept-Language")))
+	ctx := r.Context()
+	if port.LocaleFrom(ctx) != "" {
+		return ctx
+	}
+	return porthttp.WithLocale(ctx, porthttp.AcceptLanguage(r.Header.Get("Accept-Language")))
 }
 
 func Refuse(w http.ResponseWriter, r *http.Request, rd porthttp.Renderer, err error) {
@@ -39,13 +43,13 @@ func Refuse(w http.ResponseWriter, r *http.Request, rd porthttp.Renderer, err er
 	}
 	b, marshalErr := json.Marshal(body)
 	if marshalErr != nil {
-		port.Logger(ctx).Error("authhttp: encoding the refusal", "err", marshalErr)
+		port.Logger(ctx).ErrorContext(ctx, "authhttp: encoding the refusal", "err", marshalErr)
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
 	if _, writeErr := w.Write(b); writeErr != nil {
-		port.Logger(ctx).Error("authhttp: writing the refusal", "err", writeErr)
+		port.Logger(ctx).ErrorContext(ctx, "authhttp: writing the refusal", "err", writeErr)
 	}
 }

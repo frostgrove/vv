@@ -452,6 +452,128 @@ func TestAServicePathHopReachesTheRenderedField(t *testing.T) {
 	})
 }
 
+const installedCode errs.Code = "reserved_name"
+
+func installedCodes(t *testing.T) *errs.Codes {
+	t.Helper()
+	codes := errs.NewCodes()
+	if err := codes.Add(installedCode, errs.KindConflict, "the process vocabulary"); err != nil {
+		t.Fatalf("declaring the process code: %v", err)
+	}
+	return codes
+}
+
+func installedMessages(t *testing.T) *errs.Messages {
+	t.Helper()
+	messages := errs.NewMessages(nil)
+	if err := messages.Add("", "label."+string(installedCode), "the resource catalogue"); err != nil {
+		t.Fatalf("declaring the resource message: %v", err)
+	}
+	return messages
+}
+
+func installedFault() error {
+	return errs.Validation().Code(errs.CodeCheck).
+		Field("Name").Code(installedCode).Fault()
+}
+
+func TestEveryGeneratedRouteBubblesToTheProcessRendererWithItsHops(t *testing.T) {
+	for _, tc := range []struct{ name, method, target, body string }{
+		{"list", http.MethodGet, "/widgets", ""},
+		{"query", http.MethodPost, "/widgets/query", `{}`},
+		{"count", http.MethodGet, "/widgets/count", ""},
+		{"count document", http.MethodPost, "/widgets/count", `{}`},
+		{"one entity", http.MethodGet, "/widgets/42", ""},
+		{"create", http.MethodPost, "/widgets", `{"label":"bolt"}`},
+		{"update", http.MethodPatch, "/widgets/42", `{"name":"renamed"}`},
+		{"replace", http.MethodPut, "/widgets/42", `{"label":"replaced"}`},
+		{"delete", http.MethodDelete, "/widgets/42", ""},
+		{"bulk delete", http.MethodPost, "/widgets/bulk-delete", `{"ids":[1]}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fake := newFake()
+			fake.err = installedFault()
+			service := &pathService{
+				DefaultService: port.NewService[Widget, int64, WidgetUpdate](fake),
+				fields:         port.Fields{"Name": port.At("label")},
+			}
+			resource := ServingFor(Service[Widget, int64, WidgetUpdate](service), widgetMapper{}).
+				Rendering(crudhttp.WithMessages(installedMessages(t)))
+			app := fiber.New()
+			app.Use(Errors(crudhttp.WithCodes(installedCodes(t))))
+			app.Use("/widgets", resource.Routes())
+
+			r := do(t, app, tc.method, tc.target, tc.body)
+			if r.status != http.StatusConflict {
+				t.Fatalf("%s %s answered %d, want the process vocabulary's 409: %s", tc.method, tc.target, r.status, r.body)
+			}
+			violation := failed(t, r)
+			if violation.Code != string(installedCode) || violation.path() != "label" || violation.Message != "the resource catalogue" {
+				t.Fatalf("%s %s rendered %+v, want the process code, declared hop, and resource message", tc.method, tc.target, violation)
+			}
+		})
+	}
+
+	fake := newFake()
+	fake.err = installedFault()
+	service := &pathService{
+		DefaultService: port.NewService[Widget, int64, WidgetUpdate](fake),
+		fields:         port.Fields{"Name": port.At("label")},
+	}
+	plain := mountHandler(ServingFor(Service[Widget, int64, WidgetUpdate](service), widgetMapper{}))
+	r := do(t, plain, http.MethodPost, "/widgets", `{"label":"bolt"}`)
+	if violation := failed(t, r); r.status != http.StatusUnprocessableEntity || violation.path() != "label" || violation.Message != string(installedCode) {
+		t.Fatalf("without an install the zero-config route answered %d with %+v", r.status, violation)
+	}
+}
+
+func TestAManuallyRegisteredGeneratedMethodInstallsItsHops(t *testing.T) {
+	fake := newFake()
+	fake.err = installedFault()
+	service := &pathService{
+		DefaultService: port.NewService[Widget, int64, WidgetUpdate](fake),
+		fields:         port.Fields{"Name": port.At("label")},
+	}
+	resource := ServingFor(Service[Widget, int64, WidgetUpdate](service), widgetMapper{})
+	app := fiber.New()
+	app.Post("/manual", resource.Create)
+
+	r := do(t, app, http.MethodPost, "/manual", `{"label":"bolt"}`)
+	if violation := failed(t, r); violation.path() != "label" {
+		t.Fatalf("the manually registered method rendered field %q, want its declared hop", violation.path())
+	}
+}
+
+type replacementRenderer struct{}
+
+func (replacementRenderer) Render(ctx context.Context, err error) (int, http.Header, any) {
+	violations := port.Violations(ctx, port.FaultOf(err), nil)
+	return http.StatusTeapot, nil, map[string]any{"field": violations[0].Path.String()}
+}
+
+func TestAnExplicitResourceRendererStillOwnsTheShapeAndKeepsHops(t *testing.T) {
+	fake := newFake()
+	fake.err = installedFault()
+	service := &pathService{
+		DefaultService: port.NewService[Widget, int64, WidgetUpdate](fake),
+		fields:         port.Fields{"Name": port.At("label")},
+	}
+	resource := ServingFor(Service[Widget, int64, WidgetUpdate](service), widgetMapper{},
+		WithRenderer[Widget, int64, WidgetUpdate](replacementRenderer{}))
+	app := fiber.New()
+	app.Use(Errors())
+	app.Use("/widgets", resource.Routes())
+
+	r := do(t, app, http.MethodPost, "/widgets", `{"label":"bolt"}`)
+	var body struct {
+		Field string `json:"field"`
+	}
+	r.decode(t, &body)
+	if r.status != http.StatusTeapot || body.Field != "label" {
+		t.Fatalf("the replacement renderer answered %d with field %q", r.status, body.Field)
+	}
+}
+
 func TestABodyPastTheCapIsRefusedAndReachesNoRepository(t *testing.T) {
 	app, f := mount(t, MaxBody[Widget, int64, WidgetUpdate](64))
 

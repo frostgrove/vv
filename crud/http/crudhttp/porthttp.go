@@ -38,6 +38,8 @@ func WithMessages(m errs.MessageSource) RenderOption { return porthttp.WithMessa
 
 func WithResolvers(rs ...errs.Resolver) RenderOption { return porthttp.WithResolvers(rs...) }
 
+func WithObserver(fn func(context.Context, error)) RenderOption { return porthttp.WithObserver(fn) }
+
 func WithMaxViolations(n int) RenderOption { return porthttp.WithMaxViolations(n) }
 
 func WithRetryAfter(seconds int) RenderOption { return porthttp.WithRetryAfter(seconds) }

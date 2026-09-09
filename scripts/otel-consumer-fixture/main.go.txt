@@ -11,7 +11,35 @@ import (
 var (
 	_ = cache.LookupOperation
 	_ = cachememory.GetOperation
+	_ = vvotel.ApproveName
+	_ = vvotel.MustApproveName
 	_ = vvotel.New
+	_ = vvotel.Must
+	_ = vvotel.WrapService[struct{}, string, struct{}]
+	_ = vvotel.Service[struct{}, string, struct{}]
+	_ = vvotel.Source
+	_ = vvotel.Store
+	_ = vvotel.Cache
+	_ = vvotel.CacheMemory
+	_ = vvotel.Auth
+	_ = vvotel.AuthEvents
+	_ = vvotel.Authenticator
+	_ = vvotel.Health
+	_ = vvotel.Remote
+	_ = vvotel.Runtime
+	_ = vvotel.Periodic
+	_ = vvotel.JobContext
+	_ = vvotel.JobIdentity
+	_ = vvotel.Enqueue[struct{}]
+	_ = vvotel.EnqueueOnce[struct{}]
+	_ = vvotel.EnqueueIn[struct{}]
+	_ = vvotel.EnqueueOnceIn[struct{}]
+	_ = vvotel.Job[struct{}]
+	_ = vvotel.JobAdapter[struct{}]
+	_ = vvotel.Workers
+	_ = vvotel.Scheduler
+	_ = vvotel.TraceHandler
+	_ = vvotel.SignalDescriptors
 	_ port.Service[struct{}, string, struct{}]
 	_ storage.Store
 )

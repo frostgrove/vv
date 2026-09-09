@@ -2,229 +2,226 @@ package vvotel
 
 import (
 	"errors"
-	"fmt"
 	"reflect"
 	"sync"
-	"unicode"
 
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
 )
 
 var (
-	ErrNilConfig     = errors.New("vvotel: config is nil")
-	ErrNilProvider   = errors.New("vvotel: tracer or meter provider is nil")
-	ErrProviderPanic = errors.New("vvotel: provider panicked")
+	ErrNilConfig       = errors.New("vvotel: config is nil")
+	ErrNilProvider     = errors.New("vvotel: tracer or meter provider is nil")
+	ErrProviderPanic   = errors.New("vvotel: provider panicked")
+	ErrAssembly        = errors.New("vvotel: assembly failed")
+	ErrInvalidSignal   = errors.New("vvotel: invalid signal")
+	ErrDuplicateSignal = errors.New("vvotel: duplicate signal")
+	ErrInstrument      = errors.New("vvotel: instrument construction failed")
+	ErrNilInstrument   = errors.New("vvotel: instrument is nil")
 )
 
 type Config struct {
 	TracerProvider trace.TracerProvider
 	MeterProvider  metric.MeterProvider
 
-	Disabled               bool
+	Disabled bool
+
 	CommandTracesDisabled  bool
 	CommandMetricsDisabled bool
 	StorageTracesDisabled  bool
 	CacheMetricsDisabled   bool
 
-	ResourceName string
+	ResourceName ApprovedName
+	Disable      Signals
 }
 
-const maxResourceNameBytes = 64
-
 type Telemetry struct {
-	config Config
+	activeSignals map[Signal]struct{}
 
 	tracer trace.Tracer
 	meter  metric.Meter
 
-	commandDurationOnce sync.Once
-	cacheOperationsOnce sync.Once
-	resourceMu          sync.Mutex
-	resourceNames       map[string]struct{}
-	commandDuration     metric.Float64Histogram
-	cacheOperations     metric.Int64Counter
+	float64Histograms    map[Signal]metric.Float64Histogram
+	int64Histograms      map[Signal]metric.Int64Histogram
+	int64Counters        map[Signal]metric.Int64Counter
+	int64ObservableGauge map[Signal]metric.Int64ObservableGauge
+
+	configuredResourceName string
+	resourceNames          *approvedNameBudget
+}
+
+type approvedNameBudget struct {
+	mu    sync.Mutex
+	names map[string]struct{}
 }
 
 func New(config Config) (*Telemetry, error) {
-	if !config.Disabled {
-		if nilInterface(config.TracerProvider) && nilInterface(config.MeterProvider) {
-			return nil, fmt.Errorf("%w: at least one of TracerProvider or MeterProvider must be provided", ErrNilProvider)
-		}
+	descriptors := descriptorsBySignalID()
+	disabled, err := validateDisabledSignals(config.Disable, descriptors)
+	if err != nil {
+		return nil, err
 	}
 
-	t := &Telemetry{
-		config:        config,
-		resourceNames: make(map[string]struct{}),
-	}
-	t.config.ResourceName = normalizeResourceName(config.ResourceName)
-	if t.config.ResourceName != "" {
-		t.resourceNames[t.config.ResourceName] = struct{}{}
-	}
-
+	t := newTelemetry(config.ResourceName)
 	if config.Disabled {
 		return t, nil
 	}
+	if nilInterface(config.TracerProvider) && nilInterface(config.MeterProvider) {
+		return nil, newProviderError(ErrNilProvider, "")
+	}
 
-	if !nilInterface(config.TracerProvider) {
+	applyLegacyDisable(disabled, config)
+	if err := t.selectActiveSignals(descriptors, disabled, config); err != nil {
+		return nil, err
+	}
+
+	if t.needsProvider(descriptors, "tracer") {
 		tracer, panicked := providerTracer(config.TracerProvider,
 			ScopeName,
 			trace.WithInstrumentationVersion(ScopeVersion),
 		)
 		if panicked {
-			return nil, ErrProviderPanic
+			return nil, newProviderError(ErrProviderPanic, "tracer")
+		}
+		if nilInterface(tracer) {
+			return nil, newProviderError(ErrNilProvider, "tracer")
 		}
 		t.tracer = tracer
 	}
-	if !nilInterface(config.MeterProvider) {
+
+	if t.needsProvider(descriptors, "meter") {
 		meter, panicked := providerMeter(config.MeterProvider,
 			ScopeName,
 			metric.WithInstrumentationVersion(ScopeVersion),
 		)
 		if panicked {
-			return nil, ErrProviderPanic
+			return nil, newProviderError(ErrProviderPanic, "meter")
+		}
+		if nilInterface(meter) {
+			return nil, newProviderError(ErrNilProvider, "meter")
 		}
 		t.meter = meter
+		if err := t.constructMetrics(descriptors); err != nil {
+			return nil, err
+		}
 	}
 
 	return t, nil
 }
 
-func (t *Telemetry) traceDisabled(isStorage bool) bool {
-	if t.config.Disabled {
-		return true
+func Must(config Config) *Telemetry {
+	t, err := New(config)
+	if err != nil {
+		panic(err)
 	}
-	if isStorage {
-		return t.config.StorageTracesDisabled
-	}
-	return t.config.CommandTracesDisabled
+	return t
 }
 
-func (t *Telemetry) resourceName() string {
-	return t.config.ResourceName
+func newTelemetry(resourceName ApprovedName) *Telemetry {
+	name := normalizeResourceName(resourceName.Value())
+	t := &Telemetry{
+		activeSignals:          make(map[Signal]struct{}),
+		float64Histograms:      make(map[Signal]metric.Float64Histogram),
+		int64Histograms:        make(map[Signal]metric.Int64Histogram),
+		int64Counters:          make(map[Signal]metric.Int64Counter),
+		int64ObservableGauge:   make(map[Signal]metric.Int64ObservableGauge),
+		configuredResourceName: name,
+		resourceNames: &approvedNameBudget{
+			names: make(map[string]struct{}),
+		},
+	}
+	return t
 }
 
-func (t *Telemetry) boundResourceName(name string) string {
+func (t *Telemetry) signalEnabled(signal Signal) bool {
 	if t == nil {
-		return name
+		return false
 	}
-	name = normalizeResourceName(name)
-	if name == "" {
+	_, ok := t.activeSignals[signal]
+	return ok
+}
+
+func (t *Telemetry) resourceName() ApprovedName {
+	if t == nil {
 		return ""
 	}
-	t.resourceMu.Lock()
-	defer t.resourceMu.Unlock()
-	if _, ok := t.resourceNames[name]; ok {
-		return name
+	return ApprovedName(t.configuredResourceName)
+}
+
+func (t *Telemetry) boundResourceName(name ApprovedName) string {
+	if t == nil {
+		return normalizeResourceName(name.Value())
 	}
-	if len(t.resourceNames) >= MaxResourceNameValues {
+	normalized := normalizeResourceName(name.Value())
+	if normalized == "" || t.resourceNames == nil {
 		return ""
 	}
-	t.resourceNames[name] = struct{}{}
-	return name
+	t.resourceNames.mu.Lock()
+	defer t.resourceNames.mu.Unlock()
+	if _, ok := t.resourceNames.names[normalized]; ok {
+		return normalized
+	}
+	if len(t.resourceNames.names) >= MaxResourceNameValues {
+		return ""
+	}
+	t.resourceNames.names[normalized] = struct{}{}
+	return normalized
 }
 
 func normalizeResourceName(name string) string {
-	if name == "" || len(name) > maxResourceNameBytes {
+	if !ValidResourceName(name) {
 		return ""
-	}
-	for _, r := range name {
-		if !(unicode.IsLetter(r) || unicode.IsDigit(r) || r == '.' || r == '_' || r == '-') {
-			return ""
-		}
 	}
 	return name
 }
 
-func (t *Telemetry) commandDurationInstrument() metric.Float64Histogram {
-	if t == nil || t.config.Disabled || t.config.CommandMetricsDisabled || nilInterface(t.meter) {
+func (t *Telemetry) float64Histogram(signal Signal) metric.Float64Histogram {
+	if t == nil {
 		return nil
 	}
-	t.commandDurationOnce.Do(func() {
-		hist, err, panicked := createHistogram(t.meter)
-		if err == nil && !panicked {
-			t.commandDuration = hist
-		}
-	})
-	return t.commandDuration
+	return t.float64Histograms[signal]
 }
 
-func (t *Telemetry) cacheOperationsInstrument() metric.Int64Counter {
-	if t == nil || t.config.Disabled || t.config.CacheMetricsDisabled || nilInterface(t.meter) {
+func (t *Telemetry) int64Histogram(signal Signal) metric.Int64Histogram {
+	if t == nil {
 		return nil
 	}
-	t.cacheOperationsOnce.Do(func() {
-		counter, err, panicked := createCounter(t.meter)
-		if err == nil && !panicked {
-			t.cacheOperations = counter
-		}
-	})
-	return t.cacheOperations
+	return t.int64Histograms[signal]
+}
+
+func (t *Telemetry) int64Counter(signal Signal) metric.Int64Counter {
+	if t == nil {
+		return nil
+	}
+	return t.int64Counters[signal]
 }
 
 func providerTracer(provider trace.TracerProvider, name string, options ...trace.TracerOption) (tracer trace.Tracer, panicked bool) {
+	completed := false
 	defer func() {
-		if recover() != nil {
+		if !completed {
+			_ = recover()
 			tracer = nil
 			panicked = true
 		}
 	}()
 	tracer = provider.Tracer(name, options...)
-	if nilInterface(tracer) {
-		tracer = nil
-	}
+	completed = true
 	return tracer, false
 }
 
 func providerMeter(provider metric.MeterProvider, name string, options ...metric.MeterOption) (meter metric.Meter, panicked bool) {
+	completed := false
 	defer func() {
-		if recover() != nil {
+		if !completed {
+			_ = recover()
 			meter = nil
 			panicked = true
 		}
 	}()
 	meter = provider.Meter(name, options...)
-	if nilInterface(meter) {
-		meter = nil
-	}
+	completed = true
 	return meter, false
-}
-
-func createHistogram(meter metric.Meter) (histogram metric.Float64Histogram, err error, panicked bool) {
-	defer func() {
-		if recover() != nil {
-			histogram = nil
-			panicked = true
-		}
-	}()
-	histogram, err = meter.Float64Histogram(
-		MetricCommandDuration,
-		metric.WithDescription(MetricCommandDurationDescription),
-		metric.WithUnit(MetricCommandDurationUnit),
-		metric.WithExplicitBucketBoundaries(defaultDurationBoundaries...),
-	)
-	if nilInterface(histogram) {
-		histogram = nil
-	}
-	return histogram, err, false
-}
-
-func createCounter(meter metric.Meter) (counter metric.Int64Counter, err error, panicked bool) {
-	defer func() {
-		if recover() != nil {
-			counter = nil
-			panicked = true
-		}
-	}()
-	counter, err = meter.Int64Counter(
-		MetricCacheOperations,
-		metric.WithDescription(MetricCacheOperationsDescription),
-		metric.WithUnit(MetricCacheOperationsUnit),
-	)
-	if nilInterface(counter) {
-		counter = nil
-	}
-	return counter, err, false
 }
 
 func nilInterface(value any) bool {

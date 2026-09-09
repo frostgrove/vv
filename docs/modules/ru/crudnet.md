@@ -113,6 +113,21 @@ Gin и gRPC без единой строки изменений.
 | `WithRenderer(r)` | заменяет конверт |
 | `WithErrorHandler(fn)` | `func(http.ResponseWriter, *http.Request, error)` |
 
+Для стандартного конверта resource-policy можно дополнить, не заменяя
+process-policy:
+
+```go
+articles := crudnet.New(repo).Rendering(
+    crudhttp.WithMessages(articleMessages),
+)
+```
+
+`Rendering` расширяет renderer внешнего `Errors(...)`; если одна настройка
+задана с обеих сторон, побеждает resource option. Без внешнего middleware он
+расширяет defaults. `WithRenderer` остаётся полной заменой на уровне ресурса, а
+явный `WithErrorHandler` владеет этим ресурсом даже внутри `Errors`. Настройте
+ресурс до монтирования: `Rendering` — construction-time API.
+
 Каждая опция ниже принимает три параметра типа ресурса явно —
 `WithQuery[Article, int64, ArticleUpdate](cfg)`. `New` выводит их из
 репозитория, который ему передан; опция же — значение, построенное до вызова
@@ -165,6 +180,12 @@ mux, несущим и то, и другое — один вызов.
 
 С подключённой [подсистемой ошибок](errs.md) 409 или 422 также несёт
 `error_code` и `field` — см. [crudhttp](crudhttp.md#the-envelope).
+
+Optional-модуль [i18n](i18n.md) передаёт проверенный source через ту же опцию
+`WithMessages`. Binding сохраняет непустую локаль из request context; только при
+её отсутствии берётся первый tag `Accept-Language`. Если важен weighted
+negotiation, разрешите полный header до этой границы. Localized source задаёт
+`Content-Language` по локали фактически использованного шаблона.
 
 ## Две детали монтирования
 

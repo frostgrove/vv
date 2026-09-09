@@ -1,6 +1,6 @@
 # TENANCY - RECONCILE
 
-Phase 2. Written against the real tree at `frostgrove/vv/framework`, after the
+Phase 2. Written against the real tree at `frostgrove/framework`, after the
 blind spec in [TENANCY_USECASES.md](TENANCY_USECASES.md).
 
 Governing documents: `docs/roadmaps/2026-09-01-multitenancy-roadmap.md` (domain),

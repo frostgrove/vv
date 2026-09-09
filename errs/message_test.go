@@ -166,6 +166,29 @@ func TestTwoLocalesThroughTheSameFaultGiveTwoMessages(t *testing.T) {
 	}
 }
 
+func TestMessageWithLocaleReportsTheTemplateThatActuallyWon(t *testing.T) {
+	m := errs.NewMessages(errs.StandardCodes())
+	if err := m.Add("en", "unique", "already taken"); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Add("", "required", "required by default"); err != nil {
+		t.Fatal(err)
+	}
+
+	message, locale, ok := m.MessageWithLocale(context.Background(), errs.Violation{Code: errs.CodeUnique}, "en-GB")
+	if !ok || message != "already taken" || locale != "en" {
+		t.Fatalf("en-GB resolved to (%q, %q, %v), want the en template", message, locale, ok)
+	}
+	message, locale, ok = m.MessageWithLocale(context.Background(), errs.Violation{Code: errs.CodeRequired}, "de")
+	if !ok || message != "required by default" || locale != "" {
+		t.Fatalf("de resolved to (%q, %q, %v), want the locale-neutral template", message, locale, ok)
+	}
+	message, locale, ok = m.MessageWithLocale(context.Background(), errs.Violation{Code: errs.CodeNotFound}, "fr")
+	if !ok || message == "" || locale != "" {
+		t.Fatalf("the code default resolved to (%q, %q, %v), want wording without a claimed locale", message, locale, ok)
+	}
+}
+
 func TestAnIndexedPathResolvesTheSameMessageAsAnyOtherRow(t *testing.T) {
 	m := errs.NewMessages(errs.StandardCodes())
 	for _, d := range []struct{ key, text string }{
@@ -255,13 +278,11 @@ func TestALocaleIsWalkedBeforeAKeyIsNarrowed(t *testing.T) {
 
 func TestOnlyTheFirstAndLastNamedStepsReachTheLadder(t *testing.T) {
 	m := errs.NewMessages(errs.StandardCodes())
-	for _, d := range []struct{ key, text string }{
-		{"order.items.email.unique", "the whole path"},
-		{"order.email.unique", "the two ends"},
-	} {
-		if err := m.Add("en", d.key, d.text); err != nil {
-			t.Fatal(err)
-		}
+	if err := m.Add("en", "order.email.unique", "the two ends"); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Add("en", "order.items.email.unique", "the whole path"); err != nil {
+		t.Fatal(err)
 	}
 	v := errs.Violation{
 		Path: errs.Path{errs.Named("order"), errs.Named("items"), errs.Named("email")},
@@ -276,11 +297,16 @@ func TestOnlyTheFirstAndLastNamedStepsReachTheLadder(t *testing.T) {
 		t.Fatalf("resolved %q, want the first-and-last key — a key spelling the whole path is never consulted", got)
 	}
 
-	bare := errs.NewMessages(errs.StandardCodes())
-	if err := bare.Add("en", "order.items.email.unique", "the whole path"); err != nil {
-		t.Fatal(err)
+	dotted := errs.NewMessages(errs.StandardCodes())
+	if err := dotted.Add("en", "order.items.email.unique", "a literal dotted member"); err != nil {
+		t.Fatalf("a reachable key containing a literal dot was refused: %v", err)
 	}
-	if got, _ := bare.Message(context.Background(), v, "en"); got != "this value is already taken" {
-		t.Fatalf("the full dotted key resolved %q, so it is reachable after all and this test is measuring the wrong thing", got)
+	dottedPath := errs.Violation{
+		Path: errs.Path{errs.Named("order.items"), errs.Named("email")},
+		Code: errs.CodeUnique,
 	}
+	if got, ok := dotted.Message(context.Background(), dottedPath, "en"); !ok || got != "a literal dotted member" {
+		t.Fatalf("the byte-identical dotted member key resolved (%q, %v)", got, ok)
+	}
+
 }

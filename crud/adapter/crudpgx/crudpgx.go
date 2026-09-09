@@ -89,26 +89,16 @@ type rows struct {
 func (this rows) Err() error { return this.e.conflict(this.Rows.Err()) }
 
 func (this Executor) UnsafeBulkInsert(ctx context.Context, target crud.Executor, table crud.TableRef, columns []string, rows [][]any) (int64, error) {
-	switch executor := target.(type) {
-	case nil:
+	if target == nil {
 		return this.UnsafeCopyFromTable(ctx, table, columns, rows)
-	case Executor:
-		return executor.UnsafeCopyFromTable(ctx, table, columns, rows)
-	case *Executor:
-		if executor == nil {
-			return 0, crud.ErrNoBulkInsertSupport
-		}
-		return executor.UnsafeCopyFromTable(ctx, table, columns, rows)
-	case Tx:
-		return executor.Executor.UnsafeCopyFromTable(ctx, table, columns, rows)
-	case *Tx:
-		if executor == nil {
-			return 0, crud.ErrNoBulkInsertSupport
-		}
-		return executor.Executor.UnsafeCopyFromTable(ctx, table, columns, rows)
-	default:
+	}
+	executor, ok := crud.ExecutorAs[interface {
+		UnsafeCopyFromTable(context.Context, crud.TableRef, []string, [][]any) (int64, error)
+	}](target)
+	if !ok {
 		return 0, crud.ErrNoBulkInsertSupport
 	}
+	return executor.UnsafeCopyFromTable(ctx, table, columns, rows)
 }
 
 func (this Executor) UnsafeCopyFrom(ctx context.Context, table string, columns []string, rows [][]any) (int64, error) {
@@ -163,6 +153,43 @@ func (this Tx) Commit(ctx context.Context) error   { return this.conflict(this.t
 func (this Tx) Rollback(ctx context.Context) error { return this.tx.Rollback(ctx) }
 
 func (this Tx) Tx() pgx.Tx { return this.tx }
+
+func Transaction(executor crud.Executor) (pgx.Tx, bool) {
+	var transaction pgx.Tx
+	_, ok := crud.FindExecutor(executor, func(candidate crud.Executor) bool {
+		if direct, directOK := candidate.(interface{ Tx() pgx.Tx }); directOK {
+			transaction = direct.Tx()
+			return transaction != nil && crud.IsTransaction(candidate)
+		}
+		var queryer Queryer
+		switch current := candidate.(type) {
+		case Executor:
+			queryer = current.q
+		case *Executor:
+			if current != nil {
+				queryer = current.q
+			}
+		}
+		if queryer == nil {
+			return false
+		}
+		var transactionOK bool
+		transaction, transactionOK = queryer.(pgx.Tx)
+		return transactionOK && transaction != nil && crud.IsTransaction(candidate)
+	})
+	if !ok {
+		return nil, false
+	}
+	return transaction, true
+}
+
+func TransactionFor(ctx context.Context, source any) (pgx.Tx, bool) {
+	executor, ok := crud.ExecutorFor(ctx, source)
+	if !ok {
+		return nil, false
+	}
+	return Transaction(executor)
+}
 
 var (
 	_ crud.Source             = Executor{}

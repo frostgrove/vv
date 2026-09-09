@@ -1,6 +1,6 @@
 # Roadmap
 
-What is not built. Sixteen items, three of them expiring at the first tag.
+What is not built. Twenty-one items, three of them expiring at the first tag.
 
 Optional features follow the
 [current extension architecture](2026-09-01-extension-architecture-roadmap.md):
@@ -20,12 +20,18 @@ exists.
 | 7 | Whether the framework retries a retryable class | a decision, not code | no |
 | 8 | The tag-name helper, and generated wiring for Fiber and Gin | a decision each | no |
 | 9 | Remaining documentation citations to two deleted documents | classification and a mechanical sweep | no |
+| 10 | [Maximal optional OpenTelemetry integration](2026-09-08-opentelemetry-maximal-roadmap.md) | the accepted OTel roadmap implementation and green evidence | no |
 | 11 | Common optional-extension seams and legacy combination-module migration | architecture ADR and compatibility decisions | no |
 | 12 | Jobs/cache conformance and current driver/worker completion | the in-flight implementation and green evidence | no |
 | 13 | Multitenancy: the database-per-tenant profile, RLS, operator rehearsals and the multi-extension fixture | real infrastructure and two extensions that do not exist yet | no |
 | 14 | Optional durable audit extension | a named audited resource and atomicity gate | no |
 | 15 | The PostgreSQL event store | a named aggregate; the vocabulary, the in-memory store and the conformance suite are delivered | no |
-| 16 | Optional full-i18n extension | a use case beyond the current error catalogues | no |
+| 16 | I18n application lifecycle integrations | an application that needs external catalog delivery, durable pins or tenant control-plane policy | no |
+| 17 | The remaining duplicated access declaration | a consumer reaching `RefusingUnchecked` without an excuse | no |
+| 18 | One factory vocabulary, outside `jobs` and `cache` | the remaining consumer-owned names | no |
+| 19 | Generated contribution kinds requiring branded bindings | a root binding contract that preserves handwritten modules | no |
+| 20 | `crudsqlfx` using an application-owned pool | the pre-tag API migration and failure-path evidence | no |
+| 21 | A client revision reaching the atomic mutation | exact CAS capabilities and one HTTP precondition contract | no |
 
 ---
 
@@ -399,35 +405,45 @@ no affordance is exported for it. A broker sender is injected through a neutral
 application-owned contract; a future broker adapter may target an independently
 accepted delivery seam but may not import `eventpg`.
 
-## 16. Optional full-i18n extension
+## 16. I18n application lifecycle integrations
 
-The current framework already owns `errs.MessageSource`, loadable error
-catalogues and a shared locale context key in `port`; HTTP and CRUD gRPC
-renderers accept that source. There is no full i18n module. HTTP error paths can
-overwrite a prebound locale with the first header tag, while CRUD gRPC preserves
-it; neither helper performs full language negotiation.
+The optional nested module `github.com/frostgrove/vv/i18n` is implemented. It
+owns the pinned `frostgrove-mf2/v1` profile, canonical source/review workflow,
+strict compiled artifacts, immutable catalogues and overlays, bounded locale
+resolution, typed deferred messages, exact numeric and date/time formatting,
+rich parts/bidi, diagnostics, code generation/public type export, the
+`errs.MessageSource` adapter and a bounded in-process activation controller.
+The smaller root `errs.Messages` catalogue remains supported and sufficient for
+simple error wording; importing the root module does not pull in i18n.
 
-The [current i18n revision](2026-09-01-i18n-roadmap.md), researched on 2026-09-08,
-describes twelve mechanisms with references across Go, JavaScript, Python,
-Ruby, PHP, Java and C#: locale resolution, layered catalogues, plural/select,
-cultural formatting, typed deferred messages, error adaptation, authoring,
-versioned artefacts, frontend contracts, worker policies, diagnostics and
-presentation boundaries. It recommends a bounded go-i18n cardinal profile
-first, with richer MessageFormat and Go/JS runtime compatibility gated
-separately. Explainable fallback, shared typed contracts and reproducible
-delivery are proposed framework-level compositions, not shipped features.
-Seven explicit integration contracts now cover module contributions/doctor,
-errs and transport path preservation, tenant policy/overlays, typed i18n
-observations with application OTel wiring, value-free cache loaders, restored
-worker identity, and storage/runtime/health lifecycle. The first release needs
-a combined errs + tenancy + OTel application fixture. Event sourcing is excluded
-from this i18n work while its own implementation remains unfinished.
+The authoring CLI uses one strict `frostgrove.i18n.limits/v1` operator policy
+across check, compile, pseudolocalization, generation, export, extraction,
+review and merge. Catalogue, canonical source, compiled artifact and derived
+per-file output ceilings are independent; source metadata cannot widen the
+local policy, and an invalid policy cannot silently restore defaults.
 
-M0 still requires a real application scenario beyond `errs.Messages` and can
-decide that no new module is needed. If activated, one optional `i18n` module
-adapts the existing source. Locale precedence changes belong to existing
-transports with explicit compatibility evidence; there are no `i18nhttp`,
-`i18ngrpc`, `i18notel` or tenancy/i18n combination packages.
+HTTP and CRUD gRPC bindings preserve a non-empty locale already bound in the
+operation context. Without one, their built-in protocol helper deliberately
+uses only the first language tag. Applications that need weighted negotiation,
+`q=0`, wildcards or provenance resolve the complete input with the i18n
+`Resolver` before the handler/error boundary and bind the canonical supported
+result. `Snapshot.ErrorMessages` reports the actual template locale through
+`errs.LocalizedMessageSource`, allowing HTTP `Content-Language` and gRPC
+`LocalizedMessage.Locale` without mistaking the requested locale for a hit.
+
+What remains unbuilt is application infrastructure, not a second i18n runtime:
+there is no TMS/network client, filesystem watcher, external distribution
+protocol, durable snapshot-pin store, tenant preference/authorization service,
+cache backend, JavaScript formatter, runtime runner or readiness policy. The
+application may compose those facilities around `Load`, `SnapshotRef`,
+`Controller`, `RenderKey` and the privacy-safe observer when a concrete use case
+needs them. In-memory pins do not promise delayed delivery across process
+restart, and TypeScript export explicitly does not claim formatting parity.
+
+Event sourcing is independent: persisted presentation intent and its retention
+or authorization policy belong to the application. Existing transports remain
+owners of protocol projection, and there are no `i18nhttp`, `i18ngrpc`,
+`i18notel` or tenancy/i18n combination packages.
 
 ## 17. What is still two statements about one operation
 
@@ -477,3 +493,57 @@ owner: the consuming application still names its wiring `Register()` and
 `MustNew`. What is left there is the vocabulary and nothing else — `MustInit`
 panics on the error its `New` twin returns, so it is a `Must` in every way but
 the name.
+
+This item closes when those consumer-owned names either join the established
+vocabulary or are retained by an explicit naming decision. Generated module
+binding is tracked separately below.
+
+## 19. Generated contribution kinds require branded bindings
+
+`vv generate module` currently confirms a contribution kind but emits the raw
+constructor. `appfx.Option` then applies ordinary `fx.Provide`, while routes,
+workers, seeders and checks need their respective group annotations. The
+existing generated fixture counts `Definition.Active`; it never proves that a
+generated worker runs.
+
+The fix remains container-neutral: generated non-provider contributions carry
+an explicit unbound state, and the composition root supplies one branded binder
+per kind. Standard satellite factories bind the brand to the kind so the root
+cannot accidentally pair two independent arguments. A missing binder fails
+before constructors run; handwritten pre-bound definitions remain compatible.
+The framework does not claim that merely installing a seeder or health option
+proves a command or endpoint consumed it. M0 of the
+[focused mechanics roadmap](2026-09-08-magic-first-dx-mechanics.md#m0) owns the
+exact contract, external fixture and non-goals.
+
+## 20. `crudsqlfx` uses an application-owned pool
+
+`crudsqlfx.Open` currently creates a `*sql.DB` during `fx.New` and registers only
+`OnStop`. If a later constructor breaks graph construction, Fx never starts and
+does not run that stop hook. [[D-057]] already settles the direction: the
+application opens and closes the pool; `crudsqlfx` receives the borrowed handle,
+builds `crud.Source`, pings on start and never closes it.
+
+This is a concrete pre-tag API migration, not a generic lifecycle framework and
+not part of the optional-extension umbrella. M1 of the
+[focused mechanics roadmap](2026-09-08-magic-first-dx-mechanics.md#m1) owns the
+new `Spec`, failure-path fixture and documentation migration. The item closes
+only when every M1 acceptance criterion passes.
+
+## 21. A client revision reaches the atomic mutation
+
+The SQL repository's version check protects its own load-diff-write interval;
+it does not know which revision an HTTP client read earlier. `UpdateCommand`
+carries no expected revision, and `DefaultService.Replace` still routes PUT
+through version-agnostic `Save` instead of the repository's exact `Replace`
+capability. A stale browser can therefore overwrite a newer value despite the
+model having a `version` column.
+
+The first slice is deliberately narrow: one transport-neutral expected-revision
+contract, exact atomic backend capabilities, and opt-in
+`Resource-Revision`/`If-Resource-Revision` headers for PATCH and PUT. It does not
+claim a representation validator and does not include HTTP caching, idempotency
+receipts, retries or distributed locks. M2 of the
+[focused mechanics roadmap](2026-09-08-magic-first-dx-mechanics.md#m2)
+contains the exact CAS capabilities, HTTP status matrix, security forwarding
+and conformance gates.

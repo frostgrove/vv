@@ -111,6 +111,22 @@ app.Use("/articles", crudfiber.New(articleService{…}).Routes())
 | `WithRenderer(r)`      | заменить конверт                                                                                                                                                                  |
 | `WithErrorHandler(fn)` | `func(fiber.Ctx, error) error`                                                                                                                                                                 |
 
+Для стандартного конверта resource-policy можно дополнить, не заменяя
+process-policy:
+
+```go
+articles := crudfiber.New(repo).Rendering(
+    crudhttp.WithMessages(articleMessages),
+)
+```
+
+`Rendering` расширяет renderer внешнего `Errors(...)` или Fiber
+`ErrorHandler(...)`; если одна настройка задана с обеих сторон, побеждает
+resource option. Без process seam он расширяет defaults. `WithRenderer`
+остаётся полной заменой на уровне ресурса, а явный `WithErrorHandler` владеет
+этим ресурсом и внутри middleware. Настройте ресурс до монтирования:
+`Rendering` — construction-time API.
+
 Каждая опция ниже принимает три параметра типа ресурса явно —
 `WithQuery[Article, int64, ArticleUpdate](cfg)`. `New` выводит их из
 репозитория, который ему передан; опция же — значение, построенное до вызова
@@ -158,6 +174,12 @@ app.Use(crudfiber.Errors(crudhttp.WithMessages(catalogue)))
 
 С подключённой [подсистемой ошибок](errs.md) 409 или 422 также несёт
 `error_code` и `field` — см. [crudhttp](crudhttp.md#the-envelope).
+
+Optional-модуль [i18n](i18n.md) передаёт проверенный source через ту же опцию
+`WithMessages`. Binding сохраняет непустую локаль из Fiber context; только при
+её отсутствии берётся первый tag `Accept-Language`. Если важен weighted
+negotiation, разрешите полный header до этой границы. Localized source задаёт
+`Content-Language` по локали фактически использованного шаблона.
 
 ## Специфика Fiber
 

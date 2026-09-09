@@ -3,6 +3,7 @@ package runtimefx_test
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -11,6 +12,21 @@ import (
 	"github.com/frostgrove/vv/runtime"
 	"github.com/frostgrove/vv/runtime/runtimefx"
 )
+
+type lifecycleObserver struct {
+	mu     sync.Mutex
+	events []runtime.LifecycleEvent
+	seen   chan struct{}
+}
+
+func (o *lifecycleObserver) Observed(runtime.RunnerState) {}
+
+func (o *lifecycleObserver) ObservedLifecycle(_ context.Context, event runtime.LifecycleEvent) {
+	o.mu.Lock()
+	o.events = append(o.events, event)
+	o.mu.Unlock()
+	o.seen <- struct{}{}
+}
 
 type worker struct {
 	name    string
@@ -140,5 +156,30 @@ func TestTwoRunnersWithOneNameKeepTheApplicationFromStarting(t *testing.T) {
 
 	if !errors.Is(err, runtime.ErrDuplicateRunner) {
 		t.Fatalf("an application with two runners of one name started: %v", err)
+	}
+}
+
+func TestFxObserverCompositionPreservesLifecycleCapability(t *testing.T) {
+	observer := &lifecycleObserver{seen: make(chan struct{}, 4)}
+	sweeper := newWorker("translation-debt", nil)
+	app := startedApp(t,
+		fx.Provide(
+			runtimefx.AsRunner(func() *worker { return sweeper }),
+			fx.Annotate(func() *lifecycleObserver { return observer }, fx.As(new(runtime.Observer))),
+		),
+		runtimefx.Auto(),
+	)
+	await(t, sweeper.entered, "the runner never started")
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := app.Stop(ctx); err != nil {
+		t.Fatal(err)
+	}
+	await(t, observer.seen, "the composed observer lost the lifecycle callback")
+
+	observer.mu.Lock()
+	defer observer.mu.Unlock()
+	if len(observer.events) != 1 || observer.events[0].Operation() != runtime.LifecycleOperationRun || observer.events[0].Outcome() != runtime.LifecycleOutcomeOK {
+		t.Fatalf("lifecycle events=%+v", observer.events)
 	}
 }

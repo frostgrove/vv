@@ -23,8 +23,9 @@ func (this tracing) Query(ctx context.Context, q string, args ...any) (crud.Rows
 	return this.inner.Query(ctx, q, args...)
 }
 
-func (this tracing) Dialect() crud.Dialect     { return this.inner.Dialect() }
-func (this tracing) UnwrapSource() crud.Source { return this.inner }
+func (this tracing) Dialect() crud.Dialect         { return this.inner.Dialect() }
+func (this tracing) UnwrapSource() crud.Source     { return this.inner }
+func (this tracing) UnwrapExecutor() crud.Executor { return this.inner }
 
 type blind struct{ inner crud.Source }
 

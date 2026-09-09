@@ -136,6 +136,12 @@ one line of code and it is the whole of the layering — a kind is not HTTP, and
    one body a 500 ever has and there is nowhere in it for a driver's sentence to
    go ([[D-015]], [[D-044]]).
 
+   A source that also implements `errs.LocalizedMessageSource` returns the
+   locale of the template that actually won. `port.Violations` keeps it in the
+   non-JSON `Violation.MessageLocale`; the HTTP renderer emits the sorted
+   proven set as `Content-Language`. A legacy source contributes wording but no
+   locale metadata, so a raw requested tag is never presented as proof.
+
    `crud/rpc/crudgrpc/status.go:StatusRenderer.Render` is the same five steps in the
    same order, ending in the same `port.Violations` call and a different final
    shape: `BadRequest` with one `FieldViolation` per violation, `ErrorInfo`
@@ -144,6 +150,8 @@ one line of code and it is the whole of the layering — a kind is not HTTP, and
    at all — the same silence, by the same construction. The pipeline moved down
    to `port` at phase 9 precisely so those two renderers could not drift
    ([[D-045]]).
+   A field gets `LocalizedMessage` only when `MessageLocale` is present, and its
+   locale is that actual fallback winner rather than the request metadata.
 
 6. **The response.** The [[UC-017]] envelope:
    `{"type":"error","errors":{"validation":[…],"general":[…]}}` —
@@ -218,7 +226,8 @@ one line of code and it is the whole of the layering — a kind is not HTTP, and
 | a deferred constraint, firing at `COMMIT` rather than at the statement | the adapters' `Tx.Commit` — `crudsql` and `crudpgx` both, each carrying the classifier its `Begin` propagated | 409 with the code, the same as the immediate shape. It was a 500 through both until `Commit` classified |
 | stale optimistic-lock version | `ErrStaleVersion` | 409 |
 | `FindOne` matched several rows | `specs.ErrNotUnique` | 409 |
-| driver failure, closed pool, context cancelled | nothing classifies it | 500, `{"type":"error","errors":{"general":[{"error_code":"internal"}]}}` and no detail |
+| driver failure or closed pool | nothing classifies it | 500, `{"type":"error","errors":{"general":[{"error_code":"internal"}]}}` and no detail |
+| wrapped `context.Canceled` / `context.DeadlineExceeded` over gRPC | the gRPC status boundary, before the shared business-kind table | native `Canceled` / `DeadlineExceeded` with no details. HTTP keeps its existing transport behaviour; cancellation is not promoted to a global retryable business kind |
 | one payload that breaks several constraints at once | the database reports the first one it reaches; the probe finds the rest ([[FL-017]]) | one status, and a violations list with more than one entry in it — `errors.validation` renders them all, in the order `errs.SortViolations` fixes |
 | a probe that hit a cap or failed | `probe` sets `Fault.Partial` | the same status and the same violations, plus `"partial":true` — the set is incomplete and says so ([[D-042]]) |
 
@@ -240,8 +249,8 @@ out of the request's own words ([[D-044]], [[UC-015]] guarantee 11).
 | File | Role |
 |---|---|
 | `port/porthttp/errors.go` | `Status`, `StatusFor`, `KindForStatus`, `KindOf`, and the forwarders for `ErrBadRequest`, `BadRequest`, `BadRequestf`, `BadRequestAs` — the status half, shared by every binding |
-| `port/porthttp/render.go` | the `Renderer` seam and `EnvelopeRenderer` — the status, the envelope, the `Retry-After` header and the 500 short-circuit |
-| `port/violations.go` | `Violations`, `ViolationOptions`, `MaxViolations` — the copy, the path chain, the sort, the cap and the message ladder, shared by every renderer since phase 9 |
+| `port/porthttp/render.go` | the `Renderer` seam and `EnvelopeRenderer` — the status, the envelope, proven `Content-Language`, the `Retry-After` header and the 500 short-circuit |
+| `port/violations.go` | `Violations`, `ViolationOptions`, `MaxViolations` — the copy, the path chain, the sort, the cap, the message ladder and validation of an actual message locale, shared by every renderer since phase 9 |
 | `port/locale.go` | `WithLocale`, `LocaleFrom`, `FirstLanguageTag` — the locale the ladder is asked for, one key for every transport |
 | `crud/rpc/crudgrpc/status.go` | the second vocabulary: `Code`, `CodeFor`, `Renderer`, `StatusRenderer`, and the `BadRequest`/`ErrorInfo`/`RetryInfo` details |
 | `crud/rpc/crudgrpc/locale.go` | `LocaleKeys` — where a gRPC caller's language comes from |
@@ -264,14 +273,14 @@ out of the request's own words ([[D-044]], [[UC-015]] guarantee 11).
 | `crud/sqlfault/doc.go` | the two gates, what no arm may read, why the engine is declared |
 | `errs/doc.go` | what the package is, what it refuses, which half of it the first tag freezes, and the two rules that are not visible in a signature |
 | `errs/code.go` | `Code` and its constants; `Kind`, its nine constants and `Kind.String` |
-| `errs/codes.go` | `Codes` — the wired vocabulary — `StandardCodes`, `Add`, `KindOf`, `MessageFor`, `ErrCodeRedeclared` |
+| `errs/codes.go` | `Codes` — the wired vocabulary — `StandardCodes`, `Add`, `KindOf`, `MessageFor`, the placeholder-expanding `MessageSource` method `Message`, and `ErrCodeRedeclared` |
 | `errs/path.go` | `Step`, `Path`, `Named`, `Indexed`, the three renderings (`MarshalJSON`, `String`, `Pointer`) and `ParsePath` |
-| `errs/violation.go` | `Origin`, `Source`, `Violation` and its public projection |
+| `errs/violation.go` | `Origin`, `Source`, `Violation` and its public projection; `MessageLocale` is retained for transport metadata but deliberately omitted from the custom JSON form |
 | `errs/fault.go` | `Detail`, `Fault`, `Fault.Error`, `Fault.Unwrap`, `Fault.MarshalJSON`, `AsFault` |
 | `errs/build.go` | `Builder` and `P` — the hand-built fault, and `Wrapping`, the only way a sentinel is attached. The rule that resolves the chain's ambiguity, which the plan was silent on: `Code`, `Params` and `Message` apply to the violation the most recent `Field`/`At`/`General` opened; with none open, `Code` and `Message` fall to the fault, and the four steps with no fault-level meaning — `Params`, `Origin`, `Source`, `Approximate` — open a general violation rather than dropping what they were given, so a misordered chain produces a visibly odd fault instead of a silently empty one ([[D-021]]). `Fault()` copies path, params and column lists deep, so a resolver rewriting a hop in place cannot reach a fault the builder already handed back |
-| `errs/spi.go` | `Classifier`, `Resolver`, `CodeMapper`, `MessageSource`, `Chain`. No `Renderer`: it is HTTP-shaped and lives in `port/porthttp` ([[D-045]], [[D-059]]) |
-| `errs/message.go` | `Messages` — the four-level ladder, the locale fallback and the template expansion. The four levels come from the path's first and last **named** steps and not from its depth, so a key spelling a whole nested path is accepted by `Add` and never consulted |
-| `errs/catalogue.go` | `LoadMessages`, `Messages.Load`, `Messages.Locales`, `Messages.Missing`, `DefaultLocaleFile` — the same catalogue read from one flat JSON file per locale. Flat because a nested file invites exactly the key `errs/message.go` warns is never consulted; `Missing` is a report and not a refusal, because falling through the ladder is the designed case ([[D-048]]) |
+| `errs/spi.go` | `Classifier`, `Resolver`, `CodeMapper`, `MessageSource`, optional `LocalizedMessageSource`, and `Chain`. No `Renderer`: it is HTTP-shaped and lives in `port/porthttp` ([[D-045]], [[D-059]]) |
+| `errs/message.go` | `Messages` — the four-level ladder, locale fallback, template expansion and actual-locale answer. The four levels come from the path's first and last **named** steps and not from its depth. A key spelling a whole nested path can therefore be ignored, but the same bytes can be reachable when a real member name contains a dot; declaration cannot infer which one the author meant |
+| `errs/catalogue.go` | `LoadMessages`, `Messages.Load`, `Messages.Locales`, `Messages.Missing`, `DefaultLocaleFile` and the exported file/directory/count/byte bounds — the same catalogue read transactionally from one flat JSON file per locale. Flat because a nested file invites exactly the key `errs/message.go` warns is never consulted; `Missing` is a report and not a refusal, because falling through the ladder is the designed case ([[D-048]]) |
 | `errs/bridge.go` | `FieldViolation` and `FromFieldViolations` — a validation library's errors, with no import of one |
 | `errs/sqlerr/doc.go` | what a parser takes and produces, why the four files are keyed differently, the contract/fixture split, and why these are not an `errs.Classifier` |
 | `errs/sqlerr/classify.go` | `Classify` — the one exported entry point, a switch on the four dialect strings, total on a nil error and on a dialect it does not know |
@@ -374,7 +383,7 @@ classification half of them into `port`.
 - `TestRedeclaringACodeWithADifferentKindIsRefused` / `TestTheInternalCodeHasNoDefaultMessage` / `TestTheZeroKindIsInternalAndSoIsAnUnknownOne` / `TestANilCodesReadsAsEmptyInsteadOfPanicking` — `errs/codes_test.go` — the wired vocabulary, the last one with the wired catalogue as its control.
 - `TestAPathRendersThreeWaysFromOneValue` / `TestAPointerEscapesWhatRFC6901Requires` / `TestParsePathRoundTripsTheDottedForm` / `TestAParsedPositionIsANumberOnTheWire` / `TestABracketedNegativeNumberStaysPartOfTheName` — `errs/path_test.go` — the three renderings, the parser, and why a client reading `field[1]` gets a number rather than a string.
 - `TestEachLevelOfTheMessageLadderResolves` / `TestATemplateWithAMissingParamFallsBackRatherThanEmittingThePlaceholder` / `TestAMessageExpandsByteIdenticallyEveryTime` / `TestTwoLocalesThroughTheSameFaultGiveTwoMessages` / `TestAnIndexedPathResolvesTheSameMessageAsAnyOtherRow` / `TestRedeclaringAMessageWithDifferentTextIsRefused` — `errs/message_test.go` — the ladder, what it falls back to, and the redeclaration guard.
-- `TestAPOSIXLocaleFallsBackTheSameWayAHyphenatedOneDoes` / `TestALocaleIsWalkedBeforeAKeyIsNarrowed` / `TestOnlyTheFirstAndLastNamedStepsReachTheLadder` — `errs/message_test.go` — the two separators a locale arrives with, the locale-outer walk (the only shape that tells it from a key-outer one), and the collapse to the first and last named steps, which is what makes a key spelling a whole nested path silently unreachable.
+- `TestAPOSIXLocaleFallsBackTheSameWayAHyphenatedOneDoes` / `TestALocaleIsWalkedBeforeAKeyIsNarrowed` / `TestOnlyTheFirstAndLastNamedStepsReachTheLadder` — `errs/message_test.go` — the two separators a locale arrives with, the locale-outer walk (the only shape that tells it from a key-outer one), and the collapse to the first and last named steps, including the control where a literal dot in a member name makes the same flat key reachable.
 - `TestAViolationCodeIsNotTheFaultsCode` / `TestAViolationMessageIsNotTheFaultsMessage` — `errs/build_test.go` — whose code is whose, and whose message. Each has two halves and each half is the other's control; routing every `Message` to the fault left the root module green.
 - `TestEveryEntryPointCarriesItsKind` — `errs/build_test.go` — the nine constructors, with `Internal` as the control because its kind is the zero value.
 - `TestAPerViolationStepWithNoViolationOpenOpensAGeneralOne` / `TestOriginSourceAndApproximateAlsoOpenAGeneralViolation` — `errs/build_test.go` — the misordered-chain rule, which lives nowhere else: a per-violation step arriving before any `Field`/`At`/`General` opens a general violation rather than dropping what it was given.
@@ -439,6 +448,26 @@ And the second vocabulary, plus the pipeline both share:
   `TestTheCatalogueLoadsInADeterministicOrder` — `errs/catalogue_test.go` — the
   message catalogue read from files, measured against the in-code path rather
   than against nothing.
+- `TestCatalogueFilesRejectAmbiguousOrNonTextJSON`,
+  `TestCatalogueDiagnosticsAreDeterministic`,
+  `TestMessageDeclarationsRejectInvalidNamesAndTemplates`,
+  `TestCodeDeclarationsRejectInvalidValuesWithoutPanicking`,
+  `TestNilMessagesAndFilesystemsAreRefusedWithoutPanicking`,
+  `TestZeroValueCodesAndMessagesRemainUsable`,
+  `TestAFailedLateCatalogueFileLeavesTheReceiverUnchanged`,
+  `TestLoadMergesAnAddThatWinsWhileFilesAreStaged`,
+  `TestAConflictingAddWinsWhileFilesAreStaged`,
+  `TestMissingMeasuresTranslationsWithoutChangingMessageFallback`,
+  `TestLocaleMatchingIsDeliberatelyCaseSensitive`,
+  `TestTheCatalogueLimitsAreStable`,
+  `TestCatalogueInputBoundsAreEnforced`,
+  `TestCatalogueInputBoundsAcceptTheirExactEdges`,
+  `TestRuntimeAddBoundsCatalogueCountAndBytes` and
+  `TestCodesAndMessagesSupportConcurrentRuntimeUpdates` —
+  `errs/catalogue_hardening_test.go` — strict and bounded catalogue input,
+  transactional reload, base-locale coverage without default-locale masking,
+  nil boundaries, deterministic diagnostics and concurrent runtime reads and
+  updates under the race detector.
 
 ## See also
 

@@ -2,8 +2,11 @@ package porthttp
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/frostgrove/vv/errs"
@@ -11,6 +14,48 @@ import (
 
 func retryable() error {
 	return errs.Retryable().Code(errs.CodeDeadlock).Fault()
+}
+
+func TestAnObserverSeesOneInternalCauseBeforeItIsRedacted(t *testing.T) {
+	secret := errors.New("database password and host")
+	key := struct{}{}
+	ctx := context.WithValue(context.Background(), key, "request-42")
+	var calls int
+	var seenContext any
+	var seenErr error
+
+	status, _, body := NewRenderer(WithObserver(func(ctx context.Context, err error) {
+		calls++
+		seenContext = ctx.Value(key)
+		seenErr = err
+	})).Render(ctx, secret)
+	if status != http.StatusInternalServerError || !isInternal(body) {
+		t.Fatalf("an internal failure rendered %d with %#v", status, body)
+	}
+	if calls != 1 || seenContext != "request-42" || !errors.Is(seenErr, secret) {
+		t.Fatalf("observer calls=%d context=%v error=%v", calls, seenContext, seenErr)
+	}
+
+	conflict := errs.Conflict().Code(errs.CodeConflict).Fault()
+	_, _, _ = NewRenderer(WithObserver(func(context.Context, error) { calls++ })).Render(ctx, conflict)
+	if calls != 1 {
+		t.Fatalf("a non-internal failure called the observer; calls=%d", calls)
+	}
+}
+
+func TestAPanickingObserverCannotChangeTheInternalResponse(t *testing.T) {
+	secret := errors.New("private failure")
+	status, header, body := NewRenderer(WithObserver(func(context.Context, error) {
+		panic("observer failed")
+	})).Render(context.Background(), secret)
+	if status != http.StatusInternalServerError || len(header) != 0 || !isInternal(body) {
+		t.Fatalf("a panicking observer changed the response to %d %#v %#v", status, header, body)
+	}
+}
+
+func isInternal(body any) bool {
+	env, ok := body.(Envelope)
+	return ok && env.Type == "error" && len(env.Errors.Validation) == 0 && len(env.Errors.General) == 1 && env.Errors.General[0].Code == errs.CodeInternal
 }
 
 func TestA503AdvertisesTheRetryAfterTheConsumerSet(t *testing.T) {
@@ -81,6 +126,38 @@ func TestAConsumersVocabularyDecidesTheStatusAndTheDefaultMessage(t *testing.T) 
 	if got := NewRenderer().Status(f); got != http.StatusBadRequest {
 		t.Fatalf("Status answered %d without the vocabulary, want 400", got)
 	}
+}
+
+func TestContentLanguageNamesTheTemplatesActuallyUsed(t *testing.T) {
+	messages := errs.NewMessages(nil)
+	if err := messages.Add("fr", "email.unique", "déjà pris"); err != nil {
+		t.Fatal(err)
+	}
+	fault := errs.Conflict().Code(errs.CodeUnique).Field("email").Code(errs.CodeUnique).Fault()
+	ctx := WithLocale(context.Background(), "fr-CA")
+
+	_, header, body := NewRenderer(WithMessages(messages)).Render(ctx, fault)
+	if got := header.Get("Content-Language"); got != "fr" {
+		t.Fatalf("Content-Language is %q, want the actual fr fallback", got)
+	}
+	raw, err := json.Marshal(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "MessageLocale") || strings.Contains(string(raw), "message_locale") {
+		t.Fatalf("the internal message locale leaked into the stable envelope: %s", raw)
+	}
+
+	_, header, _ = NewRenderer(WithMessages(catalogueSource{})).Render(ctx, fault)
+	if got := header.Get("Content-Language"); got != "" {
+		t.Fatalf("a source that cannot prove its template locale emitted %q", got)
+	}
+}
+
+type catalogueSource struct{}
+
+func (catalogueSource) Message(context.Context, errs.Violation, string) (string, bool) {
+	return "déjà pris", true
 }
 
 func TestStatusAnswersWhatRenderWouldWithoutABody(t *testing.T) {

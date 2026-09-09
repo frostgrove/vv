@@ -111,6 +111,22 @@ types, so the same value mounts on Gin, `net/http` and gRPC unchanged.
 | `WithRenderer(r)` | replace the envelope |
 | `WithErrorHandler(fn)` | `func(fiber.Ctx, error) error` |
 
+For the standard envelope, compose resource-specific policy without replacing
+the process policy:
+
+```go
+articles := crudfiber.New(repo).Rendering(
+    crudhttp.WithMessages(articleMessages),
+)
+```
+
+`Rendering` extends an outer `Errors(...)` or Fiber `ErrorHandler(...)`
+renderer; later resource options win when both set the same field. Without a
+process seam it extends the defaults. `WithRenderer` remains a wholesale
+resource replacement, while an explicit `WithErrorHandler` owns that resource
+inside middleware too. Configure the resource before mounting it; `Rendering`
+is construction-time API.
+
 Every option below takes the resource's three type parameters explicitly —
 `WithQuery[Article, int64, ArticleUpdate](cfg)`. `New` infers them from the
 repository it is given; an option is a value built before `New` is called, and Go
@@ -157,6 +173,12 @@ named, everything else → 500 **with no detail**.
 
 With the [error subsystem](errs.md) wired in, a 409 or a 422 also carries
 `error_code` and `field` — see [crudhttp](crudhttp.md#the-envelope).
+
+The optional [i18n module](i18n.md) supplies a validated source through the same
+`WithMessages` option. This binding preserves a non-empty locale already in the
+Fiber context; otherwise it uses only the first `Accept-Language` tag. Resolve
+the full weighted header before this boundary when negotiation matters. A
+localized source makes `Content-Language` name the template locale actually used.
 
 ## Fiber-specific behaviour
 

@@ -167,8 +167,12 @@ missing entry, and equally an entry for a `generated` column or the lock — eit
 one translates a violation to a key the client cannot find in its own body.
 
 `port.At("shipping", "line1")` builds a path. `port.Hops(svc, mapper)` collects
-the declared hops in order, which is what a binding wires ahead of its own
-fallback.
+the declared hops in order. `port.WithHops(ctx, hops)` binds an immutable copy to
+one operation and `port.HopsFrom(ctx)` reads another copy. Generated bindings do
+this before calling the service, so whichever outer or resource renderer owns
+the failure receives the same path chain ahead of its own fallback. Do not also
+pass those generated hops through `WithResolvers`; that would apply a
+non-idempotent custom resolver twice.
 
 ### Deriving one instead of typing it
 
@@ -226,6 +230,11 @@ vs := port.Violations(ctx, fault, port.ViolationOptions{
 
 Five steps, and **the order is load-bearing**: copy, path chain, sort, cap,
 message.
+
+`Violations` first applies `HopsFrom(ctx)`, then `ViolationOptions.Resolvers`.
+The explicit `Resolvers` field is for a hand-written transport or an additional
+renderer-owned hop; generated bindings already supplied their service/mapper
+chain through the context.
 
 - **Messages come after path translation**, because the ladder is derived from
   the path — expanding first would key a catalogue entry on the model's field

@@ -178,13 +178,21 @@ func (this DB) Begin(ctx context.Context) (crud.Tx, error) {
 		return nil, err
 	}
 
-	return &Tx{Executor: Executor{q: tx, faults: this.faults}, tx: tx}, nil
+	root := &Tx{Executor: Executor{q: tx, faults: this.faults}, tx: tx}
+	root.provenance = &txProvenance{root: root, raw: tx}
+	return root, nil
 }
 
 type Tx struct {
 	Executor
-	tx    *sql.Tx
-	depth atomic.Int64
+	tx         *sql.Tx
+	provenance *txProvenance
+	depth      atomic.Int64
+}
+
+type txProvenance struct {
+	root *Tx
+	raw  *sql.Tx
 }
 
 func (this *Tx) Commit(ctx context.Context) error   { return this.conflict(this.tx.Commit()) }
@@ -193,18 +201,38 @@ func (this *Tx) Rollback(ctx context.Context) error { return this.tx.Rollback() 
 func (this *Tx) Tx() *sql.Tx { return this.tx }
 
 func Transaction(executor crud.Executor) (*sql.Tx, bool) {
-	if executor == nil || !crud.IsTransaction(executor) {
+	var transaction *sql.Tx
+	_, ok := crud.FindExecutor(executor, func(candidate crud.Executor) bool {
+		if direct, directOK := candidate.(interface{ Tx() *sql.Tx }); directOK {
+			transaction = direct.Tx()
+			return transaction != nil && crud.IsTransaction(candidate)
+		}
+		wrapped, wrappedOK := candidate.(interface{ Unwrap() Queryer })
+		if !wrappedOK {
+			return false
+		}
+		transaction, wrappedOK = wrapped.Unwrap().(*sql.Tx)
+		return wrappedOK && transaction != nil && crud.IsTransaction(candidate)
+	})
+	if !ok {
 		return nil, false
 	}
-	if direct, ok := executor.(interface{ Tx() *sql.Tx }); ok {
-		tx := direct.Tx()
-		return tx, tx != nil
+	return transaction, true
+}
+
+func TopLevelTransaction(executor crud.Executor) (*sql.Tx, bool) {
+	root, ok := executor.(*Tx)
+	if !ok || root == nil || root.tx == nil || root.provenance == nil {
+		return nil, false
 	}
-	if wrapped, ok := executor.(interface{ Unwrap() Queryer }); ok {
-		tx, ok := wrapped.Unwrap().(*sql.Tx)
-		return tx, ok && tx != nil
+	if root.provenance.root != root || root.provenance.raw != root.tx {
+		return nil, false
 	}
-	return nil, false
+	raw, ok := root.Executor.q.(*sql.Tx)
+	if !ok || raw == nil || raw != root.tx {
+		return nil, false
+	}
+	return raw, true
 }
 
 func TransactionFor(ctx context.Context, source any) (*sql.Tx, bool) {

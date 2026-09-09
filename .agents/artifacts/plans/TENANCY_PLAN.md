@@ -1,6 +1,6 @@
 # TENANCY — IMPLEMENTATION PLAN
 
-Phase 3. Grounded in the real tree at `frostgrove/vv/framework`.
+Phase 3. Grounded in the real tree at `frostgrove/framework`.
 Inputs: [TENANCY_USECASES.md](../usecases/TENANCY_USECASES.md) (93 UC, 36 INV),
 [TENANCY_RECONCILE.md](../usecases/TENANCY_RECONCILE.md),
 `docs/roadmaps/2026-09-01-multitenancy-roadmap.md`,

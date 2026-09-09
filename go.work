@@ -23,6 +23,7 @@ use (
 	./crud/rpc/crudgrpc
 	./event/eventpg
 	./health/healthfx
+	./i18n
 	./jobs/jobsfx
 	./jobs/jobspg
 	./jobs/jobspg/jobspgfx

@@ -1,6 +1,7 @@
 package appfiber
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -345,7 +346,14 @@ func segmentProblem(segment string) string {
 }
 
 func refuse(fiberContext fiber.Ctx, renderer porthttp.Renderer, err error) error {
-	status, header, body := renderer.Render(fiberContext.Context(), err)
+	ctx := fiberContext.Context()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if porthttp.LocaleFrom(ctx) == "" {
+		ctx = porthttp.WithLocale(ctx, porthttp.AcceptLanguage(fiberContext.Get(fiber.HeaderAcceptLanguage)))
+	}
+	status, header, body := renderer.Render(ctx, err)
 	for name, values := range header {
 		for _, value := range values {
 			fiberContext.Response().Header.Add(name, value)

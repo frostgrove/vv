@@ -6,17 +6,16 @@ import (
 	"io"
 
 	"github.com/frostgrove/vv/storage"
-	"go.opentelemetry.io/otel/codes"
-	"go.opentelemetry.io/otel/trace"
+	"go.opentelemetry.io/otel/metric"
 )
 
 type StorageOption func(*storageSettings)
 
 type storageSettings struct {
-	resourceName string
+	resourceName ApprovedName
 }
 
-func WithStorageResource(name string) StorageOption {
+func WithStorageResource(name ApprovedName) StorageOption {
 	return func(s *storageSettings) {
 		s.resourceName = name
 	}
@@ -32,10 +31,10 @@ func Store(t *Telemetry, opts ...StorageOption) storage.Middleware {
 			opt(&s)
 		}
 	}
-	if t != nil {
-		s.resourceName = t.boundResourceName(s.resourceName)
+	if t != nil && t.signalEnabled(SignalStorageSpan) && !nilInterface(t.tracer) {
+		s.resourceName = ApprovedName(t.boundResourceName(s.resourceName))
 	} else {
-		s.resourceName = normalizeResourceName(s.resourceName)
+		s.resourceName = ApprovedName(normalizeResourceName(s.resourceName.Value()))
 	}
 	return func(next storage.Store) storage.Store {
 		if next == nil {
@@ -44,7 +43,7 @@ func Store(t *Telemetry, opts ...StorageOption) storage.Middleware {
 		return &storeDecorator{
 			inner:        next,
 			tel:          t,
-			resourceName: s.resourceName,
+			resourceName: string(s.resourceName),
 		}
 	}
 }
@@ -56,63 +55,27 @@ type storeDecorator struct {
 }
 
 func (d *storeDecorator) Put(ctx context.Context, key storage.Key, source io.Reader, options storage.PutOptions) (storage.Info, error) {
-	return executeStorage(ctx, d.tel, d.resourceName, OpStoragePut, func(c context.Context) (storage.Info, error) {
+	operationContext := ctx
+	result, err := executeStorage(ctx, d.tel, d.resourceName, OpStoragePut, func(c context.Context) (storage.Info, error) {
+		operationContext = c
 		return d.inner.Put(c, key, source, options)
 	})
+	if err == nil {
+		recordStorageOperationBytes(operationContext, d.tel, OpStoragePut, result.Size)
+	}
+	return result, err
 }
 
 func (d *storeDecorator) Open(ctx context.Context, key storage.Key, options storage.ReadOptions) (io.ReadCloser, storage.Info, error) {
-	if d.tel == nil || d.tel.traceDisabled(true) || nilInterface(d.tel.tracer) {
-		return d.inner.Open(ctx, key, options)
+	type openResult struct {
+		body io.ReadCloser
+		info storage.Info
 	}
-
-	c, span, started := safeStart(
-		d.tel.tracer,
-		ctx,
-		StorageSpanName(OpStorageOpen),
-		trace.WithSpanKind(trace.SpanKindInternal),
-		trace.WithAttributes(
-			AttrComponent.String(ComponentStorage),
-			AttrOperationName.String(OpStorageOpen),
-		),
-	)
-	if !started {
-		return d.inner.Open(ctx, key, options)
-	}
-	if d.resourceName != "" && !safeSetAttributes(span, AttrResourceName.String(d.resourceName)) {
-		safeEnd(span)
-		return d.inner.Open(ctx, key, options)
-	}
-
-	returned := false
-	defer func() {
-		if !returned {
-			safeSetStatus(span, codes.Error, "")
-			safeSetAttributes(span,
-				AttrOperationOutcome.String(OutcomeError),
-				AttrErrorType.String(ErrorTypePanic),
-			)
-			safeEnd(span)
-		}
-	}()
-
-	body, info, err := d.inner.Open(c, key, options)
-	returned = true
-
-	if err == nil {
-		safeSetAttributes(span, AttrOperationOutcome.String(OutcomeOk))
-		safeEnd(span)
-		return body, info, nil
-	}
-
-	outcome, errType := classifyStorageError(err)
-	safeSetStatus(span, codes.Error, "")
-	safeSetAttributes(span,
-		AttrOperationOutcome.String(outcome),
-		AttrErrorType.String(errType),
-	)
-	safeEnd(span)
-	return body, info, err
+	result, err := executeStorage(ctx, d.tel, d.resourceName, OpStorageOpen, func(c context.Context) (openResult, error) {
+		body, info, openErr := d.inner.Open(c, key, options)
+		return openResult{body: body, info: info}, openErr
+	})
+	return result.body, result.info, err
 }
 
 func (d *storeDecorator) Head(ctx context.Context, key storage.Key) (storage.Info, error) {
@@ -129,9 +92,15 @@ func (d *storeDecorator) Delete(ctx context.Context, key storage.Key, options st
 }
 
 func (d *storeDecorator) Stage(ctx context.Context, source io.Reader, options storage.StageOptions) (storage.Staged, error) {
-	return executeStorage(ctx, d.tel, d.resourceName, OpStorageStage, func(c context.Context) (storage.Staged, error) {
+	operationContext := ctx
+	result, err := executeStorage(ctx, d.tel, d.resourceName, OpStorageStage, func(c context.Context) (storage.Staged, error) {
+		operationContext = c
 		return d.inner.Stage(c, source, options)
 	})
+	if err == nil {
+		recordStorageOperationBytes(operationContext, d.tel, OpStorageStage, result.Info.Size)
+	}
+	return result, err
 }
 
 func (d *storeDecorator) Promote(ctx context.Context, stageID storage.StageID, key storage.Key, options storage.PromoteOptions) (storage.Info, error) {
@@ -148,9 +117,15 @@ func (d *storeDecorator) Abort(ctx context.Context, stageID storage.StageID) err
 }
 
 func (d *storeDecorator) CleanupExpired(ctx context.Context, options storage.CleanupOptions) (storage.CleanupResult, error) {
-	return executeStorage(ctx, d.tel, d.resourceName, OpStorageCleanupExpired, func(c context.Context) (storage.CleanupResult, error) {
+	operationContext := ctx
+	result, err := executeStorage(ctx, d.tel, d.resourceName, OpStorageCleanupExpired, func(c context.Context) (storage.CleanupResult, error) {
+		operationContext = c
 		return d.inner.CleanupExpired(c, options)
 	})
+	if err == nil {
+		recordStorageCleanupRemoved(operationContext, d.tel, result)
+	}
+	return result, err
 }
 
 func (d *storeDecorator) TemporaryURL(ctx context.Context, key storage.Key, options storage.TemporaryURLOptions) (storage.Link, error) {
@@ -170,57 +145,57 @@ func executeStorage[T any](
 	op string,
 	fn func(context.Context) (T, error),
 ) (res T, err error) {
-	if t == nil || t.traceDisabled(true) || nilInterface(t.tracer) {
+	if t == nil {
 		return fn(ctx)
 	}
-
-	c, span, started := safeStart(
-		t.tracer,
-		ctx,
-		StorageSpanName(op),
-		trace.WithSpanKind(trace.SpanKindInternal),
-		trace.WithAttributes(
-			AttrComponent.String(ComponentStorage),
-			AttrOperationName.String(op),
-		),
-	)
-	if !started {
-		return fn(ctx)
+	var tracer = t.tracer
+	if !t.signalEnabled(SignalStorageSpan) {
+		tracer = nil
 	}
-	if resourceName != "" && !safeSetAttributes(span, AttrResourceName.String(resourceName)) {
-		safeEnd(span)
-		return fn(ctx)
+	var histogram = t.float64Histogram(SignalStorageDuration)
+	if !t.signalEnabled(SignalStorageDuration) {
+		histogram = nil
 	}
+	return executeOperation(ctx, operationSpec{
+		tracer:           tracer,
+		histogram:        histogram,
+		spanName:         StorageSpanName(op),
+		operation:        op,
+		resourceName:     resourceName,
+		classifyError:    classifyStorageError,
+		spanAttributes:   storageSpanAttributes,
+		metricAttributes: storageMetricAttributes,
+	}, fn)
+}
 
-	returned := false
-	defer func() {
-		if !returned {
-			safeSetStatus(span, codes.Error, "")
-			safeSetAttributes(span,
-				AttrOperationOutcome.String(OutcomeError),
-				AttrErrorType.String(ErrorTypePanic),
-			)
-			safeEnd(span)
-		}
-	}()
-
-	res, err = fn(c)
-	returned = true
-
-	if err == nil {
-		safeSetAttributes(span, AttrOperationOutcome.String(OutcomeOk))
-		safeEnd(span)
-		return res, nil
+func recordStorageOperationBytes(ctx context.Context, t *Telemetry, operation string, size int64) {
+	if t == nil || size < 0 || !t.signalEnabled(SignalStorageOperationBytes) {
+		return
 	}
+	histogram := t.int64Histogram(SignalStorageOperationBytes)
+	if nilInterface(histogram) {
+		return
+	}
+	attributes, admitted := safeMetricAttributes(storageOperationBytesAttributes, operation, OutcomeOk, "")
+	if !admitted {
+		return
+	}
+	safeRecordInt64(histogram, ctx, size, metric.WithAttributes(attributes...))
+}
 
-	outcome, errType := classifyStorageError(err)
-	safeSetStatus(span, codes.Error, "")
-	safeSetAttributes(span,
-		AttrOperationOutcome.String(outcome),
-		AttrErrorType.String(errType),
-	)
-	safeEnd(span)
-	return res, err
+func recordStorageCleanupRemoved(ctx context.Context, t *Telemetry, result storage.CleanupResult) {
+	if t == nil || result.Removed < 0 || result.Removed > storage.MaxCleanupLimit || !t.signalEnabled(SignalStorageCleanupRemoved) {
+		return
+	}
+	histogram := t.int64Histogram(SignalStorageCleanupRemoved)
+	if nilInterface(histogram) {
+		return
+	}
+	attributes, admitted := storageCleanupRemovedAttributes(result.More)
+	if !admitted {
+		return
+	}
+	safeRecordInt64(histogram, ctx, int64(result.Removed), metric.WithAttributes(attributes...))
 }
 
 func classifyStorageError(err error) (string, string) {

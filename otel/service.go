@@ -3,27 +3,27 @@ package vvotel
 import (
 	"context"
 	"errors"
-	"time"
 
 	"github.com/frostgrove/vv/crud"
 	"github.com/frostgrove/vv/errs"
 	"github.com/frostgrove/vv/port"
 	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/codes"
-	"go.opentelemetry.io/otel/metric"
-	"go.opentelemetry.io/otel/trace"
 )
 
 type ServiceOption func(*serviceSettings)
 
 type serviceSettings struct {
-	resourceName string
+	resourceName ApprovedName
 }
 
-func WithServiceResource(name string) ServiceOption {
+func WithServiceResource(name ApprovedName) ServiceOption {
 	return func(s *serviceSettings) {
 		s.resourceName = name
 	}
+}
+
+func WrapService[M any, ID comparable, U any](t *Telemetry, next port.Service[M, ID, U], opts ...ServiceOption) port.Service[M, ID, U] {
+	return Service[M, ID, U](t, opts...)(next)
 }
 
 func Service[M any, ID comparable, U any](t *Telemetry, opts ...ServiceOption) port.ServiceMiddleware[M, ID, U] {
@@ -36,10 +36,10 @@ func Service[M any, ID comparable, U any](t *Telemetry, opts ...ServiceOption) p
 			opt(&s)
 		}
 	}
-	if t != nil {
-		s.resourceName = t.boundResourceName(s.resourceName)
+	if t != nil && t.signalEnabled(SignalCommandSpan) && !nilInterface(t.tracer) {
+		s.resourceName = ApprovedName(t.boundResourceName(s.resourceName))
 	} else {
-		s.resourceName = normalizeResourceName(s.resourceName)
+		s.resourceName = ApprovedName(normalizeResourceName(s.resourceName.Value()))
 	}
 	return func(next port.Service[M, ID, U]) port.Service[M, ID, U] {
 		if next == nil {
@@ -48,7 +48,7 @@ func Service[M any, ID comparable, U any](t *Telemetry, opts ...ServiceOption) p
 		return &serviceDecorator[M, ID, U]{
 			inner:        next,
 			tel:          t,
-			resourceName: s.resourceName,
+			resourceName: string(s.resourceName),
 		}
 	}
 }
@@ -156,107 +156,33 @@ func executeCommand[T any](
 		return fn(ctx)
 	}
 
-	var span trace.Span
-	traceEnabled := !t.traceDisabled(false) && !nilInterface(t.tracer)
-	histogram := t.commandDurationInstrument()
-	if !traceEnabled && histogram == nil {
-		return fn(ctx)
+	var tracer = t.tracer
+	if !t.signalEnabled(SignalCommandSpan) {
+		tracer = nil
 	}
+	return executeOperation(ctx, operationSpec{
+		tracer:              tracer,
+		histogram:           t.float64Histogram(SignalCommandDuration),
+		spanName:            CommandSpanName(op),
+		operation:           op,
+		resourceName:        resourceName,
+		classifyError:       classifyCommandError,
+		spanErrorAttributes: commandSpanErrorAttributes,
+		spanAttributes:      commandSpanAttributes,
+		metricAttributes:    commandMetricAttributes,
+	}, fn)
+}
 
-	callContext := ctx
-
-	if traceEnabled {
-		var started bool
-		callContext, span, started = safeStart(
-			t.tracer,
-			ctx,
-			CommandSpanName(op),
-			trace.WithSpanKind(trace.SpanKindInternal),
-			trace.WithAttributes(
-				AttrComponent.String(ComponentCommand),
-				AttrOperationName.String(op),
-			),
-		)
-		if !started {
-			return fn(ctx)
-		}
-		if resourceName != "" && !safeSetAttributes(span, AttrResourceName.String(resourceName)) {
-			safeEnd(span)
-			return fn(ctx)
-		}
+func commandSpanErrorAttributes(err error) []attribute.KeyValue {
+	var fault *errs.Fault
+	if !errors.As(err, &fault) || fault.Code == "" {
+		return nil
 	}
-	start := time.Now()
-
-	returned := false
-	defer func() {
-		if !returned {
-			dur := durationSince(start)
-			if traceEnabled && span != nil {
-				safeSetStatus(span, codes.Error, "")
-				safeSetAttributes(span,
-					AttrOperationOutcome.String(OutcomeError),
-					AttrErrorType.String(ErrorTypePanic),
-				)
-				safeEnd(span)
-			}
-			if histogram != nil {
-				attrs := []attribute.KeyValue{
-					AttrComponent.String(ComponentCommand),
-					AttrOperationName.String(op),
-					AttrOperationOutcome.String(OutcomeError),
-					AttrErrorType.String(ErrorTypePanic),
-				}
-				safeRecord(histogram, ctx, dur, metric.WithAttributes(attrs...))
-			}
-		}
-	}()
-
-	res, err = fn(callContext)
-	returned = true
-
-	dur := durationSince(start)
-
-	if err == nil {
-		if traceEnabled && span != nil {
-			safeSetAttributes(span, AttrOperationOutcome.String(OutcomeOk))
-			safeEnd(span)
-		}
-		if histogram != nil {
-			attrs := []attribute.KeyValue{
-				AttrComponent.String(ComponentCommand),
-				AttrOperationName.String(op),
-				AttrOperationOutcome.String(OutcomeOk),
-			}
-			safeRecord(histogram, ctx, dur, metric.WithAttributes(attrs...))
-		}
-		return res, nil
+	code, ok := AllowedErrorCode(string(fault.Code))
+	if !ok {
+		return nil
 	}
-
-	outcome, errType := classifyCommandError(err)
-	if traceEnabled && span != nil {
-		safeSetStatus(span, codes.Error, "")
-		safeSetAttributes(span,
-			AttrOperationOutcome.String(outcome),
-			AttrErrorType.String(errType),
-		)
-		var fault *errs.Fault
-		if errors.As(err, &fault) && fault.Code != "" {
-			if code, ok := AllowedErrorCode(string(fault.Code)); ok {
-				safeSetAttributes(span, AttrErrorCode.String(code))
-			}
-		}
-		safeEnd(span)
-	}
-	if histogram != nil {
-		attrs := []attribute.KeyValue{
-			AttrComponent.String(ComponentCommand),
-			AttrOperationName.String(op),
-			AttrOperationOutcome.String(outcome),
-			AttrErrorType.String(errType),
-		}
-		safeRecord(histogram, ctx, dur, metric.WithAttributes(attrs...))
-	}
-	return res, err
+	return []attribute.KeyValue{AttrErrorCode.String(code)}
 }
 
 func classifyCommandError(err error) (string, string) {

@@ -698,7 +698,7 @@ func capturePlacementContext(ctx context.Context, queue *Queue, definition Name,
 	if err := ctx.Err(); err != nil {
 		return placementContext{}, err
 	}
-	capture := ContextCapture{provenance: IdentityProvenance{value: "framework.system"}, epoch: 1}
+	capture := defaultSystemContextCapture()
 	if !nilInterface(queue.contexts) {
 		request := ContextCaptureRequest{namespace: queue.namespace, definition: definition, partition: mode, candidate: candidate, wire: wire}
 		var err error

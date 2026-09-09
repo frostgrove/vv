@@ -46,9 +46,10 @@ storage, i18n or OpenTelemetry.
    justified. The reason the first event API stays direct is now only the fixed
    CRUD-shaped method set — not a missing chain.
 2. **The OpenTelemetry module exists.** `github.com/frostgrove/vv/otel`, package
-   `vvotel`, ships `vvotel.Service`, `vvotel.Store` and `vvotel.Cache` ([[D-114]]).
-   "No `eventotel`" is now a rule about a neighbour that is real, and the
-   telemetry an event command can already have is named rather than promised.
+   `vvotel`, currently ships service, storage and cache facade/backend observers
+   ([[D-128]]). "No `eventotel`" is now a rule about a neighbour that is real;
+   event-source telemetry remains an explicitly unimplemented appendix in this
+   roadmap.
 3. **Tenancy is delivered, and it is a package of the root module, not a
    module** ([[D-116]]). It exposes no service middleware, so the previous
    revision's `tenancy.Service(...)` example named an API that is not coming. The
@@ -85,7 +86,7 @@ roadmap:
 | Service composition | `port.ServiceMiddleware` and `port.ChainService` exist: first listed is outermost, nil middleware is skipped, and a nil base or a middleware that returns nil collapses the chain to nil. Restore is discovered by `port.RestorableOf` | An event service decorator is now expressible. It is still not justified: the fixed method set cannot carry a named aggregate command |
 | Storage composition | `storage.Middleware` and `storage.Chain` exist with the same order and nil rules; the root store forwards `Capabilities` from its backend | Event code may use root storage vocabulary after an actual use case; it never imports a storage satellite |
 | Event operation seam | **Superseded 2026-09-07.** `event.Store` is the dependency-neutral contract and `eventmemory` is the second implementation the old row was waiting for; `eventtest` is what a third one is held to | `eventpg` implements `event.Store` rather than inventing a surface. There is still no event middleware chain and no generic `EventStore` beside it |
-| OpenTelemetry | The `otel` module exists (`vvotel.Service`, `vvotel.Store`, `vvotel.Cache`), and the [OTel roadmap](2026-08-31-opentelemetry-roadmap.md) defers event and messaging spans | First event release has no `eventotel` package and no OTel dependency; an application still gets command spans |
+| OpenTelemetry | The `otel` module exists (`vvotel.Service`, `vvotel.Store`, `vvotel.Cache`, `vvotel.CacheMemory`); the [current OTel roadmap](2026-09-08-opentelemetry-maximal-roadmap.md) commits durable-jobs telemetry but leaves event-source signals in ES-10 here | First event release has no `eventotel` package and no OTel dependency; an application still gets command spans |
 | Tenancy | Delivered as a root-module package with one adapter per seam ([[D-116]], [[D-117]]); a scope is minted and cannot be manufactured, and a unit of work is pinned to a tenant *and* a generation | Event tenancy is application composition over `tenancy.Authority` and `tenancydb.Directory`. There is no `tenancy.Service` to sit in a chain |
 | Audit | No audit package exists | Any event/audit mapping stays application-owned, and neither module imports the other |
 | Transaction authority | `crud.Source`, `crud.Beginner`, `crud.IsTransaction`, `crud.SameDataSource`, `crud.KeyOf`, `crudsql.Transaction` and `crudsql.TransactionFor` exist; `jobspg.Driver.Stager` binds a caller's `*sql.Tx` and mints a `jobs.TransactionContext` that says which transaction it is | `eventpg` joins a caller's transaction with these; it writes no new plumbing and opens no second connection |
@@ -552,9 +553,10 @@ already have around event work, without any event-specific signal:
 - `vvotel.Store`, if event payload policy ever puts an object in `storage.Store`.
 
 No event-specific append/load/upcast/project/outbox span is promised. The
-[OTel roadmap](2026-08-31-opentelemetry-roadmap.md) defers event, outbox and
-messaging instrumentation by name, and lifting that deferral requires a neutral
-typed event operation seam and an amendment there. Sampling/exporter availability
+[current OTel roadmap](2026-09-08-opentelemetry-maximal-roadmap.md) keeps those
+signals in unimplemented ES-10 below; its separate durable-jobs messaging work
+does not instrument the event subsystem. Shipping ES-10 requires its neutral
+typed event seams and gates here. Sampling/exporter availability
 never changes append, audit or publisher correctness, and telemetry never carries
 payloads or identities.
 
@@ -831,3 +833,14 @@ The first PostgreSQL event-source release is complete only when:
 3. Адаптация: snapshot привязан к backing/stream/version и версии вычисления состояния, независимой от payload revision. Загружается только подтверждённая версия; затем проигрывается весь хвост. Несовместимость/повреждение snapshot ведёт к полному replay; unreadable event не скрывается fallback. Нужны measured benefit и проверка равенства snapshot+tail полному replay. Историю не удаляем.
 4. Уже есть: [полный replay](../../event/repo.go) и revision readers; snapshots нет. E2 уже ставит performance/equivalence gate. Оптимизированный load требует отдельного принятого контракта, а не незаметного изменения гарантий [[UC-032]].
 5. DX: необязательная snapshot policy у конкретного event store; обычные команды не зависят от наличия snapshot, оператор может его отбросить.
+
+### Приложение ES-10 — OTel для store, полного replay и проекций
+
+**Статус: не выполнено.** Принадлежит event roadmap, а не общей поставке
+[OTel](2026-09-08-opentelemetry-maximal-roadmap.md).
+
+1. Механизм: OTel Store middleware измеряет `ReadStream`/`ReadAll`/`Append` как I/O, typed repository decorator — полный `Load` с decode/upcast/fold, а projection observer — batch/checkpoint/lag после появления ES-01. Разделение следует реальным lifecycle: один store call не равен replay и продвижение scan cursor не равно применённой проекции.
+2. Зачем: отличать медленную БД от дорогого folding/upcast, store conflict от pre-store refusal и отставание проекции от остановившегося projector.
+3. Адаптация: root `event` остаётся OTel-free и получает только общий `Middleware`/`Chain` и безопасный `OutcomeOf(error)`, если они подтверждены независимым потребителем. Реализация живёт в единственном `vvotel`, без `eventsourceotel`. Span/metric attributes содержат только закрытые operation/outcome/error-type; stream/key/type/payload/version/checkpoint не экспортируются. Append внутри чужой transaction означает accepted/staged, не committed. Store wrapper сохраняет Capabilities/Limits/Backing/Transaction/Close и не пытается выдать page I/O за полный replay. Projection telemetry не реализуется до ES-01.
+4. Уже есть: [Store](../../event/store.go), полный replay в [Repo.Load](../../event/repo.go), закрытый [Outcome](../../event/outcome.go) и private failure, но нет middleware, публичного classifier, repository decorator или projection observer. Текущий `vvotel.Store` относится только к object storage.
+5. DX: `event.Chain(store, vvotel.EventStore(tel))` для I/O и `vvotel.EventRepo(tel, repo)` для полного load/append; после ES-01 projector получает обычный `vvotel.EventProjection(tel)` observer. Native OTel API остаётся escape hatch.

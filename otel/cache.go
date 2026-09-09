@@ -39,7 +39,7 @@ type cacheObserver struct {
 }
 
 func (o *cacheObserver) Observe(ctx context.Context, event cache.Event) {
-	if o.tel == nil || o.tel.config.Disabled {
+	if o.tel == nil {
 		return
 	}
 
@@ -52,25 +52,17 @@ func (o *cacheObserver) Observe(ctx context.Context, event cache.Event) {
 		return
 	}
 
-	if o.emitSpanEvents {
+	if o.emitSpanEvents && o.tel.signalEnabled(SignalCacheEvent) {
 		span := safeSpanFromContext(ctx)
-		if span != nil && safeIsRecording(span) {
-			safeAddEvent(span, "cache.event", trace.WithAttributes(
-				AttrComponent.String(ComponentCache),
-				AttrCacheLayer.String("facade"),
-				AttrOperationName.String(op),
-				AttrOperationOutcome.String(outcome),
-			))
+		attributes, admitted := cacheFacadeAttributes(SignalCacheEvent, op, outcome)
+		if !nilInterface(span) && safeIsRecording(span) && admitted {
+			safeAddEvent(span, EventCache, trace.WithAttributes(attributes...))
 		}
 	}
 
-	counter := o.tel.cacheOperationsInstrument()
-	if counter != nil {
-		safeAdd(counter, ctx, 1, metric.WithAttributes(
-			AttrComponent.String(ComponentCache),
-			AttrCacheLayer.String("facade"),
-			AttrOperationName.String(op),
-			AttrOperationOutcome.String(outcome),
-		))
+	counter := o.tel.int64Counter(SignalCacheOperations)
+	attributes, admitted := cacheFacadeAttributes(SignalCacheOperations, op, outcome)
+	if !nilInterface(counter) && admitted {
+		safeAdd(counter, ctx, 1, metric.WithAttributes(attributes...))
 	}
 }

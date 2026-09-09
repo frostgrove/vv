@@ -1,6 +1,6 @@
 # TENANCY — audit map
 
-Repository: `/home/user/ws/gd/lease/frostgrove/vv/framework`, module `github.com/frostgrove/vv`.
+Repository: `/home/user/ws/gd/lease/frostgrove/framework`, module `github.com/frostgrove/vv`.
 Everything below is relative to that directory unless stated otherwise.
 
 Audit scope: the `tenancy` subsystem and every seam it touches.

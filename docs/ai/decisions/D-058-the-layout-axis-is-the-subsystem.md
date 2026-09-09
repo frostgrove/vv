@@ -55,10 +55,11 @@ transport. CRUD was worse: ten entry points — `crud/`, `repo/`, `query/`,
 `port/`, `adapter/`, `catalog/`, `probe/`, `sqlfault/`, `http/`, `rpc/`.
 
 **Because the transport axis made every new subsystem pay every transport.**
-[[D-035]]'s grid already carries an `i18n` row with `i18nfiber` and `i18ngin` in
-it. On the old layout that row would have added two directories to `http/`, zero
-directories that say where i18n lives, and no place a reader could see that the
-two were one subsystem.
+[[D-035]]'s historical grid illustrated this with an `i18n` row containing
+`i18nfiber` and `i18ngin`: on the old layout those cells would have added two
+directories to `http/` and no directory saying where i18n lived. [[D-129]] later
+made the stronger choice for that subsystem — one optional `i18n` module and no
+transport-specific i18n packages at all.
 
 **Because the move was free exactly once.** There is no tag. Every import is
 first-party, so the whole thing is `git mv` plus a sweep. After `v0.1.0` the same

@@ -1,6 +1,6 @@
 # EVENTSOURCE PHASE 1 — IMPLEMENTATION PLAN
 
-Phase 3. Grounded in the real tree at `frostgrove/vv/framework`, commit `72e7d22`.
+Phase 3. Grounded in the real tree at `frostgrove/framework`, commit `72e7d22`.
 
 Inputs:
 [EVENTSOURCE_P1_USECASES.md](../usecases/EVENTSOURCE_P1_USECASES.md) — "[SPEC]", 68 UC (UC-023 withdrawn), 45 INV (INV-037 withdrawn);

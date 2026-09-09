@@ -2,6 +2,7 @@ package crudgrpc
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -102,6 +103,39 @@ func TestCodeIsTheSameAnswerWithoutARenderer(t *testing.T) {
 	}
 	if Code(nil) != codes.OK {
 		t.Fatalf("no error answered %s, want OK", Code(nil))
+	}
+}
+
+func TestCancellationAndDeadlineKeepTheirNativeGrpcCodes(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  error
+		want codes.Code
+	}{
+		{"canceled", context.Canceled, codes.Canceled},
+		{"wrapped canceled", fmt.Errorf("repository stopped: %w", context.Canceled), codes.Canceled},
+		{"deadline", context.DeadlineExceeded, codes.DeadlineExceeded},
+		{"wrapped deadline", fmt.Errorf("repository stopped: %w", context.DeadlineExceeded), codes.DeadlineExceeded},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := Code(tc.err); got != tc.want {
+				t.Fatalf("Code answered %s, want %s", got, tc.want)
+			}
+			renderer := NewRenderer()
+			if got := renderer.Code(tc.err); got != tc.want {
+				t.Fatalf("renderer.Code answered %s, want %s", got, tc.want)
+			}
+			st := renderer.Render(context.Background(), tc.err)
+			if st.Code() != tc.want {
+				t.Fatalf("Render answered %s, want %s", st.Code(), tc.want)
+			}
+			if len(st.Details()) != 0 {
+				t.Fatalf("a canceled operation carries %d localized/retry details", len(st.Details()))
+			}
+			if tc.want == codes.Canceled && !errors.Is(tc.err, context.Canceled) {
+				t.Fatal("the canceled control is not canceled")
+			}
+		})
 	}
 }
 
