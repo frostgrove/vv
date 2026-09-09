@@ -43,13 +43,30 @@ CREATE TABLE IF NOT EXISTS "narrow_events".events (
 	CONSTRAINT events_payload_check CHECK (octet_length(payload) <= 1024)
 );
 -- statement 5
+CREATE TABLE IF NOT EXISTS "narrow_events".checkpoints (
+	projection text NOT NULL,
+	cursor bytea NOT NULL,
+	advance bigint NOT NULL,
+	highest bigint NOT NULL,
+	applied bigint NOT NULL,
+	quarantined bigint NOT NULL,
+	updated_at timestamp with time zone NOT NULL,
+	CONSTRAINT checkpoints_pkey PRIMARY KEY (projection),
+	CONSTRAINT checkpoints_projection_check CHECK (octet_length(projection) >= 1 AND octet_length(projection) <= 128),
+	CONSTRAINT checkpoints_cursor_check CHECK (octet_length(cursor) >= 1 AND octet_length(cursor) <= 4096),
+	CONSTRAINT checkpoints_advance_check CHECK (advance > 0),
+	CONSTRAINT checkpoints_highest_check CHECK (highest >= 0),
+	CONSTRAINT checkpoints_applied_check CHECK (applied >= 0),
+	CONSTRAINT checkpoints_quarantined_check CHECK (quarantined >= 0)
+);
+-- statement 6
 CREATE OR REPLACE FUNCTION "narrow_events".events_are_append_only() RETURNS trigger
 LANGUAGE plpgsql AS $eventpg$
 	BEGIN
 		RAISE EXCEPTION 'eventpg: % on an event row: history is append-only', TG_OP;
 	END
 $eventpg$;
--- statement 6
+-- statement 7
 CREATE OR REPLACE FUNCTION "narrow_events".events_assign_writer_xid() RETURNS trigger
 LANGUAGE plpgsql AS $eventpg$
 	BEGIN
@@ -57,7 +74,7 @@ LANGUAGE plpgsql AS $eventpg$
 		RETURN NULL;
 	END
 $eventpg$;
--- statement 7
+-- statement 8
 DO $eventpg$
 	BEGIN
 		DROP TRIGGER IF EXISTS events_append_only_row ON "narrow_events".events;
@@ -65,7 +82,7 @@ DO $eventpg$
 			FOR EACH ROW EXECUTE FUNCTION "narrow_events".events_are_append_only();
 	END
 $eventpg$;
--- statement 8
+-- statement 9
 DO $eventpg$
 	BEGIN
 		DROP TRIGGER IF EXISTS events_append_only_truncate ON "narrow_events".events;
@@ -73,7 +90,7 @@ DO $eventpg$
 			FOR EACH STATEMENT EXECUTE FUNCTION "narrow_events".events_are_append_only();
 	END
 $eventpg$;
--- statement 9
+-- statement 10
 DO $eventpg$
 	BEGIN
 		DROP TRIGGER IF EXISTS events_position_needs_xid ON "narrow_events".events;
@@ -81,22 +98,26 @@ DO $eventpg$
 			FOR EACH STATEMENT EXECUTE FUNCTION "narrow_events".events_assign_writer_xid();
 	END
 $eventpg$;
--- statement 10
-INSERT INTO "narrow_events".schema_meta (singleton, version, log, fingerprint)
-VALUES (true, 1, decode(replace(gen_random_uuid()::text, '-', ''), 'hex'), 'sha256:ac3891b8e1461ee46bc6d98db295424c61ce290acc4d1a6190433e41d6ee404e')
-ON CONFLICT (singleton) DO NOTHING;
 -- statement 11
+INSERT INTO "narrow_events".schema_meta (singleton, version, log, fingerprint)
+VALUES (true, 2, decode(replace(gen_random_uuid()::text, '-', ''), 'hex'), 'sha256:972ea2a141b50313e9feb07c80222e1fbe7be70781dbb09d53714c6a4421c569')
+ON CONFLICT (singleton) DO NOTHING;
+-- statement 12
+UPDATE "narrow_events".schema_meta
+   SET version = 2, fingerprint = 'sha256:972ea2a141b50313e9feb07c80222e1fbe7be70781dbb09d53714c6a4421c569'
+ WHERE singleton AND version = 1 AND fingerprint = 'sha256:ac3891b8e1461ee46bc6d98db295424c61ce290acc4d1a6190433e41d6ee404e';
+-- statement 13
 DO $eventpg$
 	DECLARE
 		deployed record;
 	BEGIN
 		SELECT version, fingerprint INTO deployed FROM "narrow_events".schema_meta WHERE singleton;
-		IF deployed.version IS DISTINCT FROM 1 OR deployed.fingerprint IS DISTINCT FROM 'sha256:ac3891b8e1461ee46bc6d98db295424c61ce290acc4d1a6190433e41d6ee404e' THEN
+		IF deployed.version IS DISTINCT FROM 2 OR deployed.fingerprint IS DISTINCT FROM 'sha256:972ea2a141b50313e9feb07c80222e1fbe7be70781dbb09d53714c6a4421c569' THEN
 			RAISE EXCEPTION USING
 				ERRCODE = 'EVPG1',
 				MESSAGE = format('eventpg: this schema is version %s at %s', deployed.version, deployed.fingerprint),
-				DETAIL = 'eventpg: this migration builds version 1 at sha256:ac3891b8e1461ee46bc6d98db295424c61ce290acc4d1a6190433e41d6ee404e',
-				HINT = 'eventpg: version 1 creates and never alters, so it cannot make this schema the one it describes';
+				DETAIL = 'eventpg: this migration builds version 2 at sha256:972ea2a141b50313e9feb07c80222e1fbe7be70781dbb09d53714c6a4421c569',
+				HINT = 'eventpg: this list creates what is absent and stamps only the version and bounds it can transform, so it cannot make this schema the one it describes';
 		END IF;
 	END
 $eventpg$;

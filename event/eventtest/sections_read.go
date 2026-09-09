@@ -58,6 +58,11 @@ func (this *probe) subsequence(page []event.Envelope) {
 	}
 }
 
+// This and subsequence above are one law, and neither section that runs them
+// takes a needs function: a store delivering in an order that is not position
+// order is not a store this suite holds a weaker certificate for, it is one no
+// projector folding per stream is correct against. [[D-128]] is the argument and
+// names the order it refused.
 func (this *probe) ascending(page []event.Envelope, doing string) {
 	for offset := 1; offset < len(page); offset++ {
 		if page[offset].Position <= page[offset-1].Position {
@@ -184,22 +189,36 @@ func globalPagingSection(this *probe) {
 }
 
 func (this *probe) from(ctx context.Context, log event.Log, over walking, doing string) []event.Envelope {
+	seen, _ := this.reading(ctx, log, over, doing)
+	return seen
+}
+
+// The events and the cursor the walk reached, which is what a consumer persists
+// and resumes from. The cursor of an empty page is taken too: a walk that ends
+// because the log has nothing more to give still leaves a resume point, and a
+// store that moved that one past a position it could not deliver is exactly the
+// defect the resumption section is about.
+func (this *probe) reading(ctx context.Context, log event.Log, over walking, doing string) ([]event.Envelope, event.Cursor) {
 	reader, err := event.Read(log, over.from)
 	if err != nil {
 		this.refuse("%s answered %v", doing, err)
 	}
 	seen := []event.Envelope{}
+	cursor := over.from
 	for len(seen) < over.want {
 		more, err := reader.Next(ctx)
 		if err != nil {
 			this.refuse("%s answered %v", doing, err)
 		}
+		if reader.Cursor() != "" {
+			cursor = reader.Cursor()
+		}
 		if !more {
-			return seen
+			return seen, cursor
 		}
 		seen = append(seen, this.mine(reader.Events(), over.held)...)
 	}
-	return seen
+	return seen, cursor
 }
 
 func (this *probe) keyFor(held declaration, id accountID) event.Key {

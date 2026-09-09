@@ -15,19 +15,29 @@ import (
 // *testing.T: a failure here is a verdict the suite reports, and the suite's own
 // falsification run has to observe one without the test that drives it turning
 // red.
+//
+// The half that is about running a section rather than about a Store is
+// recording, which the checkpoint suite's own subject embeds too: two verdict
+// types would be two accounts of one rule, and the three anti-vacuity rules
+// would drift apart the moment one of them was written twice.
 type probe struct {
-	t       *testing.T
+	recording
 	factory Factory
 	opening
-	mark  string
-	name  string
-	unmet []string
-	broke string
+}
+
+type recording struct {
+	t      *testing.T
+	name   string
+	mark   string
+	window time.Duration
+	unmet  []string
+	broke  string
 }
 
 type abort struct{}
 
-func (this *probe) walk(body func(*probe)) {
+func (this *recording) walk(body func()) {
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			if _, aborted := recovered.(abort); !aborted {
@@ -35,7 +45,7 @@ func (this *probe) walk(body func(*probe)) {
 			}
 		}
 	}()
-	body(this)
+	body()
 }
 
 // Every store call a section makes runs under this. The contract lets a store
@@ -47,8 +57,8 @@ func (this *probe) walk(body func(*probe)) {
 // A store that needs longer says so through Factory.Window.
 const sectionWindow = 20 * time.Second
 
-func (this *probe) context() context.Context {
-	window := this.factory.Window
+func (this *recording) context() context.Context {
+	window := this.window
 	if window <= 0 {
 		window = sectionWindow
 	}
@@ -57,14 +67,14 @@ func (this *probe) context() context.Context {
 	return ctx
 }
 
-func (this *probe) refuse(format string, args ...any) {
+func (this *recording) refuse(format string, args ...any) {
 	if this.broke == "" {
 		this.broke = fmt.Sprintf(format, args...)
 	}
 	panic(abort{})
 }
 
-func (this *probe) unable(format string, args ...any) {
+func (this *recording) unable(format string, args ...any) {
 	this.unmet = append(this.unmet, fmt.Sprintf(format, args...))
 }
 

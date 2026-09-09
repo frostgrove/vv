@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -17,7 +18,7 @@ import (
 
 const (
 	mutationVariable = "EVENTPG_MUTATION"
-	mutations        = 6
+	mutations        = 7
 )
 
 // The suite detects 27 of its own 165 section-level assertions, so "eventpg
@@ -40,6 +41,7 @@ func defects() []defect {
 		{"newest-position-cursor", "resumption", func(store *Store) event.Store { return newestCursor{store} }},
 		{"pooled-payload-buffer", "payload ownership", func(store *Store) event.Store { return &pooledPayloads{Store: store} }},
 		{"crossed-stream", "stream identity", func(store *Store) event.Store { return crossedStream{store} }},
+		{"in-flight-newest-position", "resumption", func(store *Store) event.Store { return newestFetched{store} }},
 	}
 }
 
@@ -236,6 +238,46 @@ func (this newestCursor) newestIn(ctx context.Context, from uint64) (uint64, err
 	var newest int64
 	row := this.db.QueryRowContext(ctx, "SELECT COALESCE(max(position), 0) FROM "+
 		quoteIdentifier(this.schema.Name)+"."+eventsTable+" WHERE position > $1", int64(from))
+	if err := row.Scan(&newest); err != nil {
+		return 0, err
+	}
+	return uint64(newest), nil
+}
+
+// The naive cursor, and the one a store author writes without meaning to: the
+// highest position the read's own query returned, rather than the highest one
+// every position below which has settled. In a quiescent log the two numbers are
+// the same, so this store is behaviourally identical to a correct one everywhere
+// except across a gap a writer still holds — where it hands back a checkpoint
+// past a position it did not deliver, and the walk resumed from it never returns
+// that event.
+type newestFetched struct{ *Store }
+
+func (this newestFetched) ReadAll(ctx context.Context, after event.Cursor) ([]event.Envelope, event.Cursor, error) {
+	page, cursor, err := this.Store.ReadAll(ctx, after)
+	if err != nil {
+		return page, cursor, err
+	}
+	held := this.state.Load()
+	if held == nil {
+		return page, cursor, nil
+	}
+	at, unreadable := readCursor(after, held.log)
+	if unreadable != nil {
+		return page, cursor, nil
+	}
+	newest, err := this.newestFetchedIn(ctx, at.from)
+	if err != nil || newest <= at.from {
+		return page, cursor, err
+	}
+	return page, mintCursor(held.log, walk{from: newest}), nil
+}
+
+func (this newestFetched) newestFetchedIn(ctx context.Context, from uint64) (uint64, error) {
+	var newest int64
+	row := this.db.QueryRowContext(ctx, "SELECT COALESCE(max(position), 0) FROM (SELECT position FROM "+
+		quoteIdentifier(this.schema.Name)+"."+eventsTable+" WHERE position > $1 ORDER BY position LIMIT "+
+		strconv.Itoa(this.limits.MaxRead)+") AS fetched", int64(from))
 	if err := row.Scan(&newest); err != nil {
 		return 0, err
 	}

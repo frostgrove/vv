@@ -38,6 +38,7 @@ type Log struct {
 	position     event.Position
 	claims       map[event.Stream]weak.Pointer[Tx]
 	transactions uint64
+	checkpoints  map[string]event.Checkpoint
 }
 
 func NewLog(spec LogSpec) (*Log, error) {
@@ -55,6 +56,7 @@ func NewLog(spec LogSpec) (*Log, error) {
 		fingerprint: rand.Text(),
 		streams:     map[event.Stream][]event.Envelope{},
 		claims:      map[event.Stream]weak.Pointer[Tx]{},
+		checkpoints: map[string]event.Checkpoint{},
 	}
 	log.backing, err = event.NewBacking(log)
 	if err != nil {
@@ -115,4 +117,22 @@ func (this *Log) publish(envelopes []event.Envelope) {
 		this.streams[envelope.Stream] = append(this.streams[envelope.Stream], envelope)
 		this.global = append(this.global, envelope)
 	}
+}
+
+// The checkpoint rows live here beside the envelopes and under the same mutex,
+// for the reason the envelopes do: two checkpoint values over one log are one
+// store, and a restart resumes through a value that did not exist when the row
+// was written.
+func (this *Log) checkpointHeld(projection string) event.Checkpoint {
+	return this.checkpoints[projection]
+}
+
+// A save at advance zero is how a staged Forget travels, so the two are one
+// staging area and a rolled-back unit discards both alike.
+func (this *Log) recordCheckpoint(held event.Checkpoint) {
+	if held.Advance == 0 {
+		delete(this.checkpoints, held.Projection)
+		return
+	}
+	this.checkpoints[held.Projection] = held
 }

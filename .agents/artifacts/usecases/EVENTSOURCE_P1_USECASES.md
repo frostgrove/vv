@@ -3115,8 +3115,10 @@ place; INV-038…INV-045 were appended one round at a time, never inserted.
   sender that is still a reader, **or that does not own the memory it is about to
   hand over**, must make the hand-off safe.
 - **The outbound domain, enumerated before the rule so the rule can be total over
-  it.** Mutable memory crosses a party boundary at exactly **seven** points: five
-  carry payload bytes, two are the slices that carry records and envelopes.
+  it.** Mutable memory crosses a party boundary at exactly **eight** points: six
+  carry payload bytes, two are the slices that carry records and envelopes. Seven
+  were phase 1's; the eighth is phase 3's `event/projection`, appended rather than
+  inserted, exactly as the stability rule below provides for.
   Everything else crossing any boundary is a string, a scalar, a func value, an
   opaque handle or an error, and no party can write through one. **The store
   boundary — §D.14's eight methods — contributes exactly four of the seven**:
@@ -3135,10 +3137,11 @@ place; INV-038…INV-045 were appended one round at a time, never inserted.
   | 5 | the **kernel** → a **codec**, a store's `Envelope.Payload` on the load path | no — the kernel retains none of it, and row 4 already discharged it | nothing, and naming it is what makes this table total: it is why a replay pays **zero** kernel clones (§D.13) |
   | 6 | the **kernel** → a **store**, the `Records` slice itself | **yes** — every `Payload` inside it is row 3's array, which the kernel reads again at every later fold and every later append of the same change list (§UC-058, §D.3) | the **recipient**: a store reads the slice for the duration of the call and neither writes into it nor retains it past the return. A store that keeps rows for later takes its own slice, exactly as it clones a payload it retains |
   | 7 | a **store** → the kernel or a caller, the `[]Envelope` a read returns | **it must be neither**, for row 4's reason one level out | the **sender**: a fresh slice per call, whose backing array no later `ReadStream` or `ReadAll` reuses — because a `*Reader` hands that slice straight to the consumer and §INV-038 blesses fanning it out to workers |
+  | 8 | the **framework** → a **handler**, `Batch.Envelopes` and every `Envelope.Payload` in it (`event/projection`) | **yes, and this is the first row where the sender is still a reader of what it handed over** — a retry re-applies the page the projection is holding rather than re-reading the log, so the page and every payload in it are read again after the handler has had them | the **sender**: `copyOf` takes a fresh slice and a fresh copy of every payload **per attempt, the first included**, and keeps the log's own page untouched beside them. The grant is unnarrowed — the handler may keep the page indefinitely, read it from any goroutine and write into it — because narrowing it to "yours for the duration of this call" makes a handler that keeps a page, which §INV-038 blesses, or writes into one, which row 4 blesses, lose events with no error on any path. The price is one allocation and one copy of the page's payload bytes per attempt: against the measured ~1.4 µs per event, a 256-envelope page of 120-byte payloads is a single ~30 KB copy beside ~360 µs of work |
 
-  A caller's own payload value is not an eighth: it is consumed at `Fact.New` by
-  being encoded, which is the inbound table's first row and not a hand-off of an
-  array at all.
+  A caller's own payload value is not a further row: it is consumed at `Fact.New`
+  by being encoded, which is the inbound table's first row and not a hand-off of
+  an array at all.
 - **Why rows 4 and 7 are quantified over the recipient and not over the store's
   own future reads** *Memory the store will never read again* is satisfied by an
   array a **third party** will overwrite: the ordinary high-performance driver

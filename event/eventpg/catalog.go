@@ -158,8 +158,8 @@ type deployedSchema struct {
 	unexpected  []string
 }
 
-func (this *Store) inspect(ctx context.Context, on *sql.Conn) error {
-	model := expected(this.schema)
+func inspect(ctx context.Context, on *sql.Conn, schema Schema) error {
+	model := expected(schema, SchemaVersion)
 	found, err := readCatalog(ctx, on, model)
 	if err != nil {
 		return err

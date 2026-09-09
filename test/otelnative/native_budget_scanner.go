@@ -196,7 +196,7 @@ func (s *NativeBudgetScanner) validateSeries(instrument NativeBudgetInstrument, 
 		if err := validateNativeDomainValue(s.manifest.Domains[definition.Domain], value); err != nil {
 			return "", fmt.Errorf("attribute %q: %w", key, err)
 		}
-		builder.WriteString(value.Type().String())
+		builder.WriteString(value.Value.Type().String())
 		builder.WriteByte(':')
 		builder.WriteString(value.Value.Emit())
 		builder.WriteByte(0)

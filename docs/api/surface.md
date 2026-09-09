@@ -1035,6 +1035,9 @@ type Chain[V any] struct{ ... }
     func From[V any](codec Codec[V]) Chain[V]
     func Then[A, B any](prev Chain[A], codec Codec[B], up func(A) (B, error)) Chain[B]
 type Change[S any] struct{ ... }
+type Checkpoint struct{ ... }
+type CheckpointCapabilities struct{ ... }
+type Checkpoints interface{ ... }
 type Codec[V any] interface{ ... }
     func JSON[V any]() Codec[V]
 type Commit struct{ ... }
@@ -1052,6 +1055,7 @@ type Log interface{ ... }
 type Outcome uint8
     const Unclassified Outcome = iota ...
 type Position uint64
+type Progress struct{ ... }
 type Reader struct{ ... }
     func Read(log Log, after Cursor) (*Reader, error)
 type Record struct{ ... }
@@ -1061,12 +1065,17 @@ type Store interface{ ... }
 type Stream struct{ ... }
 type Support uint8
     const Unstated Support = iota ...
+type Tracker struct{ ... }
+    func Track(checkpoints Checkpoints, projection string) (*Tracker, error)
 type Version uint64
 ```
 
 ## github.com/frostgrove/vv/event/eventmemory
 ```go
 func WithTransaction(ctx context.Context, tx *Tx) context.Context
+type CheckpointSpec struct{ ... }
+type Checkpoints struct{ ... }
+    func NewCheckpoints(spec CheckpointSpec) (*Checkpoints, error)
 type Log struct{ ... }
     func NewLog(spec LogSpec) (*Log, error)
 type LogSpec struct{ ... }
@@ -1082,8 +1091,46 @@ func Families(t *testing.T, declarations ...event.Declaration)
 func Keys[S, ID any](t *testing.T, a *event.Aggregate[S, ID], ids ...ID)
 func RoundTrip[S, ID, E any](t *testing.T, fact *event.Fact[S, ID, E], byRevision ...any)
 func Run(t *testing.T, factory Factory)
+func RunCheckpoints(t *testing.T, factory CheckpointFactory)
+type CheckpointFactory struct{ ... }
 type Factory struct{ ... }
 type Tx interface{ ... }
+```
+
+## github.com/frostgrove/vv/event/projection
+```go
+var ErrSpec = errors.New("projection: this projection cannot be assembled from this spec") ...
+var Unchecked = unchecked{}
+func Ignore(router *Router, family string, types ...string)
+func On[S, ID, E any](router *Router, fact *event.Fact[S, ID, E], ...)
+func TryIgnore(router *Router, family string, types ...string) error
+func TryOn[S, ID, E any](router *Router, fact *event.Fact[S, ID, E], ...) error
+type Advance uint8
+    const UnsetAdvance Advance = iota ...
+type Backoff struct{ ... }
+type Batch struct{ ... }
+type Classifier func(err error) Verdict
+type Failure uint8
+    const Halt Failure = iota ...
+type Foreign uint8
+    const SkipForeign Foreign = iota ...
+type Handler interface{ ... }
+type HandlerFunc func(ctx context.Context, batch Batch) error
+type Observer interface{ ... }
+type ObserverFunc func(state State)
+type Phase string
+    const PhaseStarting Phase = "starting" ...
+type Projection struct{ ... }
+    func New(spec Spec) (*Projection, error)
+type Quarantined struct{ ... }
+type Quarantines interface{ ... }
+type Router struct{ ... }
+    func NewRouter(foreign Foreign) *Router
+type Spec struct{ ... }
+type State struct{ ... }
+type Verdict uint8
+    const Retryable Verdict = iota ...
+    func Classify(err error) Verdict
 ```
 
 ## github.com/frostgrove/vv/health
@@ -2591,6 +2638,9 @@ type TransportOption func(*transport)
 const DefaultSchema = "frostgrove_events" ...
 var ErrSpec = errors.New("eventpg: this store cannot be assembled from this spec") ...
 func MigrationStatements(schema Schema) ([]string, error)
+type CheckpointSpec struct{ ... }
+type Checkpoints struct{ ... }
+    func NewCheckpoints(spec CheckpointSpec) (*Checkpoints, error)
 type Schema struct{ ... }
 type SchemaManagement uint8
     const UnsetSchemaManagement SchemaManagement = iota ...

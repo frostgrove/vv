@@ -57,8 +57,12 @@ through it.
 | a transactional enqueue, a staged placement, a lease, a takeover, or an effect that must not outlive a rollback | [[FL-035]] |
 | an aggregate declaration, a fact, a reader chain, an expected-version append, a stream replay, a log walk or an event store | [[FL-036]] |
 | the PostgreSQL event schema, its migration or verification, the one-statement append, the settled-watermark cursor or the conformance run | [[FL-037]] |
+<<<<<<< HEAD
 | an i18n declaration, locale resolver, MF2 template, typed message, usage extraction, catalogue artifact, overlay, render, error source or publication controller | [[FL-038]] |
 | the audit trace registry, semantic or completeness authority, tagged design import, or section checkpoint | [[FL-039]] |
+=======
+| a projection, a checkpoint store, a router, the retry and quarantine passes, or how a settled cursor becomes a durable row | [[FL-038]] |
+>>>>>>> 5fedaae3d4e688198eb0116509c76d075429340e
 
 **A code change that alters a path must update its flow document in the same
 change.** Not afterwards, not in a follow-up. A flow that describes a path the
@@ -112,8 +116,12 @@ phase 3 landed FL-014 and before phase 5 landed FL-015.
 | [FL-035](FL-035-a-committed-decision-becomes-a-delivered-effect.md) | A committed decision becomes a delivered effect | `jobs.Enqueue` / `jobs.EnqueueIn` / `jobspg.Driver.Place` | [[UC-031]] |
 | [FL-036](FL-036-a-decision-becomes-a-recorded-fact.md) | A decision becomes a recorded fact | `event.Define` / `event.Bind` / `event.Repo.Load` / `event.Repo.Append` | [[UC-032]] |
 | [FL-037](FL-037-a-recorded-fact-becomes-a-postgresql-row.md) | A recorded fact becomes a PostgreSQL row | `eventpg.New` / `eventpg.Store.Prepare` / `eventpg.Store.Append` / `eventpg.Store.ReadAll` | [[UC-032]] |
+<<<<<<< HEAD
 | [FL-038](FL-038-a-message-declaration-becomes-rendered-presentation.md) | A message declaration becomes rendered presentation | `i18n.New` / `vv-i18n extract|merge` / `Snapshot.Resolve` / `Snapshot.Bind` / `DefineStruct` / `View.Render` / `NewFormatter` / `Controller.Activate` | [[UC-033]] |
 | [FL-039](FL-039-an-audit-contract-becomes-an-executable-checkpoint.md) | An audit contract becomes an executable checkpoint | `scripts/audit-trace.sh` / `scripts/audit_trace_test.go:TestAuditTraceRegistry` / `scripts/audit_trace_import_test.go:TestAuditTraceDesignImport` | [[UC-034]] |
+=======
+| [FL-038](FL-038-a-settled-cursor-becomes-a-durable-checkpoint.md) | A settled cursor becomes a durable checkpoint | `projection.New` / `projection.Projection.Run` / `event.Track` / `eventtest.RunCheckpoints` | [[UC-032]] |
+>>>>>>> 5fedaae3d4e688198eb0116509c76d075429340e
 
 ## By file — which flows touch this file
 
@@ -519,7 +527,7 @@ phase 3 landed FL-014 and before phase 5 landed FL-015.
 | `event/doc.go` | FL-036 |
 | `event/identity.go` | FL-036 |
 | `event/text.go` | FL-036 |
-| `event/bounds.go` | FL-036 |
+| `event/bounds.go` | FL-036, FL-038 |
 | `event/backing.go` | FL-036 |
 | `event/authority.go` | FL-036 |
 | `event/marker.go` | FL-036 |
@@ -533,18 +541,20 @@ phase 3 landed FL-014 and before phase 5 landed FL-015.
 | `event/chain.go` | FL-036 |
 | `event/aggregate.go` | FL-036 |
 | `event/seal.go` | FL-036 |
-| `event/fact.go` | FL-036 |
+| `event/fact.go` | FL-036, FL-038 |
 | `event/comparison.go` | FL-036 |
 | `event/change.go` | FL-036 |
+| `event/checkpoint.go` | FL-038 |
 | `event/binding.go` | FL-036 |
 | `event/repo.go` | FL-036 |
-| `event/reader.go` | FL-036 |
+| `event/reader.go` | FL-036, FL-038 |
 | `event/eventmemory/log.go` | FL-036 |
 | `event/eventmemory/store.go` | FL-036 |
 | `event/eventmemory/append.go` | FL-036 |
 | `event/eventmemory/read.go` | FL-036 |
 | `event/eventmemory/cursor.go` | FL-036 |
-| `event/eventmemory/transaction.go` | FL-036 |
+| `event/eventmemory/transaction.go` | FL-036, FL-038 |
+| `event/eventmemory/checkpoints.go` | FL-036, FL-038 |
 | `event/eventmemory/doc.go` | FL-036 |
 | `event/eventtest/doc.go` | FL-036 |
 | `event/eventtest/suite.go` | FL-036 |
@@ -564,6 +574,9 @@ phase 3 landed FL-014 and before phase 5 landed FL-015.
 | `event/eventtest/defects_read.go` | FL-036 |
 | `event/eventtest/defects_ownership.go` | FL-036 |
 | `event/eventtest/defects_lifecycle.go` | FL-036 |
+| `event/eventtest/checkpoints.go` | FL-036, FL-038 |
+| `event/eventtest/sections_checkpoints.go` | FL-036, FL-038 |
+| `event/eventtest/defects_checkpoints.go` | FL-036, FL-038 |
 | `event/eventtest/stores.go` | FL-036 |
 | `event/eventpg/doc.go` | FL-037 |
 | `event/eventpg/schema.go` | FL-037 |
@@ -576,6 +589,7 @@ phase 3 landed FL-014 and before phase 5 landed FL-015.
 | `event/eventpg/append.go` | FL-037 |
 | `event/eventpg/read.go` | FL-037 |
 | `event/eventpg/cursor.go` | FL-037 |
+<<<<<<< HEAD
 | `i18n/go.mod` | FL-038 |
 | `i18n/catalog.go` | FL-038 |
 | `i18n/source.go` | FL-038 |
@@ -623,6 +637,18 @@ phase 3 landed FL-014 and before phase 5 landed FL-015.
 | `scripts/testdata/audit_trace.tsv` | FL-039 |
 | `scripts/testdata/audit_trace_semantics.json` | FL-039 |
 | `scripts/testdata/audit_trace_anchor.json` | FL-039 |
+=======
+| `event/eventpg/checkpoints.go` | FL-037, FL-038 |
+| `event/projection/doc.go` | FL-038 |
+| `event/projection/errors.go` | FL-038 |
+| `event/projection/spec.go` | FL-038 |
+| `event/projection/page.go` | FL-038 |
+| `event/projection/classify.go` | FL-038 |
+| `event/projection/state.go` | FL-038 |
+| `event/projection/router.go` | FL-038 |
+| `event/projection/projection.go` | FL-038 |
+| `event/projection/pass.go` | FL-038 |
+>>>>>>> 5fedaae3d4e688198eb0116509c76d075429340e
 
 `crud/sqlrepo/repository.go` is in eleven of them. It is the layer everything else
 decorates, and almost no change to it is local.

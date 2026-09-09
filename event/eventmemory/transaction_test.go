@@ -595,3 +595,84 @@ func TestATransactionThisStoreCannotUseIsRefusedAtEveryDoor(t *testing.T) {
 		}
 	})
 }
+
+// The case the second staging area owes: a unit that staged two appends and a
+// checkpoint save burns two positions when it rolls back and not three. A save
+// riding in the append's own staging slice would burn the third, so the next
+// append would land a position above where it belongs — an event the log will
+// never hold and a gap no reader can explain.
+func TestARolledBackUnitStagedBothAndBurntOnlyTheAppends(t *testing.T) {
+	ctx := context.Background()
+	log, store := openStore(t)
+	held := newCheckpoints(t, eventmemory.CheckpointSpec{Log: log})
+	minting := &minter{store: store}
+	discarded, later := streamOf("orders.order", "acme/discarded"), streamOf("orders.order", "acme/later")
+
+	written := event.Checkpoint{Projection: "orders.v1", Cursor: minting.next(t), Advance: 1,
+		Progress: event.Progress{Highest: 1, Applied: 1}}
+	staged := event.Checkpoint{Projection: written.Projection, Cursor: minting.next(t), Advance: 2,
+		Progress: event.Progress{Highest: 4, Applied: 4}}
+	saveCheckpoint(t, ctx, held, written)
+	before := lastPosition(t, ctx, store)
+
+	inside, tx := begin(t, ctx, store)
+	appendTo(t, inside, store, discarded, 0, "rolled back", "rolled back too")
+	saveCheckpoint(t, inside, held, staged)
+	if err := tx.Rollback(ctx); err != nil {
+		t.Fatalf("rolling back a unit that staged two appends and a save answered %v", err)
+	}
+
+	if after := loadCheckpoint(t, ctx, held, written.Projection); after != written {
+		t.Fatalf("a save staged inside a unit that rolled back left the row at %+v where it held %+v", after, written)
+	}
+	appendTo(t, ctx, store, later, 0, "the one after the rollback")
+	if last := lastPosition(t, ctx, store); last != before+3 {
+		t.Fatalf("the append after the rollback took position %d where the log stood at %d: a unit that staged two appends burns two positions, and a checkpoint save that burnt a third is an event the log will never hold",
+			last, before)
+	}
+	if page := readStream(t, ctx, store, discarded, 0); len(page) != 0 {
+		t.Fatalf("the rolled-back stream still holds %v", payloadsOf(page))
+	}
+
+	t.Run("the same unit committed publishes both", func(t *testing.T) {
+		log, control := openStore(t)
+		beside := newCheckpoints(t, eventmemory.CheckpointSpec{Log: log})
+		minting := &minter{store: control}
+		first := event.Checkpoint{Projection: "orders.v1", Cursor: minting.next(t), Advance: 1}
+		kept := event.Checkpoint{Projection: first.Projection, Cursor: minting.next(t), Advance: 2,
+			Progress: event.Progress{Highest: 4, Applied: 4}}
+		saveCheckpoint(t, ctx, beside, first)
+		before := lastPosition(t, ctx, control)
+
+		inside, tx := begin(t, ctx, control)
+		appendTo(t, inside, control, discarded, 0, "kept", "kept too")
+		saveCheckpoint(t, inside, beside, kept)
+		if err := tx.Commit(ctx); err != nil {
+			t.Fatalf("committing a unit that staged two appends and a save answered %v", err)
+		}
+
+		if after := loadCheckpoint(t, ctx, beside, kept.Projection); after != kept {
+			t.Fatalf("a save staged inside a unit that committed left the row at %+v where it wrote %+v", after, kept)
+		}
+		appendTo(t, ctx, control, later, 0, "the one after the commit")
+		if last := lastPosition(t, ctx, control); last != before+3 {
+			t.Fatalf("the append after the commit took position %d where the log stood at %d, so the position the rollback case counts is not the appends' own", last, before)
+		}
+		if got := payloadsOf(readStream(t, ctx, control, discarded, 0)); !slices.Contains(got, "kept") || !slices.Contains(got, "kept too") {
+			t.Fatalf("the committed unit's appends are not on their stream: %v", got)
+		}
+	})
+}
+
+func lastPosition(t *testing.T, ctx context.Context, store *eventmemory.Store) event.Position {
+	t.Helper()
+	var at event.Position
+	var cursor event.Cursor
+	for {
+		page, next := readAll(t, ctx, store, cursor)
+		if len(page) == 0 {
+			return at
+		}
+		at, cursor = page[len(page)-1].Position, next
+	}
+}

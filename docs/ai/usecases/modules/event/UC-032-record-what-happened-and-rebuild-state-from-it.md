@@ -2,7 +2,7 @@
 
 **Actor:** the application author whose domain has a history, not just a current
 row
-**Covered by:** [[FL-036]]
+**Covered by:** [[FL-036]] [[FL-037]] [[FL-038]]
 
 ## Scenario
 
@@ -134,14 +134,73 @@ rewriting the domain.
     beginning of the log.
 20. None of this costs the author a third-party dependency, and none of it is
     compiled by an application that does not use it.
+21. **A consumer that follows the log is supervised by the host and records where
+    it got to.** It starts nothing of its own, its loop runs on a goroutine the
+    host gave it, it stops between passes when the host asks, and it answers a
+    readiness question naming no importance of its own. What it records is the
+    resume point the store minted and never a number the author could compute
+    from a position.
+22. **Recording that a page is finished admits one writer at a time.** A save
+    lands if and only if the stored fence is one below the one presented, and a
+    consumer that loses that race is told so rather than overwriting the winner.
+    Losing is not fatal: every rolling restart runs two of a singleton on purpose
+    for a few seconds, so the loser adopts what the winner recorded, resumes from
+    **the winner's** resume point, and reports the contention through its own
+    readiness answer once it has been losing for longer than the author allows.
+    A resume point that was retired, reset or restored underneath a running
+    consumer is different and does stop it.
+23. **The author chooses whether the record of progress rides in their own
+    transaction, and the promise carries its precondition.** Where it does, the
+    handler's writes and the record commit or roll back together — as far as the
+    handler wrote through the transaction it was given, which is an obligation the
+    framework checks as much of as it can see and states where it cannot. A
+    destination the framework cannot resolve has to be declared as one; leaving a
+    field unset is refused rather than read as that declaration. Where it does
+    not, the order is handle first and record last, and a crash between the two
+    re-delivers.
+24. **Delivery to a handler is at least once in every mode**, and what the
+    framework hands the handler instead of deduplication is the identity every
+    event already carries — the stream and the version — which is unique and
+    stable for every event ever written. Each attempt is handed its own copy of
+    the page, so a handler may keep, share or rewrite the one it holds without
+    changing what a retry applies.
+25. **A failure a handler cannot recover from is either loud or recorded, and
+    never silent.** By default the consumer stops advancing and says why. Where
+    the author supplies somewhere to put it, the page is delivered again one
+    event at a time, the events that apply are applied, the one that cannot is
+    recorded with its cause and passed, and the count of what was passed is part
+    of what is stored — so the resume point never reads as a claim that the
+    destination is complete.
+26. **What a consumer did not apply is declared, or a family it has no business
+    with, or a stop — and never a silence.** A recorded type of a family the
+    consumer routes and no route claims stops it; a family it routes nothing of
+    is skipped and counted. A type it deliberately does not want is declared by
+    name, so a type this build no longer models can be named too.
+27. **Delivery order is a law rather than a store's option.** Positions ascend
+    within a page and across the pages one resume point tiles, and one aggregate's
+    events reach a consumer in the order that aggregate holds them. There is no
+    capability for either, and a store that cannot hold both is not a conformant
+    store.
+28. **A checkpoint store somebody else writes is held to the same contract by a
+    suite that ships with the framework**, on the same terms as the event store's:
+    a capability it does not claim is reported as not certified rather than as a
+    pass, and the suite is itself checked against deliberately broken stores.
 
 ## Out of scope
 
 - Exactly-once delivery of anything built on the log. Point 18 is the whole of
   the answer, and there is no mode that changes it.
-- Snapshots, projections, projectors, subscriptions and read models. The log and
-  the walk over it are what is provided; what is built on them is the
-  application's.
+- Snapshots, and any second answer to what an aggregate's state is. Full replay
+  is the only authority; the measured trigger for reconsidering that is recorded
+  rather than left open.
+- Subscriptions, brokers, publishers and integration events. A consumer that
+  follows the log and records where it got to is provided; sending what it read
+  anywhere else is the application's.
+- Deduplication of anything delivered to a handler, in any mode. Point 24 is the
+  whole of the answer.
+- Any promise that one deployment runs one consumer of a name. The framework says
+  what it expects and the fence is what actually holds; enforcement is the
+  orchestrator's.
 - A query language over history, an ordinary list-and-filter endpoint over
   events, or anything that makes a fact history behave like a collection.
 - Deciding across two aggregates atomically without a transaction the caller

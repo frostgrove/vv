@@ -16,6 +16,10 @@ passes a position a writer could still commit.
 six checks an append passes before a store hears about it, and the six classes a
 refusal belongs to. This flow starts where that one reaches `Store.Append`.
 
+[[FL-038]] is the consumer's half: `eventpg.Checkpoints` is the fourth table of
+this schema, and what a projection does with the pages this store's `ReadAll`
+answers lives there.
+
 `eventpg` is a module of its own because its live fixtures need a driver
 ([[D-121]]'s "what would change the answer", [[D-051]]). Its non-test files
 import `database/sql`, `crud`, `crud/adapter/crudsql`, `crud/sqlfault`, `errs`,
@@ -54,15 +58,19 @@ fingerprint alike.
 `event/eventpg/schema.go:MigrationStatements`, `event/eventpg/migration.go`,
 `event/eventpg/verify.go`, `event/eventpg/catalog.go`:
 
-1. `MigrationStatements(schema)` renders eleven statements from the same
-   `expectation` the fingerprint digests, so a model change moves both and a
-   DDL-rendering change moves only the first. All eleven are transactional DDL.
-   Statement ten mints the log in the database and never reissues it; statement
-   eleven **asserts** what ten wrote and raises SQLSTATE `EVPG1` on a mismatch.
-   A schema another expectation built is refused rather than restamped.
+1. `MigrationStatements(schema)` renders thirteen statements from the same
+   version-parameterised `expectation` the fingerprint digests, so a model change
+   moves both and a DDL-rendering change moves only the first. All thirteen are
+   transactional DDL, and the one list both builds schema version 2 and
+   transforms a deployed version 1 into it. Statement eleven mints the log in the
+   database and never reissues it; statement twelve stamps version 2 over a
+   deployed version 1, **guarded on the version and on the version-1 fingerprint
+   at these bounds**; statement thirteen **asserts** what the two wrote and raises
+   SQLSTATE `EVPG1` on a mismatch. A schema another expectation built is refused
+   rather than restamped.
 2. `Store.Migrate` runs under `ManageSchema` only, and refuses under
    `VerifySchema` with `ErrSpec`. It takes a session advisory lock keyed by
-   `sha256(schema)` on **one pinned `*sql.Conn`**, runs the eleven statements in
+   `sha256(schema)` on **one pinned `*sql.Conn`**, runs the thirteen statements in
    one transaction on that same connection, commits, and unlocks on a context
    detached from cancellation — a lock taken over the pool serialises nothing.
 3. `Store.Prepare` migrates (under `ManageSchema`), then verifies. Until it has
@@ -218,26 +226,31 @@ triples no walk could have produced.
   surface**, because history is append-only in the database. `MIGRATIONS.md`
   carries the operator's remedy.
 - **`event/` outside `event/eventpg` is frozen.** `make check-event-kernel`
-  compares the working tree against the commit that landed the phase-1 kernel and
-  refuses rather than reporting ok when it cannot ask.
+  compares the tree against `scripts/event_kernel.sha256`, one sha256 and one
+  path per file, and refuses rather than reporting ok when it cannot ask. A
+  deliberate move is recorded with `make check-event-kernel-baseline` in the same
+  change as the code, and `check-event-kernel-moved` is what reads that move
+  against a predecessor and refuses a path nobody planned for.
 
 ## Files
 
 | File | What it holds |
 |---|---|
 | `event/eventpg/doc.go` | the package sentence, and what this store promises about ordering and about the writers it covers |
-| `event/eventpg/schema.go` | `DefaultSchema`, `SchemaVersion`, the four `Default*` bounds, `Schema`, `Schema.Resolved`, `Schema.Fingerprint`, `MigrationStatements`, `validSchemaName`, and the expectation model both renderings are built from — `expectation`, `expectedTable`, `expectedColumn`, `expectedIdentity`, `expectedUnique`, `expectedForeignKey`, `expectedCheck`, `expectedTrigger`, `expectedFunction`, `expected`, `bytesBetween`, `rendering` |
+| `event/eventpg/schema.go` | `DefaultSchema`, `SchemaVersion`, the four `Default*` bounds, `Schema`, `Schema.Resolved`, `Schema.Fingerprint`, `Schema.fingerprintAt`, `MigrationStatements`, `validSchemaName`, and the version-parameterised expectation model both renderings are built from — `expectation`, `expectedTable`, `expectedColumn`, `expectedIdentity`, `expectedUnique`, `expectedForeignKey`, `expectedCheck`, `expectedTrigger`, `expectedFunction`, `expected`, `checkpoints`, `bytesBetween`, `rendering` |
 | `event/eventpg/config.go` | `ErrSpec`, `ErrSchemaMismatch`, `ErrNotReady`, `SchemaManagement` and its `Valid`/`String`, `Spec`, `Store`, `backing`, `New`, `limitsOf`, `fits`, `bound`, and the six pure answers — `Store.Schema`, `Store.SchemaManagement`, `Store.Capabilities`, `Store.Limits`, `Store.Backing`, `Store.Close` |
-| `event/eventpg/migration.go` | `migrationStatements`, `assertMeta`, `createTable`, `createFunction`, `createTrigger`, `quoteIdentifier`, `quoteLiteral`, `migrationLock`, `Store.Migrate`, `Store.withMigrationLock`, `Store.migrateOn`, `Store.migrationFailure` — the only file that names `BeginTx`, `Commit` or `Rollback` |
-| `event/eventpg/verify.go` | `logBytes`, `readiness`, `Store.Prepare`, `Store.Verify`, `Store.Check`, `Store.readMeta`, `Store.metaFailure` — levels 1 and 2, and the readiness a cursor's log is read out of |
-| `event/eventpg/catalog.go` | level 3: the seven `pg_catalog` reads, `deployedRelation`, `deployedColumn`, `deployedConstraint`, `deployedTrigger`, `deployedSchema`, `Store.inspect`, `readCatalog`, `expectation.compare` and its six comparisons, `sameDefinition`, `tokens`, `triggerMask` |
-| `event/eventpg/executor.go` | `errAmbientNotTransaction`, `Store.Transaction`, `Store.opened`, `Store.bound`, `executor`, `run`, `Store.onExecutor` — the fixed opening order and the seam every statement is issued through |
+| `event/eventpg/migration.go` | `migrationStatements`, `stampMeta`, `assertMeta`, `createTable`, `createFunction`, `createTrigger`, `quoteIdentifier`, `quoteLiteral`, `migrationLock`, `Store.Migrate`, `migrateSchema`, `withMigrationLock`, `migrateOn`, `migrationFailure` — the only file that names `BeginTx`, `Commit` or `Rollback`. The four below `Store.Migrate` take the schema rather than a store, because a `Store` and a `Checkpoints` over one schema are two resources at one schema version |
+| `event/eventpg/verify.go` | `logBytes`, `readiness`, `Store.Prepare`, `Store.Verify`, `Store.Check`, `verifySchema`, `checkSchema`, `readMeta`, `metaFailure` — levels 1 and 2, and the readiness a cursor's log is read out of |
+| `event/eventpg/catalog.go` | level 3: the seven `pg_catalog` reads, `deployedRelation`, `deployedColumn`, `deployedConstraint`, `deployedTrigger`, `deployedSchema`, `inspect`, `readCatalog`, `expectation.compare` and its six comparisons, `sameDefinition`, `tokens`, `triggerMask` |
+| `event/eventpg/executor.go` | `errAmbientNotTransaction`, `Store.Transaction`, `Store.opened`, `Store.bound`, `boundTx`, `executor`, `run`, `Store.onExecutor`, `onExecutor` — the fixed opening order and the seam every statement is issued through |
 | `event/eventpg/classify.go` | `outcomeOf`, `backendSurvived`, `causeOf` — `NotWritten` only on proof, and the retryable cause three SQLSTATEs earn |
 | `event/eventpg/append.go` | `errStreamMoved`, `errStreamAhead`, `Store.Append`, `payloadOf`, `Store.appendStatement`, `recordRows`, `recordRow` — one statement, and what its row count means |
 | `event/eventpg/read.go` | `errRowOutsideSchema`, `errNoRow`, `storedEvent`, `Store.ReadStream`, `Store.ReadAll`, `Store.fetch`, `deliverable`, `reached`, `walk.settledAt`, `walk.spent`, `Store.promised`, `number`, `streamStatement`, `logStatement` — the two doors and the eight-step watermark walk |
+| `event/eventpg/checkpoints.go` | `CheckpointSpec`, `Checkpoints`, `NewCheckpoints`, its `Capabilities`, `Backing`, `Schema`, `SchemaManagement`, `Close`, `Prepare`, `Check`, `Transaction`, `opened`, `Load`, `Save`, `Forget`, `on`, `promisedCheckpoint`, `refusable`, `loadStatement`, `saveStatement`, `forgetStatement` — the fourth table's own resource, and the two fenced statements its save is: `saveStatement` takes the advance, because a create that could overwrite and a move that could create are the same defect twice |
 | `event/eventpg/cursor.go` | `cursorTag`, `cursorBytes`, `errCursorFormat`, `errCursorForeign`, `errCursorImpossible`, `walk`, `mintCursor`, `readCursor`, `walk.possible` — the fixed-width, tagged, log-bound encoding |
-| `event/eventpg/MIGRATIONS.md` | the profile rule, what each of the eleven statements is for, why statement eleven asserts rather than assigns, and the remedy for a row the read refuses |
-| `scripts/checks.sh` | `EVENT_KERNEL_BASELINE` and `check_event_kernel` — the arm that makes the zero-diff obligation executable |
+| `event/eventpg/MIGRATIONS.md` | the profile rule, what each of the thirteen statements is for, why the stamping update is guarded on the fingerprint it migrates from, and the remedy for a row the read refuses |
+| `scripts/checks.sh` | `EVENT_KERNEL_MANIFEST`, `event_kernel_manifest`, `check_event_kernel`, `event_kernel_baseline` and `event_kernel_moved` — the three arms that make the zero-diff obligation executable, and its recorded moves reviewable |
+| `scripts/event_kernel.sha256` | the manifest itself: one sha256 and one path per file under `event/` outside `event/eventpg` |
 | `scripts/event_test.go` | the `eventpg` row of `charged`: this package costs the vocabulary plus `crud/adapter/crudsql` and nothing else |
 
 Every non-test `.go` file under `event/eventpg/` has a row above, `doc.go`
@@ -259,7 +272,19 @@ schema harness, the counting and injecting `database/sql` driver),
 `uncertainty_integration_test.go`, `read_integration_test.go`,
 `cursor_integration_test.go`, `watermark_integration_test.go`,
 `conformance_integration_test.go`, `mutation_integration_test.go`,
-`census_integration_test.go`, `audit_integration_test.go`.
+`census_integration_test.go`, `audit_integration_test.go`,
+`checkpoints_integration_test.go` (the fourth table and the fenced save),
+`projectioncase_integration_test.go` (the harness the live projection cases
+share, and the `psql` cross-check the read-model counts are asserted through),
+`projection_integration_test.go` (the loop against a live log: the two advance
+modes at one kill point, two live instances of one name, a read model in a
+second database, the in-flight watermark and the burnt gap through a projection,
+an unconfirmed save, the quarantine and the resume in a second process),
+`router_integration_test.go` (a missing registration inside a covered family and
+outside every one of them), `rebuild_integration_test.go` (a rebuild beside a
+live projection and the cutover rolled back) and `replay_integration_test.go`
+(`BenchmarkStreamReplay`, the instrument a deployment measures its own replay
+cost with).
 
 The gate names its own command, because `make integration` runs `./test/...`
 only and does not reach a satellite's tagged suite:
@@ -279,7 +304,9 @@ it: a skipped run that prints `ok` is what a report calls evidence and is not.
 |---|---|
 | the spec refusals, and a legal spec accepted | `TestNewRefusesEverySpecItCannotAssemble` |
 | the fingerprint is the rendering it digests, and a bound is an input to it | `TestTheFingerprintIsTheRenderingItDigests` |
-| the eleven statements are ordered transactional DDL, quoted, and assert rather than assign | `TestMigrationStatementsAreOrderedTransactionalDDL`, `TestAMigrationOverASchemaItDidNotBuildRefusesRatherThanRestampingIt`, `TestARefusedMigrationLeavesTheTablesItCreatedRolledBack`, `TestASchemaNamedForAReservedWordDeploys` |
+| the thirteen statements are ordered transactional DDL, quoted, and stamp only the version and bounds they can transform | `TestMigrationStatementsAreOrderedTransactionalDDL`, `TestTheVersionOneFingerprintIsTheOneEveryDeployedSchemaCarries`, `TestAMigrationOverASchemaItDidNotBuildRefusesRatherThanRestampingIt`, `TestARefusedMigrationLeavesTheTablesItCreatedRolledBack`, `TestASchemaNamedForAReservedWordDeploys` |
+| one list builds version 2 and migrates a version 1 at these bounds, and refuses one at others | `TestAVersionOneSchemaWithRowsMigratesToVersionTwoAndReadsBackUnchanged`, `TestAVersionOneSchemaAtOtherBoundsIsNotRestamped`, `TestAFreshDatabaseTakesTheSameVersionTwoList` |
+| the checkpoint store fences its own save, holds a cursor as bytes, and verifies the schema it shares with the store | `TestTheCheckpointStoreSatisfiesTheContract`, `TestEightSaversAtOneAdvanceLeaveOneWinnerAndSevenConflicts`, `TestASaveAboveAdvanceOneCannotResurrectARowAForgetRemoved`, `TestASaveOfACursorAtExactlyTheCeilingLands`, `TestACursorOfArbitraryBytesRoundTripsThroughTheColumn`, `TestAnEmptyCursorIsRefusedByTheDoorAndByTheColumn`, `TestEveryFailureTheCheckpointStoresAnswerCarriesOneOfTheSeven`, `TestTwoConcurrentPreparesTakeOneLockAtTheNewVersion`, `TestAStoreAndACheckpointsManagingOneSchemaInOneProcessSerialiseOnTheLock` |
 | the backing is the database and the schema together | `TestTwoStoreValuesOverOneSchemaAreOneStoreAndTwoSchemasAreNot` |
 | nothing starts, nothing is discovered, nothing is logged, and `New` performs no I/O | `TestTheStoreStartsNothingAndReadsNoEnvironment`, `TestNewAgainstADeadDSNAnswersAStore`, `TestMerelyImportingTheEventExtensionStartsNothing` |
 | every bound parameter is a type every `database/sql` driver accepts | `TestEveryBoundParameterIsATypeEveryDatabaseSQLDriverAccepts` |
@@ -306,7 +333,7 @@ it: a skipped run that prints `ok` is what a report calls evidence and is not.
 | the conformance suite catches a defective store, and the gate fails with no DSN | `TestTheConformanceSuiteCatchesADefectiveStore`, `TestTheGateFailsWhenTheDSNIsUnset` |
 | the version advance and the rows are one statement, over the whole schema | `TestTheAuditOverTheWholeSchemaHolds` |
 | stored rows are upcast and never rewritten | `TestStoredRowsAreUpcastAndNeverRewritten` |
-| `event/` outside `event/eventpg` is where the phase-1 commit left it | `TestCheckEventKernelReportsADifferenceAndOtherwiseOk`, `TestTheEventKernelOfThisRepositoryIsWhereThePhaseOneCommitLeftIt` |
+| `event/` outside `event/eventpg` is where this phase left it | `TestCheckEventKernelReportsADifferenceAndOtherwiseOk`, `TestTheKernelFenceRefusesAMoveItWasNotToldAbout`, `TestTheEventKernelOfThisRepositoryIsWhereThisPhaseLeftIt` |
 | this package costs the vocabulary plus one adapter and nothing else | `TestNoEventPackageCostsMoreThanTheSeamItNames` |
 
 ### What the conformance run is worth, and why the mutation harness exists

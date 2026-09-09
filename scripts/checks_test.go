@@ -47,21 +47,20 @@ func fixture(t *testing.T, files map[string]string) string {
 
 func runCheck(t *testing.T, root, check string) (string, int) {
 	t.Helper()
-	return runCheckWithEnv(t, root, check)
+	return runCheckArguments(t, root, check)
 }
 
-func runCheckWithEnv(t *testing.T, root, check string, environment ...string) (string, int) {
+func runCheckArguments(t *testing.T, root string, arguments ...string) (string, int) {
 	t.Helper()
-	command := exec.Command("bash", filepath.Join(root, "scripts", "checks.sh"), check)
+	command := exec.Command("bash", append([]string{filepath.Join(root, "scripts", "checks.sh")}, arguments...)...)
 	command.Env = append(os.Environ(), "GOWORK=off", "GOPROXY=off", "GOTOOLCHAIN=local")
-	command.Env = append(command.Env, environment...)
 	output, err := command.CombinedOutput()
 	if err == nil {
 		return string(output), 0
 	}
 	exit, ok := err.(*exec.ExitError)
 	if !ok {
-		t.Fatalf("cannot run check-%s: %v\n%s", check, err, output)
+		t.Fatalf("cannot run checks.sh %v: %v\n%s", arguments, err, output)
 	}
 	return string(output), exit.ExitCode()
 }
@@ -2017,33 +2016,42 @@ const (
 	storeSource  = "package eventpg\n\nfunc Store() string { return \"eventpg\" }\n"
 )
 
-// A git repository of the fixture's own, because the arm under test compares a
-// working tree against a recorded commit and the fixture the other cases use is
-// a directory. Git being absent is a failure and never a skip: a self-test that
-// skips is the shape the arm itself exists to refuse.
-func eventKernelFixture(t *testing.T) (string, string) {
+const eventKernelManifest = "scripts/event_kernel.sha256"
+
+// A directory with its own recorded manifest, and no git anywhere: the arm under
+// test compares the tree against a file it wrote itself, which is what lets it
+// run from a tarball or a vendor directory.
+func eventKernelFixture(t *testing.T) string {
 	t.Helper()
 	root := fixture(t, map[string]string{
 		"go.mod":                   libraryGoMod,
 		"event/store.go":           kernelSource,
 		"event/eventpg/eventpg.go": storeSource,
 	})
-	if _, err := exec.LookPath("git"); err != nil {
-		t.Fatalf("check-event-kernel is a git-only arm and this environment has no git: %v", err)
+	if output, code := runCheck(t, root, "event-kernel-baseline"); code != 0 {
+		t.Fatalf("the fixture recorded no manifest of its own, so no case below compares anything:\n%s", output)
 	}
-	git := func(args ...string) string {
-		command := exec.Command("git", append([]string{"-c", "user.email=fixture@example.com", "-c", "user.name=fixture"}, args...)...)
-		command.Dir = root
-		output, err := command.CombinedOutput()
-		if err != nil {
-			t.Fatalf("git %v in the fixture answered %v:\n%s", args, err, output)
-		}
-		return strings.TrimSpace(string(output))
+	return root
+}
+
+// The manifest the section started from, kept beside the fixture rather than
+// inside event/, so recording it does not move what it is a record of.
+func keepAside(t *testing.T, root string) string {
+	t.Helper()
+	recorded, err := os.ReadFile(filepath.Join(root, eventKernelManifest))
+	if err != nil {
+		t.Fatalf("the fixture wrote no manifest to keep aside: %v", err)
 	}
-	git("init", "-q", "-b", "main")
-	git("add", ".")
-	git("commit", "-q", "--no-gpg-sign", "-m", "the fixture kernel")
-	return root, git("rev-parse", "HEAD")
+	if err := os.WriteFile(filepath.Join(root, "predecessor.sha256"), recorded, 0o644); err != nil {
+		t.Fatalf("cannot keep the fixture's predecessor aside: %v", err)
+	}
+	return "predecessor.sha256"
+}
+
+func fencedFixture(t *testing.T) (string, string) {
+	t.Helper()
+	root := eventKernelFixture(t)
+	return root, keepAside(t, root)
 }
 
 func writeInto(t *testing.T, root, name, content string) {
@@ -2057,16 +2065,25 @@ func writeInto(t *testing.T, root, name, content string) {
 	}
 }
 
-// Four cases, and they do not all guard the same thing: the first is what a
-// gutted arm fails, the second what an arm with no untracked half fails, the
-// third what an over-broad one fails, and the fourth what a silently vacuous one
-// fails. The third alone certifies nothing, which is why it is never run alone.
+func removeFrom(t *testing.T, root, name string) {
+	t.Helper()
+	if err := os.Remove(filepath.Join(root, name)); err != nil {
+		t.Fatalf("cannot remove %s: %v", name, err)
+	}
+}
+
+// Five cases, and they do not all guard the same thing: the first is what a
+// gutted arm fails, the second what a whole-tree digest fails, the third what a
+// walk that looked each recorded file up rather than diffing two listings fails,
+// the fourth what an over-broad arm fails, and the fifth what a silently vacuous
+// one fails. The fourth alone certifies nothing, which is why it is never run
+// alone.
 func TestCheckEventKernelReportsADifferenceAndOtherwiseOk(t *testing.T) {
-	t.Run("a tracked file under event/ differs from the baseline", func(t *testing.T) {
-		root, baseline := eventKernelFixture(t)
+	t.Run("a file under event/ differs from the manifest", func(t *testing.T) {
+		root := eventKernelFixture(t)
 		writeInto(t, root, "event/store.go", kernelSource+"\nfunc Added() int { return 1 }\n")
 
-		output, code := runCheckWithEnv(t, root, "event-kernel", "EVENT_KERNEL_BASELINE="+baseline)
+		output, code := runCheck(t, root, "event-kernel")
 		if code != 1 {
 			t.Fatalf("the kernel moved and check-event-kernel exited %d:\n%s", code, output)
 		}
@@ -2075,45 +2092,152 @@ func TestCheckEventKernelReportsADifferenceAndOtherwiseOk(t *testing.T) {
 		}
 	})
 
-	t.Run("an untracked new file under event/", func(t *testing.T) {
-		root, baseline := eventKernelFixture(t)
+	t.Run("a new file under event/ that the manifest does not record", func(t *testing.T) {
+		root := eventKernelFixture(t)
 		writeInto(t, root, "event/second.go", kernelSource)
 
-		output, code := runCheckWithEnv(t, root, "event-kernel", "EVENT_KERNEL_BASELINE="+baseline)
+		output, code := runCheck(t, root, "event-kernel")
 		if code != 1 {
-			t.Fatalf("a new file under event/ that git diff cannot see was admitted with %d:\n%s", code, output)
+			t.Fatalf("a file the manifest never recorded was admitted with %d:\n%s", code, output)
 		}
 		if !strings.Contains(output, "event/second.go") {
-			t.Errorf("check-event-kernel refused without naming the file nobody tracked:\n%s", output)
+			t.Errorf("check-event-kernel refused without naming the file that appeared:\n%s", output)
+		}
+	})
+
+	t.Run("a file removed from event/", func(t *testing.T) {
+		root := eventKernelFixture(t)
+		writeInto(t, root, "event/second.go", kernelSource)
+		if output, code := runCheck(t, root, "event-kernel-baseline"); code != 0 {
+			t.Fatalf("the two-file fixture could not be recorded:\n%s", output)
+		}
+		removeFrom(t, root, "event/second.go")
+
+		output, code := runCheck(t, root, "event-kernel")
+		if code != 1 {
+			t.Fatalf("a recorded file disappeared and check-event-kernel exited %d:\n%s", code, output)
+		}
+		if !strings.Contains(output, "event/second.go") {
+			t.Errorf("check-event-kernel refused without naming the file that disappeared:\n%s", output)
 		}
 	})
 
 	t.Run("only event/eventpg differs", func(t *testing.T) {
-		root, baseline := eventKernelFixture(t)
+		root := eventKernelFixture(t)
 		writeInto(t, root, "event/eventpg/eventpg.go", storeSource+"\nfunc Added() int { return 1 }\n")
 		writeInto(t, root, "event/eventpg/read.go", storeSource)
 
-		output, code := runCheckWithEnv(t, root, "event-kernel", "EVENT_KERNEL_BASELINE="+baseline)
+		output, code := runCheck(t, root, "event-kernel")
 		if code != 0 {
 			t.Fatalf("the store the exemption exists for moved and check-event-kernel exited %d:\n%s", code, output)
 		}
 	})
 
-	t.Run("the baseline names a commit this repository does not carry", func(t *testing.T) {
-		root, _ := eventKernelFixture(t)
+	t.Run("the manifest is not there to compare against", func(t *testing.T) {
+		root := eventKernelFixture(t)
+		removeFrom(t, root, eventKernelManifest)
 
-		output, code := runCheckWithEnv(t, root, "event-kernel",
-			"EVENT_KERNEL_BASELINE=0000000000000000000000000000000000000000")
+		output, code := runCheck(t, root, "event-kernel")
 		if code == 0 {
-			t.Fatalf("the baseline resolves to nothing and check-event-kernel reported ok:\n%s", output)
+			t.Fatalf("there was nothing to compare the kernel with and check-event-kernel reported ok:\n%s", output)
 		}
-		if !strings.Contains(output, "EVENT_KERNEL_BASELINE") {
-			t.Errorf("check-event-kernel refused without naming the constant a person has to set:\n%s", output)
+		if !strings.Contains(output, eventKernelManifest) || !strings.Contains(output, "check-event-kernel-baseline") {
+			t.Errorf("check-event-kernel refused without naming the file it could not read and the command that records one:\n%s", output)
 		}
 	})
 }
 
-func TestTheEventKernelOfThisRepositoryIsWhereThePhaseOneCommitLeftIt(t *testing.T) {
+// check-event-kernel is green by construction the instant the baseline is
+// regenerated, so these five are what stands between a phase and an unrecorded
+// kernel edit. The first is the one the committed-diff pipeline this replaces
+// could not have: it passed on an unchanged manifest and called that success.
+func TestTheKernelFenceRefusesAMoveItWasNotToldAbout(t *testing.T) {
+	t.Run("the predecessor and the manifest record the same kernel", func(t *testing.T) {
+		root, predecessor := fencedFixture(t)
+
+		output, code := runCheckArguments(t, root, "event-kernel-moved", predecessor, `^event/store\.go$`)
+		if code != 1 {
+			t.Fatalf("nothing under event/ moved and the fence exited %d:\n%s", code, output)
+		}
+		if !strings.Contains(output, "did not deliver") {
+			t.Errorf("the fence failed without saying that a section which moved no kernel file did not deliver:\n%s", output)
+		}
+	})
+
+	t.Run("a path in the moved set outside the allowed set", func(t *testing.T) {
+		root, predecessor := fencedFixture(t)
+		writeInto(t, root, "event/store.go", kernelSource+"\nfunc Added() int { return 1 }\n")
+		writeInto(t, root, "event/second.go", kernelSource)
+		if output, code := runCheck(t, root, "event-kernel-baseline"); code != 0 {
+			t.Fatalf("the moved fixture could not be recorded:\n%s", output)
+		}
+
+		output, code := runCheckArguments(t, root, "event-kernel-moved", predecessor, `^event/store\.go$`, "event/store.go")
+		if code != 1 {
+			t.Fatalf("a file nobody planned for moved and the fence exited %d:\n%s", code, output)
+		}
+		if !strings.Contains(output, "event/second.go") {
+			t.Errorf("the fence failed without naming the unplanned kernel edit:\n%s", output)
+		}
+	})
+
+	t.Run("a required path absent from the moved set", func(t *testing.T) {
+		root, predecessor := fencedFixture(t)
+		writeInto(t, root, "event/second.go", kernelSource)
+		if output, code := runCheck(t, root, "event-kernel-baseline"); code != 0 {
+			t.Fatalf("the moved fixture could not be recorded:\n%s", output)
+		}
+
+		output, code := runCheckArguments(t, root, "event-kernel-moved", predecessor,
+			`^event/(store|second)\.go$`, "event/store.go")
+		if code != 1 {
+			t.Fatalf("a file the section promised did not move and the fence exited %d:\n%s", code, output)
+		}
+		if !strings.Contains(output, "event/store.go") {
+			t.Errorf("the fence failed without naming the file the section did not deliver:\n%s", output)
+		}
+	})
+
+	t.Run("the predecessor is not there to compare against", func(t *testing.T) {
+		root := eventKernelFixture(t)
+
+		output, code := runCheckArguments(t, root, "event-kernel-moved", "nothing.sha256", `^event/store\.go$`)
+		if code == 0 {
+			t.Fatalf("there was nothing to compare the move with and the fence reported ok:\n%s", output)
+		}
+		if !strings.Contains(output, "nothing.sha256") || !strings.Contains(output, "event-kernel-baseline") {
+			t.Errorf("the fence refused without naming the file it could not read and the command that records one:\n%s", output)
+		}
+	})
+
+	// The honest case, and it carries the removal half: a moved set computed in
+	// one direction only holds the file that changed and not the one that
+	// disappeared, so the promised path is missing and this exits 1.
+	t.Run("every required path present, one because it changed and one because it went", func(t *testing.T) {
+		root := eventKernelFixture(t)
+		writeInto(t, root, "event/second.go", kernelSource)
+		if output, code := runCheck(t, root, "event-kernel-baseline"); code != 0 {
+			t.Fatalf("the two-file fixture could not be recorded:\n%s", output)
+		}
+		predecessor := keepAside(t, root)
+		writeInto(t, root, "event/store.go", kernelSource+"\nfunc Added() int { return 1 }\n")
+		removeFrom(t, root, "event/second.go")
+		if output, code := runCheck(t, root, "event-kernel-baseline"); code != 0 {
+			t.Fatalf("the moved fixture could not be recorded:\n%s", output)
+		}
+
+		output, code := runCheckArguments(t, root, "event-kernel-moved", predecessor,
+			`^event/(store|second)\.go$`, "event/store.go", "event/second.go")
+		if code != 0 {
+			t.Fatalf("the section moved exactly what it promised and the fence exited %d:\n%s", code, output)
+		}
+		if !strings.Contains(output, "event/store.go") || !strings.Contains(output, "event/second.go") {
+			t.Errorf("the fence passed without printing the moved set in both directions:\n%s", output)
+		}
+	})
+}
+
+func TestTheEventKernelOfThisRepositoryIsWhereThisPhaseLeftIt(t *testing.T) {
 	command := exec.Command("bash", "checks.sh", "event-kernel")
 	output, err := command.CombinedOutput()
 	if err != nil {

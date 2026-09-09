@@ -11,6 +11,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/frostgrove/vv/crud/adapter/crudsql"
+	"github.com/frostgrove/vv/event"
+
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
@@ -328,4 +331,350 @@ func TestASecondMigrationBlocksAgainstAHeldLock(t *testing.T) {
 			t.Fatalf("an uncontended migration took %s, which is the window the case above reads as waiting", elapsed)
 		}
 	})
+}
+
+// The version-1 list, rendered from the model this build still carries so a case
+// can deploy the schema an earlier build deployed. Version 1 stamps nothing:
+// there is no version to migrate from.
+func versionOneStatements(t *testing.T, schema Schema) []string {
+	t.Helper()
+	resolved, err := schema.Resolved()
+	if err != nil {
+		t.Fatalf("%+v does not resolve: %v", schema, err)
+	}
+	print, err := resolved.fingerprintAt(1)
+	if err != nil {
+		t.Fatalf("%+v has no version-1 fingerprint: %v", schema, err)
+	}
+	return migrationStatements(expected(resolved, 1), print, "")
+}
+
+func deployVersionOne(t *testing.T, schema Schema) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	tx, err := liveDB(t).BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatalf("the version-1 migration could not open a transaction: %v", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	for index, statement := range versionOneStatements(t, schema) {
+		if _, err := tx.ExecContext(ctx, statement); err != nil {
+			t.Fatalf("statement %d of the version-1 list: %v", index+1, err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("the version-1 migration could not commit: %v", err)
+	}
+}
+
+func metaVersion(t *testing.T, schema string) int {
+	t.Helper()
+	var version int
+	row := liveDB(t).QueryRow("SELECT version FROM " + quoteIdentifier(schema) + ".schema_meta WHERE singleton")
+	if err := row.Scan(&version); err != nil {
+		t.Fatalf("%s.schema_meta holds no version this test could read: %v", schema, err)
+	}
+	return version
+}
+
+func tableExists(t *testing.T, schema, table string) bool {
+	t.Helper()
+	var exists bool
+	row := liveDB(t).QueryRow(`SELECT EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+		WHERE n.nspname = $1 AND c.relname = $2)`, schema, table)
+	if err := row.Scan(&exists); err != nil {
+		t.Fatalf("whether %s.%s exists could not be read: %v", schema, table, err)
+	}
+	return exists
+}
+
+// The migration this schema version is for: a deployed version 1 with history in
+// it, transformed by the one list, verified at all three levels afterwards, and
+// every event read back byte for byte. The log is asserted unmoved too, because
+// a migration that reissued it would orphan every cursor a projection persisted.
+func TestAVersionOneSchemaWithRowsMigratesToVersionTwoAndReadsBackUnchanged(t *testing.T) {
+	name := scratch(t, "eventpg_s2_v1_rows")
+	schema := Schema{Name: name}
+	deployVersionOne(t, schema)
+	if metaVersion(t, name) != 1 {
+		t.Fatalf("the schema this case deploys is at version %d and not 1, so nothing below is a migration", metaVersion(t, name))
+	}
+	if tableExists(t, name, checkpointsTable) {
+		t.Fatal("the version-1 list built a checkpoints table, so the version this case migrates from is not version 1")
+	}
+	before, log := metaRow(t, name)
+
+	stream := aStream("orders.order", "acme/A-17")
+	mustExecute(t, "INSERT INTO "+quoteIdentifier(name)+".streams (family, key, version) VALUES ($1, $2, 3)",
+		stream.Family, string(stream.Key))
+	for version := 1; version <= 3; version++ {
+		mustExecute(t, "INSERT INTO "+quoteIdentifier(name)+
+			".events (family, key, version, type, revision, payload, recorded_at) VALUES ($1, $2, $3, $4, 1, $5, now())",
+			stream.Family, string(stream.Key), version, "orders.order.held", []byte("payload "+strconv.Itoa(version)))
+	}
+	held := stored(t, schema, stream)
+	if len(held) != 3 {
+		t.Fatalf("the version-1 schema holds %d events where this case wrote three", len(held))
+	}
+
+	if err := migrate(t, schema); err != nil {
+		t.Fatalf("a version-1 schema at this build's own bounds did not migrate to version 2: %v", err)
+	}
+	if version := metaVersion(t, name); version != SchemaVersion {
+		t.Fatalf("the migrated schema is at version %d and this build is version %d", version, SchemaVersion)
+	}
+	after, sameLog := metaRow(t, name)
+	described, err := schema.Fingerprint()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after != described {
+		t.Errorf("the migrated schema records %s where this build describes %s", after, described)
+	}
+	if after == before {
+		t.Error("the migration left the version-1 fingerprint in place, so a schema at version 2 records the description of another one")
+	}
+	if !bytes.Equal(sameLog, log) {
+		t.Error("the migration minted a second log, so every cursor a projection persisted against the first is now foreign")
+	}
+	if !tableExists(t, name, checkpointsTable) {
+		t.Fatal("the migration stamped version 2 and built no checkpoints table")
+	}
+
+	store := prepared(t, schema)
+	migrated := storedOn(t, liveDB(t), schema, stream)
+	if len(migrated) != len(held) {
+		t.Fatalf("the migrated schema holds %d events where the version-1 one held %d", len(migrated), len(held))
+	}
+	for index := range held {
+		before, after := held[index], migrated[index]
+		if after.position != before.position || after.version != before.version || after.name != before.name ||
+			after.revision != before.revision || !bytes.Equal(after.payload, before.payload) || !after.recordedAt.Equal(before.recordedAt) {
+			t.Errorf("event %d reads back as %+v where version 1 held %+v", index+1, after, before)
+		}
+	}
+	page, err := store.ReadStream(t.Context(), stream, 0)
+	if err != nil {
+		t.Fatalf("reading the migrated stream through a verified store answered %v", err)
+	}
+	if len(page) != 3 {
+		t.Fatalf("a verified store reads %d events off the migrated stream", len(page))
+	}
+
+	t.Run("a checkpoint store over the migrated schema records against it", func(t *testing.T) {
+		pool := checkpointPool(t, 4)
+		checkpoints := preparedCheckpoints(t, pool, schema, VerifySchema)
+		saveOne(t, context.WithoutCancel(t.Context()), checkpoints,
+			event.Checkpoint{Projection: "orders.v1", Cursor: "vve1-migrated", Advance: 1, Progress: event.Progress{At: instant()}})
+		if row := loadOne(t, context.WithoutCancel(t.Context()), checkpoints, "orders.v1"); row.Advance != 1 {
+			t.Fatalf("a save against the migrated schema left the row at advance %d", row.Advance)
+		}
+	})
+}
+
+// D1's whole point. Guarded on the version alone, this build's default-bounds
+// list meeting a version-1 schema deployed at another bound would create the
+// fourth table, stamp its own version and fingerprint, and then pass its own
+// assertion — §UC-074's silent restamping, reached by a list that looks correct.
+func TestAVersionOneSchemaAtOtherBoundsIsNotRestamped(t *testing.T) {
+	name := scratch(t, "eventpg_s2_v1_other_bounds")
+	deployed := Schema{Name: name, MaxPayload: 1024}
+	deployVersionOne(t, deployed)
+	stamped, log := metaRow(t, name)
+
+	err := migrate(t, Schema{Name: name})
+	if err == nil {
+		t.Fatal("a build at another bound ran its whole list over a version-1 schema it did not build, so schema_meta was made to agree with a schema this run did not deploy")
+	}
+	var refusal *pgconn.PgError
+	if !errors.As(err, &refusal) || refusal.Code != schemaMismatchState {
+		t.Errorf("the refusal is %v, and one nobody can tell from a syntax error is one a caller would have to classify by message text", err)
+	}
+	if version := metaVersion(t, name); version != 1 {
+		t.Errorf("the refused migration left the schema at version %d, so a version-1 schema at other bounds was restamped", version)
+	}
+	after, sameLog := metaRow(t, name)
+	if after != stamped {
+		t.Errorf("schema_meta.fingerprint is %s where the deployed schema is the one %s describes, so the recorded fact is false", after, stamped)
+	}
+	if !bytes.Equal(sameLog, log) {
+		t.Error("the refused migration minted a second log")
+	}
+	if tableExists(t, name, checkpointsTable) {
+		t.Error("the refused migration left the checkpoints table it created behind, so the schema is now half this build's and half another's")
+	}
+
+	t.Run("the same schema at its own bounds migrates", func(t *testing.T) {
+		if err := migrate(t, deployed); err != nil {
+			t.Fatalf("a version-1 schema at the bounds it was deployed at did not migrate: %v", err)
+		}
+		if version := metaVersion(t, name); version != SchemaVersion {
+			t.Fatalf("the schema is at version %d after its own build migrated it", version)
+		}
+		if err := openStore(t, deployed, VerifySchema).Prepare(t.Context()); err != nil {
+			t.Fatalf("the migrated schema does not verify at all three levels: %v", err)
+		}
+	})
+}
+
+// One list, two jobs: a fresh database takes exactly what a migrated version-1
+// schema took, and the two are the same schema afterwards — which is what makes
+// the version-1 path a migration rather than a second product.
+func TestAFreshDatabaseTakesTheSameVersionTwoList(t *testing.T) {
+	fresh := Schema{Name: scratch(t, "eventpg_s2_v2_fresh")}
+	if err := migrate(t, fresh); err != nil {
+		t.Fatalf("a fresh database did not take the version-2 list: %v", err)
+	}
+	if version := metaVersion(t, fresh.Name); version != SchemaVersion {
+		t.Fatalf("a fresh database is at version %d after the version-2 list", version)
+	}
+	if err := openStore(t, fresh, VerifySchema).Prepare(t.Context()); err != nil {
+		t.Fatalf("a freshly migrated schema does not verify at all three levels: %v", err)
+	}
+
+	migrated := Schema{Name: scratch(t, "eventpg_s2_v2_migrated")}
+	deployVersionOne(t, migrated)
+	if err := migrate(t, migrated); err != nil {
+		t.Fatalf("a version-1 schema did not take the version-2 list: %v", err)
+	}
+	for _, held := range []Schema{fresh, migrated} {
+		described, err := held.Fingerprint()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if recorded, _ := metaRow(t, held.Name); recorded != described {
+			t.Errorf("%q records %s where this build describes %s", held.Name, recorded, described)
+		}
+		if version := metaVersion(t, held.Name); version != SchemaVersion {
+			t.Errorf("%q is at version %d", held.Name, version)
+		}
+	}
+	if apart := listsApart(t, fresh, migrated); apart != "" {
+		t.Fatalf("the list a fresh database took and the one a version-1 schema took differ beyond the schema name: %s", apart)
+	}
+	for _, table := range []string{metaTable, streamsTable, eventsTable, checkpointsTable} {
+		if !tableExists(t, fresh.Name, table) || !tableExists(t, migrated.Name, table) {
+			t.Errorf("%s is not in both schemas, so the two paths do not produce one schema", table)
+		}
+	}
+	if err := openStore(t, migrated, VerifySchema).Prepare(t.Context()); err != nil {
+		t.Errorf("the migrated schema does not verify at all three levels: %v", err)
+	}
+}
+
+// The two lists with the schema name and the two fingerprints taken out, so what
+// is compared is the list rather than the three literals every statement of it
+// carries — a schema's name is a fingerprint input, so two names are two
+// fingerprints and the lists could never be byte-identical.
+func listsApart(t *testing.T, first, second Schema) string {
+	t.Helper()
+	rendered := make([]string, 2)
+	for index, schema := range []Schema{first, second} {
+		statements, err := MigrationStatements(schema)
+		if err != nil {
+			t.Fatal(err)
+		}
+		print2, err := schema.Fingerprint()
+		if err != nil {
+			t.Fatal(err)
+		}
+		print1, err := schema.fingerprintAt(1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		held := strings.ReplaceAll(listing(statements), quoteIdentifier(schema.Name), quoteIdentifier("@"))
+		held = strings.ReplaceAll(held, print2, "@v2")
+		rendered[index] = strings.ReplaceAll(held, print1, "@v1")
+	}
+	if rendered[0] == rendered[1] {
+		return ""
+	}
+	return "the two renderings are " + strconv.Itoa(len(rendered[0])) + " and " + strconv.Itoa(len(rendered[1])) + " bytes"
+}
+
+func TestTwoConcurrentPreparesTakeOneLockAtTheNewVersion(t *testing.T) {
+	for pass := range 3 {
+		schema := Schema{Name: scratch(t, "eventpg_s2_v2_race_"+strconv.Itoa(pass))}
+		first := openStore(t, schema, ManageSchema)
+		second := openStore(t, schema, ManageSchema)
+
+		start := make(chan struct{})
+		answers := make(chan error, 2)
+		for _, store := range []*Store{first, second} {
+			go func() {
+				<-start
+				answers <- store.Prepare(context.Background())
+			}()
+		}
+		close(start)
+		for range 2 {
+			if err := <-answers; err != nil {
+				t.Fatalf("pass %d: two replicas migrating one schema to version 2 at once left one of them with %v", pass, err)
+			}
+		}
+
+		var rows int
+		if err := liveDB(t).QueryRow(`SELECT count(*) FROM ` + quoteIdentifier(schema.Name) + `.schema_meta`).Scan(&rows); err != nil {
+			t.Fatal(err)
+		}
+		if rows != 1 {
+			t.Fatalf("pass %d: schema_meta holds %d rows, so both replicas minted a log and every cursor names one of two", pass, rows)
+		}
+		if version := metaVersion(t, schema.Name); version != SchemaVersion {
+			t.Fatalf("pass %d: the raced schema is at version %d", pass, version)
+		}
+		if held := advisoryHolders(t, schema.Name); len(held) != 0 {
+			t.Fatalf("pass %d: the migration lock is still held by %v after both callers returned", pass, held)
+		}
+	}
+}
+
+// The in-process pair the fourth table creates: a store and a checkpoint store
+// are two resources over one schema, and both may be asked to manage it. The
+// advisory lock is per schema, so they serialise on it and the second finds the
+// list idempotent and the assertion satisfied.
+func TestAStoreAndACheckpointsManagingOneSchemaInOneProcessSerialiseOnTheLock(t *testing.T) {
+	for pass := range 3 {
+		schema := Schema{Name: scratch(t, "eventpg_s2_pair_"+strconv.Itoa(pass))}
+		pool := checkpointPool(t, 6)
+		store, err := New(Spec{DB: pool, Source: crudsql.Postgres(pool), Schema: schema, SchemaManagement: ManageSchema})
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = store.Close() })
+		checkpoints, err := NewCheckpoints(CheckpointSpec{DB: pool, Source: crudsql.Postgres(pool), Schema: schema, SchemaManagement: ManageSchema})
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = checkpoints.Close() })
+
+		start := make(chan struct{})
+		answers := make(chan error, 2)
+		go func() { <-start; answers <- store.Prepare(context.Background()) }()
+		go func() { <-start; answers <- checkpoints.Prepare(context.Background()) }()
+		close(start)
+		for range 2 {
+			if err := <-answers; err != nil {
+				t.Fatalf("pass %d: a store and a checkpoint store managing one schema at once left one of them with %v", pass, err)
+			}
+		}
+
+		var rows int
+		if err := liveDB(t).QueryRow(`SELECT count(*) FROM ` + quoteIdentifier(schema.Name) + `.schema_meta`).Scan(&rows); err != nil {
+			t.Fatal(err)
+		}
+		if rows != 1 {
+			t.Fatalf("pass %d: schema_meta holds %d rows after the pair migrated one schema", pass, rows)
+		}
+		if held := advisoryHolders(t, schema.Name); len(held) != 0 {
+			t.Fatalf("pass %d: the migration lock is still held by %v after both callers returned", pass, held)
+		}
+		if err := store.Check(context.Background()); err != nil {
+			t.Errorf("pass %d: the store is not ready after the pair prepared: %v", pass, err)
+		}
+		if err := checkpoints.Check(context.Background()); err != nil {
+			t.Errorf("pass %d: the checkpoint store is not ready after the pair prepared: %v", pass, err)
+		}
+	}
 }

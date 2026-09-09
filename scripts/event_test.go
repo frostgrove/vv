@@ -22,12 +22,21 @@ func TestNoBaseSubsystemDependsOnTheEventExtension(t *testing.T) {
 // is not charged here fails rather than being skipped, which is the half a
 // written table cannot do: the table is what the next store is added beside.
 // Charging is a map from the package to what it may add on top of the
-// vocabulary, and a row is where that dependency is argued. `eventpg` is the
-// one that adds anything: a store that speaks SQL reaches
-// `crud/adapter/crudsql` for the caller's transaction, and the closure of that
-// one allowance is `crud`, `crud/catalog`, `crud/sqlfault`, `errs`,
-// `errs/sqlerr` and `utils` — everything a PostgreSQL store needs and nothing
-// more, which is why `health`, `port` and `runtime` stay outside it.
+// vocabulary, and a row is where that dependency is argued. Two rows add
+// anything at all.
+//
+// `eventpg` reaches `crud/adapter/crudsql` for the caller's transaction, and the
+// closure of that one allowance is `crud`, `crud/catalog`, `crud/sqlfault`,
+// `errs`, `errs/sqlerr` and `utils` — everything a PostgreSQL store needs and
+// nothing more, which is why `health` and `port` stay outside it.
+//
+// `projection` reaches `runtime`, because a consumer that follows a log
+// continuously is a background activity the process owns and this repository has
+// one contract for those: a runner the host supervises. Its closure is `runtime`
+// alone. `health` stays outside it because readiness is a seam and an importance
+// is the composition root's to name, and `port` stays outside it because this
+// package writes no line at all — a halt reaches an operator through `Ready` and
+// every transition through the `Observer`.
 func TestNoEventPackageCostsMoreThanTheSeamItNames(t *testing.T) {
 	costsNoMoreThanItNames(t, extensionCost{
 		prefix:    eventExtension,
@@ -37,6 +46,7 @@ func TestNoEventPackageCostsMoreThanTheSeamItNames(t *testing.T) {
 			eventExtension + "/eventmemory": "",
 			eventExtension + "/eventpg":     "./crud/adapter/crudsql",
 			eventExtension + "/eventtest":   "",
+			eventExtension + "/projection":  "./runtime",
 		},
 		core: func(reached string) string {
 			return "the vocabulary reaches " + reached + " — a deployment that wants a fact history and no subsystem of ours compiles it anyway"

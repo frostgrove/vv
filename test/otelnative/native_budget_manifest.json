@@ -1,0 +1,127 @@
+{
+  "version": 1,
+  "semconv_mode": {
+    "environment": "OTEL_SEMCONV_STABILITY_OPT_IN",
+    "value": ""
+  },
+  "domains": {
+    "http_methods": {
+      "type": "string",
+      "string_values": ["CONNECT", "DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT", "TRACE", "_OTHER"]
+    },
+    "http_status_codes": {
+      "type": "int64",
+      "int64_range": {"minimum": 100, "maximum": 599}
+    },
+    "servemux_route_projections": {
+      "type": "string",
+      "string_values": ["/items/{id}"]
+    },
+    "router_route_templates": {
+      "type": "string",
+      "string_values": ["/items/:id", "/fail/:id"]
+    },
+    "grpc_system": {
+      "type": "string",
+      "string_values": ["grpc"]
+    },
+    "rpc_methods": {
+      "type": "string",
+      "string_values": ["otelnative.Transport/Ping", "otelnative.Transport/Fail", "_OTHER/_OTHER"]
+    },
+    "grpc_status_codes": {
+      "type": "string",
+      "string_values": ["OK", "CANCELLED", "UNKNOWN", "INVALID_ARGUMENT", "DEADLINE_EXCEEDED", "NOT_FOUND", "ALREADY_EXISTS", "PERMISSION_DENIED", "RESOURCE_EXHAUSTED", "FAILED_PRECONDITION", "ABORTED", "OUT_OF_RANGE", "UNIMPLEMENTED", "INTERNAL", "UNAVAILABLE", "DATA_LOSS", "UNAUTHENTICATED"]
+    },
+    "postgres_system": {
+      "type": "string",
+      "string_values": ["postgresql"]
+    },
+    "pgx_operations": {
+      "type": "string",
+      "string_values": ["query", "copy", "batch", "connect", "prepare", "acquire"]
+    },
+    "sql_operations": {
+      "type": "string",
+      "string_values": ["sql.connector.connect", "sql.conn.ping", "sql.conn.exec", "sql.conn.query", "sql.conn.prepare", "sql.conn.begin_tx", "sql.conn.reset_session", "sql.tx.commit", "sql.tx.rollback", "sql.stmt.exec", "sql.stmt.query", "sql.rows"]
+    },
+    "database_pools": {
+      "type": "string",
+      "string_values": ["primary"]
+    },
+    "sql_pool_status": {
+      "type": "string",
+      "string_values": ["inuse", "idle"]
+    },
+    "runtime_memory_types": {
+      "type": "string",
+      "string_values": ["other", "stack"]
+    }
+  },
+  "resources": [
+    {"id": "transport", "schema_url": "", "attributes": {"service.name": "transport-fixture"}},
+    {"id": "database", "schema_url": "", "attributes": {"service.name": "database-fixture"}},
+    {"id": "runtime", "schema_url": "", "attributes": {"service.name": "runtime-fixture"}}
+  ],
+  "scopes": [
+    {"id": "otelhttp", "module": "go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp", "module_version": "v0.69.0", "name": "go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp", "version": "0.69.0", "schema_url": "", "attributes": {}},
+    {"id": "otelgin", "module": "go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin", "module_version": "v0.69.0", "name": "go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin", "version": "0.69.0", "schema_url": "", "attributes": {}},
+    {"id": "fiberotel", "module": "github.com/gofiber/contrib/v3/otel", "module_version": "v1.2.0", "name": "github.com/gofiber/contrib/v3/otel", "version": "1.43.0", "schema_url": "", "attributes": {}},
+    {"id": "otelgrpc", "module": "go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc", "module_version": "v0.69.0", "name": "go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc", "version": "0.69.0", "schema_url": "https://opentelemetry.io/schemas/1.41.0", "attributes": {}},
+    {"id": "otelpgx", "module": "github.com/exaring/otelpgx", "module_version": "v0.11.1", "name": "github.com/exaring/otelpgx", "version": "v0.11.1", "schema_url": "", "attributes": {}},
+    {"id": "otelsql", "module": "github.com/XSAM/otelsql", "module_version": "v0.43.0", "name": "github.com/XSAM/otelsql", "version": "0.43.0", "schema_url": "", "attributes": {}},
+    {"id": "pgxpool", "module": "application-owned/pgxpool", "module_version": "v1", "name": "github.com/frostgrove/vv/test/otelnative/pgxpool", "version": "0.1.0", "schema_url": "", "attributes": {}},
+    {"id": "runtime", "module": "go.opentelemetry.io/contrib/instrumentation/runtime", "module_version": "v0.69.0", "name": "go.opentelemetry.io/contrib/instrumentation/runtime", "version": "0.69.0", "schema_url": "", "attributes": {}}
+  ],
+  "instruments": [
+    {"resource": "transport", "scope": "otelhttp", "name": "http.server.request.body.size", "type": "histogram_int64", "unit": "By", "temporality": "cumulative", "attributes": [{"key": "http.request.method", "domain": "http_methods", "allow_absent": true}, {"key": "http.response.status_code", "domain": "http_status_codes", "allow_absent": true}, {"key": "http.route", "domain": "servemux_route_projections", "allow_absent": true}], "series_ceiling": 11022},
+    {"resource": "transport", "scope": "otelhttp", "name": "http.server.response.body.size", "type": "histogram_int64", "unit": "By", "temporality": "cumulative", "attributes": [{"key": "http.request.method", "domain": "http_methods", "allow_absent": true}, {"key": "http.response.status_code", "domain": "http_status_codes", "allow_absent": true}, {"key": "http.route", "domain": "servemux_route_projections", "allow_absent": true}], "series_ceiling": 11022},
+    {"resource": "transport", "scope": "otelhttp", "name": "http.server.request.duration", "type": "histogram_float64", "unit": "s", "temporality": "cumulative", "attributes": [{"key": "http.request.method", "domain": "http_methods", "allow_absent": true}, {"key": "http.response.status_code", "domain": "http_status_codes", "allow_absent": true}, {"key": "http.route", "domain": "servemux_route_projections", "allow_absent": true}], "series_ceiling": 11022},
+    {"resource": "transport", "scope": "otelhttp", "name": "http.server.active_requests", "type": "sum_int64", "unit": "{request}", "temporality": "cumulative", "monotonic": false, "attributes": [{"key": "http.request.method", "domain": "http_methods", "allow_absent": true}], "series_ceiling": 11},
+    {"resource": "transport", "scope": "otelhttp", "name": "http.client.request.body.size", "type": "histogram_int64", "unit": "By", "temporality": "cumulative", "attributes": [{"key": "http.request.method", "domain": "http_methods", "allow_absent": true}, {"key": "http.response.status_code", "domain": "http_status_codes", "allow_absent": true}], "series_ceiling": 5511},
+    {"resource": "transport", "scope": "otelhttp", "name": "http.client.response.body.size", "type": "histogram_int64", "unit": "By", "temporality": "cumulative", "attributes": [{"key": "http.request.method", "domain": "http_methods", "allow_absent": true}, {"key": "http.response.status_code", "domain": "http_status_codes", "allow_absent": true}], "series_ceiling": 5511},
+    {"resource": "transport", "scope": "otelhttp", "name": "http.client.request.duration", "type": "histogram_float64", "unit": "s", "temporality": "cumulative", "attributes": [{"key": "http.request.method", "domain": "http_methods", "allow_absent": true}, {"key": "http.response.status_code", "domain": "http_status_codes", "allow_absent": true}], "series_ceiling": 5511},
+    {"resource": "transport", "scope": "otelhttp", "name": "http.client.active_requests", "type": "sum_int64", "unit": "{request}", "temporality": "cumulative", "monotonic": false, "attributes": [{"key": "http.request.method", "domain": "http_methods", "allow_absent": true}], "series_ceiling": 11},
+    {"resource": "transport", "scope": "otelhttp", "name": "http.client.connection.duration", "type": "histogram_float64", "unit": "s", "temporality": "cumulative", "attributes": [], "series_ceiling": 1},
+    {"resource": "transport", "scope": "otelhttp", "name": "http.client.open_connections", "type": "sum_int64", "unit": "{connection}", "temporality": "cumulative", "monotonic": false, "attributes": [], "series_ceiling": 1},
+
+    {"resource": "transport", "scope": "otelgin", "name": "http.server.request.body.size", "type": "histogram_int64", "unit": "By", "temporality": "cumulative", "attributes": [{"key": "http.request.method", "domain": "http_methods", "allow_absent": true}, {"key": "http.response.status_code", "domain": "http_status_codes", "allow_absent": true}, {"key": "http.route", "domain": "router_route_templates", "allow_absent": true}], "series_ceiling": 16533},
+    {"resource": "transport", "scope": "otelgin", "name": "http.server.response.body.size", "type": "histogram_int64", "unit": "By", "temporality": "cumulative", "attributes": [{"key": "http.request.method", "domain": "http_methods", "allow_absent": true}, {"key": "http.response.status_code", "domain": "http_status_codes", "allow_absent": true}, {"key": "http.route", "domain": "router_route_templates", "allow_absent": true}], "series_ceiling": 16533},
+    {"resource": "transport", "scope": "otelgin", "name": "http.server.request.duration", "type": "histogram_float64", "unit": "s", "temporality": "cumulative", "attributes": [{"key": "http.request.method", "domain": "http_methods", "allow_absent": true}, {"key": "http.response.status_code", "domain": "http_status_codes", "allow_absent": true}, {"key": "http.route", "domain": "router_route_templates", "allow_absent": true}], "series_ceiling": 16533},
+
+    {"resource": "transport", "scope": "fiberotel", "name": "http.server.active_requests", "type": "sum_int64", "unit": "1", "temporality": "cumulative", "monotonic": false, "attributes": [{"key": "http.request.method", "domain": "http_methods", "allow_absent": true}], "series_ceiling": 11},
+    {"resource": "transport", "scope": "fiberotel", "name": "http.server.request.body.size", "type": "histogram_int64", "unit": "By", "temporality": "cumulative", "attributes": [{"key": "http.request.method", "domain": "http_methods", "allow_absent": true}, {"key": "http.response.status_code", "domain": "http_status_codes", "allow_absent": true}, {"key": "http.route", "domain": "router_route_templates", "allow_absent": true}], "series_ceiling": 16533},
+    {"resource": "transport", "scope": "fiberotel", "name": "http.server.response.body.size", "type": "histogram_int64", "unit": "By", "temporality": "cumulative", "attributes": [{"key": "http.request.method", "domain": "http_methods", "allow_absent": true}, {"key": "http.response.status_code", "domain": "http_status_codes", "allow_absent": true}, {"key": "http.route", "domain": "router_route_templates", "allow_absent": true}], "series_ceiling": 16533},
+    {"resource": "transport", "scope": "fiberotel", "name": "http.server.request.duration", "type": "histogram_float64", "unit": "s", "temporality": "cumulative", "attributes": [{"key": "http.request.method", "domain": "http_methods", "allow_absent": true}, {"key": "http.response.status_code", "domain": "http_status_codes", "allow_absent": true}, {"key": "http.route", "domain": "router_route_templates", "allow_absent": true}], "series_ceiling": 16533},
+
+    {"resource": "transport", "scope": "otelgrpc", "name": "rpc.client.call.duration", "type": "histogram_float64", "unit": "s", "temporality": "cumulative", "attributes": [{"key": "rpc.system.name", "domain": "grpc_system", "allow_absent": true}, {"key": "rpc.method", "domain": "rpc_methods", "allow_absent": true}, {"key": "rpc.response.status_code", "domain": "grpc_status_codes", "allow_absent": true}], "series_ceiling": 144},
+    {"resource": "transport", "scope": "otelgrpc", "name": "rpc.server.call.duration", "type": "histogram_float64", "unit": "s", "temporality": "cumulative", "attributes": [{"key": "rpc.system.name", "domain": "grpc_system", "allow_absent": true}, {"key": "rpc.method", "domain": "rpc_methods", "allow_absent": true}, {"key": "rpc.response.status_code", "domain": "grpc_status_codes", "allow_absent": true}], "series_ceiling": 144},
+
+    {"resource": "database", "scope": "otelpgx", "name": "db.client.operation.duration", "type": "histogram_float64", "unit": "s", "temporality": "cumulative", "attributes": [{"key": "db.system.name", "domain": "postgres_system", "allow_absent": true}, {"key": "pgx.operation.type", "domain": "pgx_operations", "allow_absent": true}], "series_ceiling": 14},
+    {"resource": "database", "scope": "otelpgx", "name": "db.client.operation.errors", "type": "sum_int64", "unit": "", "temporality": "cumulative", "monotonic": true, "attributes": [{"key": "db.system.name", "domain": "postgres_system", "allow_absent": true}, {"key": "pgx.operation.type", "domain": "pgx_operations", "allow_absent": true}], "series_ceiling": 14},
+
+    {"resource": "database", "scope": "otelsql", "name": "db.client.operation.duration", "type": "histogram_float64", "unit": "s", "temporality": "cumulative", "attributes": [{"key": "db.operation.name", "domain": "sql_operations", "allow_absent": true}], "series_ceiling": 13},
+    {"resource": "database", "scope": "otelsql", "name": "db.sql.connection.max_open", "type": "gauge_int64", "unit": "", "attributes": [{"key": "db.client.connection.pool.name", "domain": "database_pools", "allow_absent": true}], "series_ceiling": 2},
+    {"resource": "database", "scope": "otelsql", "name": "db.sql.connection.open", "type": "gauge_int64", "unit": "", "attributes": [{"key": "db.client.connection.pool.name", "domain": "database_pools", "allow_absent": true}, {"key": "status", "domain": "sql_pool_status", "allow_absent": true}], "series_ceiling": 6},
+    {"resource": "database", "scope": "otelsql", "name": "db.sql.connection.wait", "type": "sum_int64", "unit": "", "temporality": "cumulative", "monotonic": true, "attributes": [{"key": "db.client.connection.pool.name", "domain": "database_pools", "allow_absent": true}], "series_ceiling": 2},
+    {"resource": "database", "scope": "otelsql", "name": "db.sql.connection.wait_duration", "type": "sum_float64", "unit": "ms", "temporality": "cumulative", "monotonic": true, "attributes": [{"key": "db.client.connection.pool.name", "domain": "database_pools", "allow_absent": true}], "series_ceiling": 2},
+    {"resource": "database", "scope": "otelsql", "name": "db.sql.connection.closed_max_idle", "type": "sum_int64", "unit": "", "temporality": "cumulative", "monotonic": true, "attributes": [{"key": "db.client.connection.pool.name", "domain": "database_pools", "allow_absent": true}], "series_ceiling": 2},
+    {"resource": "database", "scope": "otelsql", "name": "db.sql.connection.closed_max_idle_time", "type": "sum_int64", "unit": "", "temporality": "cumulative", "monotonic": true, "attributes": [{"key": "db.client.connection.pool.name", "domain": "database_pools", "allow_absent": true}], "series_ceiling": 2},
+    {"resource": "database", "scope": "otelsql", "name": "db.sql.connection.closed_max_lifetime", "type": "sum_int64", "unit": "", "temporality": "cumulative", "monotonic": true, "attributes": [{"key": "db.client.connection.pool.name", "domain": "database_pools", "allow_absent": true}], "series_ceiling": 2},
+
+    {"resource": "database", "scope": "pgxpool", "name": "app.db.pool.connections.acquired", "type": "gauge_int64", "unit": "", "attributes": [{"key": "db.client.connection.pool.name", "domain": "database_pools", "allow_absent": true}], "series_ceiling": 2},
+    {"resource": "database", "scope": "pgxpool", "name": "app.db.pool.connections.idle", "type": "gauge_int64", "unit": "", "attributes": [{"key": "db.client.connection.pool.name", "domain": "database_pools", "allow_absent": true}], "series_ceiling": 2},
+    {"resource": "database", "scope": "pgxpool", "name": "app.db.pool.connections.max", "type": "gauge_int64", "unit": "", "attributes": [{"key": "db.client.connection.pool.name", "domain": "database_pools", "allow_absent": true}], "series_ceiling": 2},
+    {"resource": "database", "scope": "pgxpool", "name": "app.db.pool.acquire.waits", "type": "sum_int64", "unit": "", "temporality": "cumulative", "monotonic": true, "attributes": [{"key": "db.client.connection.pool.name", "domain": "database_pools", "allow_absent": true}], "series_ceiling": 2},
+    {"resource": "database", "scope": "pgxpool", "name": "app.db.pool.acquire.wait.duration", "type": "sum_float64", "unit": "s", "temporality": "cumulative", "monotonic": true, "attributes": [{"key": "db.client.connection.pool.name", "domain": "database_pools", "allow_absent": true}], "series_ceiling": 2},
+
+    {"resource": "runtime", "scope": "runtime", "name": "go.memory.used", "type": "sum_int64", "unit": "By", "temporality": "cumulative", "monotonic": false, "attributes": [{"key": "go.memory.type", "domain": "runtime_memory_types", "allow_absent": true}], "series_ceiling": 3},
+    {"resource": "runtime", "scope": "runtime", "name": "go.memory.limit", "type": "sum_int64", "unit": "By", "temporality": "cumulative", "monotonic": false, "attributes": [], "series_ceiling": 1},
+    {"resource": "runtime", "scope": "runtime", "name": "go.memory.allocated", "type": "sum_int64", "unit": "By", "temporality": "cumulative", "monotonic": true, "attributes": [], "series_ceiling": 1},
+    {"resource": "runtime", "scope": "runtime", "name": "go.memory.allocations", "type": "sum_int64", "unit": "{allocation}", "temporality": "cumulative", "monotonic": true, "attributes": [], "series_ceiling": 1},
+    {"resource": "runtime", "scope": "runtime", "name": "go.memory.gc.goal", "type": "sum_int64", "unit": "By", "temporality": "cumulative", "monotonic": false, "attributes": [], "series_ceiling": 1},
+    {"resource": "runtime", "scope": "runtime", "name": "go.goroutine.count", "type": "sum_int64", "unit": "{goroutine}", "temporality": "cumulative", "monotonic": false, "attributes": [], "series_ceiling": 1},
+    {"resource": "runtime", "scope": "runtime", "name": "go.processor.limit", "type": "sum_int64", "unit": "{thread}", "temporality": "cumulative", "monotonic": false, "attributes": [], "series_ceiling": 1},
+    {"resource": "runtime", "scope": "runtime", "name": "go.config.gogc", "type": "sum_int64", "unit": "%", "temporality": "cumulative", "monotonic": false, "attributes": [], "series_ceiling": 1}
+  ]
+}

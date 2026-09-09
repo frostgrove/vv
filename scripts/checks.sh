@@ -17,13 +17,14 @@ TIER0_SEALED=(errs)
 TIER0_STDLIB=(crud "${SHARED[@]}")
 SUBSYSTEMS=(crud auth port remote storage app tenancy event)
 
-# The commit that landed the phase-1 event kernel. Everything under event/ that
-# is not event/eventpg is frozen against it: a second store is added with zero
+# One sha256 and one path per file under event/ outside event/eventpg. Everything
+# in that set is frozen against this manifest: a second store is added with zero
 # diffs to the vocabulary, or the kernel gap it needs is reported out loud rather
-# than patched. Overridable because the self-test runs this script inside a
-# fixture repository, where this commit does not exist and every case would
-# otherwise take the does-not-resolve branch and prove nothing about the diff.
-EVENT_KERNEL_BASELINE=${EVENT_KERNEL_BASELINE:-c798fc0b28b270ec0368a918810ff3d7c17e6f8a}
+# than patched. It is a manifest and not a digest because a digest names nothing —
+# a diff of two manifests names the file that changed, the one that appeared and
+# the one that disappeared — and it needs no git, so the arm runs from a tarball
+# or a vendor directory.
+EVENT_KERNEL_MANIFEST=scripts/event_kernel.sha256
 TRIPLETS=(
 	'crud/http/crudnet,crud/http/crudgin,crud/http/crudfiber'
 	'auth/http/authnet,auth/http/authgin,auth/http/authfiber'
@@ -518,35 +519,134 @@ check_workspace() {
 	echo 'check-workspace: ok'
 }
 
+# Enumerated with find and sorted LC_ALL=C, so the manifest is byte-stable across
+# machines and a file nobody tracked is in it too — the half the git spelling
+# needed a second command for.
+event_kernel_manifest() {
+	find event -type f -not -path 'event/eventpg/*' -print0 2>/dev/null |
+		LC_ALL=C sort -z |
+		xargs -0 -r sha256sum || true
+}
+
 # Every arm refuses rather than reporting ok when it cannot ask its question: a
-# check that passes because git is missing, because this is a tarball, or because
-# the baseline does not resolve is a green line nobody earned.
+# check that passes because sha256sum is missing, because the manifest was
+# deleted, or because event/ itself moved is a green line nobody earned.
 check_event_kernel() {
-	local moved untracked
-	if ! command -v git >/dev/null 2>&1; then
-		echo 'check-event-kernel needs git and this environment has none, so the frozen kernel was compared with nothing'
+	local computed difference
+	if ! command -v sha256sum >/dev/null 2>&1; then
+		echo 'check-event-kernel needs sha256sum and this environment has none, so the frozen kernel was compared with nothing'
 		return 1
 	fi
-	if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-		echo 'check-event-kernel is not inside a git work tree, so the frozen kernel was compared with nothing'
+	if [[ ! -s $EVENT_KERNEL_MANIFEST ]]; then
+		echo "check-event-kernel reads $EVENT_KERNEL_MANIFEST and this tree holds no such file, or it is empty"
+		echo '  record one with make check-event-kernel-baseline'
 		return 1
 	fi
-	if ! git rev-parse --verify --quiet "$EVENT_KERNEL_BASELINE^{commit}" >/dev/null; then
-		echo "EVENT_KERNEL_BASELINE names $EVENT_KERNEL_BASELINE and this repository does not carry that commit"
+	computed=$(event_kernel_manifest)
+	if [[ -z $computed ]]; then
+		echo 'check-event-kernel found no file at all under event/ outside event/eventpg, and a directory that moved would otherwise read as a clean tree'
 		return 1
 	fi
-	moved=$(git diff --stat "$EVENT_KERNEL_BASELINE" -- event/ ':(exclude)event/eventpg')
-	untracked=$(git status --porcelain -- event/ ':(exclude)event/eventpg')
-	if [[ -n $moved || -n $untracked ]]; then
-		echo "event/ outside event/eventpg has moved since $EVENT_KERNEL_BASELINE:"
-		[[ -z $moved ]] || echo "$moved" | sed 's/^/  /'
-		[[ -z $untracked ]] || echo "$untracked" | sed 's/^/  /'
+	difference=$(diff -u --label "$EVENT_KERNEL_MANIFEST" --label 'event/ as it stands' "$EVENT_KERNEL_MANIFEST" <(printf '%s\n' "$computed")) || true
+	if [[ -n $difference ]]; then
+		echo 'event/ outside event/eventpg differs from the recorded manifest:'
+		printf '%s\n' "$difference" | sed 's/^/  /'
 		echo '  a second store is written with zero diffs to the vocabulary. Either the'
 		echo '  constructor you need already exists and was not found, or this is a real'
 		echo '  kernel gap — which is reported out loud rather than patched here.'
+		echo '  A deliberate move is recorded with make check-event-kernel-baseline, in the'
+		echo '  same change as the code, so what a reviewer reads is the diff above.'
 		return 1
 	fi
 	echo 'check-event-kernel: ok'
+}
+
+# Re-baselining is a recorded act and not a relaxation, and the difference is
+# mechanical: moving a digest is one opaque line in a diff, and regenerating this
+# file lists every path that moved next to the code that moved it.
+#
+# Phase 3 moved it, and this is what moved and why. event/checkpoint.go is the
+# checkpoint contract, its door and its fence — two store packages implement it
+# and a third must be provable against it, so it cannot live in the consumer.
+# event/bounds.go gains MaxCursorBytes, because the ceilings are one list.
+# event/reader.go's checkPage takes the cursor, because store honesty is checked
+# in one place. event/fact.go gains Family and Read, because only Fact holds the
+# reader chain. event/eventtest/ gains the checkpoint conformance runner, because
+# the suite is the kernel's evidence half. event/eventmemory/checkpoints.go
+# arrives beside transaction.go, log.go and store.go, which carry the ambient
+# join a checkpoint save inside a unit of work needs. And event/projection/ is
+# the consumer itself, a package of the root module because phase 3 adds no
+# module.
+event_kernel_baseline() {
+	local computed
+	if ! command -v sha256sum >/dev/null 2>&1; then
+		echo 'event-kernel-baseline needs sha256sum and this environment has none, so nothing was recorded'
+		return 1
+	fi
+	computed=$(event_kernel_manifest)
+	if [[ -z $computed ]]; then
+		echo 'event-kernel-baseline found no file at all under event/ outside event/eventpg, and a manifest of nothing certifies nothing'
+		return 1
+	fi
+	printf '%s\n' "$computed" >"$EVENT_KERNEL_MANIFEST"
+	echo "event-kernel-baseline: $(printf '%s\n' "$computed" | wc -l) files recorded in $EVENT_KERNEL_MANIFEST"
+}
+
+# check-event-kernel is green by construction the instant the baseline is
+# regenerated, so the arm that reads WHAT the re-baseline moved is the one thing
+# standing between a phase and an unrecorded kernel edit. It is a command rather
+# than a shell pipeline because a command can be given a predecessor that
+# survives a commit, can be self-tested, and matches with bash's own [[ =~ ]].
+#
+# The moved set is every path whose line differs between the two manifests in
+# either direction, so a file that appeared, one that changed and one that
+# disappeared are all in it. An empty moved set fails: a section that moved no
+# kernel file did not deliver.
+event_kernel_moved() {
+	local predecessor=${1:-} allowed=${2:-} moved path
+	local unplanned=() missing=()
+	if (( $# < 2 )); then
+		echo 'event-kernel-moved reads what a section moved and needs both halves of the question:'
+		echo '  ./scripts/checks.sh event-kernel-moved <predecessor> <allowed-ERE> [required-path...]'
+		return 1
+	fi
+	if [[ ! -s $predecessor ]]; then
+		echo "event-kernel-moved compares against $predecessor and this tree holds no such file, or it is empty"
+		echo '  a section records one before it writes its first file:'
+		echo "    ./scripts/checks.sh event-kernel-baseline && cp $EVENT_KERNEL_MANIFEST $predecessor"
+		return 1
+	fi
+	if [[ ! -s $EVENT_KERNEL_MANIFEST ]]; then
+		echo "event-kernel-moved reads $EVENT_KERNEL_MANIFEST and this tree holds no such file, or it is empty"
+		echo '  record one with make check-event-kernel-baseline'
+		return 1
+	fi
+	moved=$(LC_ALL=C sort "$predecessor" "$EVENT_KERNEL_MANIFEST" | uniq -u | sed 's/^[0-9a-f]\{64\}  //' | LC_ALL=C sort -u)
+	if [[ -z $moved ]]; then
+		echo "$EVENT_KERNEL_MANIFEST records the same kernel as $predecessor, and a section that moved no file under event/ did not deliver"
+		return 1
+	fi
+	while IFS= read -r path; do
+		[[ $path =~ $allowed ]] || unplanned+=("$path")
+	done <<<"$moved"
+	for path in "${@:3}"; do
+		[[ $'\n'$moved$'\n' == *$'\n'$path$'\n'* ]] || missing+=("$path")
+	done
+	if (( ${#unplanned[@]} > 0 )); then
+		echo 'these files under event/ moved and this section was not told about them:'
+		printf '  %s\n' "${unplanned[@]}"
+		echo '  an unplanned kernel edit is reported out loud rather than absorbed into the baseline'
+		return 1
+	fi
+	if (( ${#missing[@]} > 0 )); then
+		echo 'these files were to move in this section and did not:'
+		printf '  %s\n' "${missing[@]}"
+		echo '  a section that did not move what it promised did not deliver'
+		return 1
+	fi
+	echo 'the files under event/ this section moved:'
+	printf '%s\n' "$moved" | sed 's/^/  /'
+	echo 'event-kernel-moved: ok'
 }
 
 case ${1:-} in
@@ -574,5 +674,7 @@ case ${1:-} in
 	otel-module) check_otel_module ;;
 	workspace) check_workspace ;;
 	event-kernel) check_event_kernel ;;
+	event-kernel-baseline) event_kernel_baseline ;;
+	event-kernel-moved) shift; event_kernel_moved "$@" ;;
 	*) echo "unknown check: ${1:-}" >&2; exit 2 ;;
 esac

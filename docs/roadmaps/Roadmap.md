@@ -351,18 +351,23 @@ in place and with the reason.
 
 The three debts phase 1 handed phase 2 are disposed of, each by name:
 
-- **The git-diff arm of the zero-diff check**, which this file used to say should
-  exist "as a report, never as a `make check` arm". That objection was to a
-  **tag**-dependent check: before the first tag there is no tag, so the arm would
-  pass vacuously — the worst kind. It is now `make check-event-kernel`, and it
-  pins a recorded *revision* rather than a tag, refuses rather than reporting ok
-  when git is absent or the baseline does not resolve, reads `git status` beside
-  `git diff` so an untracked file under `event/` is caught too, and is self-tested
-  in `scripts/checks_test.go` with four cases — one each for the diff arm, the
-  untracked arm, the pathspec and the refuse-when-it-cannot-run branch. What the
-  original objection leaves standing is real and deferred rather than argued away:
-  it cannot run from a tarball or a vendor directory, and it freezes `event/`
-  against a fixed commit with no stated re-baselining rule.
+- **The zero-diff check**, which this file used to say should exist "as a report,
+  never as a `make check` arm". That objection was to a **tag**-dependent check:
+  before the first tag there is no tag, so the arm would pass vacuously — the
+  worst kind. It is now `make check-event-kernel`, and it compares the tree
+  against `scripts/event_kernel.sha256`, a content manifest of one sha256 and one
+  path per file under `event/` outside `event/eventpg`, refusing rather than
+  reporting ok when it cannot ask. A manifest names the file that changed, the
+  one that appeared and the one that disappeared, it catches a file nobody
+  tracked for free, and it needs no git at all — so the two halves the original
+  objection left standing are closed with it: the arm runs from a tarball or a
+  vendor directory, and re-baselining is a stated act,
+  `make check-event-kernel-baseline`, recorded in the same change as the code and
+  read by `check-event-kernel-moved`, which refuses a moved path a section was
+  not told about and a promised path that did not move. Self-tested in
+  `scripts/checks_test.go` with ten cases: five for the comparison — a changed
+  file, a new one, a removed one, the `eventpg` pathspec, and the
+  refuse-when-it-cannot-run branch — and five for the fence.
 - **The savepoint half of the authority rule** — struck, against
   `TestASavepointWritesUnderItsParentsAuthorityAndARollbackDiscardsThem` rather
   than against a claim: a receipt taken inside a `crudsql` savepoint and one taken
@@ -381,11 +386,29 @@ The three debts phase 1 handed phase 2 are disposed of, each by name:
   carrying the same number is a fingerprint input. The remaining bound belongs to
   the codec seam in `event/`, which is where it is now owed.
 
-What is left is what sits on top of the store rather than beside it: a projector
-and a checkpoint store, a retention or archival path for a history that outgrows
-one table, and an `eventpgfx` that derives schema management from the same
-`DeploymentProfile` `jobspgfx` already reads ([[D-127]]). None of the three is
-blocked on a decision; each is blocked on a consumer that needs it.
+**The projector and the checkpoint store are delivered.** `event.Checkpoints`
+with `event.Track` as its door, `eventmemory.Checkpoints`, `eventpg.Checkpoints`
+at schema version 2, `eventtest.RunCheckpoints` so a third implementation is
+provable, and `event/projection` — a supervised `runtime.Runner` per projection
+name, two advance modes, a typed router, envelope-granular quarantine and a fence
+that makes two live instances take turns rather than killing one of them
+([[D-129]]–[[D-133]], [[FL-038]]). Delivery is at least once in both modes.
+
+**A snapshot is deferred on a measurement rather than omitted.** A full replay is
+10 – 18 ms at 10 000 events and 104 – 171 ms at 100 000, measured on PostgreSQL
+17.9 at the deployed defaults, and paging is a sixth of it: the 391 pages of a
+100 000-event replay cost about 17.6 ms, roughly 45 µs a page. The gate is a
+measured **need**, not a measured cost — so what ships is the instrument,
+`BenchmarkStreamReplay`, and the re-entry trigger belongs to the deployment: a
+snapshot is built when one measures its own p99 aggregate replay above ~50 ms in
+its own environment, which is somewhere above 30 000 – 50 000 events at these
+rates and an order of magnitude fewer over a 1 ms link ([[D-132]]).
+
+What is left is a retention or archival path for a history that outgrows one
+table — whose interlock is against every projection name's stored cursor and
+never against a time cutoff — and an `eventpgfx` that derives schema management
+from the same `DeploymentProfile` `jobspgfx` already reads ([[D-127]]). Neither
+is blocked on a decision; each is blocked on a consumer that needs it.
 
 A transaction-local outbox joins that same module only if the later E4 gate
 activates it, and it is weighed against `jobs.Stager`, which already stages

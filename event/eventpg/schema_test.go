@@ -11,7 +11,43 @@ import (
 	"github.com/frostgrove/vv/event"
 )
 
-const goldenFingerprint = "sha256:fadfff742d234efabc84f46bccb1caa41aea00dc78237d1a1e7dbeabe097aaeb"
+const goldenFingerprint = "sha256:12f0154c05860113b0a28fafbee99ef3964aa4ac396617cd5a87dca068769359"
+
+// The version-1 fingerprints, at both bound configurations, as literals. They
+// are what the stamping UPDATE is guarded on, so a build that computed a
+// different one would not restamp a version-1 schema — it would decline to
+// migrate it, and every deployment on version 1 would be stuck at a red
+// migration nobody could explain. They must never move.
+const (
+	versionOneFingerprint       = "sha256:fadfff742d234efabc84f46bccb1caa41aea00dc78237d1a1e7dbeabe097aaeb"
+	versionOneNarrowFingerprint = "sha256:ac3891b8e1461ee46bc6d98db295424c61ce290acc4d1a6190433e41d6ee404e"
+)
+
+func TestTheVersionOneFingerprintIsTheOneEveryDeployedSchemaCarries(t *testing.T) {
+	for _, pinned := range []struct {
+		schema Schema
+		at     string
+	}{
+		{Schema{}, versionOneFingerprint},
+		{Schema{Name: "narrow_events", MaxPayload: 1024, MaxKey: 40}, versionOneNarrowFingerprint},
+	} {
+		print, err := pinned.schema.fingerprintAt(1)
+		if err != nil {
+			t.Fatalf("%+v has no version-1 fingerprint: %v", pinned.schema, err)
+		}
+		if print != pinned.at {
+			t.Errorf("%+v fingerprints as %s at version 1 and every schema an earlier build deployed carries %s, so this build declines to migrate all of them", pinned.schema, print, pinned.at)
+		}
+	}
+
+	t.Run("a version this build carries no model of has no fingerprint", func(t *testing.T) {
+		for _, version := range []int{0, -1, SchemaVersion + 1} {
+			if _, err := (Schema{}).fingerprintAt(version); !errors.Is(err, ErrSpec) {
+				t.Errorf("version %d answered a fingerprint rather than %v: %v", version, ErrSpec, err)
+			}
+		}
+	})
+}
 
 // Every one of them matches [a-z][a-z0-9_]* and every one of them is a syntax
 // error unquoted.
@@ -62,7 +98,7 @@ func TestTheFingerprintIsTheRenderingItDigests(t *testing.T) {
 	if err != nil {
 		t.Fatalf("the zero schema does not resolve, so nothing below was compared against anything: %v", err)
 	}
-	rendered := expected(resolved).rendering()
+	rendered := expected(resolved, SchemaVersion).rendering()
 
 	t.Run("the rendering is the golden file byte for byte", func(t *testing.T) {
 		golden, err := os.ReadFile("testdata/fingerprint.golden")
@@ -120,7 +156,7 @@ func TestTheFingerprintIsTheRenderingItDigests(t *testing.T) {
 			{"the append-only function returns instead of raising", []string{"RETURN NEW;"}},
 			{"the append-only function raises another message", []string{"RAISE EXCEPTION 'eventpg: no';"}},
 		} {
-			model := expected(resolved)
+			model := expected(resolved, SchemaVersion)
 			model.functions[0].body = changed.body
 			if fingerprintOf(model.rendering()) == goldenFingerprint {
 				t.Errorf("a build where %s fingerprints as this one does, so CREATE OR REPLACE at schema version 1 changes what the schema enforces with the digest unmoved", changed.what)
@@ -137,7 +173,7 @@ func TestTheFingerprintIsTheRenderingItDigests(t *testing.T) {
 			t.Fatalf("the rendering is %d lines and the schema alone has three tables, so this digests almost nothing", len(lines))
 		}
 		header := []string{
-			"eventpg/schema/v1",
+			"eventpg/schema/v2",
 			"schema " + DefaultSchema,
 			"bounds maxpayload=65536 maxkey=512",
 		}
@@ -191,19 +227,21 @@ func TestMigrationStatementsAreOrderedTransactionalDDL(t *testing.T) {
 		}
 	})
 
-	t.Run("eleven statements in the order a deployment runs them", func(t *testing.T) {
-		if len(statements) != 11 {
-			t.Fatalf("the migration is %d statements and schema version 1 is eleven — a statement was added or dropped and MIGRATIONS.md still says eleven", len(statements))
+	t.Run("thirteen statements in the order a deployment runs them", func(t *testing.T) {
+		if len(statements) != 13 {
+			t.Fatalf("the migration is %d statements and schema version 2 is thirteen — a statement was added or dropped and MIGRATIONS.md still says thirteen", len(statements))
 		}
 		for index, opening := range []string{
 			`CREATE SCHEMA IF NOT EXISTS "frostgrove_events"`,
 			`CREATE TABLE IF NOT EXISTS "frostgrove_events".schema_meta`,
 			`CREATE TABLE IF NOT EXISTS "frostgrove_events".streams`,
 			`CREATE TABLE IF NOT EXISTS "frostgrove_events".events`,
+			`CREATE TABLE IF NOT EXISTS "frostgrove_events".checkpoints`,
 			`CREATE OR REPLACE FUNCTION "frostgrove_events".events_are_append_only`,
 			`CREATE OR REPLACE FUNCTION "frostgrove_events".events_assign_writer_xid`,
 			"DO ", "DO ", "DO ",
 			`INSERT INTO "frostgrove_events".schema_meta`,
+			`UPDATE "frostgrove_events".schema_meta`,
 			"DO ",
 		} {
 			if !strings.HasPrefix(statements[index], opening) {
@@ -221,7 +259,7 @@ func TestMigrationStatementsAreOrderedTransactionalDDL(t *testing.T) {
 	})
 
 	t.Run("the log is minted in the database and a re-run reissues none", func(t *testing.T) {
-		insert := statements[9]
+		insert := statements[10]
 		for _, needed := range []string{
 			"decode(replace(gen_random_uuid()::text, '-', ''), 'hex')",
 			"ON CONFLICT (singleton) DO NOTHING",
@@ -232,28 +270,48 @@ func TestMigrationStatementsAreOrderedTransactionalDDL(t *testing.T) {
 		}
 	})
 
-	t.Run("the fingerprint statement ten writes is the one statement eleven demands", func(t *testing.T) {
+	t.Run("the fingerprint the last three statements carry is this build's own", func(t *testing.T) {
 		print, err := Schema{}.Fingerprint()
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, index := range []int{9, 10} {
+		for _, index := range []int{10, 11, 12} {
 			if !strings.Contains(statements[index], "'"+print+"'") {
 				t.Errorf("statement %d does not carry %s, so a schema this migration built would fail its own verification", index+1, print)
 			}
 		}
 	})
 
-	t.Run("statement eleven records nothing and refuses a schema this list cannot have built", func(t *testing.T) {
-		eleven := statements[10]
+	// The whole of D1: guarded on the version alone, this build's list meeting a
+	// version-1 schema deployed at other bounds would create the fourth table,
+	// stamp its own fingerprint over a schema it did not build, and then pass its
+	// own assertion.
+	t.Run("the stamping update is guarded on the version and the fingerprint it migrates from", func(t *testing.T) {
+		update := statements[11]
+		previous, err := (Schema{}).fingerprintAt(SchemaVersion - 1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, needed := range []string{"version = 1", "fingerprint = '" + previous + "'", "SET version = 2"} {
+			if !strings.Contains(update, needed) {
+				t.Errorf("the stamping update does not carry %q, so a version-1 schema deployed at other bounds would be restamped and would then pass this list's own assertion", needed)
+			}
+		}
+		if previous == goldenFingerprint {
+			t.Error("the version-1 model and the version-2 model fingerprint alike, so the guard admits both and the version it migrates from is not a fact")
+		}
+	})
+
+	t.Run("the last statement records nothing and refuses a schema this list cannot have built", func(t *testing.T) {
+		last := statements[12]
 		for _, write := range []string{"UPDATE ", "INSERT ", "DELETE ", "MERGE "} {
-			if strings.Contains(eleven, write) {
-				t.Errorf("statement eleven carries %q. Version 1 alters no table, so a schema another expectation built stays that schema, and a statement that writes schema_meta anyway records a fact that is false", write)
+			if strings.Contains(last, write) {
+				t.Errorf("the last statement carries %q. It runs after the stamping update and records nothing of its own, and a statement that writes schema_meta anyway records a fact that is false", write)
 			}
 		}
 		for _, needed := range []string{"RAISE EXCEPTION", "'" + schemaMismatchState + "'", "IS DISTINCT FROM"} {
-			if !strings.Contains(eleven, needed) {
-				t.Errorf("statement eleven does not carry %q, so a re-run over a drifted schema ends with exit 0 and the drift is the operator's to find", needed)
+			if !strings.Contains(last, needed) {
+				t.Errorf("the last statement does not carry %q, so a re-run over a drifted schema ends with exit 0 and the drift is the operator's to find", needed)
 			}
 		}
 	})

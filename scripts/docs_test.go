@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 // A doc that names a test is telling the reader where the proof is. When the
@@ -749,12 +750,17 @@ func declaredNamesByFile(t *testing.T, root string) map[string]map[string]bool {
 // matches nothing is a row that permits everything, and blindness here should
 // be loud rather than green.
 //
-// A refusal is a negation *attached to the claim*, not a negation nearby. The
-// scope is the sentence up to the end of the clause the phrase sits in, the
-// sentence before it in the same paragraph, and — for a list of things a
-// document refuses — a heading that itself refuses. "Delivers it exactly once,
-// so you do not need an inbox table" is a promise with a negation in it, and a
-// window of neighbouring lines reads that as a refusal.
+// A refusal is a negation *governing the claim*, not a negation nearby, and the
+// distance at which a negation stops governing is the whole of what this model
+// is. A negation inside the clause the phrase sits in refuses it: "no wording
+// here may call it exactly-once". Further away — an earlier clause, or the
+// sentence before — a negation refuses the claim only when that span is *about*
+// the claim, by naming a promise or by spelling the frequency itself: "We never
+// promise it. The broker delivers each event exactly once." Anything looser
+// exempts a promise for a negation that is merely next to it, and the house
+// style here is negative-heavy prose — "The framework deduplicates nothing",
+// "there is no head" — so a window of neighbouring sentences reads half the
+// corpus as a refusal. A heading that itself refuses covers the list beneath it.
 //
 // Every wording carried here is a claim spelled *positively*, because that is
 // what the negation model can classify. The same promise spelled as a denial —
@@ -769,6 +775,7 @@ type wording struct {
 	weaker   *regexp.Regexp
 	about    *regexp.Regexp
 	negation *regexp.Regexp
+	denying  *regexp.Regexp
 	refusing *regexp.Regexp
 }
 
@@ -780,6 +787,7 @@ var deliveryWordings = []wording{
 		weaker:   regexp.MustCompile(`(?i)at.least.once`),
 		about:    regexp.MustCompile(`(?i)deliver|broker|subscrib|consumer|projection|projector|handler|dispatch|inbox|outbox|at.least.once`),
 		negation: regexp.MustCompile(`(?i)\bno\b|\bnot\b|\bnever\b|\bnothing\b|\bnone\b|non-goal|\bcannot\b|\bwithout\b|n't\b`),
+		denying:  regexp.MustCompile(`(?i)promis|guarantee|\bclaim|\bwording\b`),
 		refusing: regexp.MustCompile(`(?i)non-goal|out of scope|not in scope`),
 	},
 	{
@@ -789,6 +797,7 @@ var deliveryWordings = []wording{
 		weaker:   regexp.MustCompile(`(?i)не менее одного раза|хотя бы один раз|как минимум один раз`),
 		about:    regexp.MustCompile(`(?i)доставк|доставл|брокер|подписчик|потребител|проекц|обработчик|не менее одного раза|хотя бы один раз`),
 		negation: regexp.MustCompile(`(?i)(^|[^\p{L}])(не|ни|нет|никогда|ничего|без)([^\p{L}]|$)`),
+		denying:  regexp.MustCompile(`(?i)обеща|гаранти|утвержд|формулиров`),
 		refusing: regexp.MustCompile(`(?i)не цел|вне области|не входит`),
 	},
 }
@@ -822,10 +831,20 @@ func TestNoDocPromisesExactlyOnceDelivery(t *testing.T) {
 func TestAPromiseOfExactlyOnceDeliveryIsReportedAndARefusalOfOneIsNot(t *testing.T) {
 	claims, read := deliveryClaims(t, deliveryFixture(t))
 
+	if endsWithOneOf(claims, "window.md:5") {
+		t.Fatalf("the sentence before window.md:5's promise denies the promise itself and %v came back, so a page that says it does not promise this is reported anyway", claims)
+	}
+	if !endsWithOneOf(claims, "window.md:13") {
+		t.Fatalf("the sentence before window.md:13's promise negates deduplication and not the claim, and the promise went unreported, so any negation at all in the sentence before licenses an exactly-once promise: %v", claims)
+	}
+	if endsWithOneOf(claims, "обход.md:9") || !endsWithOneOf(claims, "обход.md:11") {
+		t.Fatalf("the same pair written in Russian did not come back the same way, so the two rows of the table do not read a preceding sentence alike: %v", claims)
+	}
+
 	promised := []string{
 		"walk.md:3", "walk.md:7", "walk.md:9", "walk.md:11", "walk.md:15",
-		"window.md:3", "window.md:7", "window.md:10",
-		"обход.md:3", "обход.md:7",
+		"window.md:3", "window.md:7", "window.md:10", "window.md:13",
+		"обход.md:3", "обход.md:7", "обход.md:11",
 	}
 	if len(claims) != len(promised) {
 		t.Fatalf("the fixture writes %d promises and %v came back", len(promised), claims)
@@ -835,11 +854,8 @@ func TestAPromiseOfExactlyOnceDeliveryIsReportedAndARefusalOfOneIsNot(t *testing
 			t.Fatalf("the fixture's %s was not reported, so the arm that would have found it proves nothing: %v", expected, claims)
 		}
 	}
-	if endsWithOneOf(claims, "window.md:5") {
-		t.Fatalf("the fixture refuses the claim in the sentence before it and %v came back, so a page that says it does not promise this is reported anyway", claims)
-	}
-	if read.checked["English"] != 12 || read.checked["Russian"] != 3 {
-		t.Fatalf("the fixture writes twelve English uses about delivery and three Russian ones, and %d and %d were read", read.checked["English"], read.checked["Russian"])
+	if read.checked["English"] != 13 || read.checked["Russian"] != 5 {
+		t.Fatalf("the fixture writes thirteen English uses about delivery and five Russian ones, and %d and %d were read", read.checked["English"], read.checked["Russian"])
 	}
 }
 
@@ -969,7 +985,20 @@ func FuzzADeliveryClaimIsReportedAtALineTheDocumentHas(f *testing.F) {
 }
 
 func (this wording) refuses(paragraph block, at []int) bool {
-	return this.refusing.MatchString(paragraph.heading) || this.negation.MatchString(paragraph.attachedTo(at))
+	if this.refusing.MatchString(paragraph.heading) {
+		return true
+	}
+	if this.negation.MatchString(paragraph.clauseAt(at)) {
+		return true
+	}
+	return this.denies(paragraph.leadingTo(at))
+}
+
+func (this wording) denies(written string) bool {
+	if !this.negation.MatchString(written) {
+		return false
+	}
+	return this.denying.MatchString(written) || this.promise.MatchString(written) || this.weaker.MatchString(written)
 }
 
 // A paragraph read as one text, because a wrapped sentence is one sentence and
@@ -1038,6 +1067,14 @@ func (this block) attachedTo(at []int) string {
 	return this.sentenceBefore(at[0]) + " " + this.text[this.sentenceFrom(at[0]):this.clauseTo(at[1])]
 }
 
+func (this block) clauseAt(at []int) string {
+	return this.text[this.clauseFrom(at[0]):this.clauseTo(at[1])]
+}
+
+func (this block) leadingTo(at []int) string {
+	return this.sentenceBefore(at[0]) + " " + this.text[this.sentenceFrom(at[0]):this.clauseFrom(at[0])]
+}
+
 func (this block) sentenceFrom(offset int) int {
 	for index := offset; index > 0; index-- {
 		if endsASentence(this.text, index-1) {
@@ -1068,13 +1105,28 @@ func (this block) sentenceBefore(offset int) string {
 	return this.text[this.sentenceFrom(ended):from]
 }
 
+func (this block) clauseFrom(offset int) int {
+	sentence := this.sentenceFrom(offset)
+	from := sentence
+	for index, letter := range this.text[sentence:offset] {
+		if separatesAClause(letter) {
+			from = skipSpace(this.text, sentence+index+utf8.RuneLen(letter))
+		}
+	}
+	return from
+}
+
 func (this block) clauseTo(offset int) int {
-	for index := offset; index < len(this.text); index++ {
-		if strings.IndexByte(",;:", this.text[index]) >= 0 || strings.HasPrefix(this.text[index:], "—") || endsASentence(this.text, index) {
-			return index
+	for index, letter := range this.text[offset:] {
+		if separatesAClause(letter) || endsASentence(this.text, offset+index) {
+			return offset + index
 		}
 	}
 	return len(this.text)
+}
+
+func separatesAClause(letter rune) bool {
+	return strings.ContainsRune(",;:—", letter)
 }
 
 func endsASentence(text string, index int) bool {
@@ -1132,6 +1184,8 @@ func deliveryFixture(t *testing.T) string {
 			"",
 			"| the projector delivers each event exactly once |",
 			"| it does not order streams |",
+			"",
+			"The framework deduplicates nothing. Every event reaches the handler exactly once, so a read model needs no idempotency of its own.",
 		},
 		"обход.md": {
 			"# Обход журнала",
@@ -1141,6 +1195,10 @@ func deliveryFixture(t *testing.T) string {
 			"Доставка гарантируется хотя бы один раз, и ни один текст здесь не назовёт её «ровно один раз».",
 			"",
 			"Каждый подписчик получает событие один и только один раз.",
+			"",
+			"Мы никогда этого не обещаем. Брокер доставляет каждое событие ровно один раз.",
+			"",
+			"Фреймворк ничего не дедуплицирует. Каждое событие доходит до обработчика ровно один раз.",
 		},
 	}
 	for name, lines := range written {

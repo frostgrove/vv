@@ -50,7 +50,7 @@ func (this *Reader) Next(ctx context.Context) (bool, error) {
 	if err != nil {
 		return false, refuseRead(err)
 	}
-	if err := this.checkPage(page); err != nil {
+	if err := this.checkPage(page, cursor); err != nil {
 		return false, err
 	}
 	this.events, this.cursor = page, cursor
@@ -68,12 +68,35 @@ func (this *Reader) Events() []Envelope { return this.events }
 // transaction.
 func (this *Reader) Cursor() Cursor { return this.cursor }
 
+// The page and the cursor it was answered with are one answer, so both are
+// checked here and the reader's own cursor is not advanced until they pass.
+//
 // Gaps in the positions are normal and going backwards is not, so a page that
 // does not ascend is refused before a consumer checkpoints past an event it
-// never saw.
-func (this *Reader) checkPage(page []Envelope) error {
+// never saw. That arm is one half of a law and not a store's option: the whole
+// of it is that the cursor tiles the log in position order, and the other half —
+// a cursor that advanced past a position which had not settled — is invisible
+// from one page and is certified live instead, by the resumption section walking
+// across a writer holding a lower position uncommitted. What forbids the
+// alternative order outright is one stream's events reaching a projector in the
+// order that stream holds them, which is [[D-128]]. A cursor over the published
+// ceiling is refused because a checkpoint
+// store has a column of exactly that width. An empty cursor beside a NON-EMPTY
+// page is refused because the empty cursor is the origin: a log that minted one
+// there would make this reader read the head of the log for ever while a
+// consumer's checkpoint advanced once a pass — no error, no halt, and a
+// destination written twice. An empty page answered with an empty cursor is a
+// fresh log read from the origin and stays legal, because nothing was delivered
+// to resume past.
+func (this *Reader) checkPage(page []Envelope, cursor Cursor) error {
 	if len(page) > this.limits.MaxRead {
 		return fmt.Errorf("%w: a read answered with %d envelopes where this store publishes %d", ErrBackend, len(page), this.limits.MaxRead)
+	}
+	if len(cursor) > MaxCursorBytes {
+		return fmt.Errorf("%w: a read answered a cursor of %d bytes where the kernel publishes a ceiling of %d", ErrBackend, len(cursor), MaxCursorBytes)
+	}
+	if cursor == "" && len(page) > 0 {
+		return fmt.Errorf("%w: a read answered %d envelopes beside the empty cursor, which is the origin of the log, so resuming from it reads the same page again", ErrBackend, len(page))
 	}
 	for offset := 1; offset < len(page); offset++ {
 		if page[offset].Position <= page[offset-1].Position {

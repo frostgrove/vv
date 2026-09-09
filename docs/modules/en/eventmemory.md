@@ -28,6 +28,8 @@ Nothing survives the process, which is what `Persistence: Unsupported` says.
 | `WithTransaction(ctx, tx)` | the context that carries it |
 | `Tx.Commit(ctx)` · `Tx.Rollback(ctx)` | the two ends. Neither is called by the framework |
 | `Store.Check(ctx)` | a readiness answer: `event.ErrClosed` once closed |
+| `NewCheckpoints(CheckpointSpec)` | a `*Checkpoints` over the same log — the checkpoint contract with no database |
+| `Checkpoints.Begin(ctx)` | a `*Tx` of the log, opened through the checkpoint store, so a consumer that records progress and writes nothing to the log needs no `*Store` to open a unit of work |
 
 ```go
 log, err := eventmemory.NewLog(eventmemory.LogSpec{})
@@ -101,12 +103,40 @@ door looks the transaction up **before** it takes the log's lock and asks only
 whether it is still live inside. A caller whose `Value` takes a lock of its own
 would otherwise hang every reader and writer of the log.
 
+## The checkpoint store is the log's too
+
+`NewCheckpoints(CheckpointSpec{Log: log})` answers the `event.Checkpoints`
+contract over the same `*Log`, and the rows live **on the log** rather than on
+the value — so two `Checkpoints` values over one log are one checkpoint store,
+exactly as two `Store` values over one log are one store, and a restart resumes
+through a value that did not exist when the row was written.
+
+It joins the log's own ambient transaction, which is what lets a consumer prove
+the one-unit path with no database at all: a save inside a `*Tx` is staged in a
+second staging area beside the appends, the fence is evaluated when it is staged
+**and again at the commit**, and a rollback discards it. A row that moved between
+the stage and the commit is therefore an error rather than a save that overwrote
+a winner.
+
+It says `Transactions: Supported` and `Persistence: Unsupported`, so
+`eventtest.RunCheckpoints` certifies eleven of its twelve sections and reports
+`durability: not certified` with this store's own reason. That pair of facts —
+eleven passed, one declined — is asserted rather than left to a reader of the
+log.
+
+```go
+checkpoints, err := eventmemory.NewCheckpoints(eventmemory.CheckpointSpec{Log: log})
+tracker, err := event.Track(checkpoints, "balances")
+```
+
 ## Positions, and what a rollback burns
 
 A position is assigned inside the one critical section that publishes, so commit
 order is position order and the newest position is the watermark. A rollback
 discards the staged records and advances the counter by the number it staged:
-those positions are burned, the gap stays, and nothing is ever reissued. Gaps in
+those positions are burned, the gap stays, and nothing is ever reissued. A
+checkpoint draws no position, so the arithmetic reads the appends' staging area
+and not the saves'. Gaps in
 the positions are normal and every consumer of the log already has to tolerate
 them.
 
@@ -139,5 +169,6 @@ over it, and staged work belongs to the transaction that staged it.
 ## See also
 
 - [event](event.md) — the vocabulary, the seam and the refusals
+- [projection](projection.md) — the consumer that records through this store
 - [eventtest](eventtest.md) — the suite this store is certified by
-- [[D-121]] · [[FL-036]] · [[UC-032]]
+- [[D-121]] · [[D-128]] · [[D-133]] · [[FL-036]] · [[FL-038]] · [[UC-032]]

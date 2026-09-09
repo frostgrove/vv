@@ -937,7 +937,7 @@ one question, which is the shape §52 already records.
 
 Owed: resolve once and pass the result, the same fix §52 names.
 
-### 59. `eventtest` never walks the log while a lower position is uncommitted, so a cursor that skips an in-flight position is invisible to it  `[high]`
+### 59. `eventtest` never walks the log while a lower position is uncommitted, so a cursor that skips an in-flight position is invisible to it  `[high]` — **CLOSED by P3 S2, 2026-09-08**
 
 *Recorded by the S5 implementation, 2026-09-08. Owner: the phase that unfreezes the kernel. Extends
 `## P1` §1 with a measured instance.*
@@ -975,6 +975,16 @@ Owed, and it is a change to `event/eventtest` and therefore frozen by §INV-061:
 the walk delivers nothing at or beyond the held position, commits, and asserts the next walk from the
 persisted cursor delivers it. That is the one assertion that separates a settled watermark from the
 newest position, and the suite that exists to certify store implementations does not make it.
+
+**Closed by phase 3 S2.** `heldWriter` replaces `lateWriter`: the late writer's transaction is held
+**open** across the resumed walk, the section asserts the walk returns nothing that transaction wrote,
+commits, and asserts the walk resumed from the cursor persisted during the hold returns it
+(`event/eventtest/sections_resumption.go:acrossTheFlight`). The defect the entry describes is now a
+row of the eventpg mutation harness — `in-flight-newest-position`, a decorator answering the highest
+position its own read's query returned rather than the settled watermark — and
+`TestTheNewestPositionCursorNowFailsResumption` drives it with the unmodified store as the control.
+Measured both ways: against the section as it stood, that store passed all twenty sections; against
+the restructured one it fails `resumption`.
 
 ### 60. The mutation harness runs the narrow-limits configuration only  `[low]`
 
@@ -1100,3 +1110,1651 @@ makes a green run evidence" — and the harness currently makes that argument fo
 Owed: either extend the wrapper so a mutation can answer a wrong `Backing()`, a wider `Limits()` or a
 `Transaction` that reports an authority of another backing, or state in the plan and in FL-037 which
 five methods the harness does not cover and what covers them instead.
+
+---
+
+## P3 — `event/projection`, checkpoints, catch-up
+
+Recorded under the 2026-09-08 policy: `[medium]` and `[low]` are scheduled here and left alone until
+the core mechanics of all five phases are in. Everything below was raised by the phase-3 use-case
+audit (Round 1, [`EVENTSOURCE_P3_USECASES_GAPS.md`](EVENTSOURCE_P3_USECASES_GAPS.md)) against
+[`EVENTSOURCE_P3_USECASES.md`](../usecases/EVENTSOURCE_P3_USECASES.md). The seven blocking findings
+are in that file and are **not** repeated here.
+
+### 1. A handler has no spelling for a permanent failure, and `jobs`' spelling silently means the opposite  `[medium]`
+
+§3.4's table sends the handler's own error to `Spec.Classifier`, whose default (`projection.Classify`)
+calls the four history-class sentinels `Permanent` and **everything else `Retryable`**. A handler that
+knows its failure will never clear — a foreign key that does not exist, a row shape this build cannot
+write — has no way to say so except supplying a whole `Classifier` for the projection.
+
+The same repository already has the idiom: `jobs.Permanent(err)` / `jobs.IsPermanent(err)`
+(`jobs/handler_error.go:27,34`), reached by `classifiedHandlerDisposition` through an unexported
+marker interface. A consumer who uses both subsystems will write `jobs.Permanent(err)` in a projection
+handler; `projection.Classify` does not know the marker, so it answers `Retryable` and the event is
+re-applied ten times over roughly four minutes of backoff before halting anyway. Same terminal state,
+wrong four minutes, and nothing says why.
+
+Phase 3 also re-spells three more `jobs` mechanisms without recording that it is doing so:
+`projection.Backoff{First, Max}` against `jobs.BackoffPolicy` (`jobs/policy.go:20`, option
+`jobs.RetryBackoff`), `Spec.Attempts int` against `jobs.RetryLimit` (`jobs/outcome.go:21`) and
+`AttemptOrdinal`/`RetrySpent` (`jobs/attempt.go:8,21`), and `Quarantines` against the permanent-failure
+disposition path (`jobs.PermanentFailureDisposition`, `jobs/disposition.go`). The duplication is
+*justified* — §11.3 forbids `event/projection` the `jobs` closure, and a projection that dragged the
+whole job runtime into every consumer of the root module would be worse — but the justification is
+nowhere in the document, and the three decision docs §11.2 owes do not include it.
+
+Owed: a `projection.Permanent(err)` (or an exported error the classifier honours) so the common case
+needs no classifier, `Classify` documented as honouring it; and one paragraph — in the decision doc
+about the supervised runner — naming `jobs.BackoffPolicy`, `jobs.RetryLimit` and `jobs.Permanent` and
+saying why phase 3 re-spells rather than imports them.
+
+### 2. §1.3(2)'s prefix stability is load-bearing, has no invariant, and §UC-108 cites the wrong one  `[medium]`
+
+§1.3(2) — "Re-reading from one cursor is stable in its prefix … only the *number* of them may grow" —
+is what makes a crash replay "the same work and never a different subset", and §UC-108's **Must not**
+leans on it directly ("must not hand the second delivery a different subset — a re-read from one
+cursor is stable in its prefix and may only grow (§INV-066)"). §INV-066 says nothing of the kind: it
+is "a checkpoint is a store-minted cursor, and never a position". No invariant in §8 states prefix
+stability and no `eventtest` section proves it, so a consumer-facing assumption in the list titled
+"What a consumer may assume" is the one item on it with no falsification.
+
+It is derivable from §INV-035 plus ascending positions, which is why this is `[medium]`: the property
+is true of both shipped stores. What is missing is that a third store could satisfy §INV-035 and still
+answer a differently-shaped page from one cursor, and nothing would report it.
+
+Owed: fix §UC-108's citation, and either state the property as an invariant with a `resumption`-side
+case (read a page, re-read from the *same* cursor after more commits, assert the second answer starts
+with the first) or say it is a corollary and name the two invariants it follows from.
+
+### 3. §1.3(3) restates §INV-054 in its absolute form and drops the limit phase 2 measured  `[medium]`
+
+§1.3(3) tells a projection author that "every event at a position ≤ `H` that is or ever becomes
+visible has already been delivered by that walk", with no qualification. `## P2` §2.6 states the one
+writer shape that is **not** covered — a writer that draws a position with `SELECT nextval(...)` in
+one statement and inserts it with `OVERRIDING SYSTEM VALUE` in a later one can hold an unassigned
+transaction across the bound and be skipped — and `event/eventpg/watermark_integration_test.go:706`
+drives it, with a failure message that says the module page would then overstate the limit.
+
+§UC-098 admits other writers to the `events` table exist, so this is a real deployment shape, and §1.3
+is the chapter a projection author reads rather than the eventpg module page.
+
+Owed: one sentence in §1.3(3) scoping the theorem to writers that let the identity column draw the
+position, pointing at the eventpg module page for the boundary.
+
+### 4. No pass timeout, and §UC-118's two "must not"s can conflict  `[medium][immediate-ish]`
+
+Nothing in §3, §9.2 or §UC-118 bounds a pass. `runtime.PeriodicSpec` next door carries a `Timeout`
+for exactly this (`runtime/periodic.go:34`, defaulted to the interval). §UC-118 then asks for two
+things that a slow handler makes mutually exclusive: "must not abandon a page between the handler and
+the save when it was given the chance to finish" and "must not ignore the drain deadline, which would
+hold the whole supervisor past its grace". The spec never says which wins, and it never says what
+context the handler runs on — the runner's (cancelled at `Supervisor.Stop` after the drain grace,
+so a handler must be interruptible and an `InUnit` commit can be cancelled mid-flight) or a detached
+one.
+
+Consequence when it is guessed wrong: `Supervisor.Stop` returns `ErrDrainDeadline` on every deploy,
+or an `InUnit` pass is cancelled between the handler and the commit and the save answers
+`ErrUncertain` on a context that is already dead — so §3.4's bounded resolution (`Load` once) cannot
+run, and the process exits without knowing whether the advance landed. Nothing is lost (the next start
+resumes from the checkpoint), which is why this is `[medium]` rather than blocking.
+
+Owed: say what context `Apply` receives and whether it is cancelled at shutdown; decide whether
+`Spec` gains a pass timeout; and resolve §UC-118's two must-nots into an order (drain waits up to the
+deadline, then the pass is abandoned and redelivered).
+
+### 5. `Progress.Applied` and `Progress.At` have no defined semantics, and both are persisted columns  `[medium]`
+
+§1.2 and §9.1 give `Progress` three fields and define one. `Applied uint64` is not said to count
+envelopes or pages, nor whether it is cumulative across restarts (the `applied bigint` column is
+persisted, so a fresh process must either read it back and continue or reset it to zero — two
+different dashboards). `At time.Time` does not say whose clock: the projection has no injected clock
+in `Spec`, while the row's own `updated_at` comes from `statement_timestamp()`, so one row carries two
+instants from two clocks and §3.1 does not say which `Load` answers.
+
+Phase 1 made an injected clock a store obligation ("records the instant from its own injected clock");
+a projection that reads `time.Now()` is the first place in this subsystem that does not.
+
+Owed: define `Applied` (unit and lifetime) and `At` (which clock, and whether `Load` answers the
+stored value or the column), in §1.2 and in the `eventpg` column table.
+
+### 6. What a store failure on `Save` retries — the save or the whole pass — is unstated  `[medium]`
+
+§3.4's `ErrBackend` row says "Back off and try again, without limit", for a failure that can arrive at
+the **read** or at the **save**. At the read that is unambiguous. At the save it is not: does the next
+attempt re-issue the save alone, or re-run the pass — which in `AfterApply` means calling `Apply`
+again for a page whose rows are already committed, and in `InUnit` means re-running handler and save
+inside a fresh unit (which is correct, since the unit rolled back)?
+
+The two modes plausibly want different answers, and a handler with a side effect outside its
+transaction sees the difference on every database hiccup.
+
+Owed: one row per mode in §3.4, or a sentence in §3.2 saying the retry unit is the pass in `InUnit`
+and the save in `AfterApply`.
+
+### 7. `New`'s refusal set is not enumerated, and "a `Unit` beside `AfterApply` is refused" has no case  `[medium]`
+
+§9.2's `Spec` has fifteen fields and §3/§7 name three refusals: `InUnit` with a nil `Unit`, `InUnit`
+with a checkpoint store that does not claim transactions (§UC-107 a, b), and a `Log` that is also a
+`Store` (§UC-115). Unstated: a nil `Log`, `Handler` or `Checkpoints`; a `Name` that fails
+`checkName`; `OnPermanentFailure: Quarantine` with a nil sink (§UC-110's **Must not** says it must be
+refused but no case says where); `Backoff.First > Max`; a negative `Idle`, `Attempts` or `Tolerate`;
+an `Advance` value outside the enum (`Advance.Valid()` exists and nothing says who calls it).
+
+Separately, §9.2's comment refuses a `Unit` **beside** `AfterApply`. No use case covers it, and it
+refuses a wiring that is otherwise reasonable — a handler whose writes want one transaction while the
+checkpoint deliberately stays outside it (a read model in another database, §12.7's case). Either the
+refusal is right and the argument is owed, or the wiring is legitimate and the refusal is wrong.
+
+Owed: the full refusal list in §9.2 with one case covering it (the shape §UC-107 already uses), and
+an argument for refusing `Unit` under `AfterApply`.
+
+### 8. Two schema managers over one schema in one process  `[medium]`
+
+§9.3 gives `eventpg.CheckpointSpec` its own `SchemaManagement`, and §9.3's closing line says "`Store`
+and `Checkpoints` over one schema are two resources at one schema version, so a deployment migrates
+once and each verifies at its own `Prepare`". What happens when **both** are configured
+`ManageSchema` in one process is not said: two `Prepare` calls, each holding the advisory lock, each
+believing it owns the v1→v2 transform. §UC-073 covers two *replicas* racing; §10(8) drives that at the
+new version. The in-process pair is a different order of operations (the same `*sql.DB`, possibly
+concurrent under `fx`) and no case covers it.
+
+Owed: say whether `Checkpoints.Prepare` may migrate at all or only verify, and add the in-process pair
+to §UC-073's coverage or to a new case.
+
+### 9. `CheckpointCapabilities` has no `SharedBacking`, but §UC-100 is exactly that capability  `[medium]`
+
+`event.Capabilities` distinguishes `Persistence` (survives the process) from `SharedBacking` (two
+store values over one backing are one store — §UC-054, and what a restart actually exercises).
+`CheckpointCapabilities` carries two supports and drops `SharedBacking`, and §9.4 then gates the
+`Sibling` hook — "a second value over the same backing, which is what a restart is" — on
+`Persistence`. The two are not the same claim, and §3.1 says `eventmemory.Checkpoints` supplies a
+working `Sibling` while declaring `Persistence: Unsupported`, so the memory store's cross-value
+behaviour — the behaviour the `InUnit` proof without a database rests on — is never certified by the
+suite that exists to certify it.
+
+§3.1 argues the two-field shape ("an honest answer that a fourth field would not improve"). The
+argument covers the fourth field; it does not cover gating `Sibling` on the wrong one.
+
+Owed: either gate `Sibling` on its own capability, or state that for a checkpoint store `Persistence`
+is defined as "two values over one backing see one row set" and say what `eventmemory` then answers.
+
+**2026-09-08 — the gate moved, and this entry stays open.** The phase-3 plan (`RunCheckpoints`, and
+the `Sibling` paragraph under it) settles what the *suite* does: `Sibling` is **required when
+`Persistence == Supported`** and its absence is fatal before any section runs — §9.4's own sentence
+and §UC-123's first anti-vacuity rule — and the `durability` section is **gated on the capability**,
+so `eventmemory.Checkpoints` reports it `not certified` with its own reason while still supplying a
+`Sibling` that every section taking a second value uses. An earlier draft made `Sibling` optional and
+gating nothing, which deleted the rule for one capability and let an in-memory store report `passed`
+beside the word `durability`; that draft is gone. **What this entry asks is untouched**: `Persistence`
+and "two values over one backing" are still two claims and `CheckpointCapabilities` still carries
+one, so the memory store's cross-value behaviour is certified by no section of its own. Recording
+where the gate now lives is not working the entry.
+
+### 10. §UC-104's bounded resolution can conclude "it landed" about somebody else's save  `[medium]`
+
+§3.4's `ErrUncertain` row resolves by loading the checkpoint and comparing the stored advance with the
+one this pass tried to write. Under §UC-103's two-replica case the advance it finds may have been
+written by the **other** replica, with the other replica's cursor. This process then continues from
+its own in-memory cursor and saves at `advance + 1`, which lands, and the loser halts on its next
+save — so the fence still bounds it and nothing is skipped (every persisted cursor is some walk's own
+resume point). But §UC-104's Then reads as though a matching advance proves *this* save landed, and
+§INV-069 says a refused save is "never retried at a re-read advance, which would make two processes
+take turns" — which is close enough to what the resolution does that the distinction should be
+written rather than inferred.
+
+Owed: §UC-104 states the two-writer interleaving and why it is safe (or adds the discriminator that
+makes the conclusion exact), and §INV-069 says why the uncertainty path is not the re-read it forbids.
+
+### 11. `Spec.Wake` has no fan-out or coalescing rule  `[low]`
+
+`Wake <-chan struct{}` is signalled by the application after its own append. A deployment with three
+projections over one log that signals one shared channel wakes exactly one of them, at random, per
+send — the other two wait out `Idle`. Nothing says whether a wake is coalesced, whether a signal
+delivered while a pass is running is remembered, or whether each projection needs its own channel.
+§4.2 says a missed wake costs latency and never correctness, which is what keeps this `[low]`.
+
+Owed: one sentence — one channel per projection, and a wake that arrives mid-pass is either
+remembered or dropped, say which.
+
+### 12. A panicking or blocking `Observer` is unspecified  `[low]`
+
+`runtime.Supervisor` recovers a panicking observer on purpose (`runtime/supervisor.go:311`,
+`observing`). §3.5 publishes "the same value to the `Observer` on every transition" and says nothing
+about a panic or a slow implementation, so an observer that blocks stalls the loop and one that panics
+takes the runner down — through §3.4's own "a handler panic is recovered" door, which covers `Apply`
+and not `Observed`.
+
+Owed: match `runtime`'s answer, or state the opposite deliberately.
+
+### 13. §9.1's `checkPage` row understates the change to a frozen kernel file  `[low]`
+
+The §9.1 table says `event/reader.go`'s "`checkPage` also bounds the returned cursor".
+`checkPage(page []Envelope) error` (`event/reader.go:74`) does not receive the cursor, so the entry is
+a signature change inside the file the kernel baseline freezes, not an added branch. §11.1's
+re-baselining paragraph is about *which* files move; this is about how much of one moves, and the
+plan's diff review is where a one-word entry becomes a surprise.
+
+Owed: say `checkPage` takes the cursor as well, or name the new function that checks it.
+
+### 14. Shutdown ordering between closing the store and stopping the supervisor  `[low]`
+
+§3.4 makes `ErrClosed` terminal: a projection that meets a closed store halts and reports unhealthy
+through `Ready`. A composition root that closes the event store before it stops the supervisor —
+which `fx`'s reverse-order shutdown makes as likely as the other way round — therefore halts every
+projection during an ordinary shutdown and reports them unhealthy on the way out. Harmless in
+practice, noisy in a log, and indistinguishable from a real halt in whatever the readiness answer
+feeds.
+
+Owed: §UC-116 or §3.5 states the expected stop order (supervisor first, then the store), and whether a
+halt taken while the context is already cancelled is reported at all.
+
+### 15. `scripts/event_test.go`'s cost comment argues against the row §11.3 adds  `[low]`
+
+The doc comment above `TestNoEventPackageCostsMoreThanTheSeamItNames` ends "which is why `health`,
+`port` and `runtime` stay outside it". §11.3 adds `eventExtension + "/projection": "./runtime"`, which
+is correct and argued in §3.5 — the comment is what goes stale, and the comment is the place the next
+store's author reads before adding a row.
+
+Owed: update the comment in the same change as the row.
+
+---
+
+*Entries §18–§34 were raised by the phase-3 **plan** audit (Round 1,
+[`EVENTSOURCE_P3_PLAN_GAPS.md`](EVENTSOURCE_P3_PLAN_GAPS.md)) against
+[`EVENTSOURCE_P3_PLAN.md`](../plans/EVENTSOURCE_P3_PLAN.md). §16 and §17 are reserved by the plan
+itself and were not taken. The seven blocking findings are in that file and are **not** repeated
+here.*
+
+### 18. `pass.go` reads a clock nobody injected, which is the argument D4 used to refuse `Spec.Clock`  `[medium]`
+
+D4 rejects a wall-clock `Tolerate` partly because "`time.Now()` inside the loop … makes this the
+first package in the subsystem to read a clock nobody injected — phase 1 made an injected clock a
+*store* obligation and this would be the exception". Two paragraphs later `pass.go` builds
+`Progress` as `{… At: time.Now()}`, and `State.At` is the same reading. So the exception is taken
+anyway, for the two fields a test would most like to pin, and the plan's own argument is spent
+where it does not apply and abandoned where it does.
+
+The consequence is small but real: `Progress.At` and `State.At` cannot be asserted in a test, so
+the one field of `Progress` that is a timestamp is the one field no case in the plan checks, and
+`event/eventpg`'s `updated_at` column — which the plan deliberately binds as `$7` rather than
+taking `statement_timestamp()`, precisely so it round-trips — round-trips a value nothing pins.
+
+Owed: either state in D-131 that the projection reads the process clock for observations only and
+that this is the disclosed exception to the store-clock rule, or give `Spec` the clock seam and
+default it, and pin `Progress.At` in the round-trip case.
+
+### 19. `eventtest`'s `sweep`/`probe`/`admit` cannot be shared "over the factory kind" as a signature change  `[medium]`
+
+The plan says `RunCheckpoints` reuses `sweep`, `probe`, `verdict` and `word` and that this is "three
+frozen files changing for **one shared mechanism**", with a stop-and-report trigger "if `sweep`
+needs a second body". Reading the code, the trigger fires:
+
+- `admit` (`suite.go:171`) reads `store.Capabilities()` **and `store.Limits()`**, then derives the
+  run identity from `limits.MaxKey` and the section list's key budget (`runIdentity`, `reserve`,
+  `markOf`, `widestLabel`). A `Checkpoints` has no `Limits`, no key and no stream, so none of that
+  body is shared — it is `admit`'s whole body.
+- `section.needs` is `func(event.Capabilities, Factory) string`, hard-typed to both.
+- `probe` holds `factory Factory` and `opening{capabilities, limits, run}` and every section
+  function takes `*probe`.
+
+What is genuinely free is `report.go` — `word`, `verdict`, `verdict.line`, `certified`,
+`noVerdictFrom` are already store-agnostic and need **no change at all**, so listing `report.go` as
+modified widens the fence for nothing. What is not free is `suite.go` and `probe.go`, and the
+manifest fence checks paths rather than the size of a change, so a restructuring of the file that
+runs the *store* conformance suite — phase 2's evidence — would be inside the allowed set and
+invisible.
+
+Owed: decide before S2 whether `RunCheckpoints` gets its own small runner (reusing `report.go`
+only) or `sweep` is genuinely parameterised, and say which; if `suite.go`/`probe.go` are
+restructured, the section's report names what changed in them and the full store conformance run is
+re-run at both limit configurations as the control.
+
+### 20. `eventpg.Checkpoints` cannot reuse `onExecutor`, `bound`, `opened`, `Migrate` or `Verify` "unchanged" — all five are `*Store` methods  `[medium]`
+
+The plan states that `Checkpoints` "reuses `onExecutor`, `bound`, `opened`, `outcomeOf` and
+`causeOf` unchanged" and that `Prepare` "reuses the store's own `Migrate` under `ManageSchema` and
+its own `Verify` after". Of those seven, only `outcomeOf` and `causeOf` are free functions
+(`classify.go:27,69`). `opened`, `bound` and `onExecutor` are `func (this *Store)`
+(`executor.go:33,50,84`); `Migrate` is `func (this *Store)` (`migration.go:154`); `Prepare`,
+`Verify`, `Check` and `readMeta` are `func (this *Store)` (`verify.go:27,40,68,94`) and read
+`this.db`, `this.schema`, `this.management`, `this.state` and `this.closed`.
+
+So S2 either lifts five methods off `*Store` onto a shared handle — a real refactor of the store,
+unnamed in the plan and outside the kernel manifest, therefore invisible to every checkpoint — or
+duplicates them, which puts §INV-051 ("opens, commits and rolls back nothing") and §INV-053 ("never
+on the pool") in two places that then drift. The plan's own words for that shape are "two accounts
+of one rule".
+
+Owed: name the lift (which methods move, onto what) or name the duplication, and in either case
+give S2 a case that asserts a `Checkpoints` statement never runs on the pool, rather than
+inheriting the assertion from the store's.
+
+### 21. Schema version 2 forces every `eventpg` deployment to migrate, whether or not it ever runs a projection  `[medium]`
+
+`readMeta` (`verify.go:108`) refuses when `version != SchemaVersion`, and level 3 compares the
+expected model's tables as a set. Bumping `SchemaVersion` to 2 and putting the fourth table in the
+model means an existing v1 deployment that upgrades the library and uses **only** the event store
+fails `Verify` at boot until someone runs the v2 list. Under `SchemaManagement: ManageSchema` that
+is automatic; under `VerifyOnly` — the deployment that migrates out of band, which is the one that
+takes schema changes seriously — the store refuses to start.
+
+That may well be the right answer (one schema, one version, one fingerprint), but it is a
+consequence nobody states: neither the plan's D1, nor deliverable 11's `MIGRATIONS.md` row, nor the
+module pages say "upgrading to this release requires a migration even if you never build a
+`Checkpoints`".
+
+Owed: the `MIGRATIONS.md` v1→v2 row says it in one sentence, and the module page's schema section
+says it where an operator reads it.
+
+### 22. `find event -type f` puts gitignored artefacts into the manifest, so `make check` goes red after a coverage run  `[medium]`
+
+The arm enumerates with `find event -type f -not -path 'event/eventpg/*'`. `.gitignore` line 8 is
+`*.out` and line 7 is `*.db`; the current arm uses `git status --porcelain`, which does not report
+ignored files. So `go test -coverprofile=coverage.out ./...` run from inside `event/`, an editor
+scratch file, or any `*.db` left behind makes `check-event-kernel` — and therefore `make check` —
+fail with a message about the frozen kernel having moved. A check that goes red for a reason nobody
+caused is a check people learn to re-baseline past, which is the failure the arm exists to prevent.
+
+Owed: the enumeration excludes what the repository ignores — either by extension list in the arm,
+or by using `git ls-files` when git is available and falling back to `find` with the exclusions when
+it is not, with the fallback stated so the two answers cannot differ silently.
+
+### 23. UC-124's restructured `resumption` states two assertions that are not expressible  `[medium]`
+
+The plan restructures `probe.lateWriter` so the late writer's transaction is "held open across the
+resumed walk", and says "the section asserts the walk delivers nothing at or beyond the held
+position and that the persisted cursor has not passed it".
+
+Neither is expressible as written. `event/store.go:98` says an envelope's position "on an envelope a
+read hands back inside the transaction that wrote it and has not committed it … is unspecified: a
+store drawing positions from a sequence has one already and a store assigning them at commit answers
+zero, and both are conformant" — so the suite cannot name the held position before the commit. And
+"the persisted cursor has not passed it" would need a reading of a cursor as a position, which
+§INV-066 and §1.4 forbid and which no API offers.
+
+The third assertion the plan names — commit, then resume from that cursor and require the held event
+to be delivered — is expressible and is the one that falsifies a `max(position)` cursor, so the
+section is achievable; the first two need restating (assert post-hoc, after the commit, that nothing
+delivered pre-commit had a position at or above the held one; drop the cursor comparison).
+
+Owed: the plan states the three assertions in an order and a vocabulary the store contract admits,
+before S2 writes them.
+
+### 24. S1's checkpoint runs the real-repository kernel test before regenerating the manifest  `[medium]`
+
+S1's arms run, in order: `go test … -run '^(TestCheckEventKernelReportsADifferenceAndOtherwiseOk|
+TestTheEventKernelOfThisRepositoryIsWhereThisPhaseLeftIt)$' ./scripts/`, then
+`./scripts/checks.sh event-kernel-baseline`, then `./scripts/checks.sh event-kernel`. The second
+test in that `-run` runs the real arm against the real repository, which at that point is still
+comparing against the pre-S1 manifest — S1 has just added `event/checkpoint.go` and modified three
+kernel files. It fails.
+
+Owed: regenerate the baseline before the arm that reads it, in S1 and in every section that copies
+the shape.
+
+### 25. Renaming the kernel arm's self-test in S1 leaves `TestEveryTestNameTheDocsCiteExists` red until S5  `[medium]`
+
+S1 replaces `TestTheEventKernelOfThisRepositoryIsWhereThePhaseOneCommitLeftIt` with
+`TestTheEventKernelOfThisRepositoryIsWhereThisPhaseLeftIt`. That name is cited by
+`docs/ai/flows/FL-037-a-recorded-fact-becomes-a-postgresql-row.md:309`, and
+`scripts/docs_test.go:49 TestEveryTestNameTheDocsCiteExists` reads every backticked test name in
+`docs/` and fails on one no `_test.go` declares. S1's checkpoint does not run it and S2's and S3's
+run only `./event/...`, so the tree carries a failing `make unit` from S1 to S5 — against the plan's
+own ordering rule, "`make unit` stays green throughout".
+
+Owed: FL-037's citation moves in the same section as the rename, which is what CLAUDE.md's
+same-change rule already requires.
+
+### 26. `event/projection` inside the frozen-kernel manifest changes what the arm means, and the plan does not say so  `[medium]`
+
+The manifest's subject is everything under `event/` outside `event/eventpg`, and phase 3 puts a
+nine-file consumer package plus its tests inside it. From phase 4 onward every projection bug fix,
+every added test and every doc comment in `event/projection` is a "the frozen kernel moved" failure
+requiring a re-baseline — for a package that is a *consumer* of the kernel rather than part of the
+vocabulary two stores implement. The arm's signal-to-noise is what makes it survivable.
+
+Owed: either the manifest's subject excludes `event/projection` (with a sentence saying the kernel
+is the vocabulary and the suite, not every package that happens to live under `event/`), or the plan
+states that the arm now covers the consumer too and why that is wanted.
+
+### 27. What a store failure on `Save` retries — the save alone or the whole pass — is still unstated in the plan  `[medium]`
+
+`## P3` §6 raised this against the spec; the plan does not decide it. `pass.go`'s table says
+"`ErrBackend` | read or save | retryable, without limit", which under `InUnit` must mean the whole
+unit (the unit rolled back and the handler's writes with it) and under `AfterApply` could mean
+either the save alone or the whole pass — a difference of one duplicate delivery per store hiccup
+against a handler that was promised at-least-once and may be expensive.
+
+Owed: the plan says which, per mode, and the retry case asserts the handler call count over a
+failing save.
+
+### 28. The quarantine sink is handed an envelope the handler may legally have rewritten, and may record it twice  `[medium]`
+
+D5 decides *where* the sink is called and not *what it is handed*. Two things follow that nothing
+states:
+
+- the isolation pass hands the handler a copy per attempt (§3.3) and then hands the sink an
+  envelope; if that is the same value the handler was given, a handler that wrote into its page —
+  legal under §INV-021's grant, and the very thing `TestARetryReApplies…`'s control exercises —
+  makes the quarantine record name mutated bytes.
+- under `AfterApply` the sink is called outside every unit, so a crash between the sink write and
+  the advance re-delivers the page and the isolation pass records the same envelope a second time.
+  D5 names double-recording as the argument against calling the sink outside the unit under
+  `InUnit`, and then leaves the same duplicate unmentioned for the mode that has no unit at all.
+
+Owed: the module page's `Quarantines` contract row says the sink is handed its own copy, and that
+under `AfterApply` a sink is at-least-once and owes the same idempotency a handler does.
+
+### 29. `Progress.Applied` and `Progress.Quarantined` count redeliveries and isolation re-applies twice  `[medium]`
+
+The plan defines both as cumulative envelope counts seeded from the first `Load`, which closes half
+of `## P3` §5. What it does not say is that a redelivered page's envelopes are counted again, and
+that an envelope which applied inside a failed attempt and again inside the isolation pass is
+counted twice. So `Applied` is "envelope applications", not "events in the read model", and the
+difference is exactly the number a dashboard would read it as.
+
+Owed: one sentence in the module page and in the column comment.
+
+### 30. `projection.Phase`, `Observer`, `ObserverFunc` and `State` shadow four `runtime` names in a package that imports `runtime`  `[low]`
+
+`runtime` already exports `Phase` (idle/running/stopped/failed), `Observer`, `ObserverFunc` and
+`RunnerState`, and a composition root that wires a supervised projection holds both in one file.
+The projection's phases are genuinely different values and the duplication is probably right, but
+the plan never says so, and the one place it would be read — D-129 — does not mention it.
+
+Owed: a sentence in D-129 saying why the four are re-spelled rather than reused, in the same place
+the `jobs` re-spellings are argued.
+
+### 31. `*Tracker` is exported with no stated concurrency rule, where `*Reader` states one  `[low]`
+
+`event/reader.go:41` says of `*Reader`: "The one stateful value in the caller-facing surface, and it
+is for one goroutine at a time". `*Tracker` holds `advance` and `loaded` with no synchronisation and
+is exported precisely so a second consumer can have one, and the plan's contract says nothing about
+how many goroutines may hold it.
+
+Owed: the same sentence `Reader` carries, on `Track`'s doc or the module page's checkpoint row.
+
+### 32. The second data source §UC-128 and S4 need is never provisioned  `[low]`
+
+S4's `TestThreeWiringsToASecondDatabaseAreToldApart` needs "a second live database" and the gate
+supplies exactly one DSN (`FROSTGROVE_EVENTPG_TEST_DSN`), whose unset case must fail rather than
+skip. The plan does not say what the second source is — a second `*sql.DB` over the same DSN (a
+different pool, therefore a different transaction, which is all the case actually measures), a
+second schema, or a second database that has to be created. The wrong choice — the same
+`crud.Source` — makes the case fail rather than pass silently, so this is low, but it is an hour
+somebody spends in the middle of the live section.
+
+Owed: S4 says which, in one clause, and whether it needs `CREATE DATABASE` on the gate host.
+
+### 33. `event/bounds.go`'s own comment says "Five bound the factors of a product" and phase 3 adds a sixth  `[low]`
+
+`MaxCursorBytes` joins `MaxPayloadBytes`, `MaxNameBytes`, `MaxKeyBytes`, `MaxBatchCount` and
+`MaxPageCount`, making the count in the file's header comment wrong — and the new constant is not a
+factor of the resident-bytes product the sentence is about, which is worth one clause.
+
+Owed: the comment moves in the same change as the constant.
+
+### 34. An over-ceiling cursor is refused with `ErrTooLarge`, which wraps `crud.ErrBadRequest`  `[low]`
+
+`Tracker.Save` refuses a cursor over `MaxCursorBytes` with `ErrTooLarge`
+(`event/errors.go:45`: `fmt.Errorf("…: %w", crud.ErrBadRequest)`), so a **store** minting an
+oversized cursor renders through a transport as a client's 413. Every other store-honesty refusal in
+the kernel is `ErrBackend`, which is what `Reader.checkPage`'s new arm uses for the identical
+defect one door over.
+
+Owed: decide whether the two doors classify the same store defect the same way, and say why if they
+do not.
+
+### 35. [SPEC] §3.1's DDL table is the last place `cursor text` and an unbounded-below cursor survive  `[low]`
+
+The phase-3 plan overrides both, with measurements: the column is `bytea`, because `event.Cursor` is
+unconstrained bytes and PostgreSQL `text` refuses a NUL and invalid UTF-8 (D11, and `events.payload`
+already answers the identical question one table over); and it carries `octet_length(cursor) >= 1`,
+because the empty cursor is the origin of the log in both shipped stores and a stored empty cursor at
+a non-zero advance restarts a projection against a live read model with no error on any path (D12).
+The frozen semantics are not edited, so §3.1's table now says something the shipped schema does not.
+
+Owed: phase 4 either amends the spec's table or records that the plan's D11/D12 supersede it, so the
+next reader of §3.1 does not write `text`.
+
+### 36. `Track` runs one of the four store-honesty checks the log's own door runs  `[medium]`
+
+`admit(log)` (`event/binding.go:66-81`) refuses a store that is nil, one whose `Backing()` is
+invalid — "this store does not say what it writes to" — and one whose `Capabilities()` leaves any
+`Support` `Unstated`, on the stated ground that "a capability nobody stated is not one nobody has".
+`Track` (`event/checkpoint.go:76-84`) refuses only the nil, and §3.1 says a checkpoint store "is a
+second store interface with an invitation for third-party implementations, so it needs the same door
+rather than the same sentence". A third-party `Checkpoints` returning `CheckpointCapabilities{}` and
+`Backing{}` is admitted; `Persistence: Unstated` then reads to an operator as nothing at all, which
+is exactly what §UC-100 needs `Persistence` for. It fails in the safe direction —
+`Backing{}.Equal(Backing{})` is false because `crud.SameDataSource(nil, nil)` is false, so no
+destination comparison passes spuriously — which is what keeps this `[medium]`.
+
+Owed: either `Track` calls the two predicates that already exist (`Backing.valid`,
+`Support.stated`), or §3.1's "same door" sentence is narrowed to the two checks it actually means.
+
+### 37. `Reader.checkPage` bounds the page count and the cursor but never the payload bytes  `[medium]`
+
+`Fact.Read`'s comment (`event/fact.go:60-63`) says the kernel's `MaxPayloadBytes` is "the second of
+two rather than the only one", because "the store's own read door already refuses a row over its own
+bound". On the **global** read path there is no such first bound in the kernel:
+`Reader.checkPage` (`event/reader.go:84-99`) holds `this.limits` and checks only `MaxRead`, the
+cursor ceiling and ascent. The stream path does bound it — `Repo.apply` refuses
+`len(envelope.Payload) > this.limits.MaxPayload` (`event/repo.go:266`) — so the two read doors
+disagree. A store declaring `MaxPayload: 1024` and answering a page of 256 one-megabyte payloads is
+refused by neither: `MaxResidentBytes` is only enforced at bind time, derived through
+`ResidentPage(MaxPayload)` on the assumption the store honours its own number.
+
+Owed: decide whether `checkPage` applies `this.limits.MaxPayload` per envelope the way `Repo.apply`
+does, and correct `Fact.Read`'s "second of two" if it does not. Pre-dates phase 3; S1 is where the
+claim was written down.
+
+### 38. A store-classified checkpoint failure reaches the caller naming no projection  `[medium]`
+
+Every refusal the door raises itself carries `%q` of the name (`event/checkpoint.go:146-179`).
+Every refusal that comes back **through** the store does not: `Tracker.Save` and `Tracker.Forget`
+return `refuseAppend(err)` and `Tracker.Load` returns `refuseRead(err)` verbatim, so a fenced loser
+reads `event: the stream is not at the version this append was decided at: conflict` — measured —
+with no name, no advance and a sentence about streams and appends. An operator running twelve
+projections against one checkpoint store cannot tell which one stopped. §INV-076 forbids a new
+sentinel and does not forbid context.
+
+Owed: decide whether the three pass-throughs may add the projection name without disturbing the
+refusal-rendering rules, and record the answer.
+
+### 39. The door's over-ceiling arm is asserted through `resumeFrom` and is confounded  `[medium]`
+
+`TestTheDoorRefusesAnAnswerAboutAnotherName`'s third row drives `Load → Read → Next` and asserts
+`errors.Is(err, ErrWrongStore)`. Removing `admit`'s `len(held.Cursor) > MaxCursorBytes` arm still
+fails the case — measured — but through the fixture log's own refusal, `event: this cursor was not
+minted over this backing, or it is no longer readable`, not through the door. §INV-078's
+falsification asks for "a `Checkpoints` whose `Load` answers one, asserting `Tracker.Load` refuses
+it as `ErrWrongStore`", which is an assertion on `Load` alone.
+
+Owed: assert the ceiling row against `Tracker.Load` directly, and keep the `resumeFrom` walk for the
+rows about a walk.
+
+### 40. S1's eleven new exported symbols are in no module page and in no surface baseline  `[medium]`
+
+`docs/modules/en/event.md` and `docs/modules/ru/event.md` name none of `Checkpoint`, `Progress`,
+`CheckpointCapabilities`, `Checkpoints`, `Track`, `Tracker`, `MaxCursorBytes`, `Fact.Family` or
+`Fact.Read`; `grep -c` over both is 0. `docs/api/surface.md` likewise. The plan schedules all of it
+in S5 and `make api` is deliberately outside `make check`, so nothing is red — but CLAUDE.md's rule
+for a public API is "update in the same change as the code, never later", and until S5 lands, a
+consumer's reference describes a package that no longer exists.
+
+Owed: S5 regenerates the surface and writes both module pages, and a note in the plan records that
+S1–S4 deliberately run with the module page stale.
+
+### 41. The empty-cursor origin rule is a bare `== ""` in five places and has no name  `[low]`
+
+D12 makes "the empty cursor IS the origin of the log" the load-bearing fact of three kernel doors,
+and it is spelled as an unnamed comparison at `event/reader.go:91`, `event/checkpoint.go:145`,
+`event/checkpoint.go:151` and `event/checkpoint.go:174`, plus `eventpg/cursor.go:54` and
+`eventmemory`'s own reader — each with its own paragraph restating the same sentence. `Cursor` is
+exported and a third-party store has to know the convention from prose.
+
+Owed: consider one named predicate on `Cursor` that the doors and the stores share, so the rule is
+declared once and the comments shrink to one.
+
+### 42. `Fact.Read` is the one reading door on a declaration that does not seal the aggregate  `[low]`
+
+`Fact.New` and `Fact.RoundTrip` call `this.aggregate.seal()`, and `Fact.Family` seals through
+`Aggregate.Family`. `Fact.Read` reads `this.aggregate.family` directly. It is safe today — `family`
+is immutable after `Define` and `Read` consults only this fact's own chain, never
+`aggregate.facts` — so a `Declare` racing a `Read` cannot change what `Read` answers. What it does
+mean is that a projection can decode a whole log without ever sealing the aggregate it decodes
+through, and a late `Declare` then succeeds behind a router that sealed on its first `Apply`.
+
+Owed: decide whether the projection's decode door seals, and say which of the two rules `Fact.Read`
+follows.
+
+### 43. `event-kernel-moved` reads an empty allowed set as "allow everything"  `[low]`
+
+`[[ $path =~ $allowed ]]` with `allowed` empty matches every path, so
+`./scripts/checks.sh event-kernel-moved <pred> ''` reports ok for any move; the arity guard is
+`(( $# < 2 ))` and an empty second argument satisfies it. Separately, a required path is matched
+with `[[ $'\n'$moved$'\n' == *$'\n'$path$'\n'* ]]`, where `$path` is unquoted on the right of `==`
+and is therefore a glob — a required path containing `*` or `?` would match loosely. Neither is
+reachable from the checkpoints the plan writes.
+
+Owed: refuse an empty allowed set by name, and quote the required path in the membership test.
+
+### 44. S1's fence cannot be re-run outside the clone that recorded it  `[low]`
+
+The predecessor lives at `.git/event_kernel_before_s1`, which the plan calls scratch tied to this
+clone. A reviewer on a fresh checkout cannot run S1's own `event-kernel-moved` arm at all. The
+reconstruction is exact and cheap and was used for this review — every one of the 104 recorded lines
+equals `git show HEAD:<path> | sha256sum`, with `git ls-tree -r --name-only HEAD event | grep -v
+'^event/eventpg/'` giving the same 104 files — but it is nowhere written down.
+
+Owed: record the reconstruction command beside the fence in the plan, so a section's evidence
+survives the clone that produced it.
+
+### 45. The `absence` section compares `Progress` with `==`, which the kernel refuses to do three files away  `[medium]`
+
+`event/eventtest/sections_checkpoints.go:91` reads `case absent.Progress != (event.Progress{}):`.
+`event.Progress` carries a `time.Time`, and `event/checkpoint.go:29-34` exists solely to say why
+that comparison must not be written: "Field by field and never with `==`, because `time.Time`'s
+equality carries a monotonic reading and a `*Location`: a store answering a zero instant in another
+location would be refused for a difference that is not one." `Tracker.admit` calls
+`Progress.zero()`; the suite, which is what a third-party store is measured by, does the thing the
+door refuses to do. `event/eventtest/checkpoints.go:260-268` (`sameCheckpoint`) already carries the
+correct field-by-field form three lines up, so this is one call away from being right.
+
+A store answering `time.Time{}.In(someLocation)` for an absent row — a plausible scan of a NULL
+timestamp through a driver that attaches a session zone — is reported broken for a difference the
+kernel says is not one. Neither shipped store trips it, which is why this is `[medium]`.
+
+Owed: `!absent.Progress.zero()`-equivalent in the section (a `zeroProgress` helper beside
+`sameCheckpoint`, since `zero()` is unexported in `event`), and the same treatment for
+`event/eventmemory/checkpoints_test.go:103` and `:134` and
+`event/eventmemory/transaction_test.go:625`, which compare whole `event.Checkpoint` values with
+`!=` for the same reason.
+
+### 46. Four checkpoint sections blame the wrong field when a row differs in `Progress`  `[medium]`
+
+Every section that reads a row back funnels through `sameCheckpoint`, and each then prints a message
+about the one thing that section is *named* for rather than the field that actually differed.
+Measured, against a store whose only difference is the grain of its instant column (the `[high]`
+GAP-2 of [`EVENTSOURCE_P3_S2_GAPS.md`](EVENTSOURCE_P3_S2_GAPS.md)):
+
+- `event/eventtest/sections_checkpoints.go:243-246` — "a cursor of exactly the 4096 bytes the
+  kernel publishes as the ceiling was saved and answered back as 4096 bytes, byte 4096 first
+  differing". The cursor is byte-identical; `firstDifference` returns `min(len, len)` when nothing
+  differs, so the index it prints is the length.
+- `event/eventtest/sections_checkpoints.go:390-394` — "one saver alone was refused after the
+  contended round, so this fence refuses everything rather than all but one". The saver was not
+  refused; `this.save` would have failed the section if it had been.
+- `lifecycle` and `durability` print `unchangedRow`'s "%+v where it held %+v", which is honest but
+  buries the one differing field in two seven-field renderings.
+
+CLAUDE.md's rule is "the failure message states what broke in plain words". Two of these state
+something false, which is worse than `got != want`.
+
+Owed: `sameCheckpoint` answers *what* differed (a field name, or a small diff value) and the four
+call sites print it; `firstDifference` answers -1 when nothing differs and the cursor arm only fires
+when the cursor is what moved.
+
+### 47. `Forget`'s projection-name refusals diverge between the two shipped stores, and no section asks  `[medium]`
+
+`event/eventmemory/checkpoints.go:138` calls `refusable(projection)` from `Forget`, so a name over
+`event.MaxNameBytes` answers `event.Failure(event.Refused, …)`. `event/eventpg/checkpoints.go:312`
+checks only `projection == ""`, so the same call answers **nil** — the `DELETE` matches nothing and
+the store reports a successful retirement of a name it cannot key a row by. `Save` agrees in both
+stores (S2's departure 7); `Forget` does not.
+
+No `RunCheckpoints` section asks about the projection-name bound at all — `bounds` is the cursor's
+two limits only — so neither the divergence nor a third store that omits the check is visible. The
+door (`event.Track`, `checkName`) refuses an illegal name at construction, so a `*Tracker` can never
+present one; that is why this is `[medium]` rather than blocking. The suite runs against the raw
+`Checkpoints` precisely so an implementer is told what the door covers for them, and here it is not.
+
+Owed: one refusal shape for `Forget` in both stores, and a `bounds` arm that presents an unnamed and
+an over-long projection to `Save` and `Forget` and pins the class.
+
+### 48. S2's six new exported symbols are in no module page, in either language  `[medium]`
+
+`eventmemory.CheckpointSpec`/`Checkpoints`/`NewCheckpoints`, `eventpg.CheckpointSpec`/
+`Checkpoints`/`NewCheckpoints`, and `eventtest.CheckpointFactory`/`RunCheckpoints` are on the
+regenerated `docs/api/surface.md` and in `docs/ai/flows/Index.md`, and `grep -c 'NewCheckpoints\|
+RunCheckpoints'` over `docs/modules/en/{event,eventmemory,eventtest,eventpg}.md` and the `ru/` half
+answers **0** for all eight files. The `eventpg` page's only S2 edit is "eleven statements" →
+"thirteen".
+
+The plan schedules the module pages in S5, so this is the plan working rather than a section
+skipping its docs — it is recorded here because §40 already records the same debt for S1's eleven
+symbols and the two must close together, and because CLAUDE.md's table makes a module page a
+same-change obligation for a new public API.
+
+Owed: fold into §40 — one closing act in S5 covering S1's and S2's exported surface in both
+languages, with the `Checkpoints` contract row a third-party implementer reads (what `Save` admits,
+what `Load` must answer, what `Forget` is not fenced against, and what `Transaction` says).
+
+### 49. `event/eventtest/checkpoints_test.go:184` holds process-wide mutable state in a suite whose own inventory forbids it  `[low]`
+
+`var minted atomic.Uint64` is package-level and shared by every `checkpointFactory` the file builds,
+including the ones the mutation harness runs in sequence. `event/eventtest/inventory.go:5-9` states
+the rule the file next door lives by — "one slice, built here so nothing is package-level and
+mutable". Nothing is wrong today (the counter only has to be strictly increasing), but the fixture
+is the one a third party copies.
+
+Owed: move the counter onto the factory's own closure, as `pgMinter` and `minter` already do.
+
+### 50. `eventpg` classifies an advance above `bigint` as `Conflict`, which tells a consumer the row moved  `[low]`
+
+`event/eventpg/checkpoints.go:246-248` answers `event.Failure(event.Conflict, errAdvanceAhead)` for
+`checkpoint.Advance > math.MaxInt64`. `Conflict` is the class that means "another writer moved the
+row", and `pass.go` will treat it as a second replica having won; the actual condition is this
+store declining to write a number its own column cannot hold, which is `Refused` — the class the
+same function uses for every other bound in `refusable`. Unreachable in practice (2^63 saves), which
+is why it is `[low]`; it is the classification a reader copies.
+
+Owed: `Refused`, beside the other four bound refusals, and the message says the column rather than
+the row.
+
+### 51. The checkpoint suite reads an outcome off `err.Error()` rather than off the value  `[low]`
+
+`event/eventtest/checkpoints.go:241-248` (`classified`), `sections_checkpoints.go:315` (the
+cancellation arm) and `:376` (the concurrency arm) compare `err.Error()` against
+`event.Failure(outcome, nil).Error()` and `context.Canceled.Error()`. CLAUDE.md: "Compare errors
+with `errors.Is` against the exported sentinels, never by string." The intent is defensible — a
+`failure` deliberately does not unwrap, and the arms want the *bare* cancellation rather than any
+wrapping of it — and it is the store suite's existing idiom
+(`event/eventtest/sections_lifecycle.go:185,331`), so this is `[low]` and is about the whole package
+rather than S2. But it means a store whose failure text drifts by one character is certified, and a
+store that wraps a cancellation is refused for a reason the message does not give.
+
+Owed: an exported predicate on the kernel side — `event.Classified(err) (Outcome, bool)` or
+equivalent — so a suite, a decorator and a consumer can all read the outcome off the value; then the
+three arms use it and the cancellation arm says `err == context.Canceled` in as many words.
+
+### 52. The isolation pass does not claim the checkpoint row before it applies  `[low]` — **raised by S3**
+
+[[D-133]] presents the advance before the handler under `InUnit`, so a fenced save taken under the
+row's own lock refuses a second live instance before it applies anything. The **isolation pass** is
+the one applier that still saves last, because what it quarantined is what its own run discovered
+and a claim carrying a count of what the sink took before the sink was called would be a number
+nobody measured. So a losing instance that is inside an isolation pass — which it only reaches after
+its own handler failed permanently on the whole page — applies and quarantines, and then rolls back
+with the refused advance. Nothing is lost and nothing is double-committed; what is paid is the work,
+and a sink that writes outside the unit records an envelope that is redelivered.
+
+The shape that would close it is a two-number tally the pass can state up front — "at most this many
+envelopes, at most this many quarantined" — which is a wider `Progress` contract than [SPEC] §9.4
+fixes. Not worth it for the rare path; recorded so the asymmetry is not read as an oversight.
+
+### 53. Two live instances under `AfterApply` both apply the overlapping page, and no mechanism prevents it  `[low]` — **raised by S3, doc owed in S5**
+
+Outside a unit of work there is no lock to hold across a handler call and nothing this framework may
+open ([[D-126]]), so the reference implementation's claim-before-read has no `AfterApply` analogue:
+both instances read the same page, both call `Handler.Apply`, and only then does the fence pick a
+winner. Delivery is at least once and the handler already owes idempotency, so this is not a
+correctness defect — it is an **undocumented** one, and [[D-133]] plus §Adopt A2 of the reference
+adjudication put the row it needs on the module page: under `AfterApply`, `Placement: Singleton` is a
+promise to the deployment rather than an enforcement, and the overlapping page lands twice.
+
+### 54. `Progress.Highest` and the stored cursor can move backwards under contention  `[medium]` — **raised by the S3 review · RESOLVED by S4's review, 2026-09-09**
+
+> **Resolved, and the analysis below was wrong about the severity.** *"Nothing is lost"* is false:
+> A does **not** resume from the lower cursor, it resumes from its own **higher** one, so every
+> position between the two is applied by nobody and is behind the checkpoint at A's next save.
+> Driven live on 17.9 as S4's GAP-1 (`[critical]`) — the read model ended holding `[s-1 s-4]` over
+> a log of four with the row at advance 2, highest 4, quarantined 0. The last sentence's second
+> option is what shipped: the settlement now compares the **cursor**, and a row at the presented
+> advance carrying one this pass never presented is `overtaken` — the row adopted, the reader
+> rebuilt from its cursor. See `EVENTSOURCE_P3_S4_GAPS.md` GAP-1, [[D-133]]'s table and
+> `TestASettlementTakesTheRowsCursorWhenAShorterWinnerLeftIt`. The entry is kept as it was written
+> because the mistake in it is the finding: a resume point read as "at least once" was a skip.
+
+`Projection.confirmed` (`event/projection/pass.go:411-418`) is entered when the settling load finds
+the row at exactly the advance this pass presented and the save was merely *unconfirmed*. The table
+reads that as "this pass wrote it", which is right whenever there is one writer. Under two live
+instances it is ambiguous: instance B, at the same fence, may have written that advance while A's own
+save never landed. A then continues from **its own** in-memory cursor and its next save replaces B's
+row — including B's `Progress.Highest` — with A's, which is lower whenever settlement let B read
+further than A did.
+
+Nothing is lost: every position at or below either `Highest` was delivered to some handler, and a
+resume from the lower cursor redelivers rather than skips, which is at least once. What moves is a
+number an operator reads as lag and §6 reads as a cutover signal, and [[D-128]] states `Highest` as a
+watermark without saying it is non-monotone while two instances contend. Owed: one sentence beside
+`Progress.Highest`, or the resolution taking the row's cursor as `overtaken` does.
+
+### 55. D5's *the quarantine sink is called inside the unit* is pinned by no test  `[medium]` — **raised by the S3 review**
+
+The plan's D5 decides that a `Quarantines` sink runs **inside** the unit under `InUnit`, because a
+sink called outside it is the one write that survives the rollback of the advance, and the module page
+owes an implementer that contract row. `Projection.oneAtATime` (`event/projection/pass.go:232-254`) is
+reached through `claimed` and therefore does run inside the unit — but every quarantine case in
+`event/projection/retry_test.go:262-359` leaves `Spec.Advance` at its default, so all four run under
+`AfterApply`, and S4's `TestAQuarantineIsEnvelopeGranular` does not name a mode either. The decision
+is implemented and unproven. Owed: one case that quarantines under `InUnit` and asserts the sink was
+handed a context the unit bound, and one that asserts a sink writing through that context is discarded
+when the unit rolls back.
+
+**Half closed by S4, 2026-09-09.** `TestAQuarantineIsEnvelopeGranular`
+(`event/eventpg/projection_integration_test.go`) now runs under `InUnit` against a live database — it
+had to, because that is the only mode in which the isolation pass's row count is exact — and its sink
+asserts it was handed a context carrying a transaction of the checkpoint store's own source, failing
+with *"the sink was called on a context carrying no transaction … so its record does not commit with
+the advance it accounts for"*. **Still owed:** the rollback half — a sink that wrote through that
+context and a unit that then fails, asserting the record went back with the advance. Left alone under
+the policy.
+
+### 56. Three arms of the settlement table are unreachable from any case  `[medium]` — **raised by the S3 review**
+
+`Projection.settle` (`event/projection/pass.go:368-393`) has six arms and S3's cases drive three:
+`found.Advance == presented && fenced` (both two-instance cases), `found.Advance+1 == presented &&
+InUnit` (`TestTheAdvanceAndTheHandlersRowsCommitTogetherInMemory`) and the default
+(`TestAForgottenCheckpointRefusesTheNextSaveAndHalts`). Unreached anywhere in S3, and named by no test
+in S4's list either: `found.Advance > presented` (several passes of another instance already past
+this one), `found.Advance == presented` unconfirmed (`confirmed`, which S4's
+`TestAnUnconfirmedSaveIsResolvedByOneLoadAndNeverBySaving` covers only for the single-writer reading)
+and `found.Advance+1 == presented && fenced` (`errFenceRefused`), whose only reachable trigger today
+is GAP-1's mis-derived advance. A six-way table with three untried arms is three untested halts on the
+path a deployment reaches only when something has already gone wrong.
+
+### 57. The isolation pass is told apart by `apply.foreseen == nil`  `[low]` — **raised by the S3 review**
+
+`Projection.claimed` (`event/projection/pass.go:192-212`) decides whether to claim the advance before
+or after the handler by asking whether the applier carries a `foreseen` closure. The predicate is
+true, the comment above it explains why, and the name of the thing being asked — *is this an applier
+whose tally only its own run knows* — appears nowhere in the expression. A named method on `applier`
+would put the question where the answer is.
+
+### 58. The idle ticker is created once for the loop's life  `[low]` — **raised by the S3 review**
+
+`Projection.Run` (`event/projection/projection.go:112`) builds one `spec.Ticks(spec.Idle)` and
+`follow` waits on it for every poll. `runtime.SystemTicks` is a `time.Ticker`
+(`runtime/periodic.go:19`), so the wait is fixed-rate with a dropped tick rather than the fixed delay
+technique R27 of the reference adjudication records as vv's property (*"`follow` waits after the pass
+ends — `fixedDelay` semantics"*). The observable difference is one immediate poll after any pass that
+outlasted `Idle`; harmless, and recorded so the claimed property and the code agree or the claim is
+corrected.
+
+### 59. [[D-128]]'s **Proven by** cites the wrong line range  `[low]` — **raised by the S3 review**
+
+`docs/ai/decisions/D-128-the-log-delivers-in-position-order.md:196` cites
+`TestAConsumerReadsThroughPagesTheStorePublished (event/reader_test.go:69-97)`; the test begins at
+`event/reader_test.go:14` and the cited range is the body of one of its cases.
+
+### 60. `checkUnit`'s two `Destination` arms cover one another  `[low]` — **raised by S4's mutation pass**
+
+`event/projection/pass.go:547-553` refuses a `Destination` the unit bound no executor for and then
+refuses one whose executor is not a transaction. Removing only the first arm changes nothing an
+observer can see: `crud.IsTransaction(nil)` is false, so the second arm refuses the unbound case too,
+with a message about a transaction rather than about a binding. The whole `Destination` resolution has
+to be removed before §UC-107(e) fails — measured during S4's mutation pass, which is why the recorded
+mutation removes the resolution rather than the arm. Two refusals, one reachable defect, and the
+message an operator reads for a Destination naming another database is the wrong one of the two.
+Owed: either one arm, or a case that pins each message to its own wiring.
+
+### 61. `stopping()` reads a handler's own `context.DeadlineExceeded` as a shutdown  `[medium]` — **raised by the S4 review**
+
+`event/projection/pass.go:571-573` classifies any error carrying `context.Canceled` or
+`context.DeadlineExceeded` as the loop stopping, and `applyFailed`/`saveFailed`/`refused` return it
+straight out of `Run`. The value is read rather than the context: a handler that calls an HTTP
+client, a second database or a queue with a deadline of its own and returns that failure takes the
+whole runner down — `runtime/supervisor.go:165` accepts only `context.Canceled` as an expected
+return, so a `DeadlineExceeded` from a handler is reported as a failed runner and by default takes
+the process with it. The robust form asks `ctx.Err() != nil` and treats the error value as a
+handler failure like any other. Not raised as blocking because the shape is S3's and no case in
+the suite reaches it; owed either as a change or as a sentence on the module page telling a
+handler never to return its own deadline error.
+
+### 62. S4's report claims the row counts are read on a third pool, and they are read on the store's  `[low]` — **raised by the S4 review**
+
+The plan's S4 section says *"the row counts are read out of the database over a pool that is
+neither the projection's nor the handler's"*. `destination.read`
+(`event/eventpg/projectioncase_integration_test.go:115-134`) reads over `projectionCase.pool`,
+which is the pool the `Store` was built on (`:43`) and the pool the handler writes through
+(`:69`). The **checkpoint row** is read on a third pool (`maybeStoredCheckpoint` → `liveDB`), and
+the read model is cross-checked against `psql`, so the independence the sentence is about is
+really there by another route — but the sentence as written is not what the code does. Fix the
+sentence or the pool.
+
+### 63. A lost fence reaches the `Observer` only on the first turn  `[low]` — **raised by the S4 review**
+
+`event/projection/state.go:53-66` publishes only when the phase, the attempt or the nil-ness of
+the error changes. `overtaken` (`pass.go:462-475`) sets `attempt = 0` and transitions to
+`PhaseRetrying` with `ErrOvertaken` every time, so the second and every later lost fence in one
+streak publish nothing at all: an operator watching the observer sees one `ErrOvertaken` and then
+silence while the contention continues. `Ready` still answers once the streak outlasts
+`Tolerate`, which is why this is `[low]` rather than a hole; but the module page should not claim
+the observer carries the contention.
+
+### 64. [[D-128]] cites the wrong line for `Progress.Highest`'s filling  `[low]` — **raised by the S4 review**
+
+`docs/ai/decisions/D-128-the-log-delivers-in-position-order.md:129` says *"`event/projection/pass.go:220`
+fills it as `this.page[len(this.page)-1].Position`"*. Line 220 is inside `claimed`; the fill is in
+`presentSave`, `event/projection/pass.go:295-305`. Same class as §59.
+
+### 65. The three surface walks read `docs/api/surface.md` and nothing keeps it current  `[medium]` — **raised by S5**
+
+`scripts/projection_test.go`'s `checkedEventPackages` takes its package list from the `##` headings
+of `docs/api/surface.md`, which is the right source — that file is what a release reads, so a
+package missing from it is a package nothing walks. But **nothing regenerates it before the walks
+run.** `make api` is a separate command, `make check` does not call it, and `make unit` runs the
+walks against whatever is committed.
+
+The list is fail-closed in two places only: fewer than five event packages, or `event/projection`
+missing, fails the run. A **sixth** package added under `event/` without a `make api` is therefore
+walked by none of `TestNoExportedFunctionTakesAPositionAndAnswersACursor`,
+`TestNoConstructorTakesAProgressAndAnswersACursor`, `TestCursorIsNeverCompared` or
+`TestNoSnapshotAuthorityIsDeclaredOrPromised`, silently, and the `checked`/`walked` floors do not
+notice because the five that are listed carry them.
+
+S5's checkpoint runs `make api` **before** the count and the walks for exactly this reason, so the
+section's own evidence is of the right artefact. What is owed is a mechanism rather than an order in
+one command: either a `check-api-current` arm that regenerates into a temporary file and diffs, or
+deriving the package list from `go list ./event/...` and asserting it equals the baseline's, which
+turns a stale baseline into a red line rather than a narrower walk. The first is what `make check`
+should hold; the second is what makes the walk itself honest.
+
+### 66. The comment walk narrows the docs walker's window by one clause, so one invariant has two models  `[low]` — **raised by S5**
+
+`TestNoDocPromisesExactlyOnceDelivery` decides whether a phrase is *about delivery* from
+`block.around(offset)` — the sentence before the claim plus the whole sentence the claim sits in.
+`TestNoCommentInTheProjectionPackagePromisesExactlyOnce` uses `block.attachedTo(at)` instead — the
+sentence before plus the claim's own **clause** — because a Go comment packs several subjects into
+one paragraph and the wider window reports `event/projection/doc.go`'s *"Spec.Unit runs the work it
+is given exactly once, and a unit that retries its transaction answers the failure instead: the
+page is re-delivered rather than saved over twice"*, which is a statement about a unit of work and
+not about delivery.
+
+The narrowing is deliberate and stated in the test, and it costs sensitivity in exactly one shape: a
+comment whose delivery vocabulary appears **only after** the claim's clause — *"delivered exactly
+once, so the projection needs no idempotent handler"* is caught (the clause carries "delivered"),
+but *"applied exactly once; the handler therefore needs no inbox"* is not. §INV-072 now has two
+readers with two windows, which is the shape that drifts. Owed: one model with one window, or a
+recorded statement of which shapes each is blind to, in `[[FL-036]]` beside the residual that file
+already records for the negation model.
+
+### 67. The worked second-database example demonstrates two pools rather than two servers  `[low]` — **raised by S5**
+
+`_examples/event-checkpoints-elsewhere` takes `-checkpoints` and `-read-model` DSNs and **defaults
+both to the same one**, so `GOWORK=off go run ./event-checkpoints-elsewhere` proves the wiring over
+two `*sql.DB` handles of one server. That is the property `crud` actually measures — `SameDataSource`
+compares the handle, so two pools are two data sources and the unit binds a transaction for exactly
+one of them — and it is what makes `Destination: projection.Unchecked` necessary. It is *not* the
+cross-server case a reader may take it for, and the difference matters for a reader deciding whether
+their own read model is "elsewhere". Owed: a sentence in the example's own doc comment saying which
+of the two it runs by default, or a second default that points somewhere else.
+
+### 68. The five walks type-check every package of the extension from source on every `make unit`  `[low]` — **raised by S5**
+
+`scripts/projection_test.go` builds one `importer.ForCompiler(fset, "source", nil)` and type-checks
+`event`, `event/eventmemory`, `event/eventtest`, `event/projection` and `event/eventpg` from
+source — measured at ~1.2 s of the `scripts` package's ~7 s. The packages are cached across the
+five walks and the importer is shared, so the cost is paid once rather than five times, and it buys
+what a syntactic walk cannot have: `Cursor`, `event.Cursor` and a local alias of either are one type
+and three names. Recorded beside `## P2` §32 and §46, which are the same accounting for the
+`event/eventpg` binaries, so whoever decides the suite is too slow decides it over the whole bill
+rather than one line of it.
+
+### 69. The plan's deliverable 12 names an enforcement that cannot read FL-038's Files table  `[medium]` — **raised by the S5 review**
+
+`TestEverySymbolTheDocsCiteIsDeclaredWhereTheDocSaysItIs` recognises one citation shape,
+`` `path/to/file.go:Symbol` `` in a single inline-code span (`scripts/docs_test.go:643-654`,
+`citedGoSymbol`). FL-038's Files table writes the path in one span and the symbols in separate spans
+with no `file.go:` prefix, so **none of its 197 symbol citations is read by that test**. Driven:
+adding `ThisSymbolDoesNotExist` to the `event/projection/page.go` row left the test green. A scripted
+presence check over all 22 file rows confirms every one of the 197 symbols currently exists, so this
+is an absent guard rather than live drift — but it is the guard deliverable 12
+(`EVENTSOURCE_P3_PLAN.md:3117`) names, and it affects every flow's Files table rather than only
+FL-038. Owed: either the table adopts the shape the walker reads, or the walker learns the table's
+two-span shape, plus the re-driven mutation as the proof.
+
+### 70. The settlement's `AfterApply`/one-below/unconfirmed halt is in the plan and the code and in neither table a reader consults  `[medium]` — **raised by the S5 review**
+
+`event/projection/pass.go:406-407` halts when a save was never confirmed, the row did not move, and
+the mode is `AfterApply` — §UC-104's Must-not, because the handler's rows are already committed
+outside any unit and re-applying is a duplicate the resolution must not choose to make. D10b's table
+in the plan has it (`EVENTSOURCE_P3_PLAN.md:332`). FL-038's seven-row settlement table
+(`:133-141`) does not, and the module pages' "Two things still halt, because they are not
+contention" names only an absent row and one behind the fence — so a reader of either concludes this
+case re-delivers. Owed: the row in FL-038's table and the third thing that halts in both pages.
+
+### 71. The `jobs.Stager` outbox asymmetry the reference adjudication owes the module page is on no page  `[medium]` — **raised by the S5 review**
+
+`EVENTSOURCE_REFERENCE.md:452-462` (Reject 2, R26) ends *"That asymmetry belongs on the module
+page."* The other five numbered Documentation obligations are discharged — the global `xmin` stall
+with both mitigations and the `LOCK … IN SHARE ROW EXCLUSIVE MODE` alternative
+(`docs/modules/en/eventpg.md:235-265`), a new projection reading the whole log, the `AfterApply`
+two-instance double-apply, the transaction-id cost, and `Spec.Wake` as a hint. This one is not:
+`grep -n "Stager\|EnqueueIn\|outbox"` over both projection pages returns nothing. `jobs.Stager` is
+this framework's own outbox ([[D-118]]), so a projection publishing integration events is the
+obvious consumer, and the page currently describes only the "writes anywhere else" shape — a second
+database — which is a different one. Under `AfterApply` the stage commits before the advance, so the
+vv exposure is a duplicate enqueue rather than the reference's permanently lost send; the sentence
+should say which of the two it is rather than repeat the reference's.
+
+### 72. `Progress.Highest`'s completeness rests on an obligation the `Log` contract does not state  `[medium]` — **raised by the S5 review**
+
+The published sentence — *"once a checkpoint carrying `Highest = P` has been saved, a read resumed
+from that checkpoint's cursor answers only positions above `P`, and no event at or below `P` is ever
+delivered to that projection for the first time"* — is attributed to the ordering law: *"it means
+that much only because the ordering above is a law"* (`docs/modules/en/event.md:392-402`,
+`event/checkpoint.go:13-25`). Position ordering is necessary and not sufficient. A store answering
+`WHERE position > cursor ORDER BY position LIMIT n` satisfies both [[D-128]] laws, passes
+`probe.ascending` and `probe.subsequence`, and still breaks the watermark: position 5 uncommitted
+while 6 commits gives a cursor at 6 and 5 is never delivered. What carries the promise is the settled
+watermark (`event/eventpg/read.go:214-237`) and the obligation on a `Log` to mint no cursor past a
+position a writer could still commit. `Log.ReadAll`'s contract does not name it —
+`grep -n "settle\|in flight\|uncommitted\|could still" event/store.go` returns one unrelated line —
+and `Reader.checkPage` structurally cannot check it. The obligation **is** certified
+(`event/eventtest/sections_resumption.go:acrossTheFlight`, §INV-080's `in-flight-newest-position`
+decorator), so a store implementer who runs the suite is caught and one who reads only the contract
+is not. Neither published sentence is false — both say "only because", a necessary condition — but
+the premise that carries the weight is unnamed. Owed: the second obligation beside the two ordering
+laws in `Log.ReadAll`, and both premises in the watermark section of both `event.md` pages.
+
+### 73. The `ErrConflict` row of the failure table lists an outcome the settlement cannot produce  `[low]` — **raised by the S5 review**
+
+`docs/modules/en/projection.md:190` and `docs/modules/ru/projection.md:203` read *"the row is read
+once and the settlement decides: a turn, a re-delivery, or a halt"*. A re-delivery is reachable only
+through `rolledBack` (`event/projection/pass.go:404-405`), and the arm above it —
+`found.Advance+1 == waiting.presented && fenced(waiting.cause)` at `:402-403`, where `fenced` is
+`errors.Is(cause, event.ErrConflict)` — takes every refused save at that row first and halts. So
+`ErrConflict` yields a turn or a halt and never a re-delivery.
+
+### 74. `event/store.go` moved and is not on the plan's own path list, and two changed kernel files carry no FL-038 row  `[low]` — **raised by the S5 review**
+
+`event/store.go` gained the seven-line [[D-128]] ordering paragraph in `ReadAll`'s contract. The
+plan's S5 prose names it (`EVENTSOURCE_P3_PLAN.md:2869`) but "the complete set of paths phase 3 may
+add to the manifest" (`:660-686`) does not, so the list every section's checkpoint asserts against
+and the file that moved disagree. The move was fenced with its own predecessor
+(`.git/event_kernel_before_d128` exists), so it was not absorbed silently — the list is what was not
+updated. Separately, `event/store.go` and `event/eventmemory/log.go` both changed for phase 3 and
+both carry only an FL-036 row in the reverse `By file` index (`docs/ai/flows/Index.md:471`, `:485`);
+`log.go` is where the checkpoint rows now live and FL-038 says so in prose (`:149-150`) without
+giving the file a row of its own.
+
+### 75. §INV-021's enumeration is eight rows and one sentence still says seven  `[low]` — **raised by the S5 review**
+
+The eighth hand-off was appended correctly and the paragraph above it updated to "exactly **eight**
+points: six carry payload bytes, two are the slices". The sentence two lines below still reads "**The
+store boundary — §D.14's eight methods — contributes exactly four of the seven**"
+(`.agents/artifacts/usecases/EVENTSOURCE_P1_USECASES.md:3124`). The claim it makes is still true;
+the count it names is the phase-1 one.
+
+### 76. The reference's Reject 3 acceptance — every projection reads every event — is on no page and in no entry  `[medium]` — **raised by the phase-3 verification gate**
+
+`EVENTSOURCE_REFERENCE.md:464-472` (Reject 3, R3) refuses a filter parameter on `Log.ReadAll` and
+ends with what vv accepts in its place, in as many words: *"every projection reads every event, so N
+projections cost N × the read traffic. If that ever becomes the binding cost, the answer is a shared
+reader fanned out to N routers — not a filter on the store contract."* Every other obligation the
+adjudication leaves behind is either discharged or scheduled — the five numbered Documentation
+obligations are on the module pages in both languages, R12's *what vv must prove instead* is
+[[D-130]]:22, Reject 2's outbox asymmetry is §71 above. This one is in no module page, no decision,
+no flow and no backlog entry: `grep -rn "reads every event\|N × the read\|shared reader" docs/`
+returns nothing.
+
+The consequence is operational rather than behavioural, which is why it is `[medium]`: a deployment
+that adds its tenth projection to a busy log has multiplied the read traffic on `events` by ten and
+nothing in the documentation told it that would happen, and the escape hatch that is *not* a filter
+on the store contract is exactly the thing a reader will reach for a filter to solve. It belongs
+beside the `Router` section of `docs/modules/{en,ru}/projection.md`, in one paragraph: the cost, and
+the shared reader as the answer if it ever binds.
+
+## P2 — the read path should carry the writing transaction's xid8  `[high]` — **REFUSED by [[D-128]], 2026-09-09. Not implementable as written.**
+
+**Do not pick this up. The mechanism it describes is decided against and the decision is
+binding.** Read `docs/ai/decisions/D-128-the-log-delivers-in-position-order.md` first; what
+survives of this entry is the operational note at the bottom, which is owed for the walk vv
+already has, and the two defects, which are the argument for reworking `read.go` some other way.
+
+The entry as written said "**No kernel change**, no change to the phase-3 checkpoint contract."
+That was wrong, and it was wrong about the load-bearing half. The reference's read is
+`ORDER BY TRANSACTION_ID ASC, ID ASC`, and **the order is the mechanism** — `ID` is vv's
+`position`, so positions go backwards inside a page. There is no version of this technique that
+keeps position order: taking the column and the index without the order buys nothing at all.
+
+**Why it is refused, in one paragraph.** The reference's order carries a precondition it never
+states: the writing transaction takes its id *at the append and nowhere earlier*. The reference
+satisfies it structurally — `@Transactional` opens the transaction, `Propagation.MANDATORY` keeps
+every half inside it, and the aggregate CAS is the transaction's first write — so for one
+aggregate, id order, lock order and version order coincide. vv's store **joins a transaction it
+did not open** ([[D-118]]) and is forbidden to open one ([[D-126]]), so the caller's transaction
+may have been stamped by an unrelated write long before the append. Measured on PostgreSQL 17.9
+over `eventpg`'s own shape: an append at version 2 from a transaction stamped at xid 242922
+sorts **before** the append at version 1 from a transaction stamped at 242923, so the tuple read
+hands a projector version 2 of one stream before version 1. That breaks `probe.subsequence`
+(`event/eventtest/sections_read.go:47-59`), which is a stronger guarantee than the ascending
+positions the entry knew about, and it breaks it silently. The control — the same interleaving
+with no earlier write — delivers in order, so the reference is right about its own system.
+
+**What would reopen it:** [[D-118]] being superseded so the event store opens the append's
+transaction. Nothing less. D-128 §"What would change the answer" is the list.
+
+**What is still owed from this entry, and is unaffected by the refusal.** `pg_snapshot_xmin` is
+the GLOBAL oldest running xid across the whole database, not just the event tables. Any
+long-running or idle-in-transaction session anywhere — a slow unrelated read, a leaked connection
+— holds `xmin` low and stalls every subscription. Events are never lost; delivery freezes. That
+belongs in the module page beside the guarantee, with the mitigations:
+`idle_in_transaction_session_timeout` and `statement_timeout` on the application role, and
+monitoring the age of the minimum unprocessed xid8. It is tracked as `## From the reference` §3
+and is S5's.
+
+**And the two defects the entry opened with stand as an argument for reworking
+`event/eventpg/read.go`, not for this order.** The watermark walk rests on five composing facts
+and has already produced two serious defects under review: `ReadAll` declaring a gap settled from
+a floor read in a separate statement and advancing the cursor past a committed event, and a walk
+inside a caller's transaction stalling permanently on the first burnt position. A gap-free read
+that is *also* in position order exists and the reference documents it without implementing it —
+`pg_sequence_last_value` plus `LOCK … IN SHARE ROW EXCLUSIVE MODE` in its own transaction,
+README §4-7-2 — at the cost of blocking all writes once per poll. See `## From the reference`
+R18. That is the direction a successor entry takes.
+
+## From the reference
+
+Adjudicated in [`EVENTSOURCE_REFERENCE.md`](EVENTSOURCE_REFERENCE.md) against
+`github.com/eugene-khyst/postgresql-event-sourcing` @ `90faafb` (`/tmp/pges-ref`) and its Kotlin
+port at `photon/new/kotlin/platform-eventsourcing`. Every entry here is a `→` verdict from that
+file: a technique vv does not have, recorded with the reference site, the failure it prevents and
+the mechanism in full — not at a level of abstraction where it would have to be re-derived. The
+`✔` and `✗` verdicts are not repeated here; read the adjudication for those.
+
+Two entries elsewhere in this file are the same subject seen from another side and are **not**
+duplicated: `## P2 — the read path should carry the writing transaction's xid8 [high]`, whose
+"No kernel change" scoping the adjudication corrects (§1 below), and `## P3` §6/§27, the
+unstated `Save`-failure retry rule, which §2 answers from the reference.
+
+### 1. The `## P2 [high]` xid8 entry is scoped wrong in the one respect that blocks phase 3  `[high]` — **CLOSED by [[D-128]], 2026-09-09**
+
+**Settled.** Position-ascending delivery is a **kernel law**, not a store capability; one
+stream's order being a subsequence of the log's is the second half of the same law and is the
+one the tuple read actually breaks; `Progress.Highest` **keeps** its completeness meaning and
+gains a testable statement of it; the ascending check in `Reader.checkPage` stays a refusal for
+every store. The four sites were updated in place rather than frozen as they stood, S5 now
+freezes the decided contract, and the `## P2` entry above is marked not implementable as
+written. `docs/ai/decisions/D-128-the-log-delivers-in-position-order.md` carries the argument,
+the live measurement and its control. The question below is left as the record of what was
+asked.
+
+---
+
+That entry says "**No kernel change**, no change to the phase-3 checkpoint contract." The SQL,
+the column, the index and the `vve2` cursor are indeed `eventpg`-only. **The delivery order is
+not.** The reference orders `ORDER BY e.TRANSACTION_ID ASC, e.ID ASC`
+(`EventRepository.java:87`), and in that order `ID` — vv's `position` — is **not monotone**:
+
+```
+tx A: BEGIN; UPDATE ES_AGGREGATE …   -- xid 100
+tx B: BEGIN; UPDATE ES_AGGREGATE …   -- xid 101
+tx B: INSERT INTO ES_EVENT …         -- ID 5
+tx A: INSERT INTO ES_EVENT …         -- ID 6
+```
+
+delivers `(100,6)` then `(101,5)` — positions 6 then 5. Four vv sites forbid that page:
+
+- `event/reader.go:94-98` — `ErrBackend`, "a page whose positions do not ascend"
+- `event/store.go:125` — the `Log.ReadAll` contract text, "Envelopes at **ascending positions**"
+- `event/eventtest/sections_read.go:24, 61-64, 169` — `probe.ascending`, certified twice
+- `event/checkpoint.go:15-17` — `Progress.Highest`: "every committed event **at or below it** was
+  delivered", which is false under tuple order
+
+Phase 3's S5 freezes the first three behind `check-event-kernel` and publishes the fourth as a
+contract a third-party `Checkpoints` implementer is told to satisfy. **Decide before S3 is signed
+off**, and record the answer:
+
+1. is position-ascending delivery a kernel law, or a store **capability** beside
+   `MonotoneVisibility` (`event/store.go:32-37`, `event/eventtest/inventory.go:44`)?
+2. does `Progress.Highest` mean "the highest position of the page" (safe under either order) or
+   "the completeness watermark" (position order only)?
+3. is `checkPage`'s real invariant "positions ascend" or "the cursor tiles the log"? Its own
+   comment (`reader.go:74-76`) says the purpose is that a consumer never checkpoints past an
+   event it never saw — which the tuple read guarantees by construction, more strongly.
+
+If the answer is "the kernel keeps position order", the `## P2 [high]` entry is **not
+implementable as written** and must say so, because abandoning position order is the whole of
+the reference's mechanism.
+
+### 2. Two live instances of one projection name are never tested, and `AfterApply` double-applies before the fence fires  `[high]` — **CLOSED by [[D-133]] and S3's review, 2026-09-09. The doc row below was wrong and is rewritten.**
+
+**Settled.** The live case exists and is green:
+`TestTwoLiveInstancesOfOneNameOverOneSchema`
+(`event/eventpg/projection_integration_test.go`) runs two `Projection` values of one name over one
+schema in **both** modes, with each instance's first save held at a gate until both have issued
+one — so the contention is driven and a run where one instance drained the log before the other
+woke **fails** rather than passes. Measured on PostgreSQL 17.9: under `InUnit` the page both
+instances claimed is in **one** row of the read model and the handlers were called for exactly the
+log's length; under `AfterApply` it is in **two**. Reordering `claimed` to apply before it saves
+takes the `InUnit` handler count from 24 to 26, so the case discriminates.
+
+**The `Conflict` arm was decided the other way from the halting one this entry prescribed.**
+[[D-133]]: the loser takes the row the winner left, rebuilds its reader from **that** row's
+cursor, drops the page it held and backs off; `ErrOvertaken` reaches `State.Err` on every lost
+fence and `Ready` once the losing streak outlasts `Tolerate`. Halting on a lost fence kills one of
+the two projections on every rolling deploy, which is not a framework a deployment can use. Only
+an **absent** row or one **behind** the fence still halts.
+
+**The owed module-page row, corrected** — it read *"the loser halts and does not resume"*, which
+[[D-133]] reverses:
+
+> Under `AfterApply`, two live instances of one projection name both apply the overlapping page
+> before the fence fires, so the handler must be idempotent. Under `InUnit` against a store that
+> evaluates the fenced save against a tuple it holds — PostgreSQL, at advance 1 by speculative
+> insertion and above it by the row lock — the loser is refused before its handler runs and
+> applies nothing. **In both modes the loser takes its turn and does not halt**: it adopts the
+> row the winner left and carries on, and `ErrOvertaken` on `State.Err` and `Ready` is how a
+> deployment is told. `Placement: Singleton` is a promise to the deployment rather than an
+> enforcement.
+
+The question below is left as the record of what was asked.
+
+---
+
+Reference: `README §7` runs its acceptance suite as
+`docker compose … up -d --scale event-sourcing-app=2`, with a deliberately inexact assertion
+(`OrderTestScript.java:193-196`, `hasSizeGreaterThanOrEqualTo(23)`). Its stated reason transfers
+verbatim: **single-instance testing never exercises the contention branch at all**, so an
+implementation that is wrong at N=2 passes.
+
+S4's list has no concurrent two-instance case — `TestAProjectionResumesThroughASecondValueOverOneBacking`
+is *sequential* replacement.
+
+What actually happens today, traced: `event/projection/pass.go:256-261` sends a `Conflict` from
+`Tracker.Save` to `refused(…)` (`pass.go:295-304`), which halts. Under `AfterApply`, instances P
+and Q both `Load` advance 7, both read the same page, **both call `Handler.Apply`** — the read
+model is written twice — then P's fenced `UPDATE … WHERE advance = 7` matches and Q's does not,
+so Q halts. The reference prevents the double-apply outright, because its
+`SELECT … FOR UPDATE SKIP LOCKED` (`EventSubscriptionRepository.java:33-44`) runs **before** the
+read; a zero-row result means "someone else has it" and is a logged no-op
+(`EventSubscriptionProcessor.java:48`), not an error.
+
+vv cannot take that lock under `AfterApply`: there is no transaction to hold across the handler
+call and [[D-126]] forbids the store opening one. Under `InUnit` vv already has the reference's
+mutual exclusion **and** the guard the reference lacks — the fenced `UPDATE`
+(`event/eventpg/checkpoints.go:353-364`) takes the row lock, the second writer blocks, re-evaluates
+`advance = $3 - 1` under READ COMMITTED, matches 0 rows, and the **whole unit rolls back with the
+handler's writes**. The reference's own `UPDATE ES_EVENT_SUBSCRIPTION SET … WHERE SUBSCRIPTION_NAME = :name`
+has no such guard and is safe only because the lock is always held.
+
+Owed:
+
+- a live case in `event/eventpg/projection_integration_test.go`: two `Projection` values of one
+  name, one schema, concurrent, in **both** modes, asserting out of the database. Control: one
+  instance alone reaches `PhaseFollowing` and never halts.
+- a delivery row in both module pages: *under `AfterApply`, two live instances of one name both
+  apply the overlapping page before the fence fires; the handler must be idempotent, the loser
+  halts and does not resume, and `Placement: Singleton` is a promise to the deployment rather
+  than an enforcement.* **[[D-133]] reversed the middle clause — see the corrected row above.**
+  **Delivered by S5, 2026-09-09**, in the corrected form: `docs/modules/{en,ru}/projection.md`
+  carries what each mode costs while two instances overlap — `InUnit` refuses the loser before it
+  applies anything against a store that evaluates its fenced save under the row's lock,
+  `AfterApply` has both instances apply the overlapping page, and a store that stages its save
+  optimistically lets both apply under `InUnit` too — plus the rule that the **cursor** the row
+  carries and never the advance alone settles an unconfirmed save, and the obligation that puts on
+  a third-party `Checkpoints`.
+- a decision on the `Conflict` arm. Halting is defensible. Reload-and-retry is what
+  `event/checkpoint.go:190-196` was explicitly built for — *"taking its advance is what makes two
+  processes take turns over one checkpoint"* — and what the reference does. The kernel and the
+  loop currently disagree; that is the entry. **[[D-133]] took reload-and-retry.**
+
+### 3. The global `xmin` stall is vv's today and is on no module page  `[medium]` — **CLOSED by S5, 2026-09-09**
+
+**Delivered.** `docs/modules/en/eventpg.md` and `docs/modules/ru/eventpg.md` carry it beside the
+settled-watermark guarantee, in these terms: the floor is the **cluster's** oldest running
+transaction id and not this schema's, so any session anywhere that has written and gone idle in
+transaction freezes gap settlement — nothing is lost, delivery freezes, and every projection over
+the schema freezes with it because they all wait on the same number. The three mitigations are
+named and attributed to the deployment rather than to the library:
+`idle_in_transaction_session_timeout` on the application role (the one that matters — without it a
+single leaked connection is an unbounded stall), `statement_timeout` for the not-idle-but-very-long
+shape, and an alert on the **pair** `Progress.At` / `Progress.Highest`, because a `Highest` that
+stops moving while the log grows is indistinguishable at a glance from a halted projection. README
+§4-7-2's table-lock alternative is recorded as the escape hatch (§9 below) rather than implemented.
+The second half — **a new projection reads the whole log** — is on the same pages beside
+`Checkpoint.Fresh()`, and on `docs/modules/{en,ru}/projection.md`.
+
+The original entry follows.
+
+
+`event/eventpg/read.go:319` reads `pg_snapshot_xmin(pg_current_snapshot())` and `walk.settledAt`
+(`read.go:232-237`) passes a gap only once that floor exceeds the minted bound. `pg_snapshot_xmin`
+is the **oldest running transaction id in the whole database**, not in the event tables — so any
+session anywhere that has written and then gone idle-in-transaction holds the floor down and the
+walk cannot pass a burnt gap until that session ends. Events are never lost; delivery freezes.
+
+`docs/modules/en/eventpg.md:141-179` documents the two *local* stalls (a live writer holding the
+gap; a walk inside a caller's transaction) and not this one;
+`grep -n 'long-running\|idle_in_transaction' docs/` returns nothing.
+
+README §4-9 drawback 3 states the general form and offers no mitigation. The Kotlin port writes
+the mitigation down (`EventRepository.kt:101-108`) and that is the version to carry:
+`idle_in_transaction_session_timeout` and `statement_timeout` on the application role, plus a
+monitored subscription-lag metric ("age of the min unprocessed xid8"). **The obligation survives
+§1 unchanged** — the tuple read has the same dependency more strongly, because it defers *all*
+delivery rather than only gap settlement.
+
+Also owed on the same page (README §4-8's WARNING block): **a new projection reads the whole
+log.** vv's is paged by `MaxRead` and resumable, which is better than the reference's unbounded
+first poll, but the consequence is identical — adding a projection to a live deployment replays
+every event ever written through its handler.
+
+### 4. A redelivery count that survives a process restart  `[medium]` — **P4**
+
+Reference: none — one poison event stalls a subscription **forever**
+(`EventSubscriptionProcessor.java:41-46` is a bare `events.forEach`, the exception rolls the
+`REQUIRES_NEW` transaction back, the checkpoint never advances, and the only symptom is a
+repeating WARN). vv already closes that liveness failure with `oneAtATime`
+(`event/projection/pass.go:181-201`) plus the quarantine sink, which is the Kotlin port's answer
+in a better shape.
+
+What vv lacks is the **durable** count. `Projection.attempt` is an in-memory `int`
+(`projection.go:29`) reset at every `read` (`pass.go:74`), and `permanent()` reaches its cap via
+`this.attempt >= this.spec.Attempts` (`pass.go:253`, default 10). An envelope whose application
+**kills the process** — an allocation the handler cannot make, an OOM kill, a supervisor taking
+the process down for an unrelated runner — is retried at attempt 1 forever: the cap is never
+reached, `OnPermanentFailure` never fires, the sink is never called.
+
+Plan decision **D3 does not answer this**. Its argument is that a handler reading "delivered 14
+times across 3 processes" can do nothing `(Stream, Version)` idempotency does not already do —
+a statement about the **handler**, where the port's counter is for the **engine's cap**. Its
+second half ("a durable count would have to be written on the path whose entire property is that
+it wrote nothing") is a real objection, and the port's own answer has a real hole worth
+recording: the port writes the attempt row in the **same transaction as the failing handler**, so
+a handler that failed by aborting the PostgreSQL transaction (a constraint violation, a statement
+error) cannot record its attempt — there is no savepoint around `handleEvent` — and that event
+retries forever without ever dead-lettering. Both implementations have an infinite-retry hole;
+they are different holes.
+
+The port's mechanism, in full, because the shape is the transferable part
+(`V9__eventsourcing_subscription_attempts.sql`, `DeadLetterStore.kt`,
+`EventSubscriptionProcessor.kt:76-122`):
+
+```sql
+CREATE TABLE ES_EVENT_SUBSCRIPTION_ATTEMPT (
+  SUBSCRIPTION_NAME TEXT NOT NULL, EVENT_ID BIGINT NOT NULL,
+  ATTEMPT_COUNT INT NOT NULL, LAST_ERROR TEXT,
+  LAST_ATTEMPT_AT TIMESTAMPTZ NOT NULL, DEAD_LETTERED_AT TIMESTAMPTZ,
+  PRIMARY KEY (SUBSCRIPTION_NAME, EVENT_ID));
+CREATE INDEX … ON ES_EVENT_SUBSCRIPTION_ATTEMPT (SUBSCRIPTION_NAME, DEAD_LETTERED_AT)
+  WHERE DEAD_LETTERED_AT IS NOT NULL;
+```
+
+Five steps per event, in order: (1) skip if already dead-lettered and advance the local position
+past it; (2) handle, and on success **delete** the attempt row so a later transient failure starts
+at attempt 1; (3) on failure `INSERT … ON CONFLICT (SUBSCRIPTION_NAME, EVENT_ID) DO UPDATE SET
+ATTEMPT_COUNT = ES_EVENT_SUBSCRIPTION_ATTEMPT.ATTEMPT_COUNT + 1, LAST_ERROR = :err,
+LAST_ATTEMPT_AT = :now`; (4) at the cap set `DEAD_LETTERED_AT` and advance **past** the poison;
+(5) otherwise **break**, so the checkpoint advances only to the last good event and ordering is
+preserved. The partial index makes "what did we give up on" cheap; the migration comment also
+names the operator's stuck query, `dead_lettered_at IS NULL AND last_attempt_at < now() -
+interval '5m'`.
+
+The lighter option that fits vv and sidesteps D3's real objection: vv already persists two
+cumulative counters on the checkpoint row (`applied`, `quarantined`,
+`event/eventpg/schema.go:318-320`) and saves per page. A third column carrying the attempt count
+for the page the cursor is about to deliver would be written on the **succeeding** save only — not
+on the path that writes nothing. It does not survive a crash mid-page, so it closes part of the
+hole. Decide which hole is worth closing.
+
+Keep what vv already does better than either: advancing past a poison event breaks per-aggregate
+completeness, and `Progress.Quarantined` records it — `event/checkpoint.go:22-24`, *"Non-zero
+means that destination has holes, which is what keeps `Highest` from reading as a completeness
+claim."* Neither implementation gives its consumer that signal.
+
+### 5. Write-side command idempotency  `[medium]` — **P4**
+
+Reference: none, and it says so — README §4-9(1), "the exactly-once delivery guarantee is hard to
+achieve due to a dual-write… consumers should be idempotent". Its only physical write-side dedup
+is `UNIQUE (AGGREGATE_ID, VERSION)`. An at-least-once caller — a retried HTTP POST, a workflow
+activity — that re-sends the same non-idempotent command applies it twice, at versions 6 and 7,
+both legitimate, undetectable.
+
+The port added a real one (`V4__eventsourcing_idempotency.sql`, `IdempotencyRepository.kt:43-54`):
+
+```sql
+INSERT INTO ES_IDEMPOTENCY_KEY (IDEMPOTENCY_KEY, AGGREGATE_TYPE, AGGREGATE_ID)
+VALUES (:key, :aggregateType, :aggregateId) ON CONFLICT (IDEMPOTENCY_KEY) DO NOTHING
+```
+
+run with `MANDATORY` propagation so the claim commits atomically with the events. Two concurrent
+transactions racing one key serialise on the primary-key index — the loser blocks until the winner
+commits, then sees 0 rows and is a duplicate. There is no window in which both append. The row
+records **which aggregate the key was spent on**, and a redelivery routed to a *different*
+aggregate is rejected fail-closed (`CommandGateway.kt:181-195`) rather than returning an unrelated
+aggregate's state.
+
+**Not blocked by [[D-118]]** — a dedup claim is not a durable *intent*. vv already ships this
+exact shape one subsystem over: `jobs.EnqueueOnceIn(ctx, queue, stager, definition, intent, …)`
+(`jobs/queue.go:509`) with `ProducerIntent` (`jobs/identity.go:102`). The event write path has no
+equivalent. Cost the port carries and does not solve: the key table grows monotonically with no
+TTL (only a `CREATED_AT` for a future sweep), and the claim puts a PK-index serialisation point on
+the command path.
+
+### 6. Snapshots — the five things the reference gets right, and the one it gets wrong  `[medium]` — **backlog, owner: the phase the roadmap's ~50 ms p99 trigger opens**
+
+The phase-3 plan defers snapshots on a measurement with a recorded re-entry trigger (D-131). This
+entry exists so the later phase implements a decision rather than re-deriving it.
+
+1. **Write the snapshot INSIDE the append transaction** (`AggregateStore.java:57`, README §4-4).
+   A snapshot committed before or beside the append leaves, after a rollback, a snapshot at
+   version 10 for a stream whose head is version 9. Every later load reads it, then reads
+   `WHERE version > 10` and gets nothing, and returns state derived from events that never
+   committed — permanently wrong, never repaired, because the snapshot is preferred over the log.
+   The CAS earlier in the same transaction already holds the row lock, so no two writers race a
+   snapshot for one aggregate. `PRIMARY KEY (AGGREGATE_ID, VERSION)` makes a duplicate impossible.
+2. **Cadence is `finalVersion % N == 0` with `N >= 2`, enforced twice** — `@Min(2)` at bind time
+   *and* a runtime `nthEvent > 1` check (`EventSourcingProperties.java:19,30-35`,
+   `AggregateStore.java:62-71`); the reference gives no reason for the redundancy. `N == 1` turns
+   the event store into a state store with an audit log attached; `N == 0` is a divide-by-zero on
+   the write path. Note the consequence the reference accepts: a multi-event command **jumps**
+   boundaries, so worst-case replay length is not bounded by N.
+3. **Time travel: the newest snapshot AT OR BELOW the requested version.**
+   `WHERE s.AGGREGATE_ID = :id AND (:version IS NULL OR s.VERSION <= :version) ORDER BY s.VERSION
+   DESC LIMIT 1` (`AggregateRepository.java:75-94`), then a forward read
+   `AND (:fromVersion IS NULL OR VERSION > :fromVersion) AND (:toVersion IS NULL OR VERSION <=
+   :toVersion) ORDER BY VERSION ASC`. The half-open/half-closed asymmetry is deliberate: the
+   snapshot already includes its own version. **The Kotlin port dropped the `<= :version` clause**
+   and pays a full replay from event 1 for every historical read; for an engine whose product
+   value is revision history that is the wrong trade. Without the clause, a read at version 12 of
+   an aggregate snapshotted at 30 returns **future state labelled as version 12** — and that is the
+   path the async integration-event sender takes on every event (§7).
+4. **Snapshots are versioned and NEVER upcast; on drift they are DELETED and the aggregate is
+   rebuilt from events** (port `V2:27,40`, `AggregateStore.kt:32-34, 59-78`,
+   `AggregateRepository.kt:64-89`). The delete is what stops every subsequent load re-detecting
+   the same stale row and paying a full replay. Writes use `ON CONFLICT (AGGREGATE_ID, VERSION)
+   DO UPDATE SET JSON_VERSION = EXCLUDED.JSON_VERSION, JSON_DATA = EXCLUDED.JSON_DATA` — not
+   `DO NOTHING` — so a re-snapshot genuinely replaces a drifted one. The reference has **no**
+   schema version on either table, which is its single largest correctness gap for a long-lived
+   deployment: rename a field, deploy, and old snapshots deserialize with the field silently
+   null while the tail events replayed on top do not restore it. vv already has the *event* half
+   — `revision integer NOT NULL CHECK (revision > 0)` (`event/eventpg/schema.go:258, 275`) with a
+   declared upcaster chain (`event/chain.go:52,88`) — and would owe only the snapshot half.
+5. **The reference has a latent bug here; do not copy its code.** `AggregateStore.java:53-58`
+   calls `createAggregateSnapshot` **inside** the per-event append loop while testing the
+   aggregate's **final** version (`:66`, already advanced by `applyChange`, `Aggregate.java:67`).
+   A command emitting 2+ events whose final version is divisible by N therefore executes the
+   snapshot `INSERT` once **per event** with identical `(AGGREGATE_ID, VERSION)`, and
+   `AggregateRepository.java:64-72` is a bare `INSERT` with no `ON CONFLICT` — so the second
+   violates `PRIMARY KEY (AGGREGATE_ID, VERSION)` and aborts the whole command transaction. It is
+   invisible only because every sample command emits exactly one event. The port moved the call
+   after the loop (`AggregateStore.kt:184`), which is right.
+
+Neither implementation ever prunes snapshots by age; `ES_AGGREGATE_SNAPSHOT` grows one full-state
+row per N events forever and for a large aggregate can exceed the event log.
+
+### 7. An integration event is the aggregate re-read AT the event's version  `[medium]` — **backlog, with §6**
+
+`OrderIntegrationEventSender.java:31-38`:
+`aggregateStore.readAggregate(type, event.getAggregateId(), event.getVersion())` — the third
+argument is what makes §6(3) a **correctness** requirement rather than a debugging convenience.
+Reading head state instead: the subscription is a second behind, the aggregate has moved from
+ACCEPTED to COMPLETED, and the `OrderAccepted` integration event goes out carrying COMPLETED.
+Consumers see the state machine out of order, and with a large backlog (a new subscription
+replaying all history) **every** integration event carries head state — the entire replayed
+stream indistinguishable from N copies of the current state.
+
+The payload rule beside it (README §3-7, lines 211-218): a domain event is a delta and internal to
+the bounded context; an integration event carries the **whole state**, flat, tagged with the
+originating event type and the aggregate version. Publishing the raw domain event exports the
+internal model, so every internal refactor is a breaking change for other services; and a
+delta-shaped payload is unusable under at-least-once redelivery — replaying `PriceAdjusted(+10)`
+twice adds 20.
+
+vv has no at-version load: `event/repo.go:28` folds to head.
+
+### 8. `LISTEN`/`NOTIFY`, if a `Spec.Wake` producer is ever written  `[low]` — **backlog**
+
+Phase 3 does not deliver it and the seam is `Spec.Wake` (`event/projection/spec.go:71`). vv's
+`follow` (`event/projection/projection.go:183-192`) already selects on `ctx.Done()`, `drain`,
+`Wake` **and** the idle ticker together — the combination the reference structurally **cannot**
+express, because `polling` and `postgres-channel` are mutually exclusive
+`@ConditionalOnProperty`s (`ScheduledEventSubscriptionProcessor.java:13` vs
+`PostgresChannelEventSubscriptionProcessor.java:22`). That absence is the reference's **lost
+wake-up**: instance A holds the checkpoint lock and its snapshot predates event E's commit; E
+commits, NOTIFY fires, B's `SELECT … FOR UPDATE SKIP LOCKED` returns zero rows, B logs at DEBUG and
+returns; A commits without E; the trigger fires on INSERT only, so E sits undelivered until some
+unrelated event of the same aggregate type is written. Neither implementation closes it.
+
+The semantics to carry, verbatim, because none is recoverable from a NOTIFY tutorial:
+
+- The trigger (`V2__notify_trigger.sql:1-17`, byte-identical in the port's `V3`):
+  `AFTER INSERT ON ES_EVENT FOR EACH ROW`, body
+  `SELECT a.AGGREGATE_TYPE INTO aggregate_type FROM ES_AGGREGATE a WHERE a.ID = NEW.AGGREGATE_ID;
+  PERFORM pg_notify('channel_event_notify', aggregate_type);`. One channel for the whole system;
+  the **payload is the aggregate type**, and that is the design, not a detail.
+- **Notifications are delivered only at COMMIT.** A `BEGIN; pg_notify(…); ROLLBACK;` delivers
+  nothing, so a notification never announces an uncommitted event. This is also what makes the
+  `xmin` deferral self-healing: when a long writer finally commits, its own NOTIFY fires at that
+  moment and re-wakes the listener for everything deferred behind it.
+- **Identical `(channel, payload)` pairs within one transaction are COLLAPSED** — verified: five
+  inserts in one transaction produced exactly one notification. A 500-event command yields one
+  wake-up per distinct aggregate type, not 500. Distinct payloads are each delivered. This is the
+  reason the payload must be low-cardinality; an event id or aggregate id would produce one
+  notification per row.
+- **The listener must use it only as a filter and drain durably regardless.** The reference proves
+  it does not depend on NOTIFY by shipping polling as a drop-in alternative producing identical
+  results.
+- **Drain every handler once on (re)connect, before entering the notification loop**
+  (`PostgresChannelEventSubscriptionProcessor.java:64`; the port's comment: *"so we never miss a
+  NOTIFY that fired before we were listening"*). vv's idle ticker gives this for free; a producer
+  written as if `Wake` were the delivery mechanism loses it.
+- **The connection must be dedicated, unpooled and long-lived** — `DriverManager.getConnection(…)
+  .unwrap(PgConnection.class)`, a daemon single-thread executor, `LISTEN channel_event_notify`,
+  then `getNotifications(0)` in a loop, wrapped in an outer `while (isActive())` that reopens and
+  re-LISTENs after any failure (`…java:30-40, 50, 101-107`). A pooled connection is reset or handed
+  to someone else and the LISTEN registration is silently gone — the subscription goes dark with
+  no error. A non-zero `getNotifications(timeoutMillis)` blocks statements from other threads on
+  that connection (README:499-501), so it cannot be shared. It is invisible to pool metrics and
+  must be added to capacity planning.
+- **Shutdown**: there is no way to interrupt a notification poll but by closing its connection
+  (`…java:69-74`, the comment says so). `future.cancel(true)`, then `conn.close()` on a volatile
+  field, then a 5-second `CountDownLatch`; `isActive()` re-asserts the interrupt flag so the check
+  is non-destructive, and an `if (isActive())` guard around the error log keeps every shutdown from
+  printing a misleading stack trace.
+- **Costs.** A PL/pgSQL call plus one indexed `SELECT` on the writer's critical path, per row —
+  the reference gives no reason for choosing `FOR EACH ROW` over a statement-level trigger. And the
+  async notification queue is a fixed cluster-wide ring (`max_notify_queue_pages`, 1048576 pages =
+  8 GB on PG17): a listener that stops consuming eventually makes **writers'** COMMITs fail.
+
+### 9. The table-level-lock outbox, as the escape hatch from the `xmin` stall  `[low]` — **backlog, situational**
+
+README §4-7-2, documented and never implemented (`grep -rn 'pg_sequence_last_value\|SHARE ROW
+EXCLUSIVE' /tmp/pges-ref` finds nothing in code; README:429-431: *"The transaction ID solution is
+used by default as it is non-blocking."*). Recorded because it is the **one** alternative that
+bounds delivery by the slowest **writer** rather than by the oldest transaction anywhere in the
+database — which is exactly the failure §3 documents.
+
+Five steps, in order, each load-bearing:
+
+1. `SELECT pg_sequence_last_value('ES_EVENT_ID_SEQ')` — the most recently **issued** id.
+2. `LOCK ES_EVENT IN SHARE ROW EXCLUSIVE MODE`. The mode is the technique: every `INSERT` holds
+   `ROW EXCLUSIVE (RowExclusiveLock)`; `SHARE ROW EXCLUSIVE (ShareRowExclusiveLock)` conflicts with
+   it **and** is self-exclusive, so acquiring it proves every in-flight insert has finished and only
+   one waiter can hold it.
+3. It must be taken in a **separate** transaction (`REQUIRES_NEW`) containing **only** that command,
+   committing immediately to release it (README:455-456) — otherwise it is held for the whole
+   read-and-handle batch and all writes stop.
+4. Acquiring and releasing it proves there are no uncommitted writes with an id `<=` the value from
+   step 1.
+5. Read `WHERE ID <= :lastValue`, with **no** `xmin` guard.
+
+Cost, and why the reference does not default to it: it blocks **all writes** to the event table once
+per poll, for as long as the slowest in-flight append. Reading up to `pg_sequence_last_value`
+*without* the lock is the naive outbox and loses events; the lock is what turns the sequence
+high-water mark into a safe point.
+
+### 10. A gap-free ordered read plus an unordered sink is an unordered system  `[low]` — **backlog, doc, owner: whoever writes an integration-event sender**
+
+Two lines in the reference's config and code, neither commented, which are the only reason its
+careful `(TRANSACTION_ID, ID)` ordering survives the last hop:
+
+- `spring.kafka.producer.properties.max.in.flight.requests.per.connection: 1`
+  (`application.yml:8-11`). At the default of 5 with retries enabled, a transient failure on the
+  request carrying `OrderAccepted` while `OrderCompleted` is already in flight puts the retry
+  **after** the later message, permanently. (`enable.idempotence=true` would allow 5 in flight with
+  the same guarantee; the reference does not set it.)
+- every message keyed by the aggregate id (`OrderIntegrationEventSender.java:43-47`,
+  `KafkaTopicsConfig.java:17` `partitions(10)`), so all events of one aggregate hash to one
+  partition. Unkeyed, v1 and v2 land on different partitions and consumers see them in arbitrary
+  order.
+
+The consumer-side counterpart: the integration event carries the aggregate **version**
+(`OrderDto.java:42-43`, from `order.baseVersion`), dense and strictly increasing per aggregate under
+`UNIQUE (AGGREGATE_ID, VERSION)` plus the CAS, and the consumer's rule is
+`if (incoming.version <= stored.version) drop;`. `event_timestamp` is **not** usable for this — it
+is `OffsetDateTime.now()` from the application (`Event.java:111`), a writer's wall clock. vv's
+`Envelope` already carries `Stream` and `Version` for this purpose (`event/store.go:87-111`) and its
+`RecordedAt` is at least a database clock (`statement_timestamp()`, `event/eventpg/append.go:123`).
+
+Per-aggregate ordering in the log is **derived, not enforced**, and the README never states the
+derivation: the CAS `UPDATE ES_AGGREGATE … WHERE VERSION = :expected` runs **first**, before any
+insert, so a writer of version N+1 cannot have read version N until N's transaction committed and
+does not acquire an xid until that UPDATE executes — hence `xid(N) < xid(N+1)` always. The property
+is fragile in one specific way worth carrying: **any earlier write in the same transaction that
+assigns an xid before the CAS blocks would break the argument.** vv's append has the same shape —
+the CTE's `streams` write is the first write of the statement — and the same fragility.
+
+### 11. Partitioning an event store by time is incompatible with the constraint OCC rests on  `[low]` — **backlog, warning**
+
+Reproduced on PostgreSQL 17.9 against the port's own schema: the port's
+`V11__eventsourcing_partitioning_conversion.sql:58-60`
+`CREATE TABLE ES_EVENT (LIKE ES_EVENT_legacy INCLUDING ALL) PARTITION BY RANGE (CREATED_AT)` **fails**
+with `ERROR: unique constraint on partitioned table must include all partitioning columns / DETAIL:
+PRIMARY KEY constraint on table "es_event" lacks column "created_at"`. `INCLUDING ALL` copies both
+the PK and `UNIQUE (AGGREGATE_ID, VERSION)`, and PostgreSQL requires the partition key in every
+unique constraint. The script is shipped entirely commented out and marked "run MANUALLY by a DBA",
+because `ALTER TABLE … ATTACH PARTITION` takes `ACCESS EXCLUSIVE`.
+
+vv has exactly the constraint at risk — `events_stream_version_key UNIQUE (family, key, version)`
+(`event/eventpg/schema.go:263`), which [[D-126]] names as what holds if the admission predicate is
+ever wrong and which verification refuses to start without. Widening it to include a partition key
+**destroys** the guarantee: two rows at one `(family, key, version)` could exist in two partitions.
+The only other routes are moving the uniqueness to an unpartitioned side table, or relying on the
+`streams` CAS alone. The reference does not partition at all, which on this evidence is the safer
+position. The port's `PartitionMaintenanceJob.kt` also pre-creates `preCreateMonths` (default 2)
+months ahead and swallows its failures — including the failure that means the parent was never
+converted — and `preCreateMonths = 0` makes every insert fail at midnight on the 1st.
+
+### 12. Archival must interlock with checkpoints and snapshots, or it deletes undelivered events  `[low]` — **backlog, warning**
+
+vv has no archival. The port added one (`EventArchiveService.kt`) whose candidate query is
+`SELECT ID, CREATED_AT FROM ES_EVENT WHERE CREATED_AT < :cutoff ORDER BY CREATED_AT, ID LIMIT 10000`
+(`:218-232`) followed by `DELETE FROM ES_EVENT WHERE ID IN (:ids)` (`:266-274`), checking **nothing**:
+
+- not `ES_EVENT_SUBSCRIPTION.LAST_EVENT_ID` — a subscription stalled behind a long transaction,
+  dead-lettered, or newly added has its undelivered events deleted and never receives them;
+- not `ES_AGGREGATE_SNAPSHOT` — an aggregate without a snapshot becomes unloadable, and the port's
+  own `loadAtVersion` replays from event 1 and asserts the final version, so time travel over an
+  archived range throws rather than degrading;
+- not the attempt table, which is left referencing event ids that no longer exist;
+- and it deletes exactly what a future new-subscription backfill needs, which is the headline
+  advantage of event sourcing (README:231-232).
+
+Its class doc claims "Runs inside a transaction — a DELETE failure rolls back" while the class
+carries no `@Transactional`, so each JDBC call autocommits. Its SHA-256 is computed over
+`JSON_DATA::text` — the JSONB rendering, not the bytes originally written — so it attests the
+archive round-trip and not the original payload. vv's `payload bytea` would not have that problem.
+
+The interlock vv would need is against **`checkpoints.cursor` for every projection name**, not
+against a time cutoff.
+
+### 13. Event metadata: actor, causation, correlation, bitemporality  `[low]` — **backlog**
+
+`event.Envelope` (`event/store.go:87-111`) carries `Stream`, `Version`, `Position`, `Type`,
+`Revision`, `Payload`, `RecordedAt` and nothing else. The port added `METADATA JSONB` (`V8`)
+carrying actor, `parent_event_id` (causation), `correlation_id`, `operation_id` and bitemporal
+`effective_at`/`recorded_at`; the reference has no metadata column at all and puts `createdDate`
+inside the payload via `OffsetDateTime.now()` (`Event.java:111`) — an application clock, not
+comparable across instances. Out of phase-3 scope, recorded because a column is cheap at a schema
+version and impossible to backfill.
+
+### 14. The reference's index set, as a ceiling rather than a model  `[low]` — **backlog, note**
+
+`ES_EVENT` carries five index writes per append (`V1:10, 16, 19-21`) and two of them back nothing:
+`IDX_ES_EVENT_AGGREGATE_ID` is fully redundant with the leading column of
+`UNIQUE (AGGREGATE_ID, VERSION)`, and `IDX_ES_EVENT_VERSION` is a single-column index on values
+1..N repeated across every aggregate, with near-zero selectivity and no query that filters on
+`VERSION` without also filtering on `AGGREGATE_ID`. Neither is explained anywhere. The same
+redundancy is repeated on `ES_AGGREGATE_SNAPSHOT` (`V1:30-31`).
+
+vv has **two**: PK `(position)` and `UNIQUE (family, key, version)`, whose leading columns also
+serve the foreign key's referencing side. Adding `(writer_xid, position)` for §1 makes three.
+**Three is the ceiling** — this is an append-only table that only grows, and every index is a btree
+write on the hottest path in the system.

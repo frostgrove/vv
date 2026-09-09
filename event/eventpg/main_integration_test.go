@@ -205,7 +205,7 @@ func (heldCodec) Decode(payload []byte) (held, error) { return held{Bytes: paylo
 
 func (heldCodec) CanEncode() error { return nil }
 
-func declareHolding(t *testing.T, family string) (*event.Aggregate[held, string], *event.Fact[held, string, held]) {
+func declareHolding(t testing.TB, family string) (*event.Aggregate[held, string], *event.Fact[held, string, held]) {
 	t.Helper()
 	aggregate, err := event.TryDefine[held](family, func(id string) event.Key { return event.Key(id) })
 	if err != nil {
