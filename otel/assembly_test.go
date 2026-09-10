@@ -841,7 +841,7 @@ func TestAssembly_ContextOnlyEventsRemainActiveWithoutTracerProvider(t *testing.
 	}
 }
 
-func TestAssembly_CurrentSignalsDisableIndependentlyAndPlannedSignalsDoNotEmit(t *testing.T) {
+func TestAssembly_EmittedSignalsDisableIndependently(t *testing.T) {
 	current := vvotel.Signals{
 		vvotel.SignalCommandDuration,
 		vvotel.SignalCommandSpan,
@@ -850,6 +850,12 @@ func TestAssembly_CurrentSignalsDisableIndependentlyAndPlannedSignalsDoNotEmit(t
 		vvotel.SignalCacheOperations,
 		vvotel.SignalCacheEvent,
 		vvotel.SignalCacheBackendEvent,
+		vvotel.SignalCacheEvents,
+		vvotel.SignalCacheItems,
+		vvotel.SignalCacheEncodedBytes,
+		vvotel.SignalCachePayloadBytes,
+		vvotel.SignalCacheValueBytes,
+		vvotel.SignalCacheChargedBytes,
 	}
 	for _, disabled := range current {
 		t.Run(fmt.Sprintf("signal_%d", disabled), func(t *testing.T) {
@@ -865,8 +871,8 @@ func TestAssembly_CurrentSignalsDisableIndependentlyAndPlannedSignalsDoNotEmit(t
 			key, _ := storage.ParseKey("a/b")
 			_, _ = store.Head(context.Background(), key)
 			ctx, parent := tp.Tracer("ambient").Start(context.Background(), "ambient")
-			vvotel.Cache(tel, vvotel.WithCacheSpanEvents(true)).Observe(ctx, cache.Event{Operation: cache.LookupOperation, Outcome: cache.HitOutcome})
-			vvotel.CacheMemory(tel, vvotel.WithCacheMemorySpanEvents(true)).Observe(ctx, cachememory.Event{Operation: cachememory.GetOperation, Outcome: cachememory.HitOutcome})
+			vvotel.Cache(tel, vvotel.WithCacheSpanEvents(true)).Observe(ctx, cache.Event{Operation: cache.LookupOperation, Outcome: cache.HitOutcome, Items: 1, EncodedBytes: 1, PayloadBytes: 1})
+			vvotel.CacheMemory(tel, vvotel.WithCacheMemorySpanEvents(true)).Observe(ctx, cachememory.Event{Operation: cachememory.GetOperation, Outcome: cachememory.HitOutcome, Items: 1, ValueBytes: 1, ChargedBytes: 1})
 			parent.End()
 
 			spanNames := map[string]int{}
@@ -880,11 +886,6 @@ func TestAssembly_CurrentSignalsDisableIndependentlyAndPlannedSignalsDoNotEmit(t
 			metricNames := map[string]int{}
 			for _, measurement := range mp.metrics {
 				metricNames[measurement.name]++
-				if measurement.name != vvotel.MetricCommandDuration &&
-					measurement.name != vvotel.MetricStorageDuration &&
-					measurement.name != vvotel.MetricCacheOperations {
-					t.Fatalf("planned signal emitted metric %q", measurement.name)
-				}
 			}
 
 			assertPresentUnlessDisabled(t, disabled, vvotel.SignalCommandDuration, metricNames[vvotel.MetricCommandDuration])
@@ -892,6 +893,12 @@ func TestAssembly_CurrentSignalsDisableIndependentlyAndPlannedSignalsDoNotEmit(t
 			assertPresentUnlessDisabled(t, disabled, vvotel.SignalStorageDuration, metricNames[vvotel.MetricStorageDuration])
 			assertPresentUnlessDisabled(t, disabled, vvotel.SignalStorageSpan, spanNames["vv.storage head"])
 			assertCountUnlessDisabled(t, disabled, vvotel.SignalCacheOperations, metricNames[vvotel.MetricCacheOperations], 2)
+			assertCountUnlessDisabled(t, disabled, vvotel.SignalCacheEvents, metricNames[vvotel.MetricCacheEvents], 2)
+			assertCountUnlessDisabled(t, disabled, vvotel.SignalCacheItems, metricNames[vvotel.MetricCacheItems], 2)
+			assertPresentUnlessDisabled(t, disabled, vvotel.SignalCacheEncodedBytes, metricNames[vvotel.MetricCacheEncodedBytes])
+			assertPresentUnlessDisabled(t, disabled, vvotel.SignalCachePayloadBytes, metricNames[vvotel.MetricCachePayloadBytes])
+			assertPresentUnlessDisabled(t, disabled, vvotel.SignalCacheValueBytes, metricNames[vvotel.MetricCacheValueBytes])
+			assertPresentUnlessDisabled(t, disabled, vvotel.SignalCacheChargedBytes, metricNames[vvotel.MetricCacheChargedBytes])
 			assertPresentUnlessDisabled(t, disabled, vvotel.SignalCacheEvent, events[vvotel.EventCache])
 			assertPresentUnlessDisabled(t, disabled, vvotel.SignalCacheBackendEvent, events[vvotel.EventCacheBackend])
 		})

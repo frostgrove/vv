@@ -366,7 +366,10 @@ func FindExecutor(v any, matches func(Executor) bool) (Executor, bool) {
 }
 
 func BeginnerOf(v any) (Beginner, bool) {
-	found, ok := unwrapSource(v, func(x any) bool { _, is := x.(Beginner); return is })
+	found, ok := unwrapSource(v, func(x any) bool {
+		candidate, is := x.(Beginner)
+		return is && !isNilValue(candidate)
+	})
 	if !ok {
 		return nil, false
 	}
@@ -378,7 +381,11 @@ func ReadSourceOf(v any) (Source, bool) {
 	if !ok {
 		return nil, false
 	}
-	return found.ReadSource(), true
+	source := found.ReadSource()
+	if isNilValue(source) {
+		return nil, false
+	}
+	return source, true
 }
 
 func ReadSourcerOf(v any) (ReadSourcer, bool) {

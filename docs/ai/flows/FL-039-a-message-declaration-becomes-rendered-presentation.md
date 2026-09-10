@@ -1,6 +1,7 @@
-# FL-038 — A message declaration becomes rendered presentation
+# FL-039 — A message declaration becomes rendered presentation
 
-**Entry points:** `i18n.New` / `i18n.Compile` (assembly),
+**Entry points:** `i18n.New` / `i18n.NewContext` / `i18n.Compile` /
+`i18n.CompileContext` (assembly),
 `Snapshot.Resolve` / `Snapshot.View` (operation policy), `Snapshot.Bind` /
 `Definition.Bind` / `DefineStruct` (deferred intent), `View.Render` /
 `NewFormatter` / `View.Formatter` (presentation),
@@ -8,7 +9,7 @@
 (the existing error seam), `Controller.Activate`
 (publication), `vv-i18n` (offline authoring)
 **Implements:** [[UC-033]]
-**Governed by:** [[D-129]] [[D-033]] [[D-048]] [[D-084]] [[D-116]]
+**Governed by:** [[D-135]] [[D-033]] [[D-048]] [[D-084]] [[D-116]]
 
 This is the whole path from module-owned source wording and a typed schema to
 one immutable rendered result. It includes source/review identity, strict
@@ -34,21 +35,30 @@ export: those are application boundaries rather than hidden i18n runtime work.
    `ExpectedReviewDigest` then hashes that identity with canonical translation
    locale and translated text. A source-locale, wording or context edit therefore
    invalidates approval independently of contract drift.
-4. `EncodeSource` writes the canonical `frostgrove.i18n.source/v1` document.
+4. `EncodeSource` and `EncodeSourceContext` write the canonical
+   `frostgrove.i18n.source/v1` document.
+   `SourceCodec.EncodedSize` and `EncodedSizeContext` expose the exact count-only
+   canonical wire size under the same limits without materializing it.
    `DecodeSource` scans before decoding and rejects excessive bytes/depth/items,
    duplicate or unknown members, invalid UTF-8, trailing data and invalid closed
    enum values. It canonicalizes order and locale spelling without inventing a
    review state.
-5. `MergeSource` treats a newly authored declaration as authoritative while
+5. `MergeSource`, `MergeSourceContext`, `SourceMerger.Merge` and
+   `SourceMerger.MergeContext` treat a newly authored declaration as
+   authoritative while
    carrying forward structurally eligible translations and application
    overrides absent from it. Stale, review-required and rejected identities are
    preserved verbatim for `Check`, never promoted. Source-locale changes and
    obsolete authoring work are refused unless pruning was explicitly requested;
-   source/contract/review identities are not silently restamped.
+   source/contract/review identities are not silently restamped. `SourceMerger`
+   preflights aggregate catalogue material and its `SourceLimits` output budget
+   before append. Obsolete work retains only an exact count and lexical first
+   diagnostic rather than a proportional diagnostics slice.
 6. `Check` validates source while retaining authoring states. It classifies
    missing, stale, review-required, rejected, unused and structurally invalid
-   entries, calculates exact coverage and bounds retained findings. A complete
-   usage manifest makes absence usable as evidence; an incomplete one does not.
+   entries, calculates exact coverage and bounds retained findings. Only a
+   valid v4 manifest with complete scope provenance makes absence usable as
+   evidence; incomplete and migrated v1-v3 input does not.
 
 ## Construction and the pinned profile
 
@@ -84,16 +94,19 @@ export: those are application boundaries rather than hidden i18n runtime work.
 
 `i18n/artifact.go`:
 
-1. `Compile` calls the same construction path and emits canonical
+1. `Compile` and `CompileContext` call the same construction path and emit canonical
    `frostgrove.i18n.catalog/v1` JSON containing exact grammar, engine,
    locale-data and time-zone-data-model identities plus semantic digest.
-   `Encode` does the same from an already validated snapshot.
+   `Encode`, `EncodeContext` and `Compiler.EncodeContext` do the same from an
+   already validated snapshot.
 2. `Loader.Load` or `LoadFS` reads beneath local artifact/catalog ceilings,
    rejects invalid UTF-8, duplicates, unknown members and trailing data, and
    reconstructs the snapshot without network or ambient state.
 3. The loader recompiles the representation and requires byte equality. An
    artifact that is semantically similar but non-canonical, incompatible with
    the pinned identities, or trying to widen local limits is refused.
+   Compiler encoding counts the complete snapshot wire representation before
+   snapshot digest validation, canonical cloning or hashing.
 4. `LoadFS` owns only the opened file and closes it on success and failure. No
    constructor starts a watcher, timer or goroutine.
 
@@ -233,7 +246,8 @@ export: those are application boundaries rather than hidden i18n runtime work.
 - `check` decodes canonical source, optionally reads an extracted usage
   manifest, writes a bounded deterministic report and exits nonzero for errors.
 - `review` selects locale/key/scope/state and stamps contract, source and review
-  identities. Approval refuses structurally invalid source.
+  identities. Locale, scope and state are validated before the catalogue is
+  cloned. Approval refuses structurally invalid source.
 - `merge` combines the next authoritative canonical source with the prior
   reviewed source. It preserves non-conflicting work, refuses implicit loss and
   requires explicit obsolete pruning.
@@ -249,10 +263,29 @@ export: those are application boundaries rather than hidden i18n runtime work.
   TypeScript file, public manifest and publication generation file. Invalid
   policy never falls back to defaults, and source metadata cannot widen the
   operator ceiling beneath which it was decoded.
+- Core `CheckPolicy.UsageLimits` independently bounds hostile usage evidence.
+  Zero fields select fixed defaults/hard maxima: 262144 keys, dynamic ranges and
+  occurrences; 1024 roots; 100000 files and metadata records; 256 entries in
+  each tag and environment ledger; 4 MiB per string; and 64 MiB aggregate
+  material. Catalogue limits never substitute for these limits, and callers may
+  narrow but not widen them.
+- The CLI passes its context and matching byte ceiling into the producer before
+  output exists: `CompileContext`, `PseudoContext`, `GenerateGoContext`,
+  `ExportPublicContext`, `SourceCodec.EncodeContext` and bounded report/usage
+  encoders. `ExpectedPublicExportAddressContext`,
+  `ExpectedUsageSourceDigestContext` and `ExpectedUsageManifestDigestContext`
+  make the corresponding digest loops interruptible. Builders, canonical JSON encoders and address digests poll
+  cancellation; an impossible tiny output is rejected before proportional
+  clone, formatter or hash work. Convenience library APIs retain the same
+  behavior through `context.Background()` and finite snapshot/default ceilings.
+  Exact count-only passes include JSON/TypeScript escaping and fixed scaffolding;
+  generated Go is already gofmt-canonical. Pseudolocale and review preflights
+  account fixed digest widths before hashing or cloning, so N succeeds and N-1
+  fails before the later output phase.
 - `extract` uses the local Go tool's effective `-deps -compiled -export -json`
   graph and exact export importer, then analyzes selected local packages without
-  running application initialization. It follows root-local wrappers and typed
-  callbacks and recognizes static or bounded-domain calls through the complete
+  running application initialization. It follows wrappers and typed callbacks
+  across that exact selected graph and recognizes static or bounded-domain calls through the complete
   definition surface. Persisted GOENV/GOFLAGS, workspaces, nested modules,
   replacements, vendor mode and overlays participate in selection and
   provenance. A private build cache, local toolchain, disabled proxy/checksum
@@ -260,14 +293,24 @@ export: those are application boundaries rather than hidden i18n runtime work.
   checkout writes. Unbounded keys and escaped constructor callables are refused;
   package/dependency/type/load errors, cgo, partial roots, conflicting export
   evidence and reachable external dependencies that may hide i18n calls force
-  `complete:false`. Effective-build exclusions remain in the hashed ledger but
-  do not by themselves invalidate that build's proof.
+  `complete:false`. The same downgrade applies when `Snapshot.Bind`, a method
+  expression/value, binder interface, snapshot or another i18n capability is
+  returned, stored, reflected, converted through `unsafe`, or passed beyond the
+  exact selected source graph. Exact typed calls and callbacks remain analyzable
+  when the callee body belongs to that graph, including a selected sibling package. Generated
+  definition factories gain no marker-based trust: each result field must be
+  proven across all reaching assignments and returns. Effective-build exclusions
+  remain in the hashed ledger but do not by themselves invalidate that build's
+  proof.
 - Usage v4 binds sorted unique aggregates and bidirectional source occurrences
   to canonical root/file/metadata/environment/package-graph ledgers through
   recomputable source and manifest SHA-256 digests. The decoder and `Check`
   validate counts, containment, coordinates, selected-file backing, reverse
-  evidence and canonical ordering under bounded JSON work. V1-v3 decode only as
-  incomplete. Ledger self-consistency is neither authenticity nor freshness, so
+  evidence and canonical ordering under bounded JSON work. Build, tool and
+  release tag ledgers are sorted and unique. V1-v3 retain positive aggregates
+  and occurrences but discard legacy scope and always decode as incomplete, so
+  they neither assert non-use nor incur v4 provenance failures. Ledger
+  self-consistency is neither authenticity nor freshness, so
   a trusted release that consumes non-use evidence reruns the same
   `extract -complete ... -check` command against the physical checkout; plain
   `check -usage` performs no filesystem revalidation.
@@ -286,15 +329,31 @@ export: those are application boundaries rather than hidden i18n runtime work.
   descriptors, refuse links and identity changes between inspection and open,
   and cannot be redirected by a later ancestor replacement. The publisher
   creates a missing final root and syncs its parent through the pinned parent
-  descriptor. Readers bound directory enumeration; the command reader polls
-  cancellation between bounded file chunks.
+  descriptor. It pins the verified `generations` handle for all generation
+  mutations, verifies that the parent entry still has that identity, and
+  compare-and-swaps `current.json` only while its initially absent or exact
+  regular-file target remains unchanged. Direct, staged and generational
+  writers acquire the same descriptor-validated persistent `.vv-i18n.lock`
+  before target snapshots and retain its OS advisory lock through commit,
+  rollback and directory sync. Unix uses nonblocking `flock`, Windows uses
+  nonblocking `LockFileEx`, waits observe context cancellation, and process exit
+  releases ownership. `-check` neither creates nor acquires the lock. Cooperating
+  publishers are serialized; external mutations that ignore the lock are only
+  detected at identity checkpoints and are not promised linearizability.
+  Temporary files are synced on every platform. A non-Windows build also syncs
+  affected directories; Windows uses a compile-time explicit directory-sync
+  no-op because Go's read-only directory handle returns `ACCESS_DENIED`. Atomic
+  visibility and reader integrity remain guaranteed on Windows, while
+  directory-entry power-loss durability remains an OS/filesystem boundary.
+  Readers bound directory enumeration; the command reader polls cancellation
+  between bounded file chunks.
   `-check` compares or
   verifies desired bytes without modifying the destination.
 
 ## Where the decisions bite
 
 - The nested `i18n/go.mod` is the one optional Unicode/MessageFormat dependency
-  decision. No root or transport package imports it ([[D-033]], [[D-129]]).
+  decision. No root or transport package imports it ([[D-033]], [[D-135]]).
 - There is one runtime package and one grammar profile. No `i18nhttp`,
   `i18ngrpc`, `i18ntenancy`, `i18notel` or grammar auto-detection exists.
 - Resolution, grammar locale, formatting locale, time zone and presentation
@@ -340,11 +399,12 @@ export: those are application boundaries rather than hidden i18n runtime work.
 The nested module's `catalog_test.go`, `source_test.go`, `check_test.go`,
 `artifact_test.go`, `locale_test.go`, `render_test.go`, `formatters_test.go`,
 `overlay_errors_test.go`, `controller_test.go`, `generate_test.go`,
-`export_test.go`, `pseudo_test.go`, `hardening_test.go`,
+`export_test.go`, `pseudo_test.go`, `generation_context_test.go`, `hardening_test.go`,
 `foundation_fix_round_test.go`, `integrity_fix_round_test.go` and
 `lifecycle_fix_round_test.go`, plus the struct-definition, direct-formatter,
 range, plural and date-component suites, cover the package contract. `fuzz_test.go` and the
-source fuzz target cover malformed inputs. `cmd/vv-i18n/*_test.go` covers every
+source fuzz target cover malformed inputs. `cmd/vv-i18n/*_test.go`, including
+`output_context_test.go`, covers every
 command, direct output and generational publication. `test/i18nflow/*_test.go` walks integration through
 HTTP, gRPC and cache boundaries. The scripts named above run dependency and
 standalone-consumer gates with workspace resolution disabled.

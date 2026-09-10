@@ -104,13 +104,9 @@ For newcomer-oriented navigation, see the [module index](modules/Index.md) and
 | [UC-027](modules/app/UC-027-run-one-codebase-as-an-api-a-worker-and-a-seed-command.md) | Run one codebase as an API, a worker and a seed command | the application author | `app` | appfx · appfiber · runtime | covered |
 | [UC-030](general/UC-030-observe-the-framework-with-opentelemetry.md) | Observe framework semantics with OpenTelemetry without surrendering SDK control | application operator and telemetry architect | `general` | port · storage · cache · crud · remote · auth · health · runtime · jobs · otel | partially covered |
 | [UC-031](modules/jobs/UC-031-make-an-effect-happen-exactly-when-its-transaction-commits.md) | Make an effect happen when, and only when, its transaction commits | application author | `jobs` | crud · jobspg | covered |
-<<<<<<< HEAD
-| [UC-032](modules/event/UC-032-record-what-happened-and-rebuild-state-from-it.md) | Record what happened, and rebuild state from it | application author | `event` | eventmemory · eventpg · eventtest | covered |
+| [UC-032](modules/event/UC-032-record-what-happened-and-rebuild-state-from-it.md) | Record what happened, rebuild state from it, and follow the log into a read model | application author | `event` | eventmemory · eventpg · eventtest · projection | covered |
 | [UC-033](modules/i18n/UC-033-render-one-message-correctly-now-or-later.md) | Render one message correctly now or later | application author presenting a message | `i18n` | errs · port · CRUD HTTP · CRUD gRPC · auth | covered; durable/external lifecycle remains application-owned |
 | [UC-034](modules/audit/UC-034-record-and-investigate-auditable-evidence.md) | Record and investigate auditable evidence | the application author defining accountable operations, the investigator reviewing them, and the operator preserving the ledger | `audit` | crud · security · auth · tenancy · jobs · event · storage · errs · i18n · otel · app | S0 contract covered; runtime implementation owed |
-=======
-| [UC-032](modules/event/UC-032-record-what-happened-and-rebuild-state-from-it.md) | Record what happened, rebuild state from it, and follow the log into a read model | application author | `event` | eventmemory · eventpg · eventtest · projection | covered |
->>>>>>> 5fedaae3d4e688198eb0116509c76d075429340e
 
 ## Coverage map
 | Use case | Flows |
@@ -145,13 +141,9 @@ For newcomer-oriented navigation, see the [module index](modules/Index.md) and
 | [UC-028](modules/tenancy/UC-028-serve-many-tenants-from-one-deployment.md) | `tenancy` | crud · security · jobs · storage · cache | [[FL-033]] [[FL-007]] [[FL-008]] |
 | [UC-030](general/UC-030-observe-the-framework-with-opentelemetry.md) | `general` | port · storage · cache · crud · remote · auth · health · runtime · jobs · otel | [[FL-034]] |
 | [UC-031](modules/jobs/UC-031-make-an-effect-happen-exactly-when-its-transaction-commits.md) | `jobs` | crud · jobspg | [[FL-035]] |
-<<<<<<< HEAD
-| [UC-032](modules/event/UC-032-record-what-happened-and-rebuild-state-from-it.md) | `event` | eventmemory · eventpg · eventtest | [[FL-036]] [[FL-037]] |
-| [UC-033](modules/i18n/UC-033-render-one-message-correctly-now-or-later.md) | `i18n` | errs · port · CRUD HTTP · CRUD gRPC · auth | [[FL-038]] |
-| [UC-034](modules/audit/UC-034-record-and-investigate-auditable-evidence.md) | `audit` | crud · security · auth · tenancy · jobs · event · storage · errs · i18n · otel · app | [[FL-039]] |
-=======
 | [UC-032](modules/event/UC-032-record-what-happened-and-rebuild-state-from-it.md) | `event` | eventmemory · eventpg · eventtest · projection | [[FL-036]] [[FL-037]] [[FL-038]] |
->>>>>>> 5fedaae3d4e688198eb0116509c76d075429340e
+| [UC-033](modules/i18n/UC-033-render-one-message-correctly-now-or-later.md) | `i18n` | errs · port · CRUD HTTP · CRUD gRPC · auth | [[FL-039]] |
+| [UC-034](modules/audit/UC-034-record-and-investigate-auditable-evidence.md) | `audit` | crud · security · auth · tenancy · jobs · event · storage · errs · i18n · otel · app | [[FL-040]] |
 
 ## Gaps
 

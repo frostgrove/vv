@@ -11,9 +11,10 @@ import (
 
 var (
 	httpServerMetricAttributes = map[attribute.Key]struct{}{
-		"http.request.method":       {},
-		"http.response.status_code": {},
-		"http.route":                {},
+		"http.request.method":         {},
+		"http.response.status_code":   {},
+		"http.route":                  {},
+		httpManagementMetricAttribute: {},
 	}
 	httpActiveMetricAttributes = map[attribute.Key]struct{}{
 		"http.request.method": {},
@@ -41,13 +42,8 @@ func TransportMetricOptions(policy TraceProjectionPolicy) []sdkmetric.Option {
 		{otelhttp.ScopeName, "http.server.request.body.size", httpServerMetricAttributes},
 		{otelhttp.ScopeName, "http.server.response.body.size", httpServerMetricAttributes},
 		{otelhttp.ScopeName, "http.server.request.duration", httpServerMetricAttributes},
-		{otelhttp.ScopeName, "http.server.active_requests", httpActiveMetricAttributes},
 		{otelhttp.ScopeName, "http.client.request.body.size", httpClientMetricAttributes},
-		{otelhttp.ScopeName, "http.client.response.body.size", httpClientMetricAttributes},
 		{otelhttp.ScopeName, "http.client.request.duration", httpClientMetricAttributes},
-		{otelhttp.ScopeName, "http.client.active_requests", httpActiveMetricAttributes},
-		{otelhttp.ScopeName, "http.client.connection.duration", map[attribute.Key]struct{}{}},
-		{otelhttp.ScopeName, "http.client.open_connections", map[attribute.Key]struct{}{}},
 		{otelgin.ScopeName, "http.server.request.body.size", httpServerMetricAttributes},
 		{otelgin.ScopeName, "http.server.response.body.size", httpServerMetricAttributes},
 		{otelgin.ScopeName, "http.server.request.duration", httpServerMetricAttributes},
@@ -77,7 +73,7 @@ func transportMetricFilter(scope string, keys map[attribute.Key]struct{}, policy
 		if _, allowed := keys[candidate.Key]; !allowed {
 			return false
 		}
-		projected := projectTraceAttributes(scope, []attribute.KeyValue{candidate}, policy)
+		projected := projectTransportMetricAttributes(scope, []attribute.KeyValue{candidate}, policy)
 		return len(projected) == 1 && projected[0].Key == candidate.Key && projected[0].Value.Type() == candidate.Value.Type() && projected[0].Value.Emit() == candidate.Value.Emit()
 	}
 }

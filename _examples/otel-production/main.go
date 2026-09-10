@@ -19,9 +19,13 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-	defer cancel()
-	if err := telemetry.Shutdown(shutdownCtx); err != nil && !errors.Is(err, context.Canceled) {
+	flushCtx, cancelFlush := context.WithTimeout(context.Background(), 10*time.Second)
+	flushErr := telemetry.ForceFlush(flushCtx)
+	cancelFlush()
+	shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), 20*time.Second)
+	shutdownErr := telemetry.Shutdown(shutdownCtx)
+	cancelShutdown()
+	if err := errors.Join(flushErr, shutdownErr); err != nil {
 		log.Print(err)
 	}
 }

@@ -1,37 +1,58 @@
 # Production OTLP ownership recipe
 
-`NewTelemetry` builds application-owned trace and metric SDKs and returns the
-providers explicitly. Pass those providers to Frostgrove adapters and every
-native transport/database integration. The recipe never calls `otel.Set*`.
+`NewTelemetry` creates application-owned trace and metric SDK providers and one
+OTLP trace/metric exporter pair. It never changes OpenTelemetry globals.
+
+Frost signals are projected by the built-in schema projector. Native signals
+must be connected explicitly with one trace layer and/or metric layer. A layer
+declares the exact instrumentation scope tuple (name, version, schema URL and
+scope attributes) that its projector owns:
 
 ```go
+httpScope := instrumentation.Scope{
+	Name:    otelhttp.ScopeName,
+	Version: otelhttp.Version,
+}
+
 telemetry, err := NewTelemetry(ctx, Config{
     ServiceName:       "orders-api",
     ServiceVersion:    "1.0.0",
     ServiceNamespace:  "commerce",
     FrameworkResource: vvotel.MustApproveName("orders"),
+    TraceProjectionLayers: []TraceProjectionLayer{{
+        Scopes: []instrumentation.Scope{httpScope},
+        Wrap: func(next sdktrace.SpanExporter) (sdktrace.SpanExporter, error) {
+            return newHTTPSpanProjection(next), nil
+        },
+    }},
+    MetricProjectionLayers: []MetricProjectionLayer{{
+        Scopes: []instrumentation.Scope{httpScope},
+        Wrap: func(next sdkmetric.Exporter) (sdkmetric.Exporter, error) {
+            return newHTTPMetricProjection(next), nil
+        },
+    }},
+    Views: httpMetricViews(),
 })
 ```
 
-OTLP endpoints and credentials use the upstream `OTEL_EXPORTER_OTLP_*`
-environment variables. The default sampler is `ParentBased(TraceIDRatioBased(0.1))`;
-set `Sampler` for full low-level control. `Views` are passed unchanged to the
-metric provider in addition to schema-derived Frostgrove Views. Those defaults
-filter attribute keys before aggregation and use the registry's histogram
-buckets. Set `FrostgroveViewsDisabled` only when replacing them deliberately.
-The periodic reader uses trace-based exemplars.
+Each layer receives only its declared scopes. Sibling scopes bypass it, while
+the layer's output is restricted to its own scopes. A final exact-scope gate
+drops undeclared and near-match scopes before OTLP. `Wrap` must return a
+synchronous exporter decorator and forward `ForceFlush`/`Shutdown` to `next`
+exactly once. Duplicate scopes, empty scope sets, invalid scopes and nil
+wrappers are rejected. The configuration and nested scope slices are copied.
 
-`ForceFlush` attempts traces and metrics with independent time budgets.
-`Shutdown` first rejects new flushes, waits for admitted flushes, then attempts
-both provider shutdowns with independent budgets. The first caller owns cleanup;
-concurrent callers may time out without canceling it, and completed callers all
-receive the cached cleanup result.
+Pass `telemetry.TracerProvider`, `telemetry.MeterProvider` and
+`telemetry.Propagator` directly to native middleware and database hooks. Native
+metric filtering and aggregation stay in `Config.Views`; exporter layers are
+the final privacy/contract boundary.
 
-Application shutdown order is: stop admission; drain HTTP, gRPC, jobs and
-runtime work; finish response bodies and database rows; close pools; unregister
-owned callbacks; flush traces and metrics; shut down both providers. Bound every
-step and continue cleanup after errors.
+OTLP endpoints and credentials use `OTEL_EXPORTER_OTLP_*`. The default sampler
+is `ParentBased(TraceIDRatioBased(0.1))`; `Sampler` overrides it. Frost Views
+filter attributes before aggregation and install schema buckets. The periodic
+reader uses trace-based exemplars.
 
-Native middleware, database hooks, route/RPC Views and export-time privacy
-projection remain application modules. Removing this recipe or any native
-integration does not alter `vvotel` or the framework kernel.
+Shutdown order is: stop admission, drain work, finish response bodies and rows,
+close pools, unregister callbacks, call `ForceFlush` with its own timeout, then
+call `Shutdown` with a fresh timeout even when flushing failed. Both methods
+attempt trace and metric providers independently.

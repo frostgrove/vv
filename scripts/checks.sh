@@ -487,7 +487,7 @@ check_otel_module() (
 	cp "$REPO_ROOT/otel/go.mod" "$modfile"
 	[[ ! -f $REPO_ROOT/otel/go.sum ]] || cp "$REPO_ROOT/otel/go.sum" "$temporary/otel.sum"
 	GOWORK=off "$GO" mod edit -modfile="$modfile" -replace="$VV_MODULE=$REPO_ROOT"
-	(cd "$REPO_ROOT/otel" && GOWORK=off "$GO" test -count=1 -modfile="$modfile" ./...)
+	(cd "$REPO_ROOT/otel" && GOWORK=off GOPROXY=off GOTOOLCHAIN=local "$GO" test -count=1 -modfile="$modfile" ./...)
 	consumer="$temporary/consumer"
 	mkdir "$consumer"
 	cp "$SCRIPT_DIR/otel-consumer-fixture/main.go.txt" "$consumer/main.go"
@@ -497,10 +497,14 @@ check_otel_module() (
 		GOWORK=off "$GO" mod edit -require="$VV_MODULE/otel@v0.0.0"
 		GOWORK=off "$GO" mod edit -replace="$VV_MODULE/otel=$REPO_ROOT/otel"
 		GOWORK=off "$GO" mod edit -replace="$VV_MODULE=$REPO_ROOT"
-		GOWORK=off GOPROXY=off "$GO" test -mod=mod -count=1 ./...
+		GOWORK=off GOPROXY=off GOTOOLCHAIN=local "$GO" test -mod=mod -count=1 ./...
 	)
 	echo 'check-otel-module: ok'
 )
+
+check_otel_operations() {
+	"$SCRIPT_DIR/otel-operations.sh" offline
+}
 
 check_workspace() {
 	local expected actual
@@ -660,6 +664,7 @@ case ${1:-} in
 		check_tidy
 		check_otel_schema
 		check_otel_module
+		check_otel_operations
 		check_workspace
 		check_event_kernel
 		;;
@@ -672,6 +677,7 @@ case ${1:-} in
 	tidy) check_tidy ;;
 	otel-schema) check_otel_schema ;;
 	otel-module) check_otel_module ;;
+	otel-operations) check_otel_operations ;;
 	workspace) check_workspace ;;
 	event-kernel) check_event_kernel ;;
 	event-kernel-baseline) event_kernel_baseline ;;

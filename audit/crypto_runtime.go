@@ -101,7 +101,7 @@ func NewTokenQueryResult(query TokenQuery, tokens []Token) (TokenQueryResult, er
 }
 
 func newProtectionRequest(plaintext, aad []byte) (ProtectionRequest, error) {
-	if len(plaintext) == 0 || len(plaintext) > MaxValueBytes || len(aad) == 0 || len(aad) > MaxReferenceBytes {
+	if len(plaintext) > MaxValueBytes || len(aad) == 0 || len(aad) > MaxReferenceBytes {
 		return ProtectionRequest{}, auditErrorAt(ErrInvalid, "protection")
 	}
 	return ProtectionRequest{value: protectionRequest{plaintext: bytes.Clone(plaintext), aad: bytes.Clone(aad)}}, nil
@@ -115,7 +115,7 @@ func newRevealRequest(envelope ProtectedValue, aad []byte) (RevealRequest, error
 }
 
 func newTokenizeRequest(plaintext, aad []byte, description TokenDescription) (TokenizeRequest, error) {
-	if len(plaintext) == 0 || len(plaintext) > MaxValueBytes || len(aad) == 0 || len(aad) > MaxReferenceBytes {
+	if len(plaintext) > MaxValueBytes || len(aad) == 0 || len(aad) > MaxReferenceBytes {
 		return TokenizeRequest{}, auditErrorAt(ErrInvalid, "token")
 	}
 	if err := validateProviderDescription(description.Algorithm, description.Profile, description.KeyID); err != nil {
@@ -206,7 +206,7 @@ func (p *aesGCMProtection) Descriptions() []ProtectionDescription {
 }
 
 func (p *aesGCMProtection) Protect(ctx context.Context, request ProtectionRequest) (ProtectedValue, error) {
-	if p == nil || len(request.value.plaintext) == 0 || len(request.value.aad) == 0 {
+	if p == nil || len(request.value.aad) == 0 {
 		return ProtectedValue{}, auditErrorAt(ErrInvalid, "protection")
 	}
 	if err := ctx.Err(); err != nil {
@@ -254,7 +254,12 @@ func (p *aesGCMProtection) Reveal(ctx context.Context, request RevealRequest) ([
 	if err != nil {
 		return nil, CryptoFailure(CryptoBackend, err)
 	}
-	plaintext, err := aead.Open(nil, request.value.envelope.Nonce(), request.value.envelope.Ciphertext(), request.value.aad)
+	nonce := request.value.envelope.Nonce()
+	ciphertext := request.value.envelope.Ciphertext()
+	if len(nonce) != aead.NonceSize() || len(ciphertext) < aead.Overhead() {
+		return nil, CryptoFailure(CryptoMalformed, fmt.Errorf("audit: malformed protected envelope"))
+	}
+	plaintext, err := aead.Open(nil, nonce, ciphertext, request.value.aad)
 	if err != nil {
 		return nil, CryptoFailure(CryptoMalformed, err)
 	}
@@ -335,7 +340,7 @@ func (t *hmacTokenizer) Descriptions() []TokenDescription {
 }
 
 func (t *hmacTokenizer) Tokenize(ctx context.Context, request TokenizeRequest) (Token, error) {
-	if t == nil || len(request.value.plaintext) == 0 || len(request.value.aad) == 0 {
+	if t == nil || len(request.value.aad) == 0 {
 		return Token{}, auditErrorAt(ErrInvalid, "token")
 	}
 	if err := ctx.Err(); err != nil {

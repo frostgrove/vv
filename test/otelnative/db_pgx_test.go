@@ -8,6 +8,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 )
@@ -55,18 +56,21 @@ func TestPGXRecipeBoundsEveryOperationBeforeTheSDKAndAtExport(t *testing.T) {
 	config := &pgx.ConnConfig{Config: pgconn.Config{Host: secretHost, User: secretUser, Database: secretDatabase}}
 	connect := tracer.TraceConnectStart(ctx, pgx.TraceConnectStartData{ConnConfig: config})
 	tracer.TraceConnectEnd(connect, pgx.TraceConnectEndData{})
+
+	acquire := tracer.TraceAcquireStart(ctx, nil, pgxpool.TraceAcquireStartData{})
+	tracer.TraceAcquireEnd(acquire, nil, pgxpool.TraceAcquireEndData{})
 	parent.End()
 	fixture.flushMetrics(t)
 
 	names := sampler.snapshot()
 	assertStringsExclude(t, "sampler names", names, []string{secretSQL, secretTable, secretPrepared})
-	for _, expected := range []string{"db.query", "db.prepare", "db.copy", "db.batch", "db.connect"} {
+	for _, expected := range []string{"db.query", "db.prepare", "db.copy", "db.batch", "db.connect", "db.acquire"} {
 		if !slices.Contains(names, expected) {
 			t.Fatalf("sampler names %v do not contain %q", names, expected)
 		}
 	}
 	spans := fixture.databaseSpans()
-	if len(spans) != 8 {
+	if len(spans) != 9 {
 		t.Fatalf("database spans=%d names=%v", len(spans), spanNames(spans))
 	}
 	for _, span := range spans {

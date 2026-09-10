@@ -93,6 +93,7 @@ func TryDeclareOperation(policy OperationPolicy) (*OperationType, error) {
 	description.Semantics.Fingerprint = policyFingerprint(description, nil)
 	operation := &OperationType{value: &operationType{members: members}}
 	operation.value.seal.description = description
+	operation.value.seal.operationMembers = slices.Clone(members)
 	operation.value.seal.members = []declarationMember{{
 		declaration: operation, operation: policy.Name, retention: policy.Retention,
 		consequence: policy.Consequence, key: operationDeclarationKey(policy.Name),

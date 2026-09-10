@@ -79,18 +79,28 @@ func TestCardinality_CacheMetricSeriesStayWithinRegistryBound(t *testing.T) {
 			backendObserver.Observe(context.Background(), cachememory.Event{Operation: cachememory.Operation(operation), Outcome: cachememory.Outcome(outcome)})
 		}
 	}
-	series := map[string]bool{}
+	series := map[string]map[string]bool{}
 	for _, observation := range mp.metrics {
 		parts := make([]string, 0, len(observation.attributes))
 		for key, value := range observation.attributes {
 			parts = append(parts, fmt.Sprintf("%s=%s", key, value.AsString()))
 		}
 		sort.Strings(parts)
-		series[observation.name+strings.Join(parts, ";")] = true
+		if series[observation.name] == nil {
+			series[observation.name] = map[string]bool{}
+		}
+		series[observation.name][strings.Join(parts, ";")] = true
 	}
-	want := vvotel.MetricMetadataByKey["cache_operations"].CardinalityBound
-	if len(series) != want {
-		t.Fatalf("cache produced %d unique attribute sets against the calculated bound %d", len(series), want)
+	bounds := map[string]int{}
+	for _, descriptor := range vvotel.SignalDescriptors() {
+		if descriptor.Component == "cache" || descriptor.Component == "cache_backend" {
+			bounds[descriptor.Name] = descriptor.CardinalityBound
+		}
+	}
+	for name, values := range series {
+		if len(values) == 0 || bounds[name] == 0 || len(values) > bounds[name] {
+			t.Fatalf("cache metric %q produced %d unique attribute sets against bound %d", name, len(values), bounds[name])
+		}
 	}
 }
 

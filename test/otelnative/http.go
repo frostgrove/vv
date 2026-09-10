@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/propagation"
 )
 
@@ -15,11 +16,29 @@ var (
 	ErrRoutesSealed = errors.New("otelnative: HTTP routes are sealed")
 )
 
+const (
+	httpManagementMetricAttribute = "vv.http.management"
+	httpManagementMetricValue     = "true"
+	httpApplicationMetricValue    = "false"
+)
+
 type HTTPRoutes struct {
 	mu      sync.Mutex
 	mux     *http.ServeMux
 	entries map[string]*registeredHTTPHandler
 	sealed  bool
+}
+
+type HTTPServerOption func(*httpServerSettings)
+
+type httpServerSettings struct {
+	excludeManagementSignals bool
+}
+
+func ExcludeManagementSignals() HTTPServerOption {
+	return func(settings *httpServerSettings) {
+		settings.excludeManagementSignals = true
+	}
 }
 
 func NewHTTPRoutes() *HTTPRoutes {
@@ -51,7 +70,7 @@ func (r *HTTPRoutes) HandleFunc(pattern string, handler http.HandlerFunc) error 
 	return r.Handle(pattern, handler)
 }
 
-func HTTPServer(providers Providers, routes *HTTPRoutes, mode IngressMode) (http.Handler, error) {
+func HTTPServer(providers Providers, routes *HTTPRoutes, mode IngressMode, options ...HTTPServerOption) (http.Handler, error) {
 	if err := providers.validate(); err != nil {
 		return nil, err
 	}
@@ -62,15 +81,24 @@ func HTTPServer(providers Providers, routes *HTTPRoutes, mode IngressMode) (http
 	if err != nil {
 		return nil, err
 	}
-	return otelhttp.NewHandler(
-		policy,
-		fallbackHTTPName,
+	settings := httpServerSettings{}
+	for _, option := range options {
+		if option != nil {
+			option(&settings)
+		}
+	}
+	serverOptions := []otelhttp.Option{
 		otelhttp.WithTracerProvider(providers.Tracer),
 		otelhttp.WithMeterProvider(providers.Meter),
 		otelhttp.WithPropagators(propagatorFor(mode)),
 		otelhttp.WithPublicEndpointFn(func(*http.Request) bool { return mode == PublicIngress }),
 		otelhttp.WithSpanNameFormatter(policy.spanName),
-	), nil
+		otelhttp.WithMetricAttributesFn(policy.metricAttributes),
+	}
+	if settings.excludeManagementSignals {
+		serverOptions = append(serverOptions, otelhttp.WithFilter(policy.includeSignals))
+	}
+	return otelhttp.NewHandler(policy, fallbackHTTPName, serverOptions...), nil
 }
 
 func HTTPTransport(providers Providers, base http.RoundTripper) (http.RoundTripper, error) {
@@ -140,7 +168,9 @@ func (p *httpRoutePolicy) ServeHTTP(writer http.ResponseWriter, request *http.Re
 	withState := request.WithContext(context.WithValue(request.Context(), dispatchStateKey{}, state))
 	*request = *withState
 	p.mux.ServeHTTP(writer, request)
-	if !admitted || state.executed != registered.token || request.Pattern != pattern {
+	if admitted && state.executed == registered.token {
+		request.Pattern = pattern
+	} else {
 		request.Pattern = ""
 	}
 }
@@ -151,4 +181,22 @@ func (p *httpRoutePolicy) spanName(_ string, request *http.Request) string {
 		return fallbackHTTPName
 	}
 	return name
+}
+
+func (p *httpRoutePolicy) includeSignals(request *http.Request) bool {
+	selected, pattern := p.mux.Handler(request)
+	if pattern != "/live" && pattern != "/ready" {
+		return true
+	}
+	registered, declared := p.entries[pattern]
+	selectedRegistered, selectedIsRegistered := selected.(*registeredHTTPHandler)
+	return !(declared && selectedIsRegistered && selectedRegistered == registered)
+}
+
+func (p *httpRoutePolicy) metricAttributes(request *http.Request) []attribute.KeyValue {
+	value := httpApplicationMetricValue
+	if request.Pattern == "/live" || request.Pattern == "/ready" {
+		value = httpManagementMetricValue
+	}
+	return []attribute.KeyValue{attribute.String(httpManagementMetricAttribute, value)}
 }

@@ -54,7 +54,7 @@ func TestGoroutineExitIsACompleteSpanOnlyTerminal(t *testing.T) {
 	if spans != 11 {
 		t.Fatalf("span wrapper inventory drifted: %d", spans)
 	}
-	for key, want := range map[string]int{"command_duration": 100, "cache_operations": 116} {
+	for key, want := range map[string]int{"command_duration": 100, "cache_operations": 49} {
 		got, err := metricCardinality(r, r.Signals[key])
 		if err != nil || got != want {
 			t.Fatalf("Goexit changed %s bound: %d/%v", key, got, err)
@@ -160,7 +160,7 @@ func TestCacheFacadeMeasurementMatricesAreExact(t *testing.T) {
 			t.Fatalf("%s matrix was not exhaustive: %d/%d", key, positive, negative)
 		}
 	}
-	for key, want := range map[string]int{"cache_events": 49, "cache_items": 49, "cache_encoded_bytes": 14, "cache_payload_bytes": 6, "cache_value_bytes": 13, "cache_charged_bytes": 11, "cache_operations": 116} {
+	for key, want := range map[string]int{"cache_events": 49, "cache_items": 49, "cache_encoded_bytes": 14, "cache_payload_bytes": 6, "cache_value_bytes": 13, "cache_charged_bytes": 11, "cache_operations": 49} {
 		got, err := metricCardinality(r, r.Signals[key])
 		if err != nil || got != want {
 			t.Fatalf("%s bound=%d err=%v, want %d", key, got, err, want)

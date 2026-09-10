@@ -1,6 +1,7 @@
 package i18n
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/agentable/go-intl/datetimeformat"
@@ -115,12 +116,25 @@ func validateResolvedDateLocale(requested string, resolved datetimeformat.Resolv
 }
 
 func snapshotFormattingRequirements(snapshot *Snapshot) (map[string]formatRequirements, error) {
+	return snapshotFormattingRequirementsContext(context.Background(), snapshot)
+}
+
+func snapshotFormattingRequirementsContext(ctx context.Context, snapshot *Snapshot) (map[string]formatRequirements, error) {
 	requirements := make(map[string]formatRequirements, len(snapshot.supported))
 	for _, localeName := range snapshot.supported {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		chain := snapshot.fallbackChain(localeName)
 		var localeRequirements formatRequirements
 		for _, record := range snapshot.records {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
 			for _, candidate := range chain {
+				if err := ctx.Err(); err != nil {
+					return nil, err
+				}
 				translation, exists := record.templates[candidate]
 				if !exists {
 					continue
@@ -134,5 +148,5 @@ func snapshotFormattingRequirements(snapshot *Snapshot) (map[string]formatRequir
 		}
 		requirements[localeName] = localeRequirements
 	}
-	return requirements, nil
+	return requirements, ctx.Err()
 }

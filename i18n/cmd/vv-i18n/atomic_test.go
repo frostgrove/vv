@@ -89,7 +89,7 @@ func TestPublishAtomicFailureAndCancellationLeavePriorFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(entries) != 1 || entries[0].Name() != "catalog.json" {
+	if len(entries) != 2 || entries[0].Name() != publisherLockName || entries[1].Name() != "catalog.json" {
 		t.Fatalf("temporary output leaked: %v", entries)
 	}
 	ctx, cancel = context.WithCancel(context.Background())
@@ -157,7 +157,7 @@ func TestPublishStagedSetRollsBackAReportedFailure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(entries) != 2 {
+	if len(entries) != 3 || entries[0].Name() != publisherLockName {
 		t.Fatalf("transaction artifacts leaked: %v", entries)
 	}
 	if err := writeOutputSet(context.Background(), outputs, false); err != nil {
@@ -205,8 +205,96 @@ func TestPublishStagedSetRollsBackCancellationFromARenameHook(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(entries) != 2 {
+	if len(entries) != 3 || entries[0].Name() != publisherLockName {
 		t.Fatalf("canceled staged publication leaked files: %v", entries)
+	}
+}
+
+func TestPublishStagedSetRollbackPreservesAConcurrentReplacementAndRecoveryBackup(t *testing.T) {
+	directory := t.TempDir()
+	first := filepath.Join(directory, "first.json")
+	second := filepath.Join(directory, "second.json")
+	replacement := filepath.Join(directory, "concurrent.json")
+	if err := os.WriteFile(first, []byte("old first"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(second, []byte("old second"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(replacement, []byte("concurrent first"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sentinel := errors.New("second rename refused")
+	outputs := []outputFile{{path: first, content: []byte("new first")}, {path: second, content: []byte("new second")}}
+	err := publishStagedSet(context.Background(), directory, outputs, stagedSetHooks{beforeRename: func(index int) error {
+		if index != 1 {
+			return nil
+		}
+		if err := os.Remove(first); err != nil {
+			return err
+		}
+		if err := os.Rename(replacement, first); err != nil {
+			return err
+		}
+		return sentinel
+	}})
+	if !errors.Is(err, sentinel) || !strings.Contains(err.Error(), "backup preserved") {
+		t.Fatalf("rollback recovery error = %v", err)
+	}
+	assertFileContent(t, first, "concurrent first")
+	assertFileContent(t, second, "old second")
+	entries, err := os.ReadDir(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	backup := ""
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), ".first.json.backup.tmp-") {
+			backup = filepath.Join(directory, entry.Name())
+		}
+	}
+	if backup == "" {
+		t.Fatalf("recovery backup missing: %v", entries)
+	}
+	assertFileContent(t, backup, "old first")
+}
+
+func TestPublishStagedSetRollbackDoesNotRemoveAConcurrentReplacementOfANewTarget(t *testing.T) {
+	directory := t.TempDir()
+	first := filepath.Join(directory, "first.json")
+	second := filepath.Join(directory, "second.json")
+	replacement := filepath.Join(directory, "concurrent.json")
+	if err := os.WriteFile(second, []byte("old second"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(replacement, []byte("concurrent first"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sentinel := errors.New("second rename refused")
+	outputs := []outputFile{{path: first, content: []byte("new first")}, {path: second, content: []byte("new second")}}
+	err := publishStagedSet(context.Background(), directory, outputs, stagedSetHooks{beforeRename: func(index int) error {
+		if index != 1 {
+			return nil
+		}
+		if err := os.Remove(first); err != nil {
+			return err
+		}
+		if err := os.Rename(replacement, first); err != nil {
+			return err
+		}
+		return sentinel
+	}})
+	if !errors.Is(err, sentinel) || !strings.Contains(err.Error(), "refuse rollback") || strings.Contains(err.Error(), "backup preserved") {
+		t.Fatalf("rollback recovery error = %v", err)
+	}
+	assertFileContent(t, first, "concurrent first")
+	assertFileContent(t, second, "old second")
+	entries, err := os.ReadDir(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 3 || entries[0].Name() != publisherLockName {
+		t.Fatalf("new-target rollback leaked staging files: %v", entries)
 	}
 }
 

@@ -72,6 +72,19 @@ func TestAuditTraceCheckpointRejectsMissingTest(t *testing.T) {
 	if _, err := parseAuditTraceBundle(mutated, semantics, anchor); err == nil {
 		t.Fatal("the audit trace accepted a missing executable mutant reservation")
 	}
+	controls := []struct {
+		name string
+		run  func(*testing.T)
+	}{
+		{name: "invalid sections", run: TestTraceScriptRejectsInvalidSections},
+		{name: "event proof", run: TestTraceEventProofRejectsMissingSkippedDuplicateAndWrongPackage},
+		{name: "exact bootstrap", run: TestTraceScriptUsesTheExactBootstrap},
+		{name: "closed package commands", run: TestTracePackageCommandsAreClosed},
+		{name: "hostile bootstrap events", run: TestTraceRunnerRejectsAdversarialBootstrapEvents},
+	}
+	for _, control := range controls {
+		t.Run(control.name, control.run)
+	}
 }
 
 func TestAuditTraceCheckpointPreservesCompleteGraph(t *testing.T) {
@@ -301,7 +314,14 @@ func TestTraceScriptUsesTheExactBootstrap(t *testing.T) {
 			t.Fatal(err)
 		}
 		command := exec.Command(scriptPath, "S0")
-		command.Env = append(os.Environ(), "PATH="+root+string(os.PathListSeparator)+os.Getenv("PATH"), "AUDIT_TRACE_STUB_LOG="+log)
+		environment := make([]string, 0, len(os.Environ())+2)
+		for _, variable := range os.Environ() {
+			if strings.HasPrefix(variable, "AUDIT_TRACE_SECTION=") || strings.HasPrefix(variable, "AUDIT_TRACE_BOOTSTRAP_JSON=") {
+				continue
+			}
+			environment = append(environment, variable)
+		}
+		command.Env = append(environment, "PATH="+root+string(os.PathListSeparator)+os.Getenv("PATH"), "AUDIT_TRACE_STUB_LOG="+log)
 		if output, err := command.CombinedOutput(); err != nil {
 			t.Fatalf("fixture script failed: %v\n%s", err, output)
 		}

@@ -131,6 +131,15 @@
 | [projection](projection.md) | `vv/event/projection` | Журнал становится моделью чтения: супервизируемый потребитель с контрольной точкой, два режима продвижения, типизированный роутер, карантин по одному конверту и ограда, из-за которой два живых экземпляра ходят по очереди |
 | [eventtest](eventtest.md) | `vv/event/eventtest` | Контракт хранилища как набор проверок соответствия плюс три прокси, которые приложение прогоняет над своим объявлением |
 
+## Audit evidence — объявляется до сохранения
+
+| Модуль | Импорт | Что это |
+|---|---|---|
+| [audit](audit.md) | `vv/audit` | Типизированные защищённые бизнес-свидетельства, неизменяемые каталоги, recorder/grouping, reconciliation и отдельно авторизованная ограниченная история |
+| [auditmemory](audit.md) | `vv/audit/auditmemory` | Конкурентный in-process audit writer/log и явная deployment activation |
+| [auditcrud](audit.md#транзакционный-crud) | `vv/audit/auditcrud` | Закрытые security-first CRUD mutations, co-committed с точным entity evidence |
+| [auditpg](audit.md) | `vv/audit/auditpg` | **Модуль** — durable PostgreSQL writer/log с явным schema и catalog lifecycle |
+
 ## Интернационализация — типизированное представление в явной локали
 
 | Модуль | Импорт | Что это |

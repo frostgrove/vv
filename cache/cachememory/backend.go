@@ -451,6 +451,21 @@ func (backend *Backend) Stats() Stats {
 	}
 	backend.mu.Lock()
 	defer backend.mu.Unlock()
+	return backend.statsLocked()
+}
+
+func (backend *Backend) StatsContext(ctx context.Context) (Stats, bool) {
+	if backend == nil || nilInterface(ctx) || ctx.Err() != nil || !backend.mu.TryLock() {
+		return Stats{}, false
+	}
+	defer backend.mu.Unlock()
+	if ctx.Err() != nil {
+		return Stats{}, false
+	}
+	return backend.statsLocked(), true
+}
+
+func (backend *Backend) statsLocked() Stats {
 	return Stats{
 		Entries:      len(backend.entries),
 		ChargedBytes: backend.charged,

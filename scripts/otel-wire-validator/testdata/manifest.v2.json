@@ -1,0 +1,79 @@
+{
+  "contract_version": "vv-otel/v2",
+  "scope": {
+    "name": "github.com/frostgrove/vv/otel",
+    "version": "v0.1.0"
+  },
+  "signals": {
+    "command_span": {
+      "kind": "span",
+      "availability": "implemented",
+      "span_kind": "internal",
+      "names": ["vv.command get"],
+      "resolved_variants": [
+        {
+          "status": "unset",
+          "attributes": {
+            "vv.component": {"type": "string", "values": ["command"]},
+            "vv.operation.name": {"type": "string", "values": ["get"]},
+            "vv.operation.outcome": {"type": "string", "values": ["ok"]}
+          }
+        }
+      ]
+    },
+    "cache_event": {
+      "kind": "span_event",
+      "availability": "implemented",
+      "names": ["cache.event"],
+      "resolved_variants": [
+        {
+          "attributes": {
+            "vv.cache.layer": {"type": "string", "values": ["facade"]},
+            "vv.cache.memoized": {"type": "bool", "values": ["false"]},
+            "vv.component": {"type": "string", "values": ["cache"]},
+            "vv.operation.name": {"type": "string", "values": ["lookup"]},
+            "vv.operation.outcome": {"type": "string", "values": ["hit"]}
+          }
+        }
+      ]
+    },
+    "command_duration": {
+      "kind": "metric",
+      "availability": "implemented",
+      "api_kind": "float64_histogram",
+      "instrument": "histogram",
+      "number_type": "float64",
+      "unit": "s",
+      "names": ["vv.command.duration"],
+      "resolved_variants": [
+        {
+          "attributes": {
+            "vv.component": {"type": "string", "values": ["command"]},
+            "vv.operation.name": {"type": "string", "values": ["get"]},
+            "vv.operation.outcome": {"type": "string", "values": ["ok"]}
+          }
+        }
+      ]
+    },
+    "cache_operations": {
+      "kind": "metric",
+      "availability": "implemented",
+      "api_kind": "int64_counter",
+      "instrument": "counter",
+      "number_type": "int64",
+      "unit": "{operation}",
+      "names": ["vv.cache.operations"],
+      "resolved_variants": [
+        {
+          "attributes": {
+            "vv.cache.layer": {"type": "string", "values": ["facade"]},
+            "vv.cache.memoized": {"type": "bool", "values": ["false"]},
+            "vv.component": {"type": "string", "values": ["cache"]},
+            "vv.operation.name": {"type": "string", "values": ["lookup"]},
+            "vv.operation.outcome": {"type": "string", "values": ["hit"]}
+          }
+        }
+      ]
+    }
+  }
+}

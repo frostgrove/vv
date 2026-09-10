@@ -13,11 +13,18 @@ type StorageOption func(*storageSettings)
 
 type storageSettings struct {
 	resourceName ApprovedName
+	streams      bool
 }
 
 func WithStorageResource(name ApprovedName) StorageOption {
 	return func(s *storageSettings) {
 		s.resourceName = name
+	}
+}
+
+func WithStorageStreams() StorageOption {
+	return func(s *storageSettings) {
+		s.streams = true
 	}
 }
 
@@ -41,17 +48,19 @@ func Store(t *Telemetry, opts ...StorageOption) storage.Middleware {
 			return nil
 		}
 		return &storeDecorator{
-			inner:        next,
-			tel:          t,
-			resourceName: string(s.resourceName),
+			inner:          next,
+			tel:            t,
+			resourceName:   string(s.resourceName),
+			observeStreams: s.streams && storageStreamSignalsEnabled(t),
 		}
 	}
 }
 
 type storeDecorator struct {
-	inner        storage.Store
-	tel          *Telemetry
-	resourceName string
+	inner          storage.Store
+	tel            *Telemetry
+	resourceName   string
+	observeStreams bool
 }
 
 func (d *storeDecorator) Put(ctx context.Context, key storage.Key, source io.Reader, options storage.PutOptions) (storage.Info, error) {
@@ -71,10 +80,21 @@ func (d *storeDecorator) Open(ctx context.Context, key storage.Key, options stor
 		body io.ReadCloser
 		info storage.Info
 	}
+	incomingSpanContext := safeSpanContextFromContext(ctx)
+	operationContext := ctx
 	result, err := executeStorage(ctx, d.tel, d.resourceName, OpStorageOpen, func(c context.Context) (openResult, error) {
+		operationContext = c
 		body, info, openErr := d.inner.Open(c, key, options)
 		return openResult{body: body, info: info}, openErr
 	})
+	if err != nil || !d.observeStreams || nilInterface(result.body) {
+		return result.body, result.info, err
+	}
+	parent := safeSpanContextFromContext(operationContext)
+	if !parent.IsValid() {
+		parent = incomingSpanContext
+	}
+	result.body = newStorageStream(result.body, d.tel, parent)
 	return result.body, result.info, err
 }
 

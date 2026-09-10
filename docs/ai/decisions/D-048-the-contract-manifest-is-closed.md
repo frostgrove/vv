@@ -1,6 +1,6 @@
 # D-048 — The contract manifest is closed until a second implementation asks
 
-**Status:** accepted — the i18n-specific conclusion is superseded by [[D-129]]
+**Status:** accepted — the i18n-specific conclusion is superseded by [[D-135]]
 **Invariant:** A package joins the contract manifest — `crud`, `query`, `errs`, `port` — only when a **second** implementation of it exists or is being written, and never when the standard library or an established ecosystem standard already contracts the thing. A package with one implementation is an implementation, not a contract.
 
 ## The decision
@@ -31,7 +31,7 @@ contract. Read the count as four; read the variable as seven.
 | candidate | verdict | why |
 |---|---|---|
 | `log` | **refused** | `slog.Handler` *is* the seam. A facade in front of it is what every pre-1.21 Go logging facade tried and lost |
-| `i18n` | **refused as a root contract; later admitted as one optional satellite by [[D-129]]** | `errs.MessageSource` remains the right stdlib seam for error wording and does not join this manifest. UC-033 later supplied the second presentation use case and the CLDR/MessageFormat dependency decision that this row required, so the full renderer lives in its own nested module rather than widening `errs` or the root graph |
+| `i18n` | **refused as a root contract; later admitted as one optional satellite by [[D-135]]** | `errs.MessageSource` remains the right stdlib seam for error wording and does not join this manifest. UC-033 later supplied the second presentation use case and the CLDR/MessageFormat dependency decision that this row required, so the full renderer lives in its own nested module rather than widening `errs` or the root graph |
 | `health` | **refused** | three method signatures and zero implementations. A health endpoint is application code |
 | `migrate` | **refused** | zero implementations, and [[D-041]] already forbids the one package that could drift into it — *"not a migration tool, not a full DDL model"*. A migration tool is a product |
 | `catalog` | **refused; it is the package that row is about** | it shipped in phase 6 with one implementation and four back-ends, which is one implementation of a reader, not a contract a third party writes against. `Catalog` is an interface because the four engines answer it four ways, and that is polymorphism inside a package rather than a manifest entry |
@@ -62,7 +62,7 @@ importance; it is a count.
 
 **Why refuse root `i18n` when the errors roadmap needs messages.** Because that
 slice did not need a full subsystem — it needed `errs.MessageSource`, one
-interface in the package that raises the messages. [[D-129]] records the later
+interface in the package that raises the messages. [[D-135]] records the later
 trigger: application presentation now needs plural/select grammar, cultural
 formatting, typed deferred messages and reproducible releases. Those needs earn
 one optional module, not a new root contract and not a manifest entry.
@@ -71,7 +71,7 @@ Phase 9 shipped what its consumer
 actually asked for — a catalogue read from files, one per locale — as
 `errs.LoadMessages` and `Messages.Load` in `errs/catalogue.go`: stdlib only,
 inside the package that raises the messages, no new name anywhere. The manifest
-did not move, and [[D-129]] preserves that property.
+did not move, and [[D-135]] preserves that property.
 
 **And `crudgrpc` does not join it either.** It is an implementation of a
 transport, not a contract: what a third party writes against is `port.Service`,

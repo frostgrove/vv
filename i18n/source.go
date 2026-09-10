@@ -91,34 +91,11 @@ func (c SourceCodec) Encode(spec CatalogSpec) ([]byte, error) {
 }
 
 func (c SourceCodec) EncodeContext(ctx context.Context, spec CatalogSpec) ([]byte, error) {
-	if ctx == nil {
-		return nil, fmt.Errorf("%w: encoding context is nil", ErrInvalidSource)
-	}
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	artifactLimits, err := checkedArtifactLimits(c.Limits)
+	expectedSize, artifactLimits, ceiling, err := c.encodedSizeContext(ctx, spec)
 	if err != nil {
 		return nil, err
 	}
-	ceiling, err := checkedLimits(c.CatalogLimits)
-	if err != nil {
-		return nil, err
-	}
-	declared, err := checkedLimits(spec.Limits)
-	if err != nil {
-		return nil, err
-	}
-	if err := requireCatalogLimitCeiling(declared, ceiling); err != nil {
-		return nil, err
-	}
-	if err := checkSourceArtifactFloorContext(ctx, spec, declared, artifactLimits); err != nil {
-		return nil, err
-	}
-	if err := preflightCatalogCardinalityContext(ctx, spec, declared); err != nil {
-		return nil, sourceSemanticError(err)
-	}
-	canonical, err := canonicalSourceSpec(context.Background(), spec, ceiling)
+	canonical, err := canonicalSourceSpec(ctx, spec, ceiling)
 	if err != nil {
 		return nil, err
 	}
@@ -140,7 +117,51 @@ func (c SourceCodec) EncodeContext(ctx context.Context, spec CatalogSpec) ([]byt
 		}
 		return nil, fmt.Errorf("%w: encoding document: %v", ErrInvalidSource, err)
 	}
+	if len(encoder.bytes) != expectedSize {
+		return nil, fmt.Errorf("%w: canonical source size changed during materialization", ErrInvalidSource)
+	}
 	return encoder.bytes, nil
+}
+
+func (c SourceCodec) EncodedSize(spec CatalogSpec) (int, error) {
+	return c.EncodedSizeContext(context.Background(), spec)
+}
+
+func (c SourceCodec) EncodedSizeContext(ctx context.Context, spec CatalogSpec) (int, error) {
+	size, _, _, err := c.encodedSizeContext(ctx, spec)
+	return size, err
+}
+
+func (c SourceCodec) encodedSizeContext(ctx context.Context, spec CatalogSpec) (int, ArtifactLimits, Limits, error) {
+	if ctx == nil {
+		return 0, ArtifactLimits{}, Limits{}, fmt.Errorf("%w: encoding context is nil", ErrInvalidSource)
+	}
+	if err := ctx.Err(); err != nil {
+		return 0, ArtifactLimits{}, Limits{}, err
+	}
+	artifactLimits, err := checkedArtifactLimits(c.Limits)
+	if err != nil {
+		return 0, ArtifactLimits{}, Limits{}, err
+	}
+	ceiling, err := checkedLimits(c.CatalogLimits)
+	if err != nil {
+		return 0, ArtifactLimits{}, Limits{}, err
+	}
+	declared, err := checkedLimits(spec.Limits)
+	if err != nil {
+		return 0, ArtifactLimits{}, Limits{}, err
+	}
+	if err := requireCatalogLimitCeiling(declared, ceiling); err != nil {
+		return 0, ArtifactLimits{}, Limits{}, err
+	}
+	var counter artifactFloorCounter
+	if err := checkSourceArtifactFloorIntoContext(ctx, spec, declared, artifactLimits, &counter); err != nil {
+		return 0, ArtifactLimits{}, Limits{}, err
+	}
+	if err := preflightCatalogCardinalityContext(ctx, spec, declared); err != nil {
+		return 0, ArtifactLimits{}, Limits{}, sourceSemanticError(err)
+	}
+	return counter.written, artifactLimits, ceiling, nil
 }
 
 type sourceDocument struct {
@@ -893,11 +914,27 @@ func cloneCatalogSpecContext(ctx context.Context, spec CatalogSpec) (CatalogSpec
 		return CatalogSpec{}, err
 	}
 	clone := spec
-	clone.Supported = slices.Clone(spec.Supported)
-	clone.Required = slices.Clone(spec.Required)
-	clone.Parents = slices.Clone(spec.Parents)
-	clone.Capabilities = slices.Clone(spec.Capabilities)
-	clone.Overrides = slices.Clone(spec.Overrides)
+	var err error
+	clone.Supported, err = cloneSliceContext(ctx, spec.Supported)
+	if err != nil {
+		return CatalogSpec{}, err
+	}
+	clone.Required, err = cloneSliceContext(ctx, spec.Required)
+	if err != nil {
+		return CatalogSpec{}, err
+	}
+	clone.Parents, err = cloneSliceContext(ctx, spec.Parents)
+	if err != nil {
+		return CatalogSpec{}, err
+	}
+	clone.Capabilities, err = cloneSliceContext(ctx, spec.Capabilities)
+	if err != nil {
+		return CatalogSpec{}, err
+	}
+	clone.Overrides, err = cloneSliceContext(ctx, spec.Overrides)
+	if err != nil {
+		return CatalogSpec{}, err
+	}
 	clone.Modules = make([]Module, len(spec.Modules))
 	for moduleIndex, module := range spec.Modules {
 		if err := ctx.Err(); err != nil {
@@ -915,12 +952,40 @@ func cloneCatalogSpecContext(ctx context.Context, spec CatalogSpec) (CatalogSpec
 					return CatalogSpec{}, err
 				}
 				clonedMessage.Arguments[argumentIndex] = argument
-				clonedMessage.Arguments[argumentIndex].Values = slices.Clone(argument.Values)
+				clonedMessage.Arguments[argumentIndex].Values, err = cloneSliceContext(ctx, argument.Values)
+				if err != nil {
+					return CatalogSpec{}, err
+				}
 			}
-			clonedMessage.Markup = slices.Clone(message.Markup)
-			clonedMessage.Translations = slices.Clone(message.Translations)
+			clonedMessage.Markup, err = cloneSliceContext(ctx, message.Markup)
+			if err != nil {
+				return CatalogSpec{}, err
+			}
+			clonedMessage.Translations, err = cloneSliceContext(ctx, message.Translations)
+			if err != nil {
+				return CatalogSpec{}, err
+			}
 			clone.Modules[moduleIndex].Messages[messageIndex] = clonedMessage
 		}
+	}
+	return clone, ctx.Err()
+}
+
+func cloneSliceContext[T any](ctx context.Context, values []T) ([]T, error) {
+	if values == nil {
+		return nil, ctx.Err()
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	clone := make([]T, len(values))
+	for index, value := range values {
+		if index&255 == 0 {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+		}
+		clone[index] = value
 	}
 	return clone, ctx.Err()
 }

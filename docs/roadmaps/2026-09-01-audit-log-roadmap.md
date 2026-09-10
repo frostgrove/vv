@@ -1,21 +1,50 @@
 # Auditable evidence roadmap — 2026-09-01
 
-**Status:** current delivery roadmap. S0 establishes the reviewed contract and
-executable trace checkpoint; production audit packages remain owed.
+**Status:** active implementation roadmap. S0 and the S1 foundation are
+implemented; the recorder, concurrent memory store, sealed CRUD integration and
+PostgreSQL append/deployment/history path form the current alpha base. Protected
+disclosure, broader Frostgrove composition and the advanced lifecycle/control
+surface remain in delivery and are not credited as complete below.
 
 **Supersedes:** the one-module, PostgreSQL-first topology and provisional wrapper
 examples previously carried by this document. The 2026-08-26 snapshot remains a
 historical research source, not current architecture.
 
-**Contract:** [[D-130]], [[UC-034]] and [[FL-039]].
+**Contract:** [[D-136]], [[UC-034]] and [[FL-040]].
 
 ## Baseline checked on 2026-09-09
 
-The repository does not yet contain an audit kernel, store or adapter. The old
-roadmap predates working event sourcing, tenancy, storage and service chains,
-application module profiles, the current OpenTelemetry module and the current
-i18n/error presentation seam. Its package layout and integration assumptions are
-therefore obsolete.
+The repository now contains the dependency-light audit kernel, a concurrent
+memory writer, the sealed CRUD adapter and a nested PostgreSQL writer/deployment
+module. The prior no-runtime baseline is obsolete. The current vertical slice
+can compile catalogues, capture declared events and entity revisions, protect
+evidence before the store boundary, append/reconcile standalone records, group
+work under a proven source-bound transaction, and co-commit supported CRUD
+mutations with evidence. Public one-page history verifies record-era catalogues
+and signatures before disclosure. Both stores expose an immutable bounded
+catalog-mutation log; PostgreSQL readiness verifies the exact managed schema and
+catalog lineage. Application fixtures exercise the real auth, tenancy, security,
+faults, CRUD, SQL, event, jobs, storage, observer and i18n seams. Generated
+Serving and Deployment definitions prove the runtime/admin split, and a live
+PostgreSQL fixture co-commits the real `sqlrepo` business row and audit revision
+in one source-bound transaction across create, update, soft delete and restore.
+
+This is an alpha base, not the full product described by this roadmap. The basic
+bounded history kernel and both store implementations are usable now;
+access-evidence-before-protected-disclosure, durable attempts,
+advanced selectors and reconstruction, correction, holds, purge planning and
+the final hostile-edge pass remain explicitly unshipped until their gates pass.
+
+| Delivery slice | Current state | Usable boundary |
+|---|---|---|
+| S0 contract and trace authority | implemented | The architecture, use cases, invariants and executable reservations are current |
+| S1 declarations and protection foundation | implemented | Catalogues, codecs, trusted context, privacy admission, commitments, protection, integrity and safe failures are usable |
+| S2 recorder and memory | alpha | Manual event/entity append, grouping, idempotency, retry/reconciliation, concurrent memory persistence and signed public one-page history are usable; protected disclosure belongs to S3 |
+| S4 sealed CRUD | alpha | Create, assigned/unassigned Save, update, hard/soft delete and restore are transactionally supervised; ambiguous bulk/write-only paths refuse |
+| S5 PostgreSQL | partial alpha | Exact schema readiness, catalog activation/readback, append, transaction joining, lookup, basic history and restart identity are implemented; exact inspection/control parity is owed |
+| S6 Frostgrove composition | partial alpha | Auth/tenancy/security/faults/CRUD/SQL/event/jobs/storage/observer/i18n wiring, generated serving/deployment profiles and live PostgreSQL CRUD atomicity are executable; broader deployment graphs and adoption artifacts remain |
+| S3 advanced investigation/control | not shipped | Attempts, cursors, reconstruction, comparison, neighbours, corrections, holds and purge planning remain planned |
+| S7 final hardening | not started | Deferred edge, mutation, concurrency and whole-tree release gates remain planned |
 
 | Current Frostgrove fact | Audit consequence |
 |---|---|

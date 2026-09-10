@@ -40,6 +40,7 @@ func TestTransportSpanProjectionCoversEveryExportFieldWithoutMutation(t *testing
 		SpanKind:    trace.SpanKindServer,
 		Attributes: []attribute.KeyValue{
 			attribute.String("http.request.method", "SECRET-METHOD"),
+			attribute.String(httpManagementMetricAttribute, httpManagementMetricValue),
 			attribute.String("url.full", "https://secret-projection-host/secret-projection-id"),
 		},
 		Events: []sdktrace.Event{{
@@ -114,7 +115,9 @@ func TestTransportMetricProjectionCoversExemplarsAndDoesNotAliasInput(t *testing
 			},
 			Metrics: []metricdata.Metrics{
 				{
-					Name: "http.server.request.duration",
+					Name:        "http.server.request.duration",
+					Description: "secret-metric-description",
+					Unit:        "secret-unit",
 					Data: metricdata.Histogram[float64]{
 						DataPoints: []metricdata.HistogramDataPoint[float64]{{
 							Attributes: attribute.NewSet(
@@ -130,6 +133,7 @@ func TestTransportMetricProjectionCoversExemplarsAndDoesNotAliasInput(t *testing
 						}},
 					},
 				},
+				{Name: "http.server.request.duration", Description: "wrong-shape-secret", Unit: "By", Data: metricdata.Sum[int64]{IsMonotonic: true}},
 				{Name: "secret.metric.name", Data: metricdata.Gauge[int64]{}},
 			},
 		}},
@@ -148,7 +152,11 @@ func TestTransportMetricProjectionCoversExemplarsAndDoesNotAliasInput(t *testing
 	if len(projected.ScopeMetrics) != 1 || len(projected.ScopeMetrics[0].Metrics) != 1 {
 		t.Fatalf("projected metric roster=%#v", projected.ScopeMetrics)
 	}
-	histogram := projected.ScopeMetrics[0].Metrics[0].Data.(metricdata.Histogram[float64])
+	measurement := projected.ScopeMetrics[0].Metrics[0]
+	if measurement.Description != "Duration of HTTP server requests." || measurement.Unit != "s" {
+		t.Fatalf("projected metric metadata = %q/%q", measurement.Description, measurement.Unit)
+	}
+	histogram := measurement.Data.(metricdata.Histogram[float64])
 	if len(histogram.DataPoints) != 1 || histogram.DataPoints[0].Attributes.Len() != 1 || len(histogram.DataPoints[0].Exemplars) != 1 || len(histogram.DataPoints[0].Exemplars[0].FilteredAttributes) != 0 {
 		t.Fatalf("projected datapoint=%#v", histogram.DataPoints)
 	}
@@ -158,6 +166,9 @@ func TestTransportMetricProjectionCoversExemplarsAndDoesNotAliasInput(t *testing
 		"secret-metric-host",
 		"secret-metric-id",
 		"secret-exemplar-url",
+		"secret-metric-description",
+		"secret-unit",
+		"wrong-shape-secret",
 		"secret.metric.name",
 	)
 	histogram.DataPoints[0].Bounds[0] = 99

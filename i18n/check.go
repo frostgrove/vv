@@ -157,83 +157,163 @@ type UsageManifest struct {
 }
 
 func ExpectedUsageSourceDigest(scope GoUsageScope) string {
+	digest, _ := ExpectedUsageSourceDigestContext(context.Background(), scope)
+	return digest
+}
+
+func ExpectedUsageSourceDigestContext(ctx context.Context, scope GoUsageScope) (string, error) {
+	if ctx == nil {
+		return "", errors.New("i18n: usage source digest context is nil")
+	}
 	digest := sha256.New()
-	writeUsageDigestField(digest.Write, "domain", "frostgrove.i18n.go-usage-source/v2")
-	writeUsageScopeDigest(digest.Write, scope)
-	return hex.EncodeToString(digest.Sum(nil))
+	writer := usageDigestWriter{ctx: ctx, write: digest.Write}
+	if err := writer.field("domain", "frostgrove.i18n.go-usage-source/v2"); err != nil {
+		return "", err
+	}
+	if err := writeUsageScopeDigest(&writer, scope); err != nil {
+		return "", err
+	}
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(digest.Sum(nil)), nil
 }
 
 func ExpectedUsageManifestDigest(manifest UsageManifest) string {
-	digest := sha256.New()
-	writeUsageDigestField(digest.Write, "domain", "frostgrove.i18n.usage-manifest/v1")
-	writeUsageDigestField(digest.Write, "complete", strconv.FormatBool(manifest.Complete))
-	if manifest.GoScope != nil {
-		writeUsageDigestField(digest.Write, "source-digest", manifest.GoScope.SourceDigest)
-	}
-	for _, key := range manifest.Keys {
-		writeUsageDigestField(digest.Write, "key", string(key))
-	}
-	for _, dynamic := range manifest.Dynamic {
-		writeUsageDigestField(digest.Write, "dynamic-domain", dynamic.Domain)
-		writeUsageDigestField(digest.Write, "dynamic-prefix", dynamic.Prefix)
-	}
-	for _, occurrence := range manifest.Occurrences {
-		writeUsageDigestField(digest.Write, "occurrence-key", string(occurrence.Key))
-		writeUsageDigestField(digest.Write, "occurrence-domain", occurrence.Domain)
-		writeUsageDigestField(digest.Write, "occurrence-prefix", occurrence.Prefix)
-		writeUsageDigestField(digest.Write, "occurrence-path", occurrence.Path)
-		writeUsageDigestField(digest.Write, "occurrence-line", strconv.Itoa(occurrence.Line))
-		writeUsageDigestField(digest.Write, "occurrence-column", strconv.Itoa(occurrence.Column))
-	}
-	return hex.EncodeToString(digest.Sum(nil))
+	digest, _ := ExpectedUsageManifestDigestContext(context.Background(), manifest)
+	return digest
 }
 
-func writeUsageScopeDigest(write func([]byte) (int, error), scope GoUsageScope) {
+func ExpectedUsageManifestDigestContext(ctx context.Context, manifest UsageManifest) (string, error) {
+	if ctx == nil {
+		return "", errors.New("i18n: usage manifest digest context is nil")
+	}
+	digest := sha256.New()
+	writer := usageDigestWriter{ctx: ctx, write: digest.Write}
+	if err := writer.field("domain", "frostgrove.i18n.usage-manifest/v1"); err != nil {
+		return "", err
+	}
+	if err := writer.field("complete", strconv.FormatBool(manifest.Complete)); err != nil {
+		return "", err
+	}
+	if manifest.GoScope != nil {
+		if err := writer.field("source-digest", manifest.GoScope.SourceDigest); err != nil {
+			return "", err
+		}
+	}
+	for _, key := range manifest.Keys {
+		if err := writer.field("key", string(key)); err != nil {
+			return "", err
+		}
+	}
+	for _, dynamic := range manifest.Dynamic {
+		if err := writer.field("dynamic-domain", dynamic.Domain); err != nil {
+			return "", err
+		}
+		if err := writer.field("dynamic-prefix", dynamic.Prefix); err != nil {
+			return "", err
+		}
+	}
+	for _, occurrence := range manifest.Occurrences {
+		for _, field := range []struct{ name, value string }{
+			{"occurrence-key", string(occurrence.Key)}, {"occurrence-domain", occurrence.Domain},
+			{"occurrence-prefix", occurrence.Prefix}, {"occurrence-path", occurrence.Path},
+			{"occurrence-line", strconv.Itoa(occurrence.Line)}, {"occurrence-column", strconv.Itoa(occurrence.Column)},
+		} {
+			if err := writer.field(field.name, field.value); err != nil {
+				return "", err
+			}
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(digest.Sum(nil)), nil
+}
+
+type usageDigestWriter struct {
+	ctx   context.Context
+	write func([]byte) (int, error)
+	work  uint64
+}
+
+func (w *usageDigestWriter) field(name, value string) error {
+	if w.work&255 == 0 {
+		if err := w.ctx.Err(); err != nil {
+			return err
+		}
+	}
+	w.work++
+	_, _ = w.write([]byte(strconv.Itoa(len(name))))
+	_, _ = w.write([]byte{':'})
+	_, _ = w.write([]byte(name))
+	_, _ = w.write([]byte(strconv.Itoa(len(value))))
+	_, _ = w.write([]byte{':'})
+	_, _ = w.write([]byte(value))
+	return nil
+}
+
+func writeUsageScopeDigest(writer *usageDigestWriter, scope GoUsageScope) error {
 	for _, value := range []struct{ name, value string }{
 		{"analyzer", scope.Analyzer}, {"goos", scope.GOOS}, {"goarch", scope.GOARCH}, {"compiler", scope.Compiler},
 		{"cgo", strconv.FormatBool(scope.CgoEnabled)}, {"go-version", scope.GoVersion}, {"toolchain", scope.Toolchain},
 		{"go-experiment", scope.GoExperiment}, {"go-flags", scope.GoFlags}, {"go-work", scope.GoWork}, {"go-env", scope.GoEnv},
 	} {
-		writeUsageDigestField(write, value.name, value.value)
+		if err := writer.field(value.name, value.value); err != nil {
+			return err
+		}
 	}
 	for _, tag := range scope.BuildTags {
-		writeUsageDigestField(write, "build-tag", tag)
+		if err := writer.field("build-tag", tag); err != nil {
+			return err
+		}
 	}
 	for _, tag := range scope.ToolTags {
-		writeUsageDigestField(write, "tool-tag", tag)
+		if err := writer.field("tool-tag", tag); err != nil {
+			return err
+		}
 	}
 	for _, tag := range scope.ReleaseTags {
-		writeUsageDigestField(write, "release-tag", tag)
+		if err := writer.field("release-tag", tag); err != nil {
+			return err
+		}
 	}
 	for _, setting := range scope.Environment {
-		writeUsageDigestField(write, "environment-name", setting.Name)
-		writeUsageDigestField(write, "environment-value", setting.Value)
+		if err := writer.field("environment-name", setting.Name); err != nil {
+			return err
+		}
+		if err := writer.field("environment-value", setting.Value); err != nil {
+			return err
+		}
 	}
 	for _, root := range scope.Roots {
-		writeUsageDigestField(write, "root-kind", root.Kind.String())
-		writeUsageDigestField(write, "root-path", root.Path)
+		if err := writer.field("root-kind", root.Kind.String()); err != nil {
+			return err
+		}
+		if err := writer.field("root-path", root.Path); err != nil {
+			return err
+		}
 	}
 	for _, metadata := range scope.Metadata {
-		writeUsageDigestField(write, "metadata-kind", metadata.Kind)
-		writeUsageDigestField(write, "metadata-path", metadata.Path)
-		writeUsageDigestField(write, "metadata-sha256", metadata.SHA256)
+		for _, field := range []struct{ name, value string }{
+			{"metadata-kind", metadata.Kind}, {"metadata-path", metadata.Path}, {"metadata-sha256", metadata.SHA256},
+		} {
+			if err := writer.field(field.name, field.value); err != nil {
+				return err
+			}
+		}
 	}
 	for _, file := range scope.Files {
-		writeUsageDigestField(write, "file-root", file.Root)
-		writeUsageDigestField(write, "file-path", file.Path)
-		writeUsageDigestField(write, "file-logical-path", file.LogicalPath)
-		writeUsageDigestField(write, "file-selected", strconv.FormatBool(file.Selected))
-		writeUsageDigestField(write, "file-sha256", file.SHA256)
+		for _, field := range []struct{ name, value string }{
+			{"file-root", file.Root}, {"file-path", file.Path}, {"file-logical-path", file.LogicalPath},
+			{"file-selected", strconv.FormatBool(file.Selected)}, {"file-sha256", file.SHA256},
+		} {
+			if err := writer.field(field.name, field.value); err != nil {
+				return err
+			}
+		}
 	}
-}
-
-func writeUsageDigestField(write func([]byte) (int, error), name, value string) {
-	_, _ = write([]byte(strconv.Itoa(len(name))))
-	_, _ = write([]byte{':'})
-	_, _ = write([]byte(name))
-	_, _ = write([]byte(strconv.Itoa(len(value))))
-	_, _ = write([]byte{':'})
-	_, _ = write([]byte(value))
+	return nil
 }
 
 type CheckPolicy struct {
@@ -588,7 +668,7 @@ func CheckContext(ctx context.Context, spec CatalogSpec, policy CheckPolicy) Rep
 	if collector.canceled() {
 		return canceledCheckReport(maximum)
 	}
-	if usageValid && policy.Usage.Complete {
+	if usageValid && policy.Usage.Complete && policy.Usage.GoScope != nil && policy.Usage.GoScope.Analyzer == GoUsageAnalyzerV2 {
 		for _, message := range messages {
 			if collector.pollCancellation() {
 				return canceledCheckReport(maximum)
@@ -1314,7 +1394,11 @@ func checkUsage(messages []checkedMessage, usage UsageManifest, limits UsageLimi
 					valid = false
 				}
 			}
-			expected := ExpectedUsageManifestDigest(usage)
+			expected, err := ExpectedUsageManifestDigestContext(collector.ctx, usage)
+			if err != nil {
+				collector.stopped = true
+				return used, false
+			}
 			if !validUsageSHA256(usage.ManifestDigest) || usage.ManifestDigest != expected {
 				collector.add(Finding{Status: CheckInvalid, Severity: SeverityError, Path: "usage.manifest_digest", Detail: "usage manifest digest does not match its canonical content"})
 				valid = false
@@ -1522,7 +1606,12 @@ func checkGoUsageScope(scope *GoUsageScope, complete bool, limits UsageLimits, c
 		collector.add(Finding{Status: CheckInvalid, Severity: SeverityError, Path: "usage.go_scope.metadata", Detail: "Go usage metadata ledger is empty"})
 		valid = false
 	}
-	if !addMaterial("usage.go_scope.source_digest", scope.SourceDigest, sha256.Size*2) || !validUsageSHA256(scope.SourceDigest) || scope.SourceDigest != ExpectedUsageSourceDigest(*scope) {
+	expectedSourceDigest, err := ExpectedUsageSourceDigestContext(collector.ctx, *scope)
+	if err != nil {
+		collector.stopped = true
+		return false
+	}
+	if !addMaterial("usage.go_scope.source_digest", scope.SourceDigest, sha256.Size*2) || !validUsageSHA256(scope.SourceDigest) || scope.SourceDigest != expectedSourceDigest {
 		collector.add(Finding{Status: CheckInvalid, Severity: SeverityError, Path: "usage.go_scope.source_digest", Detail: "Go usage source digest does not match its canonical ledger"})
 		valid = false
 	}

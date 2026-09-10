@@ -30,7 +30,7 @@ func exactInventorySnapshotError(reg Registry) error {
 	if len(reg.Signals) != 59 || signalKinds["metric"] != 45 || signalKinds["span"] != 11 || signalKinds["span_event"] != 3 || len(signalKinds) != 3 {
 		return fmt.Errorf("signal inventory=%d kinds=%v", len(reg.Signals), signalKinds)
 	}
-	if availability["implemented"] != 44 || availability["planned"] != 15 || len(availability) != 2 {
+	if availability["implemented"] != 59 || len(availability) != 1 {
 		return fmt.Errorf("signal availability=%v", availability)
 	}
 	var history SignalAvailabilityHistory
@@ -45,7 +45,7 @@ func exactInventorySnapshotError(reg Registry) error {
 	for _, shape := range reg.SourceShapes {
 		shapeAvailability[shape.Availability]++
 	}
-	if len(reg.SourceShapes) != 86 || shapeAvailability["current"] != 85 || shapeAvailability["planned"] != 1 || len(shapeAvailability) != 2 {
+	if len(reg.SourceShapes) != 86 || shapeAvailability["current"] != 86 || len(shapeAvailability) != 1 {
 		return fmt.Errorf("source-shape inventory=%d availability=%v", len(reg.SourceShapes), shapeAvailability)
 	}
 	wantShapes := strings.Fields(`
@@ -503,8 +503,8 @@ func TestSignalAvailabilityHistoryFreezesTheExactRoster(t *testing.T) {
 			planned++
 		}
 	}
-	if planned != 15 {
-		t.Fatalf("planned roster=%d, want 15", planned)
+	if planned != 0 {
+		t.Fatalf("planned roster=%d, want 0", planned)
 	}
 }
 

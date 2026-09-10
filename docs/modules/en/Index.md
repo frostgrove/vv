@@ -120,6 +120,15 @@ the exception ([[D-048]], [[D-055]]).
 | [projection](projection.md) | `vv/event/projection` | A log becomes a read model: a supervised checkpointed consumer, two advance modes, a typed router, envelope-granular quarantine, and a fence that makes two live instances take turns |
 | [eventtest](eventtest.md) | `vv/event/eventtest` | The store contract as a conformance suite, plus three proxies an application runs over its own declaration |
 
+## Audit evidence — declared before it is stored
+
+| Module | Import | What it is |
+|---|---|---|
+| [audit](audit.md) | `vv/audit` | Typed protected business evidence, immutable catalogs, recorder/grouping, reconciliation, and separately authorized bounded history |
+| [auditmemory](audit.md) | `vv/audit/auditmemory` | Concurrent in-process audit writer/log and explicit deployment activation |
+| [auditcrud](audit.md#transactional-crud) | `vv/audit/auditcrud` | Sealed security-first CRUD mutations co-committed with exact entity evidence |
+| [auditpg](audit.md) | `vv/audit/auditpg` | **Module** — durable PostgreSQL writer/log with explicit schema and catalog lifecycle |
+
 ## Internationalization — typed presentation at an explicit locale
 
 | Module | Import | What it is |

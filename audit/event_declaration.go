@@ -262,7 +262,6 @@ func (field eventFieldValue[E, V]) extract(event E) (_ draftValue, _ []byte, err
 	}
 	if field.mode == AsRedacted {
 		draft.state = ValueRedacted
-		draft.canonical = nil
 	}
 	return draft, bytes.Clone(wire), nil
 }

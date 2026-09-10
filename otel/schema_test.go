@@ -1027,11 +1027,11 @@ func TestSchema_CurrentEmittersConformToWireManifest(t *testing.T) {
 	}
 	_, _ = vvotel.Store(tel)(&fakeStorageStore{}).Head(context.Background(), key)
 	ctx, span := tracer.Tracer("schema").Start(context.Background(), "cache-parent")
-	vvotel.Cache(tel, vvotel.WithCacheSpanEvents(true)).Observe(ctx, cache.Event{Operation: cache.LookupOperation, Outcome: cache.HitOutcome})
-	vvotel.CacheMemory(tel, vvotel.WithCacheMemorySpanEvents(true)).Observe(ctx, cachememory.Event{Operation: cachememory.PutOperation, Outcome: cachememory.StoredOutcome})
+	vvotel.Cache(tel, vvotel.WithCacheSpanEvents(true)).Observe(ctx, cache.Event{Operation: cache.LookupOperation, Outcome: cache.HitOutcome, Items: 1, EncodedBytes: 1, PayloadBytes: 1})
+	vvotel.CacheMemory(tel, vvotel.WithCacheMemorySpanEvents(true)).Observe(ctx, cachememory.Event{Operation: cachememory.PutOperation, Outcome: cachememory.StoredOutcome, Items: 1, ValueBytes: 1, ChargedBytes: 1})
 	span.End()
-	if len(meter.metrics) != 4 {
-		t.Fatal("control operations did not produce their existing metrics")
+	if len(meter.metrics) != 12 {
+		t.Fatalf("control operations produced %d metrics, want 12", len(meter.metrics))
 	}
 	for _, point := range meter.metrics {
 		var key string
@@ -1040,6 +1040,18 @@ func TestSchema_CurrentEmittersConformToWireManifest(t *testing.T) {
 			key = "command_duration"
 		case vvotel.MetricCacheOperations:
 			key = "cache_operations"
+		case vvotel.MetricCacheEvents:
+			key = "cache_events"
+		case vvotel.MetricCacheItems:
+			key = "cache_items"
+		case vvotel.MetricCacheEncodedBytes:
+			key = "cache_encoded_bytes"
+		case vvotel.MetricCachePayloadBytes:
+			key = "cache_payload_bytes"
+		case vvotel.MetricCacheValueBytes:
+			key = "cache_value_bytes"
+		case vvotel.MetricCacheChargedBytes:
+			key = "cache_charged_bytes"
 		case vvotel.MetricStorageDuration:
 			key = "storage_duration"
 		default:

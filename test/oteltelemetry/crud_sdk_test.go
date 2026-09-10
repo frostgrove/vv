@@ -198,6 +198,19 @@ func TestRealSDKCRUDCoversDirectTransactionReplicaAndBulkWithoutLeaks(t *testing
 	if tx.execCalls != 1 || tx.queryCalls != 1 || tx.commitCalls != 1 || tx.rollbackCalls != 1 || replica.execCalls != 1 {
 		t.Fatalf("nested calls = tx exec:%d query:%d commit:%d rollback:%d replica:%d", tx.execCalls, tx.queryCalls, tx.commitCalls, tx.rollbackCalls, replica.execCalls)
 	}
+	parentContext := trace.SpanContextFromContext(ctx)
+	for group, contexts := range map[string][]context.Context{
+		"source direct and begin": source.contexts,
+		"transaction":             tx.contexts,
+		"replica":                 replica.contexts,
+	} {
+		for index, operationContext := range contexts {
+			spanContext := trace.SpanContextFromContext(operationContext)
+			if operationContext == ctx || !spanContext.IsValid() || spanContext.Equal(parentContext) || spanContext.TraceID() != parentContext.TraceID() {
+				t.Fatalf("%s context %d is not the derived CRUD span context: %v", group, index, spanContext)
+			}
+		}
+	}
 	if source.bulkTarget != wrappedTx || source.bulkContext == ctx || trace.SpanContextFromContext(source.bulkContext).Equal(trace.SpanContextFromContext(ctx)) {
 		t.Fatal("bulk target or derived operation context was not preserved")
 	}
@@ -247,15 +260,37 @@ func TestRealSDKCRUDCoversDirectTransactionReplicaAndBulkWithoutLeaks(t *testing
 		t.Fatalf("CRUD metric data = %T", metric.Data)
 	}
 	var samples uint64
+	exemplarOperations := make(map[string]bool)
 	for _, point := range histogram.DataPoints {
 		samples += point.Count
 		attributes := attributesByName(point.Attributes.ToSlice())
 		if attributes[string(vvotel.AttrComponent)] != vvotel.ComponentCrudSource {
 			t.Fatalf("CRUD metric attributes = %#v", attributes)
 		}
+		operation := attributes[string(vvotel.AttrOperationName)]
+		matched := false
+		for _, exemplar := range point.Exemplars {
+			for _, span := range crudSpans {
+				spanAttributes := attributesByName(span.Attributes())
+				if spanAttributes[string(vvotel.AttrOperationName)] == operation && exemplarMatches(exemplar.TraceID, exemplar.SpanID, span.SpanContext()) {
+					matched = true
+					break
+				}
+			}
+			if matched {
+				break
+			}
+		}
+		if !matched {
+			t.Fatalf("CRUD metric operation %q has no exemplar for its operation span", operation)
+		}
+		exemplarOperations[operation] = true
 	}
 	if samples != 9 || !reflect.DeepEqual(histogram.DataPoints[0].Bounds, vvotel.MetricCrudSourceDurationBoundaries()) {
 		t.Fatalf("CRUD samples/bounds = %d/%v", samples, histogram.DataPoints[0].Bounds)
+	}
+	if len(exemplarOperations) != len(wantOperations) {
+		t.Fatalf("CRUD exemplar operations = %#v, want every operation in %#v", exemplarOperations, wantOperations)
 	}
 	assertSDKPrivacy(t, crudSpans, metricdata.ResourceMetrics{ScopeMetrics: []metricdata.ScopeMetrics{{Metrics: []metricdata.Metrics{metric}}}}, []string{
 		queryErr.Error(),

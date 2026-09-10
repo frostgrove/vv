@@ -48,9 +48,9 @@ func safeSetStatus(span trace.Span, code codes.Code, description string) {
 	span.SetStatus(code, description)
 }
 
-func safeEnd(span trace.Span) {
+func safeEnd(span trace.Span, options ...trace.SpanEndOption) {
 	defer func() { _ = recover() }()
-	span.End()
+	span.End(options...)
 }
 
 func safeAddEvent(span trace.Span, name string, options ...trace.EventOption) {

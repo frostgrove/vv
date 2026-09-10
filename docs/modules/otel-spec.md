@@ -7,13 +7,11 @@ published module version. The contract identifier is not an OpenTelemetry
 schema URL. The [v1 to v2 migration](../release-notes/2026-09-09-otel-v1-v2.md)
 records the compatibility boundary.
 
-[[D-128]] governs ownership; [[UC-030]] states the consumer guarantees; [[FL-034]] maps the
-adapters. The registry declares future signals without implementing their
-adapters. Fail-fast assembly constructs every enabled provider-compatible
-metric instrument, including instruments whose adapter remains planned;
-construction is not emission. Every signal states
-`availability: implemented` or `planned`. Existing implementation remains
-command spans/duration, storage operation spans, and cache counters/span events.
+[[D-134]] governs ownership; [[UC-030]] states the consumer guarantees; [[FL-034]] maps the
+adapters. Every signal states `availability: implemented` or `planned`, and the
+current roster contains 59 stable signal IDs, all implemented. Fail-fast
+assembly constructs every enabled provider-compatible metric instrument before
+an adapter can emit through the returned Telemetry.
 
 ## Registry model
 
@@ -48,19 +46,15 @@ are explicitly excluded with reasons; silently omitting one fails generation.
 Free-function inventories check every exported function in their declared file,
 including explicit exclusions for constructors and options.
 
-The 87 structured inventories comprise 77 current and ten planned surfaces.
+All 86 structured inventories are current surfaces.
 Every member is mapped to reciprocal signal inputs and consumed attributes,
 linked to a nested shape, or excluded with a nonempty privacy/semantic reason.
 Boolean members may name an explicit subset of their reciprocal signals as
 source-admission gates; a gate is not an emitted attribute.
 Shape ownership is a closed component list; scope prose is metadata, not a
 validation rule. Current shape additions, removals, renames and signature/type
-changes fail the AST check. Planned storage-stream and executor-unwrapper
-interfaces, lifecycle/scheduler events and C01 carrier extensions are
-prospective contracts, not claims that those root APIs exist.
-Their owning implementation card reconciles exact signatures and promotes the
-shape to current; additive accessor inventories must merge into the full
-current surface. Implemented signals cannot depend on planned source inputs.
+changes fail the AST check. Additive accessor inventories must merge into the
+full current surface. Implemented signals cannot depend on planned source inputs.
 
 Remote `BulkDelete` maps to `delete_many`, runtime `per-replica`
 maps to `per_replica`, and jobs `cancelled`/`timed_out` map to
@@ -140,16 +134,15 @@ the downstream operation did not return. This covers command, storage
 operation/stream, CRUD source/transaction, remote, authenticator, enabled health
 probe, periodic pass, direct/staged enqueue and handler spans. It does not add
 an outcome to metric-only observer contracts, change existing metric bounds,
-or claim planned adapters already implement the A04 defer guard. The current
-command and storage adapters do implement it through the shared operation
-recorder.
+or fabricate a duration/counter sample for a non-returning call. All eleven
+wrappers implement the terminal guard; ten use the shared operation recorder
+and the handler preserves the same contract around its callback boundary.
 
-The old `vv.cache.operations` counter keeps its existing facade/backend
-attribute sets and is sourced by both `cache.Observer.Observe` and
-`cachememory.Observer.Observe`. Rich reasons and memoization belong to the new
-`vv.cache.events` counter and distribution instruments. Existing
-`cache_backend`, `memory_backend`, `cache.event` and
-`cache_backend.event` wire values remain unchanged.
+`vv.cache.operations` remains sourced by both `cache.Observer.Observe` and
+`cachememory.Observer.Observe`, but its v2 variants now retain source-proven
+reason and memoization alongside the new `vv.cache.events` counter and
+distribution instruments. Existing `cache_backend`, `memory_backend`,
+`cache.event` and `cache_backend.event` wire values remain unchanged.
 
 New cache event/item variants admit exactly 31 facade and 18 backend tuples.
 Memoized=true is possible only for lookup; Forget only reports deleted without
@@ -163,14 +156,15 @@ and decoded-expiry miss shapes do not prove consistent payload presence.
 Successful lookup_many emits an explicit aggregate, including zero. Backend
 stored/hit/deleted values may genuinely have zero bytes; absent get/miss sizes
 are excluded. Empty reset/close aggregate charged size is also a present zero.
-Aggregate memory occupancy and capacity use `Backend.Stats`; `Stats.Closed`
+Aggregate memory occupancy and capacity use the non-blocking,
+deadline-aware `Backend.StatsContext`; `Stats.Closed`
 gates entries, bytes and both limits so a closed backend contributes only to
 the closed count.
 `record_when` governs the measured number; `when` governs source-field presence.
 Neither fact nor measured value contributes a metric label or cardinality.
-The legacy optional cache span events keep their v1 attribute shapes; rich
-reason/memoization is currently contracted by the new counter/distributions,
-not silently added to existing implemented events.
+The optional cache span events and cache metrics share the same source-proven
+reason and memoization mappings. Neither surface invents attributes absent from
+the terminal event.
 
 Storage operation bytes (signal ID 5) measure successful persisted size only:
 Put's returned Info.Size or Stage's returned Staged.Info.Size. Only put/stage
@@ -204,15 +198,14 @@ EnqueueOnce uses its public closed return enum; successful transaction forms
 always emit staged without inspecting internal placement/Staged outcomes.
 Handler queue delay and attempt ordinal are associated with the
 `AdapterHandler` invocation that supplies `DeliveryMeta`; attempt is in
-1..`jobs.MaxAttemptOrdinal` (4129). The 42 command/disposition/reason tuples describe apply calls, not confirmed
-mutations. Their planned OT-C05 projection uses disposition.Reason when the
-disposition is nonzero, command.Reason otherwise. The current root emitter
-still uses command.Reason unconditionally; C05 must fix that seam before
-enabling this signal. No root behavior changes in this registry migration.
+1..`jobs.MaxAttemptOrdinal` (4129). The 42 command/disposition/reason tuples
+describe apply calls, not confirmed mutations. The root worker event supplies
+the effective disposition reason when a disposition exists and the command
+reason otherwise; the current worker adapter projects that bounded value.
 
 The current `runtime.Observer.Observed` callback supplies transitions only.
 Replayable `RunnerState.Err`, `StartedAt` and `EndedAt` cannot prove one unique
-run/drain completion and are explicitly excluded. Planned
+run/drain completion and are explicitly excluded.
 `LifecycleObserver.ObservedLifecycle` is the sole source for operation counts
 and durations.
 
@@ -227,11 +220,11 @@ authored series_budget. It is only a ceiling and is never copied into
 calculated metadata; both values are available in the manifest and rich Go
 descriptors. Most budgets deliberately leave room above the current bound.
 
-The existing command bound is 10 operations times ten result shapes: one
-success, seven ordinary error/panic types, cancellation and timeout, giving
-100. The existing cache bound is 6 facade operations times 10 outcomes plus
-7 backend operations times 8 outcomes, giving 116. Layer and component are
-correlated constants, not independent multipliers.
+The command bound is 10 operations times ten result shapes: one success, seven
+ordinary error/panic types, cancellation and timeout, giving 100. The cache
+operation counter has exactly 31 facade and 18 backend source-valid tuples,
+giving a calculated bound of 49 under its authored budget of 116. Layer and
+component are correlated constants, not independent multipliers.
 
 These are bounds on instrumentation attribute sets per instrument/resource/
 scope. Application Resource multiplicity, SDK aggregation and histogram
@@ -270,8 +263,8 @@ The meter path constructs the 45 enabled descriptors in increasing signal-ID
 order: 14 float64 histograms, 13 int64 histograms, 12 int64 counters and six
 int64 observable gauges. Description, unit and per-signal histogram boundaries
 come from the descriptor. Observable gauges are constructed without callbacks;
-backend registration remains a separate fallible B04 operation. Planned means
-"not emitted by an adapter", not "skipped during assembly".
+`CacheMemoryStats` is the separate fallible registration that activates the six
+process-local aggregate gauges for a bounded set of memory backends.
 
 Provider nil/panic and instrument error/panic/nil failures return a redacted
 `*AssemblyError`. `Signal`, `Provider` and `SignalName` expose only the closed
@@ -292,8 +285,8 @@ as `SpanCommandName`, alongside the unchanged permissive v1
 `SignalDescriptor.Accepts(status, attributes, facts...)` checks the exact status and
 attribute variant, rejecting extra/duplicate keys, wrong types, unknown values
 and invalid declarations. Adapters can use the generated internal matcher
-without copying subsystem-specific unions. Current command, storage and cache
-emitters route their complete candidate sets through one internal admission
+without copying subsystem-specific unions. Every current emitter routes its
+complete candidate set through one internal admission
 function before `Start`, `SetAttributes`, `Record`, `Add` or `AddEvent`; a
 rejected set reaches no emitting API. The admission result is a fresh slice.
 Facts are generated typed IDs with
@@ -318,7 +311,7 @@ trace_id, span_id and trace_flags belong to an explicitly constructed
 context-only slog handler. They have registry-owned exported key constants,
 exact lower_hex lengths 32/16/2 and preserve-record collision policy. They are
 not metric labels, are not Config.Disable selections and require no Telemetry
-instance. [[D-128]] specifies the handler behavior; this registry step only
+instance. [[D-134]] specifies the handler behavior; this registry step only
 declares its keys.
 
 ## Generation and checks
@@ -330,6 +323,7 @@ go run ./cmd/vv-otel-gen -registry internal/otelreg/registry.json \
   -out otel/schema_gen.go -manifest otel/wire_manifest.json
 make check-otel-schema
 make check-otel-live
+make check-otel-operations
 ```
 
 Check mode compares both artifacts and writes neither. Version generation
@@ -340,12 +334,16 @@ unknown fields, duplicate keys at any nesting depth and trailing documents.
 writes schema_gen.go and wire_manifest.json in the satellite itself.
 
 `make check-otel-live` runs the `oteltelemetry` package inside the unpublished
-`test/` module with `GOWORK=off` and the race detector. It uses isolated real trace/metric SDK
-providers, a manual metric reader and an in-process gRPC OTLP trace/metric
-receiver. It opens no external connection and mutates no OTel global. The target
-is an explicit pre-release proof, not part of offline `make check`. OT-D05 will
-extend live validation with pinned Weaver; Weaver is not claimed to understand
-this JSON wire format.
+`test/` module with `GOWORK=off` and the race detector. It uses isolated real
+trace/metric SDK providers, a manual metric reader and an in-process gRPC OTLP
+trace/metric receiver. It opens no external connection and mutates no OTel
+global. The target is an explicit pre-release proof, not part of offline
+`make check`. `make check-otel-operations` is the network-free structural and
+validator test gate. Separate opt-in targets run the pinned Collector startup,
+Prometheus fixtures and Weaver listener/send/report cycle; `check-otel-wire`
+validates a supplied OTLP capture. Weaver validates emitted OTLP against pinned
+semantic conventions; the generated Frostgrove JSON manifest remains the
+authority for Frostgrove-owned names and shapes.
 
 The wire manifest records scope, complete migration metadata, descriptors,
 resolved variants, omission rules, signal IDs and calculated bounds. Additional

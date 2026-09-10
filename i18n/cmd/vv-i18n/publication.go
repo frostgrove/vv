@@ -64,12 +64,13 @@ type publicationHooks struct {
 }
 
 var errPublicationFileChanged = errors.New("publication file changed while opening")
+var errPublicationPointerChanged = errors.New("publication pointer changed before commit")
 
 func writePublicPublication(ctx context.Context, rootPath string, exported i18n.PublicExport, check bool, hooks publicationHooks) error {
 	return writePublicPublicationBounded(ctx, rootPath, exported, check, hooks, maximumCommandInput)
 }
 
-func writePublicPublicationBounded(ctx context.Context, rootPath string, exported i18n.PublicExport, check bool, hooks publicationHooks, maximum int) error {
+func writePublicPublicationBounded(ctx context.Context, rootPath string, exported i18n.PublicExport, check bool, hooks publicationHooks, maximum int) (resultErr error) {
 	if ctx == nil {
 		return errors.New("publication context is nil")
 	}
@@ -79,7 +80,7 @@ func writePublicPublicationBounded(ctx context.Context, rootPath string, exporte
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	pointer, contents, err := publicPublicationBounded(exported, maximum)
+	pointer, contents, err := publicPublicationBounded(ctx, exported, maximum)
 	if err != nil {
 		return err
 	}
@@ -100,24 +101,50 @@ func writePublicPublicationBounded(ctx context.Context, rootPath string, exporte
 		}
 		return nil
 	}
+	if err := ensurePublisherLockSupported(); err != nil {
+		return err
+	}
 	root, err := openPublicationRootContext(ctx, rootPath, true, hooks.beforeRootCreate)
 	if err != nil {
 		return err
 	}
 	defer root.Close()
+	lock, err := acquirePublisherLock(ctx, root)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		resultErr = errors.Join(resultErr, lock.close())
+	}()
 	if err := validatePublicationPointerTarget(root); err != nil {
 		return err
 	}
-	if current, _, raw, readErr := readPublicPublicationFromRootBounded(ctx, root, maximum); readErr == nil && bytes.Equal(raw, pointerBytes) && equalPublicationPointers(current, pointer) {
-		if err := syncRootPath(root, publicationGenerationsName); err != nil {
-			return err
-		}
-		return syncRootDirectory(root)
+	current, _, raw, readErr := readPublicPublicationFromRootBounded(ctx, root, maximum)
+	currentMatches := readErr == nil && bytes.Equal(raw, pointerBytes) && equalPublicationPointers(current, pointer)
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	if err := ensurePublicationDirectory(root, publicationGenerationsName); err != nil {
 		return err
 	}
-	if err := publishGenerationBounded(ctx, root, pointer, contents, hooks, maximum); err != nil {
+	generationsRoot, err := openRootedDirectory(root, publicationGenerationsName)
+	if err != nil {
+		return err
+	}
+	defer generationsRoot.Close()
+	if currentMatches {
+		if _, err := verifyPublicationGenerationInRootBounded(ctx, generationsRoot, pointer, maximum); err != nil {
+			return err
+		}
+		if err := syncRootDirectory(generationsRoot); err != nil {
+			return err
+		}
+		if err := validatePinnedRootedDirectory(root, publicationGenerationsName, generationsRoot); err != nil {
+			return err
+		}
+		return syncRootDirectory(root)
+	}
+	if err := publishGenerationBounded(ctx, generationsRoot, pointer, contents, hooks, lock, maximum); err != nil {
 		return err
 	}
 	if hooks.afterGeneration != nil {
@@ -128,7 +155,7 @@ func writePublicPublicationBounded(ctx context.Context, rootPath string, exporte
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	return commitPublicationPointer(ctx, root, pointerBytes, hooks)
+	return commitPublicationPointer(ctx, root, generationsRoot, pointerBytes, hooks, lock)
 }
 
 func readPublicPublication(ctx context.Context, rootPath string) (publicationPointer, map[string][]byte, error) {
@@ -190,17 +217,21 @@ func readPublicPublicationFromRootBounded(ctx context.Context, root *os.Root, ma
 }
 
 func publicPublication(exported i18n.PublicExport) (publicationPointer, []publicationContent, error) {
-	return publicPublicationBounded(exported, maximumCommandInput)
+	return publicPublicationBounded(context.Background(), exported, maximumCommandInput)
 }
 
-func publicPublicationBounded(exported i18n.PublicExport, maximum int) (publicationPointer, []publicationContent, error) {
+func publicPublicationBounded(ctx context.Context, exported i18n.PublicExport, maximum int) (publicationPointer, []publicationContent, error) {
 	if maximum < 1 || maximum > maximumCommandOutputBytes {
 		return publicationPointer{}, nil, fmt.Errorf("publication limit %d is outside supported bounds", maximum)
 	}
 	if !validSHA256Address(exported.Address) {
 		return publicationPointer{}, nil, errors.New("public export has an invalid content address")
 	}
-	if exported.Address != i18n.ExpectedPublicExportAddress(exported.Manifest, exported.TypeScript) {
+	address, err := i18n.ExpectedPublicExportAddressContext(ctx, exported.Manifest, exported.TypeScript)
+	if err != nil {
+		return publicationPointer{}, nil, err
+	}
+	if exported.Address != address {
 		return publicationPointer{}, nil, errors.New("public export content does not match its address")
 	}
 	contents := []publicationContent{
@@ -396,38 +427,34 @@ func publicationGenerationName(generation string) string {
 	return "sha256-" + strings.TrimPrefix(generation, "sha256:")
 }
 
-func publishGeneration(ctx context.Context, root *os.Root, pointer publicationPointer, contents []publicationContent, hooks publicationHooks) error {
-	return publishGenerationBounded(ctx, root, pointer, contents, hooks, maximumCommandInput)
-}
-
-func publishGenerationBounded(ctx context.Context, root *os.Root, pointer publicationPointer, contents []publicationContent, hooks publicationHooks, maximum int) error {
-	final := publicationGenerationDirectory(pointer.Generation)
-	if _, err := verifyPublicationGenerationBounded(ctx, root, pointer, maximum); err == nil {
-		return syncRootPath(root, publicationGenerationsName)
+func publishGenerationBounded(ctx context.Context, generationsRoot *os.Root, pointer publicationPointer, contents []publicationContent, hooks publicationHooks, lock *publisherLock, maximum int) error {
+	final := publicationGenerationName(pointer.Generation)
+	if _, err := verifyPublicationGenerationInRootBounded(ctx, generationsRoot, pointer, maximum); err == nil {
+		return syncRootDirectory(generationsRoot)
 	} else if !errors.Is(err, fs.ErrNotExist) {
 		if contextErr := ctx.Err(); contextErr != nil {
 			return contextErr
 		}
-		if info, statErr := root.Lstat(final); statErr == nil && info.Mode().IsDir() {
+		if info, statErr := generationsRoot.Lstat(final); statErr == nil && info.Mode().IsDir() {
 			return fmt.Errorf("existing publication generation is invalid: %w", err)
 		}
 	}
-	temporary, err := createPublicationTemporaryDirectory(root)
+	temporary, err := createPublicationTemporaryDirectory(generationsRoot)
 	if err != nil {
 		return err
 	}
 	keepTemporary := true
 	defer func() {
 		if keepTemporary {
-			_ = root.RemoveAll(temporary)
+			_ = generationsRoot.RemoveAll(temporary)
 		}
 	}()
 	for _, content := range contents {
-		if err := writePublicationFile(ctx, root, temporary+"/"+content.name, content.content); err != nil {
+		if err := writePublicationFile(ctx, generationsRoot, temporary+"/"+content.name, content.content); err != nil {
 			return err
 		}
 	}
-	if err := syncRootPath(root, temporary); err != nil {
+	if err := syncRootPath(generationsRoot, temporary); err != nil {
 		return err
 	}
 	if err := ctx.Err(); err != nil {
@@ -441,20 +468,23 @@ func publishGenerationBounded(ctx context.Context, root *os.Root, pointer public
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if err := root.Rename(temporary, final); err != nil {
-		if _, verifyErr := verifyPublicationGenerationBounded(ctx, root, pointer, maximum); verifyErr != nil {
+	if err := lock.validate(); err != nil {
+		return err
+	}
+	if err := generationsRoot.Rename(temporary, final); err != nil {
+		if _, verifyErr := verifyPublicationGenerationInRootBounded(ctx, generationsRoot, pointer, maximum); verifyErr != nil {
 			if contextErr := ctx.Err(); contextErr != nil {
 				return contextErr
 			}
 			return errors.Join(fmt.Errorf("publish generation: %w", err), verifyErr)
 		}
-		return syncRootPath(root, publicationGenerationsName)
+		return syncRootDirectory(generationsRoot)
 	}
 	keepTemporary = false
-	if err := syncRootPath(root, publicationGenerationsName); err != nil {
+	if err := syncRootDirectory(generationsRoot); err != nil {
 		return err
 	}
-	_, err = verifyPublicationGenerationBounded(ctx, root, pointer, maximum)
+	_, err = verifyPublicationGenerationInRootBounded(ctx, generationsRoot, pointer, maximum)
 	return err
 }
 
@@ -463,17 +493,21 @@ func verifyPublicationGeneration(ctx context.Context, root *os.Root, pointer pub
 }
 
 func verifyPublicationGenerationBounded(ctx context.Context, root *os.Root, pointer publicationPointer, maximum int) (map[string][]byte, error) {
+	generationsRoot, err := openRootedDirectory(root, publicationGenerationsName)
+	if err != nil {
+		return nil, err
+	}
+	defer generationsRoot.Close()
+	return verifyPublicationGenerationInRootBounded(ctx, generationsRoot, pointer, maximum)
+}
+
+func verifyPublicationGenerationInRootBounded(ctx context.Context, generationsRoot *os.Root, pointer publicationPointer, maximum int) (map[string][]byte, error) {
 	if maximum < 1 || maximum > maximumCommandOutputBytes {
 		return nil, fmt.Errorf("publication limit %d is outside supported bounds", maximum)
 	}
 	if err := validatePublicationPointer(pointer); err != nil {
 		return nil, err
 	}
-	generationsRoot, err := openRootedDirectory(root, publicationGenerationsName)
-	if err != nil {
-		return nil, err
-	}
-	defer generationsRoot.Close()
 	generationRoot, err := openRootedDirectory(generationsRoot, publicationGenerationName(pointer.Generation))
 	if err != nil {
 		return nil, err
@@ -502,7 +536,11 @@ func verifyPublicationGenerationBounded(ctx context.Context, root *os.Root, poin
 		files[descriptor.Role] = content
 		contents[index] = publicationContent{role: descriptor.Role, name: descriptor.Name, content: content}
 	}
-	if i18n.ExpectedPublicExportAddress(files[publicationManifestRole], files[publicationTypeScriptRole]) != pointer.Address {
+	address, err := i18n.ExpectedPublicExportAddressContext(ctx, files[publicationManifestRole], files[publicationTypeScriptRole])
+	if err != nil {
+		return nil, err
+	}
+	if address != pointer.Address {
 		return nil, errors.New("publication files do not match the public export address")
 	}
 	if publicationGeneration(pointer.Address, contents) != pointer.Generation {
@@ -517,7 +555,7 @@ func createPublicationTemporaryDirectory(root *os.Root) (string, error) {
 		if _, err := io.ReadFull(rand.Reader, random[:]); err != nil {
 			return "", fmt.Errorf("generate temporary publication name: %w", err)
 		}
-		name := publicationGenerationsName + "/.tmp-" + hex.EncodeToString(random[:])
+		name := ".tmp-" + hex.EncodeToString(random[:])
 		if err := root.Mkdir(name, 0o755); err == nil {
 			return name, nil
 		} else if !errors.Is(err, fs.ErrExist) {
@@ -541,15 +579,14 @@ func writePublicationFile(ctx context.Context, root *os.Root, name string, conte
 	return nil
 }
 
-func commitPublicationPointer(ctx context.Context, root *os.Root, content []byte, hooks publicationHooks) error {
-	mode := fs.FileMode(0o644)
-	if info, err := root.Lstat(publicationPointerName); err == nil {
-		if info.Mode()&fs.ModeSymlink != 0 || !info.Mode().IsRegular() {
-			return errors.New("publication pointer is not a regular file")
-		}
-		mode = info.Mode().Perm()
-	} else if !errors.Is(err, fs.ErrNotExist) {
-		return fmt.Errorf("inspect publication pointer: %w", err)
+func commitPublicationPointer(ctx context.Context, root, generationsRoot *os.Root, content []byte, hooks publicationHooks, lock *publisherLock) error {
+	return commitPublicationPointerAttempt(ctx, root, generationsRoot, content, hooks, lock)
+}
+
+func commitPublicationPointerAttempt(ctx context.Context, root, generationsRoot *os.Root, content []byte, hooks publicationHooks, lock *publisherLock) error {
+	mode, identity, existed, err := inspectPublicationTarget(root, publicationPointerName, publicationPointerName)
+	if err != nil {
+		return err
 	}
 	temporary, file, err := createTemporary(root, publicationPointerName, mode)
 	if err != nil {
@@ -575,18 +612,22 @@ func commitPublicationPointer(ctx context.Context, root *os.Root, content []byte
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if _, err := root.Lstat(publicationPointerName); err == nil {
-		info, inspectErr := root.Lstat(publicationPointerName)
-		if inspectErr != nil || info.Mode()&fs.ModeSymlink != 0 || !info.Mode().IsRegular() {
-			return errors.New("publication pointer changed before commit")
-		}
-	} else if !errors.Is(err, fs.ErrNotExist) {
-		return fmt.Errorf("inspect publication pointer before commit: %w", err)
-	}
 	if hooks.beforeCommit != nil {
 		if err := hooks.beforeCommit(); err != nil {
 			return err
 		}
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := validatePinnedRootedDirectory(root, publicationGenerationsName, generationsRoot); err != nil {
+		return err
+	}
+	if err := validatePublicationPointerCommitTarget(root, identity, existed); err != nil {
+		return err
+	}
+	if err := lock.validate(); err != nil {
+		return err
 	}
 	if err := ctx.Err(); err != nil {
 		return err
@@ -600,6 +641,29 @@ func commitPublicationPointer(ctx context.Context, root *os.Root, content []byte
 		hookErr = hooks.afterCommit()
 	}
 	return errors.Join(hookErr, syncRootDirectory(root))
+}
+
+func validatePublicationPointerCommitTarget(root *os.Root, identity fs.FileInfo, existed bool) error {
+	info, err := root.Lstat(publicationPointerName)
+	if !existed {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("inspect publication pointer before commit: %w", err)
+		}
+		return fmt.Errorf("%w: target appeared", errPublicationPointerChanged)
+	}
+	if errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("%w: target disappeared", errPublicationPointerChanged)
+	}
+	if err != nil {
+		return fmt.Errorf("inspect publication pointer before commit: %w", err)
+	}
+	if info.Mode()&fs.ModeSymlink != 0 || !info.Mode().IsRegular() || !os.SameFile(identity, info) {
+		return fmt.Errorf("%w: target identity was replaced", errPublicationPointerChanged)
+	}
+	return nil
 }
 
 func validatePublicationPointerTarget(root *os.Root) error {
@@ -677,6 +741,21 @@ func openRootedDirectory(root *os.Root, name string) (*os.Root, error) {
 	return opened, nil
 }
 
+func validatePinnedRootedDirectory(root *os.Root, name string, pinned *os.Root) error {
+	current, err := root.Lstat(name)
+	if err != nil {
+		return fmt.Errorf("inspect pinned publication directory %q: %w", name, err)
+	}
+	identity, err := pinned.Stat(".")
+	if err != nil {
+		return fmt.Errorf("inspect pinned publication directory handle %q: %w", name, err)
+	}
+	if current.Mode()&fs.ModeSymlink != 0 || !current.Mode().IsDir() || !os.SameFile(identity, current) {
+		return fmt.Errorf("publication directory %q changed before pointer commit", name)
+	}
+	return nil
+}
+
 func readRootedRegularFile(ctx context.Context, root *os.Root, name string, maximum int64) ([]byte, error) {
 	if ctx == nil {
 		return nil, errors.New("publication context is nil")
@@ -722,17 +801,4 @@ func readRootDirectoryNames(root *os.Root) ([]string, error) {
 	}
 	slices.Sort(names)
 	return names, nil
-}
-
-func syncRootPath(root *os.Root, name string) error {
-	directory, err := root.Open(name)
-	if err != nil {
-		return fmt.Errorf("open publication directory for sync: %w", err)
-	}
-	syncErr := directory.Sync()
-	closeErr := directory.Close()
-	if syncErr != nil || closeErr != nil {
-		return errors.Join(syncErr, closeErr)
-	}
-	return nil
 }

@@ -17,17 +17,31 @@ var (
 	_ = vvotel.Must
 	_ = vvotel.WrapService[struct{}, string, struct{}]
 	_ = vvotel.Service[struct{}, string, struct{}]
+	_ = vvotel.WithServiceResource
 	_ = vvotel.Source
 	_ = vvotel.Store
+	_ = vvotel.WithStorageResource
+	_ = vvotel.WithStorageStreams
 	_ = vvotel.Cache
+	_ = vvotel.WithCacheSpanEvents
 	_ = vvotel.CacheMemory
+	_ = vvotel.WithCacheMemorySpanEvents
+	_ = vvotel.CacheMemoryStats
+	_ = vvotel.MustCacheMemoryStats
+	_ = vvotel.MaxCacheMemoryStatsBackends
+	_ = vvotel.ErrInvalidRegistration
+	_ = vvotel.ErrDuplicateRegistration
+	_ = vvotel.ErrCallbackRegistration
+	_ = vvotel.ErrCallbackUnregister
 	_ = vvotel.Auth
 	_ = vvotel.AuthEvents
 	_ = vvotel.Authenticator
 	_ = vvotel.Health
+	_ = vvotel.WithHealthResource
 	_ = vvotel.Remote
 	_ = vvotel.Runtime
 	_ = vvotel.Periodic
+	_ = vvotel.WithPeriodicResource
 	_ = vvotel.JobContext
 	_ = vvotel.JobIdentity
 	_ = vvotel.Enqueue[struct{}]
@@ -36,12 +50,16 @@ var (
 	_ = vvotel.EnqueueOnceIn[struct{}]
 	_ = vvotel.Job[struct{}]
 	_ = vvotel.JobAdapter[struct{}]
+	_ = vvotel.ParentChild
 	_ = vvotel.Workers
 	_ = vvotel.Scheduler
 	_ = vvotel.TraceHandler
+	_ = vvotel.AllSignals
 	_ = vvotel.SignalDescriptors
 	_ port.Service[struct{}, string, struct{}]
 	_ storage.Store
+	_ vvotel.StorageStream
+	_ vvotel.Registration
 )
 
 func main() {}

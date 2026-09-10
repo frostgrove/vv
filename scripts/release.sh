@@ -6,14 +6,9 @@ source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/common.sh"
 cd "$REPO_ROOT"
 
 [[ -n ${V:-} ]] || { echo 'usage: make release V=v0.1.0' >&2; exit 1; }
-git diff --quiet || { echo 'working tree is dirty' >&2; exit 1; }
+[[ -z $(git status --porcelain) ]] || { echo 'working tree is dirty' >&2; exit 1; }
 
-while IFS= read -r module; do
-	grep -qE "$VV_MODULE $V( //.*)?$" "$module/go.mod" || {
-		echo "$module/go.mod does not require the library at $V; run make version V=$V" >&2
-		exit 1
-	}
-done < <(satellites)
+V="$V" "$SCRIPT_DIR/release-modules.sh" check
 
 scope_version=$(sed -n 's/^[[:space:]]*ScopeVersion[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' otel/schema_gen.go)
 [[ $scope_version == "$V" ]] || {
@@ -22,9 +17,9 @@ scope_version=$(sed -n 's/^[[:space:]]*ScopeVersion[[:space:]]*=[[:space:]]*"\([
 }
 
 "$SCRIPT_DIR/checks.sh" otel-schema
+"$SCRIPT_DIR/checks.sh" otel-module
 (cd otel && GOWORK=off "$GO" test ./...)
 "$SCRIPT_DIR/modules.sh" vet
-V="$V" "$SCRIPT_DIR/otel-consumer.sh"
 V="$V" "$SCRIPT_DIR/i18n-consumer.sh"
 
 tags=("$V")
@@ -43,6 +38,7 @@ for tag in "${tags[@]}"; do
 	git rev-parse -q --verify "refs/tags/$tag" >/dev/null || git tag -a "$tag" -m "$tag"
 done
 git push origin --atomic "${tags[@]}"
+V="$V" "$SCRIPT_DIR/otel-consumer.sh"
 
 echo consumers:
 echo "  go get $VV_MODULE@$V"

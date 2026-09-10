@@ -1,22 +1,20 @@
 # otel (vvotel)
 
-`github.com/frostgrove/vv/otel` (package `vvotel`) provides optional
-OpenTelemetry adapters. Its current runtime adapters cover `port.Service`,
-`storage.Store`, `cache.Observer` and `cachememory.Observer`.
+`github.com/frostgrove/vv/otel` (package `vvotel`) provides optional,
+composable OpenTelemetry adapters for Frostgrove service, storage, cache,
+authentication, health, runtime, remote, CRUD and durable-job boundaries.
 
-Current production code imports only the stable OpenTelemetry `trace`, `metric`,
-`attribute` and `codes` API packages. [[D-128]] also permits `propagation`, but its
-W3C Trace Context use belongs to the still-planned durable-jobs adapters. The
-module imports no SDK, exporter, Collector client, contrib instrumentation,
-`otelslog`, OTel Logs API or database-driver bridge. It borrows providers and
-leaves SDK bootstrap, native instrumentation, export, flush and shutdown to the
-application.
+Production code imports only stable OpenTelemetry API packages, including W3C
+Trace Context propagation for durable jobs. The module imports no SDK, exporter,
+Collector client, contrib instrumentation, `otelslog`, OTel Logs API or database
+driver bridge. It borrows providers and leaves SDK bootstrap, native
+instrumentation, export policy, flush and shutdown to the application.
 
 The current generated contract is `ContractVersion = vv-otel/v2`; the
 instrumentation scope is `github.com/frostgrove/vv/otel` at
 `ScopeVersion = v0.1.0`. The checked-in registry, generated Go schema and wire
-manifest contain 59 stable signal IDs. Six are `implemented`; 53 are `planned`
-and are not emitted yet. The registry is the source of truth for names,
+manifest contain 59 stable signal IDs, all with `implemented` availability. The
+registry is the source of truth for names,
 mappings, privacy classes, cardinality bounds, availability and migration
 metadata; see [otel-spec.md](../otel-spec.md).
 
@@ -26,9 +24,22 @@ metadata; see [otel-spec.md](../otel-spec.md).
   `metric.MeterProvider`;
 - closed per-signal selection through `Config.Disable` and eager fail-fast
   construction of all enabled provider-compatible metric instruments;
-- `vvotel.Service` generic middleware for `port.Service`, emitting INTERNAL spans (`vv.command <op>`) and recording duration histogram (`vv.command.duration`);
-- `vvotel.Store` middleware for `storage.Store`, emitting INTERNAL spans (`vv.storage <op>`);
-- `vvotel.Cache` and `vvotel.CacheMemory` terminal event observers recording `vv.cache.operations` counters and optional span events;
+- inference-friendly `vvotel.WrapService` and the lower-level `vvotel.Service`
+  middleware for all `port.Service` commands;
+- `vvotel.Store` for all `storage.Store` operations, including duration,
+  successful persisted-size and cleanup-result measurements;
+- opt-in `vvotel.WithStorageStreams` for lazy reader lifetime, terminal outcome
+  and actual-byte telemetry, with `vvotel.StorageStream.Unwrap` as the raw escape;
+- `vvotel.Cache` and `vvotel.CacheMemory` terminal observers;
+- explicit `vvotel.CacheMemoryStats` and `vvotel.MustCacheMemoryStats` aggregate
+  registration over 1–64 in-process memory backends;
+- `vvotel.Auth`, `vvotel.AuthEvents`, `vvotel.Authenticator`, `vvotel.Health`,
+  `vvotel.Runtime`, `vvotel.Periodic` and `vvotel.Remote` adapters;
+- `vvotel.Source` for direct CRUD source, transaction, replica and admitted
+  native-bulk boundaries;
+- `vvotel.JobContext`, `vvotel.JobIdentity`, all four enqueue helpers,
+  `vvotel.Job`, `vvotel.JobAdapter`, `vvotel.Workers` and `vvotel.Scheduler` for
+  durable propagation and producer/consumer/control-plane telemetry;
 - `vvotel.TraceHandler`, an independent stdlib `slog.Handler` decorator that
   adds an all-or-none `trace_id`/`span_id`/`trace_flags` triplet from a valid
   context without exporting logs or overwriting caller-owned fields;
@@ -38,12 +49,10 @@ metadata; see [otel-spec.md](../otel-spec.md).
 - generated allow-list admission before every emitting OTel call, privacy-safe
   error classification, and bounded cardinality guarantees.
 
-Those four adapters emit exactly the six signals marked `implemented`: command
-span/duration, storage span, cache operation count, cache facade event and cache
-backend event. The other 53 descriptors remain non-emitting, but their enabled
-metric instruments are assembled eagerly so a broken provider fails at startup.
-No observable callback is registered by `New`; aggregate cache-memory callback
-registration remains a separate planned operation.
+All 59 descriptors have an emitting adapter. Enabled metric instruments are
+assembled eagerly so a broken provider fails at startup. `New` registers no
+observable callback; cache-memory gauges begin only after the explicit
+`CacheMemoryStats` call and stop after its returned registration is unregistered.
 
 `Disable: vvotel.Signals{vvotel.SignalX, ...}` removes individual semantic
 signals. Unknown and duplicate explicit IDs fail even when `Disabled` is true.
@@ -59,10 +68,10 @@ API. Provider and instrument failures return a redacted `*AssemblyError` that
 supports `errors.Is`; `Signal`, `Provider` and `SignalName` identify only the
 closed registry location. Only a constructor-returned error is unwrapped.
 
-Planned signal ID 5, `storage_operation_bytes`, has only successful `put/ok` and
-`stage/ok` variants. It will record persisted size from the returned
-`Info.Size` or `Staged.Info.Size`; it will never wrap or read the source and
-will not claim to measure bytes actually consumed from the reader.
+Implemented signal ID 5, `storage_operation_bytes`, has only successful
+`put/ok` and `stage/ok` variants. It records persisted size from returned
+`Info.Size` or `Staged.Info.Size`; it never wraps or reads the source and does
+not claim to measure bytes consumed from the reader.
 
 `ResourceName` is an optional trace-only `ApprovedName`. String literals stay
 concise; dynamic values use `vvotel.ApproveName` or
@@ -82,9 +91,14 @@ Business panics are recorded and re-panicked unchanged; `runtime.Goexit` ends a
 span as `goroutine_exit` without an `error.type` or incomplete-operation metric.
 
 The application owns Resource, SDK providers, exporters, readers/processors,
-Views, sampling, native instrumentation, flush and shutdown. A runnable stdout
-SDK setup is in
-[`_examples/otel-sdk-bootstrap`](../../../_examples/otel-sdk-bootstrap/).
+Views, sampling, native instrumentation, export projection, flush and shutdown.
+Use the runnable
+[`_examples/otel-production`](../../../_examples/otel-production/) composition
+for OTLP and lifecycle ownership. The unpublished
+[`test/otelnative`](../../../test/otelnative/) package contains explicitly
+connected HTTP, Gin, Fiber, gRPC, HTTP-client, pgx, `database/sql`, pgxpool and
+Go-runtime recipes and privacy canaries. `vvotel` never owns those contrib
+integrations.
 
 Maintenance uses `make generate` and `make check-otel-schema`; the latter is a
 read-only freshness gate. `make version V=v0.1.0` updates the registry scope
@@ -101,10 +115,7 @@ telemetry := vvotel.Must(vvotel.Config{
     ResourceName:   "products",
 })
 
-service := port.ChainService[Product, string, Product](
-    baseService,
-    vvotel.Service[Product, string, Product](telemetry),
-)
+service := vvotel.WrapService(telemetry, baseService)
 
 store := storage.Chain(
     baseStore,
@@ -116,8 +127,29 @@ cacheRuntime.Observer = cache.MustObservers(
     vvotel.Cache(telemetry, vvotel.WithCacheSpanEvents(true)),
 )
 
+memoryObserver := vvotel.CacheMemory(telemetry, vvotel.WithCacheMemorySpanEvents(true))
+memoryPrimary, err := cachememory.New(primaryLimits, cachememory.WithObserver(memoryObserver))
+memorySecondary, err := cachememory.New(secondaryLimits, cachememory.WithObserver(memoryObserver))
+
+stats := vvotel.MustCacheMemoryStats(telemetry, memoryPrimary, memorySecondary)
+defer stats.Unregister()
+
 logger := slog.New(vvotel.TraceHandler(slog.NewJSONHandler(os.Stdout, nil)))
 ```
+
+The direct wrappers are the short path:
+
+```go
+source = vvotel.Source(telemetry, source)
+authenticator = vvotel.Authenticator(telemetry, authenticator)
+transport = vvotel.Remote(telemetry, transport)
+pass = vvotel.Periodic(telemetry, pass)
+```
+
+The original middleware/observer APIs remain available when ordering or signal
+selection needs to be explicit. Native transport and database instrumentation
+receives the same application-owned providers; it is not hidden inside these
+wrappers.
 
 For a dynamic logical name:
 
@@ -133,8 +165,20 @@ telemetry := vvotel.Must(vvotel.Config{
 ```
 
 Use `New` instead of `Must` when the composition root returns startup errors.
-`vvotel` does not register callbacks, roll back providers, start goroutines or
-own shutdown during assembly.
+`New` does not register callbacks, roll back providers, start goroutines or own
+shutdown during assembly. `CacheMemoryStats` is the separate fallible callback
+registration and returns its own explicit, idempotent cleanup handle. Validation,
+duplicate registration and native callback failures match `ErrAssembly` plus
+`ErrInvalidRegistration`, `ErrDuplicateRegistration` or
+`ErrCallbackRegistration`; cleanup failures additionally match
+`ErrCallbackUnregister`. `MustCacheMemoryStats` panics with that same typed
+framework error.
+
+Collector, sampling, PromQL and validation recipes are under
+[`docs/operations/otel`](../../operations/otel/). Native HTTP, gRPC, database
+and runtime composition is documented in
+[`test/otelnative`](../../../test/otelnative/); production SDK/export lifecycle
+is in [`_examples/otel-production`](../../../_examples/otel-production/).
 
 For OTel log export, the application creates its native `otelslog` handler,
 wraps that handler with its own redaction policy, then passes the result to

@@ -11,6 +11,7 @@ import (
 	pathpkg "path"
 	"slices"
 	"strings"
+	"unicode/utf8"
 
 	jsonv2 "github.com/go-json-experiment/json"
 	"github.com/go-json-experiment/json/jsontext"
@@ -24,11 +25,10 @@ const (
 	usageSchemaV3 = "frostgrove.i18n.usage/v3"
 	usageSchema   = "frostgrove.i18n.usage/v4"
 
-	maximumUsageJSONDepth    = 16
-	maximumUsageJSONMembers  = 1 << 22
-	maximumUsageJSONString   = 4 << 20
-	maximumUsageJSONMaterial = 64 << 20
-	maximumUsageCoordinate   = 1 << 30
+	maximumUsageJSONDepth      = 16
+	maximumUsageJSONMembers    = 1 << 22
+	maximumUsageCoordinate     = 1 << 30
+	maximumUsageScopeAtomBytes = 1024
 )
 
 var errCommandJSONTooLarge = errors.New("command JSON exceeds the output limit")
@@ -82,11 +82,14 @@ func encodeUsageBoundedContext(ctx context.Context, usage i18n.UsageManifest, ma
 	if maximum < 1 || maximum > maximumCommandOutputBytes {
 		return nil, fmt.Errorf("encode usage manifest: output limit %d is outside supported bounds", maximum)
 	}
+	limits := i18n.DefaultUsageLimits()
+	if err := preflightUsageManifestCardinality(usage, limits); err != nil {
+		return nil, err
+	}
 	if err := preflightUsageOutputContext(ctx, usage, maximum); err != nil {
 		return nil, err
 	}
-	limits := i18n.DefaultUsageLimits()
-	if err := preflightUsageManifestCardinality(usage, limits); err != nil {
+	if err := validateUsageDocumentMaterial(ctx, usage, limits); err != nil {
 		return nil, err
 	}
 	keys := slices.Clone(usage.Keys)
@@ -129,13 +132,21 @@ func encodeUsageBoundedContext(ctx context.Context, usage i18n.UsageManifest, ma
 	}
 	canonical := i18n.UsageManifest{Keys: keys, Dynamic: dynamic, Occurrences: occurrences, GoScope: scope, Complete: usage.Complete}
 	if canonical.GoScope != nil && canonical.GoScope.Analyzer == i18n.GoUsageAnalyzerV2 {
-		canonical.GoScope.SourceDigest = i18n.ExpectedUsageSourceDigest(*canonical.GoScope)
+		sourceDigest, err := i18n.ExpectedUsageSourceDigestContext(ctx, *canonical.GoScope)
+		if err != nil {
+			return nil, err
+		}
+		canonical.GoScope.SourceDigest = sourceDigest
 	}
-	if err := validateUsageDocumentScope(canonical.GoScope, usage.Complete, limits); err != nil {
+	if err := validateUsageDocumentScope(ctx, canonical.GoScope, usage.Complete, limits); err != nil {
 		return nil, err
 	}
-	canonical.ManifestDigest = i18n.ExpectedUsageManifestDigest(canonical)
-	if err := validateUsageDocument(canonical, limits); err != nil {
+	manifestDigest, err := i18n.ExpectedUsageManifestDigestContext(ctx, canonical)
+	if err != nil {
+		return nil, err
+	}
+	canonical.ManifestDigest = manifestDigest
+	if err := validateUsageDocument(ctx, canonical, limits); err != nil {
 		return nil, err
 	}
 	document := usageDocument{
@@ -146,52 +157,28 @@ func encodeUsageBoundedContext(ctx context.Context, usage i18n.UsageManifest, ma
 }
 
 func preflightUsageOutputContext(ctx context.Context, usage i18n.UsageManifest, maximum int) error {
-	remaining := maximum - 64
-	consume := func(size int) bool {
-		if size < 0 || size > remaining {
-			return false
-		}
-		remaining -= size
-		return true
+	if err := ctx.Err(); err != nil {
+		return err
 	}
-	if remaining < 0 {
-		return fmt.Errorf("encode usage manifest: %w", errCommandJSONTooLarge)
+	const digest = "0000000000000000000000000000000000000000000000000000000000000000"
+	var scope *i18n.GoUsageScope
+	if usage.GoScope != nil {
+		cloned := *usage.GoScope
+		if cloned.Analyzer == i18n.GoUsageAnalyzerV2 {
+			cloned.SourceDigest = digest
+		}
+		scope = &cloned
 	}
-	for _, key := range usage.Keys {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		if !consume(len(key) + 2) {
-			return fmt.Errorf("encode usage manifest: %w", errCommandJSONTooLarge)
-		}
+	document := usageDocument{
+		Schema: usageSchema, Keys: usage.Keys, Dynamic: usage.Dynamic, Occurrences: usage.Occurrences,
+		GoScope: scope, ManifestDigest: digest, Complete: usage.Complete,
 	}
-	for _, dynamic := range usage.Dynamic {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		if !consume(len(dynamic.Domain) + len(dynamic.Prefix) + 2) {
-			return fmt.Errorf("encode usage manifest: %w", errCommandJSONTooLarge)
-		}
+	counter := commandJSONCounter{ctx: ctx, maximum: maximum, nextPoll: 64 << 10}
+	if err := jsonv2.MarshalWrite(&counter, document, jsonv2.Deterministic(true), jsontext.WithIndent("  ")); err != nil {
+		return fmt.Errorf("encode usage manifest: %w", err)
 	}
-	for _, occurrence := range usage.Occurrences {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		if !consume(len(occurrence.Key) + len(occurrence.Domain) + len(occurrence.Prefix) + len(occurrence.Path) + 2) {
-			return fmt.Errorf("encode usage manifest: %w", errCommandJSONTooLarge)
-		}
-	}
-	if usage.GoScope == nil {
-		return ctx.Err()
-	}
-	scope := usage.GoScope
-	if !consume(len(scope.Analyzer) + len(scope.GOOS) + len(scope.GOARCH) + len(scope.Compiler) + len(scope.GoVersion) + len(scope.Toolchain) + len(scope.GoExperiment) + len(scope.GoFlags) + len(scope.GoWork) + len(scope.GoEnv) + len(scope.SourceDigest)) {
-		return fmt.Errorf("encode usage manifest: %w", errCommandJSONTooLarge)
-	}
-	for _, count := range []int{len(scope.Environment), len(scope.BuildTags), len(scope.ToolTags), len(scope.ReleaseTags), len(scope.Roots), len(scope.Files), len(scope.Metadata)} {
-		if !consume(count * 2) {
-			return fmt.Errorf("encode usage manifest: %w", errCommandJSONTooLarge)
-		}
+	if _, err := counter.Write([]byte{'\n'}); err != nil {
+		return fmt.Errorf("encode usage manifest: %w", err)
 	}
 	return ctx.Err()
 }
@@ -203,6 +190,12 @@ func decodeUsage(raw []byte) (i18n.UsageManifest, error) {
 func decodeUsageContext(ctx context.Context, raw []byte) (i18n.UsageManifest, error) {
 	if ctx == nil {
 		return i18n.UsageManifest{}, errors.New("decode usage manifest: context is nil")
+	}
+	if err := ctx.Err(); err != nil {
+		return i18n.UsageManifest{}, err
+	}
+	if !utf8.Valid(raw) {
+		return i18n.UsageManifest{}, errors.New("decode usage manifest: input is not valid UTF-8")
 	}
 	limits := i18n.DefaultUsageLimits()
 	if err := preflightUsageJSON(ctx, raw, usageJSONLimitsFrom(limits)); err != nil {
@@ -256,15 +249,19 @@ func decodeUsageContext(ctx context.Context, raw []byte) (i18n.UsageManifest, er
 		if err := ctx.Err(); err != nil {
 			return i18n.UsageManifest{}, err
 		}
-		if err := validateUsageDocumentScope(document.GoScope, document.Complete, limits); err != nil {
+		if err := validateUsageDocumentScope(ctx, document.GoScope, document.Complete, limits); err != nil {
 			return i18n.UsageManifest{}, err
 		}
 		manifest := i18n.UsageManifest{Keys: document.Keys, Dynamic: document.Dynamic, Occurrences: document.Occurrences,
 			GoScope: document.GoScope, ManifestDigest: document.ManifestDigest, Complete: document.Complete}
-		if err := validateUsageDocument(manifest, limits); err != nil {
+		if err := validateUsageDocument(ctx, manifest, limits); err != nil {
 			return i18n.UsageManifest{}, err
 		}
-		if manifest.ManifestDigest != i18n.ExpectedUsageManifestDigest(manifest) {
+		expected, err := i18n.ExpectedUsageManifestDigestContext(ctx, manifest)
+		if err != nil {
+			return i18n.UsageManifest{}, err
+		}
+		if manifest.ManifestDigest != expected {
 			return i18n.UsageManifest{}, errors.New("usage manifest digest does not match its canonical content")
 		}
 		return manifest, nil
@@ -318,19 +315,10 @@ func preflightUsageManifestCardinality(manifest i18n.UsageManifest, limits i18n.
 	return nil
 }
 
-func canonicalUsageTags(tags []string, maximum int) bool {
-	if !slices.IsSorted(tags) {
-		return false
+func validateUsageDocumentScope(ctx context.Context, scope *i18n.GoUsageScope, complete bool, limits i18n.UsageLimits) error {
+	if ctx == nil {
+		return errors.New("usage manifest validation context is nil")
 	}
-	for index, tag := range tags {
-		if tag == "" || len(tag) > maximum || strings.ContainsAny(tag, " \t\r\n/\\") || index != 0 && tag == tags[index-1] {
-			return false
-		}
-	}
-	return true
-}
-
-func validateUsageDocumentScope(scope *i18n.GoUsageScope, complete bool, limits i18n.UsageLimits) error {
 	if scope == nil {
 		if complete {
 			return errors.New("complete usage manifest requires Go scope provenance")
@@ -339,7 +327,6 @@ func validateUsageDocumentScope(scope *i18n.GoUsageScope, complete bool, limits 
 	}
 	decodedDigest, digestErr := hex.DecodeString(scope.SourceDigest)
 	if scope.Analyzer != i18n.GoUsageAnalyzerV2 || scope.GOOS == "" || scope.GOARCH == "" || scope.Compiler == "" || scope.GoVersion == "" || scope.Toolchain == "" ||
-		(scope.GoWork != "off" && scope.GoWork != "active" && scope.GoWork != "mixed") || (scope.GoEnv != "off" && scope.GoEnv != "active") ||
 		len(scope.Roots) == 0 || (complete && len(scope.Files) == 0) || len(scope.Metadata) == 0 ||
 		digestErr != nil || len(decodedDigest) != 32 || strings.ToLower(scope.SourceDigest) != scope.SourceDigest {
 		return errors.New("usage manifest has incomplete Go scope provenance")
@@ -347,16 +334,54 @@ func validateUsageDocumentScope(scope *i18n.GoUsageScope, complete bool, limits 
 	if scope.SelectedFiles < 0 || scope.ExcludedFiles < 0 || scope.SelectedFiles > limits.MaxFiles || scope.ExcludedFiles > limits.MaxFiles-scope.SelectedFiles {
 		return errors.New("usage manifest has invalid Go source counts")
 	}
+	atomMaximum := min(limits.MaxStringBytes, maximumUsageScopeAtomBytes)
+	for _, field := range []struct {
+		name  string
+		value string
+	}{
+		{name: "goos", value: scope.GOOS},
+		{name: "goarch", value: scope.GOARCH},
+		{name: "compiler", value: scope.Compiler},
+	} {
+		if !validUsageDocumentScopeAtom(field.value, atomMaximum) {
+			return fmt.Errorf("usage manifest Go scope %s is invalid", field.name)
+		}
+	}
+	for _, field := range []struct {
+		name  string
+		value string
+	}{
+		{name: "go_version", value: scope.GoVersion},
+		{name: "toolchain", value: scope.Toolchain},
+		{name: "go_experiment", value: scope.GoExperiment},
+		{name: "go_flags", value: scope.GoFlags},
+		{name: "go_work", value: scope.GoWork},
+		{name: "go_env", value: scope.GoEnv},
+	} {
+		if !validUsageDocumentScopeText(field.value, limits.MaxStringBytes) {
+			return fmt.Errorf("usage manifest Go scope %s is invalid", field.name)
+		}
+	}
+	if (scope.GoWork != "off" && scope.GoWork != "active" && scope.GoWork != "mixed") || (scope.GoEnv != "off" && scope.GoEnv != "active") {
+		return errors.New("usage manifest has incomplete Go scope provenance")
+	}
 	if len(scope.Roots) > limits.MaxRoots || len(scope.BuildTags) > limits.MaxTags || len(scope.ToolTags) > limits.MaxTags || len(scope.ReleaseTags) > limits.MaxTags || len(scope.Environment) > limits.MaxEnvironment {
 		return errors.New("usage manifest Go scope exceeds configured bounds")
 	}
 	if len(scope.Files) > limits.MaxFiles || len(scope.Metadata) > limits.MaxMetadata {
 		return errors.New("usage manifest ledgers exceed configured bounds")
 	}
-	if scope.SourceDigest != i18n.ExpectedUsageSourceDigest(*scope) {
+	expectedSourceDigest, err := i18n.ExpectedUsageSourceDigestContext(ctx, *scope)
+	if err != nil {
+		return err
+	}
+	if scope.SourceDigest != expectedSourceDigest {
 		return errors.New("usage manifest source digest does not match its ledger")
 	}
 	for _, root := range scope.Roots {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if !root.Kind.Valid() || root.Path == "" {
 			return errors.New("usage manifest has invalid Go roots")
 		}
@@ -372,21 +397,51 @@ func validateUsageDocumentScope(scope *i18n.GoUsageScope, complete bool, limits 
 	}) || !slices.IsSortedFunc(scope.Files, compareUsageFileDocument) || !slices.IsSortedFunc(scope.Metadata, compareUsageMetadataDocument) {
 		return errors.New("usage manifest provenance ledgers are not sorted")
 	}
-	for _, tags := range [][]string{scope.BuildTags, scope.ToolTags, scope.ReleaseTags} {
-		if !canonicalUsageTags(tags, limits.MaxStringBytes) {
-			return errors.New("usage manifest tags are invalid, repeated, or not sorted")
+	for _, ledger := range []struct {
+		name string
+		tags []string
+	}{
+		{name: "build_tags", tags: scope.BuildTags},
+		{name: "tool_tags", tags: scope.ToolTags},
+		{name: "release_tags", tags: scope.ReleaseTags},
+	} {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if !slices.IsSorted(ledger.tags) {
+			return fmt.Errorf("usage manifest Go scope %s are not sorted", ledger.name)
+		}
+		for index, tag := range ledger.tags {
+			if !validUsageDocumentScopeAtom(tag, atomMaximum) {
+				return fmt.Errorf("usage manifest Go scope %s[%d] is invalid", ledger.name, index)
+			}
+			if index != 0 && tag == ledger.tags[index-1] {
+				return fmt.Errorf("usage manifest Go scope %s[%d] is repeated", ledger.name, index)
+			}
 		}
 	}
 	if !slices.IsSortedFunc(scope.Environment, func(left, right i18n.UsageSetting) int { return strings.Compare(left.Name, right.Name) }) || len(scope.Environment) == 0 {
 		return errors.New("usage manifest Go environment is empty or not sorted")
 	}
 	for index, setting := range scope.Environment {
-		if setting.Name == "" || strings.ContainsAny(setting.Name, " \t\r\n/\\") || index != 0 && setting.Name == scope.Environment[index-1].Name {
-			return errors.New("usage manifest has invalid or repeated Go environment settings")
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if !validUsageDocumentScopeAtom(setting.Name, atomMaximum) {
+			return fmt.Errorf("usage manifest Go environment[%d].name is invalid", index)
+		}
+		if !validUsageDocumentScopeText(setting.Value, limits.MaxStringBytes) {
+			return fmt.Errorf("usage manifest Go environment[%d].value is invalid", index)
+		}
+		if index != 0 && setting.Name == scope.Environment[index-1].Name {
+			return fmt.Errorf("usage manifest has repeated Go environment setting at index %d", index)
 		}
 	}
 	settings := make(map[string]string, len(scope.Environment))
 	for _, setting := range scope.Environment {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		settings[setting.Name] = setting.Value
 	}
 	if settings["GOOS"] != scope.GOOS || settings["GOARCH"] != scope.GOARCH || settings["GOVERSION"] != scope.GoVersion ||
@@ -396,7 +451,10 @@ func validateUsageDocumentScope(scope *i18n.GoUsageScope, complete bool, limits 
 	}
 	roots := make(map[string]i18n.UsageRootKind, len(scope.Roots))
 	for index, root := range scope.Roots {
-		if !validUsageDocumentPath(root.Path) || index != 0 && root == scope.Roots[index-1] {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if !validUsageDocumentPath(root.Path, limits.MaxStringBytes) || index != 0 && root == scope.Roots[index-1] {
 			return errors.New("usage manifest has invalid or repeated Go roots")
 		}
 		roots[root.Path] = root.Kind
@@ -404,7 +462,12 @@ func validateUsageDocumentScope(scope *i18n.GoUsageScope, complete bool, limits 
 	selected := 0
 	excluded := 0
 	for index, file := range scope.Files {
-		if _, ok := roots[file.Root]; !ok || !validUsageDocumentPath(file.Path) || file.LogicalPath != file.Root+"/"+file.Path || !strings.HasSuffix(file.LogicalPath, ".go") || !validUsageDocumentSHA(file.SHA256) {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if _, ok := roots[file.Root]; !ok || !validUsageDocumentPath(file.Path, limits.MaxStringBytes) ||
+			!validUsageDocumentPath(file.LogicalPath, limits.MaxStringBytes) || file.LogicalPath != file.Root+"/"+file.Path ||
+			!strings.HasSuffix(file.LogicalPath, ".go") || !validUsageDocumentSHA(file.SHA256) {
 			return errors.New("usage manifest has a file outside its declared root")
 		}
 		if index != 0 && file.Root == scope.Files[index-1].Root && file.Path == scope.Files[index-1].Path {
@@ -420,8 +483,17 @@ func validateUsageDocumentScope(scope *i18n.GoUsageScope, complete bool, limits 
 		return errors.New("usage manifest Go source counts do not match its ledger")
 	}
 	for index, metadata := range scope.Metadata {
-		if metadata.Kind == "" || strings.ContainsAny(metadata.Kind, " \t\r\n/\\") || !validUsageDocumentPath(metadata.Path) || !validUsageDocumentSHA(metadata.SHA256) {
-			return errors.New("usage manifest has invalid Go metadata")
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if !validUsageDocumentScopeAtom(metadata.Kind, atomMaximum) {
+			return fmt.Errorf("usage manifest Go metadata[%d].kind is invalid", index)
+		}
+		if !validUsageDocumentPath(metadata.Path, limits.MaxStringBytes) {
+			return fmt.Errorf("usage manifest Go metadata[%d].path is invalid", index)
+		}
+		if !validUsageDocumentSHA(metadata.SHA256) {
+			return fmt.Errorf("usage manifest Go metadata[%d].sha256 is invalid", index)
 		}
 		if index != 0 && metadata.Kind == scope.Metadata[index-1].Kind && metadata.Path == scope.Metadata[index-1].Path {
 			return errors.New("usage manifest has repeated Go metadata")
@@ -430,12 +502,15 @@ func validateUsageDocumentScope(scope *i18n.GoUsageScope, complete bool, limits 
 	return nil
 }
 
-func validateUsageDocument(manifest i18n.UsageManifest, limits i18n.UsageLimits) error {
-	if err := validateUsageDocumentScope(manifest.GoScope, manifest.Complete, limits); err != nil {
+func validateUsageDocument(ctx context.Context, manifest i18n.UsageManifest, limits i18n.UsageLimits) error {
+	if err := preflightUsageManifestCardinality(manifest, limits); err != nil {
 		return err
 	}
-	if manifest.GoScope == nil || manifest.GoScope.Analyzer != i18n.GoUsageAnalyzerV2 {
-		return nil
+	if err := validateUsageDocumentMaterial(ctx, manifest, limits); err != nil {
+		return err
+	}
+	if err := validateUsageDocumentScope(ctx, manifest.GoScope, manifest.Complete, limits); err != nil {
+		return err
 	}
 	if !slices.IsSorted(manifest.Keys) || !slices.IsSortedFunc(manifest.Dynamic, func(left, right i18n.DynamicUsage) int {
 		if value := strings.Compare(left.Domain, right.Domain); value != 0 {
@@ -447,6 +522,9 @@ func validateUsageDocument(manifest i18n.UsageManifest, limits i18n.UsageLimits)
 	}
 	keys := make(map[i18n.Key]bool, len(manifest.Keys))
 	for _, key := range manifest.Keys {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if keys[key] {
 			return errors.New("usage manifest has repeated keys")
 		}
@@ -454,21 +532,37 @@ func validateUsageDocument(manifest i18n.UsageManifest, limits i18n.UsageLimits)
 	}
 	dynamic := make(map[string]bool, len(manifest.Dynamic))
 	for _, value := range manifest.Dynamic {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		identity := value.Domain + "\x00" + value.Prefix
 		if dynamic[identity] {
 			return errors.New("usage manifest has repeated dynamic usage")
 		}
 		dynamic[identity] = true
 	}
-	selected := make(map[string]bool, manifest.GoScope.SelectedFiles)
-	for _, file := range manifest.GoScope.Files {
-		selected[file.LogicalPath] = file.Selected
+	scoped := manifest.GoScope != nil && manifest.GoScope.Analyzer == i18n.GoUsageAnalyzerV2
+	selected := make(map[string]bool)
+	if scoped {
+		selected = make(map[string]bool, manifest.GoScope.SelectedFiles)
+		for _, file := range manifest.GoScope.Files {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			selected[file.LogicalPath] = file.Selected
+		}
 	}
 	coordinates := make(map[string]bool, len(manifest.Occurrences))
 	occurrenceKeys := make(map[i18n.Key]bool, len(manifest.Keys))
 	occurrenceDynamic := make(map[string]bool, len(manifest.Dynamic))
 	for _, occurrence := range manifest.Occurrences {
-		if !selected[occurrence.Path] {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if !validUsageDocumentPath(occurrence.Path, limits.MaxStringBytes) || !strings.HasSuffix(occurrence.Path, ".go") {
+			return errors.New("usage occurrence source path is invalid")
+		}
+		if scoped && !selected[occurrence.Path] {
 			return errors.New("usage occurrence is not backed by a selected source file")
 		}
 		exact := occurrence.Key != ""
@@ -495,14 +589,22 @@ func validateUsageDocument(manifest i18n.UsageManifest, limits i18n.UsageLimits)
 		}
 		coordinates[coordinate] = true
 	}
-	for _, key := range manifest.Keys {
-		if !occurrenceKeys[key] {
-			return errors.New("usage key has no source occurrence")
+	if scoped {
+		for _, key := range manifest.Keys {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			if !occurrenceKeys[key] {
+				return errors.New("usage key has no source occurrence")
+			}
 		}
-	}
-	for _, value := range manifest.Dynamic {
-		if !occurrenceDynamic[value.Domain+"\x00"+value.Prefix] {
-			return errors.New("dynamic usage has no source occurrence")
+		for _, value := range manifest.Dynamic {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			if !occurrenceDynamic[value.Domain+"\x00"+value.Prefix] {
+				return errors.New("dynamic usage has no source occurrence")
+			}
 		}
 	}
 	if !validUsageDocumentSHA(manifest.ManifestDigest) {
@@ -511,9 +613,147 @@ func validateUsageDocument(manifest i18n.UsageManifest, limits i18n.UsageLimits)
 	return nil
 }
 
-func validUsageDocumentPath(value string) bool {
-	return value != "" && len(value) <= maximumUsageJSONString && !pathpkg.IsAbs(value) && !strings.ContainsAny(value, "\\:\r\n") &&
+func validateUsageDocumentMaterial(ctx context.Context, manifest i18n.UsageManifest, limits i18n.UsageLimits) error {
+	if ctx == nil {
+		return errors.New("usage manifest validation context is nil")
+	}
+	material := 0
+	add := func(value string) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if len(value) > limits.MaxStringBytes || len(value) > limits.MaxMaterialBytes-material {
+			return errors.New("usage manifest string material exceeds configured bounds")
+		}
+		material += len(value)
+		return nil
+	}
+	for _, key := range manifest.Keys {
+		if err := add(string(key)); err != nil {
+			return err
+		}
+	}
+	for _, dynamic := range manifest.Dynamic {
+		if err := add(dynamic.Domain); err != nil {
+			return err
+		}
+		if err := add(dynamic.Prefix); err != nil {
+			return err
+		}
+	}
+	for _, occurrence := range manifest.Occurrences {
+		for _, value := range []string{string(occurrence.Key), occurrence.Domain, occurrence.Prefix, occurrence.Path} {
+			if err := add(value); err != nil {
+				return err
+			}
+		}
+	}
+	if manifest.GoScope != nil {
+		scope := manifest.GoScope
+		for _, value := range []string{scope.Analyzer, scope.GOOS, scope.GOARCH, scope.Compiler, scope.GoVersion, scope.Toolchain, scope.GoExperiment, scope.GoFlags, scope.GoWork, scope.GoEnv} {
+			if err := add(value); err != nil {
+				return err
+			}
+		}
+		for _, tags := range [][]string{scope.BuildTags, scope.ToolTags, scope.ReleaseTags} {
+			for _, tag := range tags {
+				if err := add(tag); err != nil {
+					return err
+				}
+			}
+		}
+		for _, setting := range scope.Environment {
+			if err := add(setting.Name); err != nil {
+				return err
+			}
+			if err := add(setting.Value); err != nil {
+				return err
+			}
+		}
+		for _, root := range scope.Roots {
+			if err := add(root.Path); err != nil {
+				return err
+			}
+		}
+		for _, file := range scope.Files {
+			for _, value := range []string{file.Root, file.Path, file.LogicalPath, file.SHA256} {
+				if err := add(value); err != nil {
+					return err
+				}
+			}
+		}
+		for _, metadata := range scope.Metadata {
+			for _, value := range []string{metadata.Kind, metadata.Path, metadata.SHA256} {
+				if err := add(value); err != nil {
+					return err
+				}
+			}
+		}
+		if err := add(scope.SourceDigest); err != nil {
+			return err
+		}
+	}
+	return add(manifest.ManifestDigest)
+}
+
+func validUsageDocumentPath(value string, maximum int) bool {
+	return value != "" && len(value) <= maximum && utf8.ValidString(value) && !pathpkg.IsAbs(value) && !strings.ContainsAny(value, "\\:") &&
+		!usageDocumentHasControl(value) && !usageDocumentHasUnsafeAuthoredBidiControls(value) &&
 		pathpkg.Clean(value) == value && value != "." && value != ".." && !strings.HasPrefix(value, "../")
+}
+
+func validUsageDocumentScopeAtom(value string, maximum int) bool {
+	if value == "" || !validUsageDocumentScopeText(value, maximum) {
+		return false
+	}
+	for _, character := range value {
+		if character <= 0x20 || character == '/' || character == '\\' {
+			return false
+		}
+	}
+	return true
+}
+
+func validUsageDocumentScopeText(value string, maximum int) bool {
+	if len(value) > maximum || !utf8.ValidString(value) || usageDocumentHasUnsafeAuthoredBidiControls(value) {
+		return false
+	}
+	for _, character := range value {
+		if character < 0x20 && character != '\t' || character == 0x7f {
+			return false
+		}
+	}
+	return true
+}
+
+func usageDocumentHasControl(value string) bool {
+	for _, character := range value {
+		if character < 0x20 || character == 0x7f {
+			return true
+		}
+	}
+	return false
+}
+
+func usageDocumentHasUnsafeAuthoredBidiControls(value string) bool {
+	depth := 0
+	for _, character := range value {
+		switch {
+		case character >= '\u202a' && character <= '\u202e':
+			return true
+		case character >= '\u2066' && character <= '\u2068':
+			depth++
+			if depth > 64 {
+				return true
+			}
+		case character == '\u2069':
+			if depth == 0 {
+				return true
+			}
+			depth--
+		}
+	}
+	return depth != 0
 }
 
 func validUsageDocumentSHA(value string) bool {
@@ -726,6 +966,27 @@ type commandJSONBuffer struct {
 	ctx     context.Context
 }
 
+type commandJSONCounter struct {
+	ctx      context.Context
+	maximum  int
+	count    int
+	nextPoll int
+}
+
+func (c *commandJSONCounter) Write(value []byte) (int, error) {
+	if len(value) > c.maximum-c.count {
+		return 0, errCommandJSONTooLarge
+	}
+	c.count += len(value)
+	if c.count >= c.nextPoll {
+		if err := c.ctx.Err(); err != nil {
+			return 0, err
+		}
+		c.nextPoll = c.count + 64<<10
+	}
+	return len(value), nil
+}
+
 func (b *commandJSONBuffer) Write(value []byte) (int, error) {
 	if b.ctx != nil {
 		if err := b.ctx.Err(); err != nil {
@@ -756,13 +1017,13 @@ func encodeCommandJSONBoundedContext(ctx context.Context, name string, value any
 	if maximum < 1 || maximum > maximumCommandOutputBytes {
 		return nil, fmt.Errorf("encode %s: output limit %d is outside supported bounds", name, maximum)
 	}
-	buffer := commandJSONBuffer{maximum: maximum - 1, ctx: ctx}
+	buffer := commandJSONBuffer{maximum: maximum, ctx: ctx}
 	err := jsonv2.MarshalWrite(&buffer, value, jsonv2.Deterministic(true), jsontext.WithIndent("  "))
 	if err != nil {
 		return nil, fmt.Errorf("encode %s: %w", name, err)
 	}
-	if err := ctx.Err(); err != nil {
-		return nil, err
+	if _, err := buffer.Write([]byte{'\n'}); err != nil {
+		return nil, fmt.Errorf("encode %s: %w", name, err)
 	}
-	return append(buffer.Bytes(), '\n'), nil
+	return buffer.Bytes(), nil
 }

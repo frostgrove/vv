@@ -2,6 +2,7 @@ package i18n
 
 import (
 	"context"
+	"reflect"
 	"testing"
 
 	"github.com/frostgrove/vv/errs"
@@ -28,6 +29,48 @@ func FuzzCatalogAndMF2ValidationNeverPanic(f *testing.F) {
 				Arguments: []ArgumentSpec{{Name: argument, Type: TypeText}},
 			}}}},
 		})
+	})
+}
+
+func FuzzUsageCheckNeverPanicsAndRemainsDeterministic(f *testing.F) {
+	spec := CatalogSpec{
+		Revision: "usage-fuzz/v1", SourceLocale: "en", DefaultLocale: "en", Supported: []string{"en"},
+		Modules: []Module{{Name: "app", Messages: []MessageSpec{{
+			ID: "notice", Revision: "notice/v1", Source: "Notice", Description: "Usage fuzz target.", Output: OutputPlain,
+		}}}},
+	}
+	if _, err := New(spec); err != nil {
+		f.Fatal(err)
+	}
+	f.Add("app.notice", "example.test/app/use.go", "edge", uint8(1), true, 8)
+	f.Add("\x00", "../bad.go", "edge", uint8(32), false, -1)
+	f.Fuzz(func(t *testing.T, key, path, tag string, count uint8, scoped bool, occurrenceLimit int) {
+		if len(key)+len(path)+len(tag) > 4096 {
+			return
+		}
+		usage := UsageManifest{}
+		if key != "" {
+			usage.Keys = []Key{Key(key)}
+		}
+		for index := 0; index < int(count); index++ {
+			usage.Occurrences = append(usage.Occurrences, UsageOccurrence{Key: Key(key), Path: path, Line: index + 1, Column: 1})
+		}
+		if scoped {
+			usage.GoScope = testGoUsageScope()
+			usage.GoScope.BuildTags = []string{tag, tag}
+			usage.GoScope.SourceDigest = ExpectedUsageSourceDigest(*usage.GoScope)
+			usage.Complete = true
+			usage.ManifestDigest = ExpectedUsageManifestDigest(usage)
+		}
+		policy := CheckPolicy{Usage: usage, UsageLimits: UsageLimits{MaxOccurrences: occurrenceLimit}, MaxFindings: 16}
+		first := Check(spec, policy)
+		second := Check(spec, policy)
+		if !reflect.DeepEqual(first, second) {
+			t.Fatalf("usage check is not deterministic:\n%+v\n%+v", first, second)
+		}
+		if len(first.Findings) > policy.MaxFindings {
+			t.Fatalf("usage check exceeded finding bound: %d", len(first.Findings))
+		}
 	})
 }
 

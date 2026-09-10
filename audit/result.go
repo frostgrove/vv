@@ -1,5 +1,7 @@
 package audit
 
+import "errors"
+
 type receipt struct {
 	disposition AppendDisposition
 	settlement  Settlement
@@ -43,11 +45,11 @@ func receiptFromAppend(result AppendResult, settlement Settlement, reconcile Rec
 	}}
 }
 
-func receiptFromStored(stored StoredHeader, settlement Settlement) Receipt {
+func receiptFromStored(stored StoredHeader, settlement Settlement, reconcile ReconcileKey) Receipt {
 	header := stored.Revision()
 	return Receipt{value: receipt{
 		disposition: Replayed, settlement: settlement,
-		revision: header.RevisionID, operation: header.OperationID,
+		revision: header.RevisionID, operation: header.OperationID, reconcile: reconcile,
 	}}
 }
 
@@ -122,6 +124,10 @@ type retryCarrier struct {
 
 func (e *retryCarrier) Error() string { return "audit: write requires recovery" }
 
+func (e *retryCarrier) Is(target error) bool {
+	return e != nil && errors.Is(e.err, target)
+}
+
 func RetryTokenOf(err error) (RetryToken, bool) {
 	carrier, ok := findErrorAs[*retryCarrier](err)
 	if !ok || carrier == nil || !carrier.token.value.reconcile.valid() {
@@ -132,8 +138,20 @@ func RetryTokenOf(err error) (RetryToken, bool) {
 
 func ReconcileKeyOf(err error) (ReconcileKey, bool) {
 	token, ok := RetryTokenOf(err)
+	if ok {
+		return token.ReconcileKey(), true
+	}
+	carrier, ok := findErrorAs[interface {
+		error
+		AuditReconcileKey() (ReconcileKey, bool)
+	}](err)
 	if !ok {
 		return ReconcileKey{}, false
 	}
-	return token.ReconcileKey(), true
+	key, ok := carrier.AuditReconcileKey()
+	if !ok || !key.valid() {
+		return ReconcileKey{}, false
+	}
+	copy, parseErr := ParseReconcileKey(key.Bytes())
+	return copy, parseErr == nil
 }

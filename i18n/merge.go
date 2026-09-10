@@ -44,6 +44,16 @@ func (m SourceMerger) MergeContext(ctx context.Context, source, previous Catalog
 	if err != nil {
 		return CatalogSpec{}, err
 	}
+	declared, err := checkedLimits(source.Limits)
+	if err != nil {
+		return CatalogSpec{}, err
+	}
+	if err := requireCatalogLimitCeiling(declared, ceiling); err != nil {
+		return CatalogSpec{}, err
+	}
+	if err := checkSourceArtifactFloorContext(ctx, source, declared, sourceLimits); err != nil {
+		return CatalogSpec{}, err
+	}
 	merged, err := canonicalSourceSpec(ctx, source, ceiling)
 	if err != nil {
 		return CatalogSpec{}, err

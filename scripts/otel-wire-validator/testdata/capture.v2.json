@@ -1,0 +1,98 @@
+{
+  "resourceSpans": [
+    {
+      "scopeSpans": [
+        {
+          "scope": {
+            "name": "github.com/frostgrove/vv/otel",
+            "version": "v0.1.0"
+          },
+          "spans": [
+            {
+              "name": "vv.command get",
+              "kind": "SPAN_KIND_INTERNAL",
+              "attributes": [
+                {"key": "vv.component", "value": {"stringValue": "command"}},
+                {"key": "vv.operation.name", "value": {"stringValue": "get"}},
+                {"key": "vv.operation.outcome", "value": {"stringValue": "ok"}}
+              ],
+              "events": [
+                {
+                  "name": "cache.event",
+                  "attributes": [
+                    {"key": "vv.cache.layer", "value": {"stringValue": "facade"}},
+                    {"key": "vv.cache.memoized", "value": {"boolValue": false}},
+                    {"key": "vv.component", "value": {"stringValue": "cache"}},
+                    {"key": "vv.operation.name", "value": {"stringValue": "lookup"}},
+                    {"key": "vv.operation.outcome", "value": {"stringValue": "hit"}}
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "resourceMetrics": [
+    {
+      "scopeMetrics": [
+        {
+          "scope": {
+            "name": "github.com/frostgrove/vv/otel",
+            "version": "v0.1.0"
+          },
+          "metrics": [
+            {
+              "name": "vv.command.duration",
+              "unit": "s",
+              "histogram": {
+                "aggregationTemporality": "AGGREGATION_TEMPORALITY_CUMULATIVE",
+                "dataPoints": [
+                  {
+                    "attributes": [
+                      {"key": "vv.component", "value": {"stringValue": "command"}},
+                      {"key": "vv.operation.name", "value": {"stringValue": "get"}},
+                      {"key": "vv.operation.outcome", "value": {"stringValue": "ok"}}
+                    ],
+                    "count": "1",
+                    "sum": 0.012,
+                    "bucketCounts": ["0", "1"],
+                    "explicitBounds": [0.005],
+                    "exemplars": [
+                      {
+                        "asDouble": 0.012,
+                        "traceId": "11111111111111111111111111111111",
+                        "spanId": "2222222222222222"
+                      }
+                    ]
+                  }
+                ]
+              }
+            },
+            {
+              "name": "vv.cache.operations",
+              "unit": "{operation}",
+              "sum": {
+                "aggregationTemporality": "AGGREGATION_TEMPORALITY_CUMULATIVE",
+                "isMonotonic": true,
+                "dataPoints": [
+                  {
+                    "attributes": [
+                      {"key": "vv.cache.layer", "value": {"stringValue": "facade"}},
+                      {"key": "vv.cache.memoized", "value": {"boolValue": false}},
+                      {"key": "vv.component", "value": {"stringValue": "cache"}},
+                      {"key": "vv.operation.name", "value": {"stringValue": "lookup"}},
+                      {"key": "vv.operation.outcome", "value": {"stringValue": "hit"}}
+                    ],
+                    "asInt": "1"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

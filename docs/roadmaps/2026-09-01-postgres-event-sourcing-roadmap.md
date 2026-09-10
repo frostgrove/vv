@@ -47,7 +47,7 @@ storage, i18n or OpenTelemetry.
    CRUD-shaped method set — not a missing chain.
 2. **The OpenTelemetry module exists.** `github.com/frostgrove/vv/otel`, package
    `vvotel`, currently ships service, storage and cache facade/backend observers
-   ([[D-128]]). "No `eventotel`" is now a rule about a neighbour that is real;
+   ([[D-134]]). "No `eventotel`" is now a rule about a neighbour that is real;
    event-source telemetry remains an explicitly unimplemented appendix in this
    roadmap.
 3. **Tenancy is delivered, and it is a package of the root module, not a

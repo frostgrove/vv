@@ -1,0 +1,17 @@
+{
+  "format": 1,
+  "generated_by": "vv generate module",
+  "package": "auditdeployment",
+  "module": "audit-deployment",
+  "order": 410,
+  "contributions": [
+    {
+      "symbol": "NewCatalogAdmin",
+      "kind": "provide",
+      "source": "inferred-from-signature",
+      "signature_fingerprint": "c790cc633f2db40f78e137110c2f42e4d43fcf3c77aebcc4b3c9253c7c48f17b",
+      "excluded": false,
+      "confirmed": true
+    }
+  ]
+}

@@ -2006,8 +2006,8 @@
         "go_helper": "StorageStreamOutcomeName"
       },
       "vocabularies": {},
-      "source_coverage": "future_seam",
-      "source_rationale": "The planned neutral observation boundary is not implemented; its computed source contract is reserved, and no structured payload or identity field may be inspected."
+      "source_coverage": "structured",
+      "source_rationale": "The explicit StorageStream wrapper observes only Read and Close results plus deliberate Unwrap; object identity, key, metadata, buffers and error text remain excluded."
     },
     "cache": {
       "wire_value": "cache",
@@ -2542,7 +2542,7 @@
     },
     "cache_memory": {
       "wire_value": "cache_memory",
-      "source": "cachememory.Backend.Stats aggregate",
+      "source": "cachememory.Backend.StatsContext aggregate",
       "maturity": "development",
       "operations": {
         "source": {
@@ -5729,7 +5729,7 @@
       "privacy_class": "safe",
       "maturity": "development",
       "semconv": "none",
-      "availability": "planned",
+      "availability": "implemented",
       "boundaries": [
         0.005,
         0.01,
@@ -5822,7 +5822,7 @@
       "privacy_class": "safe",
       "maturity": "development",
       "semconv": "none",
-      "availability": "planned",
+      "availability": "implemented",
       "boundaries": [
         0,
         64,
@@ -5904,11 +5904,11 @@
       "component": "storage_stream",
       "name_domain": "storage_stream.span_names",
       "description": "Logical storage_stream operation",
-      "source": "vvotel.StorageStream Read, Close and Unwrap A04 terminal Goexit ends this span with goroutine_exit/Error, no error.type, and suppresses associated metric samples; wrapper upgrade is owed.",
+      "source": "vvotel.StorageStream Read, Close and Unwrap; terminal Goexit ends this span with goroutine_exit/Error, no error.type, and suppresses associated metric samples",
       "privacy_class": "safe",
       "maturity": "development",
       "semconv": "none",
-      "availability": "planned",
+      "availability": "implemented",
       "span_kind": "internal",
       "variants": [
         {
@@ -6002,16 +6002,7 @@
       "semconv": "none",
       "availability": "implemented",
       "min": 0,
-      "variants": [
-        {
-          "base": "cache.legacy",
-          "attributes": {}
-        },
-        {
-          "base": "cache_backend.legacy",
-          "attributes": {}
-        }
-      ],
+      "variants": [{"attributes":{"component":{"const":"cache","domain":"components"},"cache_layer":{"const":"facade","domain":"cache.layer"},"operation_name":{"const":"lookup","domain":"cache.operations"},"operation_outcome":{"const":"hit","domain":"cache.outcomes"},"memoized":{"const":"false","domain":"cache.memoized"}},"absent":["reason"]},{"attributes":{"component":{"const":"cache","domain":"components"},"cache_layer":{"const":"facade","domain":"cache.layer"},"operation_name":{"const":"lookup","domain":"cache.operations"},"operation_outcome":{"const":"miss","domain":"cache.outcomes"},"memoized":{"const":"false","domain":"cache.memoized"}},"absent":["reason"]},{"attributes":{"component":{"const":"cache","domain":"components"},"cache_layer":{"const":"facade","domain":"cache.layer"},"operation_name":{"const":"lookup","domain":"cache.operations"},"operation_outcome":{"const":"negative","domain":"cache.outcomes"},"memoized":{"const":"false","domain":"cache.memoized"}},"absent":["reason"]},{"attributes":{"component":{"const":"cache","domain":"components"},"cache_layer":{"const":"facade","domain":"cache.layer"},"operation_name":{"const":"lookup","domain":"cache.operations"},"operation_outcome":{"const":"stale","domain":"cache.outcomes"},"memoized":{"const":"false","domain":"cache.memoized"}},"absent":["reason"]},{"attributes":{"component":{"const":"cache","domain":"components"},"cache_layer":{"const":"facade","domain":"cache.layer"},"operation_name":{"const":"lookup","domain":"cache.operations"},"operation_outcome":{"const":"hit","domain":"cache.outcomes"},"memoized":{"const":"true","domain":"cache.memoized"}},"absent":["reason"]},{"attributes":{"component":{"const":"cache","domain":"components"},"cache_layer":{"const":"facade","domain":"cache.layer"},"operation_name":{"const":"lookup","domain":"cache.operations"},"operation_outcome":{"const":"miss","domain":"cache.outcomes"},"memoized":{"const":"true","domain":"cache.memoized"}},"absent":["reason"]},{"attributes":{"component":{"const":"cache","domain":"components"},"cache_layer":{"const":"facade","domain":"cache.layer"},"operation_name":{"const":"lookup","domain":"cache.operations"},"operation_outcome":{"const":"negative","domain":"cache.outcomes"},"memoized":{"const":"true","domain":"cache.memoized"}},"absent":["reason"]},{"attributes":{"component":{"const":"cache","domain":"components"},"cache_layer":{"const":"facade","domain":"cache.layer"},"operation_name":{"const":"lookup","domain":"cache.operations"},"operation_outcome":{"const":"stale","domain":"cache.outcomes"},"memoized":{"const":"true","domain":"cache.memoized"}},"absent":["reason"]},{"attributes":{"component":{"const":"cache","domain":"components"},"cache_layer":{"const":"facade","domain":"cache.layer"},"operation_name":{"const":"lookup","domain":"cache.operations"},"operation_outcome":{"const":"error","domain":"cache.outcomes"},"memoized":{"const":"false","domain":"cache.memoized"},"reason":{"const":"backend","domain":"cache.reason"}}},{"attributes":{"component":{"const":"cache","domain":"components"},"cache_layer":{"const":"facade","domain":"cache.layer"},"operation_name":{"const":"lookup","domain":"cache.operations"},"operation_outcome":{"const":"error","domain":"cache.outcomes"},"memoized":{"const":"false","domain":"cache.memoized"},"reason":{"const":"corrupt","domain":"cache.reason"}}},{"attributes":{"component":{"const":"cache","domain":"components"},"cache_layer":{"const":"facade","domain":"cache.layer"},"operation_name":{"const":"lookup","domain":"cache.operations"},"operation_outcome":{"const":"error","domain":"cache.outcomes"},"memoized":{"const":"false","domain":"cache.memoized"},"reason":{"const":"runtime","domain":"cache.reason"}}},{"attributes":{"component":{"const":"cache","domain":"components"},"cache_layer":{"const":"facade","domain":"cache.layer"},"operation_name":{"const":"lookup","domain":"cache.operations"},"operation_outcome":{"const":"error","domain":"cache.outcomes"},"memoized":{"const":"true","domain":"cache.memoized"},"reason":{"const":"runtime","domain":"cache.reason"}}},{"attributes":{"component":{"const":"cache","domain":"components"},"cache_layer":{"const":"facade","domain":"cache.layer"},"operation_name":{"const":"lookup_many","domain":"cache.operations"},"operation_outcome":{"const":"error","domain":"cache.outcomes"},"memoized":{"const":"false","domain":"cache.memoized"},"reason":{"const":"backend","domain":"cache.reason"}}},{"attributes":{"component":{"const":"cache","domain":"components"},"cache_layer":{"const":"facade","domain":"cache.layer"},"operation_name":{"const":"lookup_many","domain":"cache.operations"},"operation_outcome":{"const":"error","domain":"cache.outcomes"},"memoized":{"const":"false","domain":"cache.memoized"},"reason":{"const":"corrupt","domain":"cache.reason"}}},{"attributes":{"component":{"const":"cache","domain":"components"},"cache_layer":{"const":"facade","domain":"cache.layer"},"operation_name":{"const":"lookup_many","domain":"cache.operations"},"operation_outcome":{"const":"error","domain":"cache.outcomes"},"memoized":{"const":"false","domain":"cache.memoized"},"reason":{"const":"limit","domain":"cache.reason"}}},{"attributes":{"component":{"const":"cache","domain":"components"},"cache_layer":{"const":"facade","domain":"cache.layer"},"operation_name":{"const":"lookup_many","domain":"cache.operations"},"operation_outcome":{"const":"error","domain":"cache.outcomes"},"memoized":{"const":"false","domain":"cache.memoized"},"reason":{"const":"runtime","domain":"cache.reason"}}},{"attributes":{"component":{"const":"cache","domain":"components"},"cache_layer":{"const":"facade","domain":"cache.layer"},"operation_name":{"const":"lookup_many","domain":"cache.operations"},"operation_outcome":{"const":"complete","domain":"cache.outcomes"},"memoized":{"const":"false","domain":"cache.memoized"}},"absent":["reason"]},{"attributes":{"component":{"const":"cache","domain":"components"},"cache_layer":{"const":"facade","domain":"cache.layer"},"operation_name":{"const":"load","domain":"cache.operations"},"operation_outcome":{"const":"loaded","domain":"cache.outcomes"},"memoized":{"const":"false","domain":"cache.memoized"}},"absent":["reason"]},{"attributes":{"component":{"const":"cache","domain":"components"},"cache_layer":{"const":"facade","domain":"cache.layer"},"operation_name":{"const":"load","domain":"cache.operations"},"operation_outcome":{"const":"negative","domain":"cache.outcomes"},"memoized":{"const":"false","domain":"cache.memoized"}},"absent":["reason"]},{"attributes":{"component":{"const":"cache","domain":"components"},"cache_layer":{"const":"facade","domain":"cache.layer"},"operation_name":{"const":"load","domain":"cache.operations"},"operation_outcome":{"const":"error","domain":"cache.outcomes"},"memoized":{"const":"false","domain":"cache.memoized"}},"absent":["reason"]},{"attributes":{"component":{"const":"cache","domain":"components"},"cache_layer":{"const":"facade","domain":"cache.layer"},"operation_name":{"const":"load","domain":"cache.operations"},"operation_outcome":{"const":"superseded","domain":"cache.outcomes"},"memoized":{"const":"false","domain":"cache.memoized"}},"absent":["reason"]},{"attributes":{"component":{"const":"cache","domain":"components"},"cache_layer":{"const":"facade","domain":"cache.layer"},"operation_name":{"const":"load_many","domain":"cache.operations"},"operation_outcome":{"const":"complete","domain":"cache.outcomes"},"memoized":{"const":"false","domain":"cache.memoized"}},"absent":["reason"]},{"attributes":{"component":{"const":"cache","domain":"components"},"cache_layer":{"const":"facade","domain":"cache.layer"},"operation_name":{"const":"load_many","domain":"cache.operations"},"operation_outcome":{"const":"stored","domain":"cache.outcomes"},"memoized":{"const":"false","domain":"cache.memoized"}},"absent":["reason"]},{"attributes":{"component":{"const":"cache","domain":"components"},"cache_layer":{"const":"facade","domain":"cache.layer"},"operation_name":{"const":"load_many","domain":"cache.operations"},"operation_outcome":{"const":"error","domain":"cache.outcomes"},"memoized":{"const":"false","domain":"cache.memoized"}},"absent":["reason"]},{"attributes":{"component":{"const":"cache","domain":"components"},"cache_layer":{"const":"facade","domain":"cache.layer"},"operation_name":{"const":"load_many","domain":"cache.operations"},"operation_outcome":{"const":"error","domain":"cache.outcomes"},"memoized":{"const":"false","domain":"cache.memoized"},"reason":{"const":"limit","domain":"cache.reason"}}},{"attributes":{"component":{"const":"cache","domain":"components"},"cache_layer":{"const":"facade","domain":"cache.layer"},"operation_name":{"const":"load_many","domain":"cache.operations"},"operation_outcome":{"const":"error","domain":"cache.outcomes"},"memoized":{"const":"false","domain":"cache.memoized"},"reason":{"const":"backend","domain":"cache.reason"}}},{"attributes":{"component":{"const":"cache","domain":"components"},"cache_layer":{"const":"facade","domain":"cache.layer"},"operation_name":{"const":"put","domain":"cache.operations"},"operation_outcome":{"const":"stored","domain":"cache.outcomes"},"memoized":{"const":"false","domain":"cache.memoized"}},"absent":["reason"]},{"attributes":{"component":{"const":"cache","domain":"components"},"cache_layer":{"const":"facade","domain":"cache.layer"},"operation_name":{"const":"put","domain":"cache.operations"},"operation_outcome":{"const":"superseded","domain":"cache.outcomes"},"memoized":{"const":"false","domain":"cache.memoized"}},"absent":["reason"]},{"attributes":{"component":{"const":"cache","domain":"components"},"cache_layer":{"const":"facade","domain":"cache.layer"},"operation_name":{"const":"put","domain":"cache.operations"},"operation_outcome":{"const":"error","domain":"cache.outcomes"},"memoized":{"const":"false","domain":"cache.memoized"},"reason":{"const":"backend","domain":"cache.reason"}}},{"attributes":{"component":{"const":"cache","domain":"components"},"cache_layer":{"const":"facade","domain":"cache.layer"},"operation_name":{"const":"forget","domain":"cache.operations"},"operation_outcome":{"const":"deleted","domain":"cache.outcomes"},"memoized":{"const":"false","domain":"cache.memoized"}},"absent":["reason"]},{"attributes":{"component":{"const":"cache","domain":"components"},"cache_layer":{"const":"facade","domain":"cache.layer"},"operation_name":{"const":"forget","domain":"cache.operations"},"operation_outcome":{"const":"error","domain":"cache.outcomes"},"memoized":{"const":"false","domain":"cache.memoized"},"reason":{"const":"backend","domain":"cache.reason"}}},{"attributes":{"component":{"const":"cache_backend","domain":"components"},"cache_layer":{"const":"memory_backend","domain":"cache_backend.layer"},"operation_name":{"const":"get","domain":"cache_backend.operations"},"operation_outcome":{"const":"hit","domain":"cache_backend.outcomes"}}},{"attributes":{"component":{"const":"cache_backend","domain":"components"},"cache_layer":{"const":"memory_backend","domain":"cache_backend.layer"},"operation_name":{"const":"get","domain":"cache_backend.operations"},"operation_outcome":{"const":"miss","domain":"cache_backend.outcomes"}}},{"attributes":{"component":{"const":"cache_backend","domain":"components"},"cache_layer":{"const":"memory_backend","domain":"cache_backend.layer"},"operation_name":{"const":"get","domain":"cache_backend.operations"},"operation_outcome":{"const":"miss","domain":"cache_backend.outcomes"},"reason":{"const":"expired","domain":"cache_backend.reason"}}},{"attributes":{"component":{"const":"cache_backend","domain":"components"},"cache_layer":{"const":"memory_backend","domain":"cache_backend.layer"},"operation_name":{"const":"get","domain":"cache_backend.operations"},"operation_outcome":{"const":"rejected","domain":"cache_backend.outcomes"},"reason":{"const":"read_limit","domain":"cache_backend.reason"}}},{"attributes":{"component":{"const":"cache_backend","domain":"components"},"cache_layer":{"const":"memory_backend","domain":"cache_backend.layer"},"operation_name":{"const":"get_many","domain":"cache_backend.operations"},"operation_outcome":{"const":"complete","domain":"cache_backend.outcomes"}}},{"attributes":{"component":{"const":"cache_backend","domain":"components"},"cache_layer":{"const":"memory_backend","domain":"cache_backend.layer"},"operation_name":{"const":"get_many","domain":"cache_backend.operations"},"operation_outcome":{"const":"rejected","domain":"cache_backend.outcomes"},"reason":{"const":"batch_item_limit","domain":"cache_backend.reason"}}},{"attributes":{"component":{"const":"cache_backend","domain":"components"},"cache_layer":{"const":"memory_backend","domain":"cache_backend.layer"},"operation_name":{"const":"get_many","domain":"cache_backend.operations"},"operation_outcome":{"const":"rejected","domain":"cache_backend.outcomes"},"reason":{"const":"batch_total_limit","domain":"cache_backend.reason"}}},{"attributes":{"component":{"const":"cache_backend","domain":"components"},"cache_layer":{"const":"memory_backend","domain":"cache_backend.layer"},"operation_name":{"const":"put","domain":"cache_backend.operations"},"operation_outcome":{"const":"stored","domain":"cache_backend.outcomes"}}},{"attributes":{"component":{"const":"cache_backend","domain":"components"},"cache_layer":{"const":"memory_backend","domain":"cache_backend.layer"},"operation_name":{"const":"put","domain":"cache_backend.operations"},"operation_outcome":{"const":"replaced","domain":"cache_backend.outcomes"}}},{"attributes":{"component":{"const":"cache_backend","domain":"components"},"cache_layer":{"const":"memory_backend","domain":"cache_backend.layer"},"operation_name":{"const":"put","domain":"cache_backend.operations"},"operation_outcome":{"const":"rejected","domain":"cache_backend.outcomes"},"reason":{"const":"max_item_bytes","domain":"cache_backend.reason"}}},{"attributes":{"component":{"const":"cache_backend","domain":"components"},"cache_layer":{"const":"memory_backend","domain":"cache_backend.layer"},"operation_name":{"const":"put","domain":"cache_backend.operations"},"operation_outcome":{"const":"rejected","domain":"cache_backend.outcomes"},"reason":{"const":"max_bytes","domain":"cache_backend.reason"}}},{"attributes":{"component":{"const":"cache_backend","domain":"components"},"cache_layer":{"const":"memory_backend","domain":"cache_backend.layer"},"operation_name":{"const":"delete","domain":"cache_backend.operations"},"operation_outcome":{"const":"miss","domain":"cache_backend.outcomes"}}},{"attributes":{"component":{"const":"cache_backend","domain":"components"},"cache_layer":{"const":"memory_backend","domain":"cache_backend.layer"},"operation_name":{"const":"delete","domain":"cache_backend.operations"},"operation_outcome":{"const":"deleted","domain":"cache_backend.outcomes"}}},{"attributes":{"component":{"const":"cache_backend","domain":"components"},"cache_layer":{"const":"memory_backend","domain":"cache_backend.layer"},"operation_name":{"const":"evict","domain":"cache_backend.operations"},"operation_outcome":{"const":"evicted","domain":"cache_backend.outcomes"},"reason":{"const":"expired","domain":"cache_backend.reason"}}},{"attributes":{"component":{"const":"cache_backend","domain":"components"},"cache_layer":{"const":"memory_backend","domain":"cache_backend.layer"},"operation_name":{"const":"evict","domain":"cache_backend.operations"},"operation_outcome":{"const":"evicted","domain":"cache_backend.outcomes"},"reason":{"const":"max_entries","domain":"cache_backend.reason"}}},{"attributes":{"component":{"const":"cache_backend","domain":"components"},"cache_layer":{"const":"memory_backend","domain":"cache_backend.layer"},"operation_name":{"const":"evict","domain":"cache_backend.operations"},"operation_outcome":{"const":"evicted","domain":"cache_backend.outcomes"},"reason":{"const":"max_bytes","domain":"cache_backend.reason"}}},{"attributes":{"component":{"const":"cache_backend","domain":"components"},"cache_layer":{"const":"memory_backend","domain":"cache_backend.layer"},"operation_name":{"const":"reset","domain":"cache_backend.operations"},"operation_outcome":{"const":"complete","domain":"cache_backend.outcomes"},"reason":{"const":"reset","domain":"cache_backend.reason"}}},{"attributes":{"component":{"const":"cache_backend","domain":"components"},"cache_layer":{"const":"memory_backend","domain":"cache_backend.layer"},"operation_name":{"const":"close","domain":"cache_backend.operations"},"operation_outcome":{"const":"complete","domain":"cache_backend.outcomes"},"reason":{"const":"close","domain":"cache_backend.reason"}}}],
       "series_budget": 116,
       "signal_id": 9,
       "provider": "meter",
@@ -6021,9 +6012,12 @@
         "cache_memory_observer.Observe",
         "cache_backend_event.Operation",
         "cache_backend_event.Outcome",
+        "cache_backend_event.Reason",
         "cache_observer.Observe",
+        "cache_event.Memoized",
         "cache_event.Operation",
-        "cache_event.Outcome"
+        "cache_event.Outcome",
+        "cache_event.Reason"
       ],
       "computed_source": "event_count"
     },
@@ -6037,19 +6031,16 @@
       "maturity": "development",
       "semconv": "none",
       "availability": "implemented",
-      "variants": [
-        {
-          "base": "cache.legacy",
-          "attributes": {}
-        }
-      ],
+      "variants": [{"attributes":{"component":{"const":"cache","domain":"components"},"cache_layer":{"const":"facade","domain":"cache.layer"},"operation_name":{"const":"lookup","domain":"cache.operations"},"operation_outcome":{"const":"hit","domain":"cache.outcomes"},"memoized":{"const":"false","domain":"cache.memoized"}},"absent":["reason"]},{"attributes":{"component":{"const":"cache","domain":"components"},"cache_layer":{"const":"facade","domain":"cache.layer"},"operation_name":{"const":"lookup","domain":"cache.operations"},"operation_outcome":{"const":"miss","domain":"cache.outcomes"},"memoized":{"const":"false","domain":"cache.memoized"}},"absent":["reason"]},{"attributes":{"component":{"const":"cache","domain":"components"},"cache_layer":{"const":"facade","domain":"cache.layer"},"operation_name":{"const":"lookup","domain":"cache.operations"},"operation_outcome":{"const":"negative","domain":"cache.outcomes"},"memoized":{"const":"false","domain":"cache.memoized"}},"absent":["reason"]},{"attributes":{"component":{"const":"cache","domain":"components"},"cache_layer":{"const":"facade","domain":"cache.layer"},"operation_name":{"const":"lookup","domain":"cache.operations"},"operation_outcome":{"const":"stale","domain":"cache.outcomes"},"memoized":{"const":"false","domain":"cache.memoized"}},"absent":["reason"]},{"attributes":{"component":{"const":"cache","domain":"components"},"cache_layer":{"const":"facade","domain":"cache.layer"},"operation_name":{"const":"lookup","domain":"cache.operations"},"operation_outcome":{"const":"hit","domain":"cache.outcomes"},"memoized":{"const":"true","domain":"cache.memoized"}},"absent":["reason"]},{"attributes":{"component":{"const":"cache","domain":"components"},"cache_layer":{"const":"facade","domain":"cache.layer"},"operation_name":{"const":"lookup","domain":"cache.operations"},"operation_outcome":{"const":"miss","domain":"cache.outcomes"},"memoized":{"const":"true","domain":"cache.memoized"}},"absent":["reason"]},{"attributes":{"component":{"const":"cache","domain":"components"},"cache_layer":{"const":"facade","domain":"cache.layer"},"operation_name":{"const":"lookup","domain":"cache.operations"},"operation_outcome":{"const":"negative","domain":"cache.outcomes"},"memoized":{"const":"true","domain":"cache.memoized"}},"absent":["reason"]},{"attributes":{"component":{"const":"cache","domain":"components"},"cache_layer":{"const":"facade","domain":"cache.layer"},"operation_name":{"const":"lookup","domain":"cache.operations"},"operation_outcome":{"const":"stale","domain":"cache.outcomes"},"memoized":{"const":"true","domain":"cache.memoized"}},"absent":["reason"]},{"attributes":{"component":{"const":"cache","domain":"components"},"cache_layer":{"const":"facade","domain":"cache.layer"},"operation_name":{"const":"lookup","domain":"cache.operations"},"operation_outcome":{"const":"error","domain":"cache.outcomes"},"memoized":{"const":"false","domain":"cache.memoized"},"reason":{"const":"backend","domain":"cache.reason"}}},{"attributes":{"component":{"const":"cache","domain":"components"},"cache_layer":{"const":"facade","domain":"cache.layer"},"operation_name":{"const":"lookup","domain":"cache.operations"},"operation_outcome":{"const":"error","domain":"cache.outcomes"},"memoized":{"const":"false","domain":"cache.memoized"},"reason":{"const":"corrupt","domain":"cache.reason"}}},{"attributes":{"component":{"const":"cache","domain":"components"},"cache_layer":{"const":"facade","domain":"cache.layer"},"operation_name":{"const":"lookup","domain":"cache.operations"},"operation_outcome":{"const":"error","domain":"cache.outcomes"},"memoized":{"const":"false","domain":"cache.memoized"},"reason":{"const":"runtime","domain":"cache.reason"}}},{"attributes":{"component":{"const":"cache","domain":"components"},"cache_layer":{"const":"facade","domain":"cache.layer"},"operation_name":{"const":"lookup","domain":"cache.operations"},"operation_outcome":{"const":"error","domain":"cache.outcomes"},"memoized":{"const":"true","domain":"cache.memoized"},"reason":{"const":"runtime","domain":"cache.reason"}}},{"attributes":{"component":{"const":"cache","domain":"components"},"cache_layer":{"const":"facade","domain":"cache.layer"},"operation_name":{"const":"lookup_many","domain":"cache.operations"},"operation_outcome":{"const":"error","domain":"cache.outcomes"},"memoized":{"const":"false","domain":"cache.memoized"},"reason":{"const":"backend","domain":"cache.reason"}}},{"attributes":{"component":{"const":"cache","domain":"components"},"cache_layer":{"const":"facade","domain":"cache.layer"},"operation_name":{"const":"lookup_many","domain":"cache.operations"},"operation_outcome":{"const":"error","domain":"cache.outcomes"},"memoized":{"const":"false","domain":"cache.memoized"},"reason":{"const":"corrupt","domain":"cache.reason"}}},{"attributes":{"component":{"const":"cache","domain":"components"},"cache_layer":{"const":"facade","domain":"cache.layer"},"operation_name":{"const":"lookup_many","domain":"cache.operations"},"operation_outcome":{"const":"error","domain":"cache.outcomes"},"memoized":{"const":"false","domain":"cache.memoized"},"reason":{"const":"limit","domain":"cache.reason"}}},{"attributes":{"component":{"const":"cache","domain":"components"},"cache_layer":{"const":"facade","domain":"cache.layer"},"operation_name":{"const":"lookup_many","domain":"cache.operations"},"operation_outcome":{"const":"error","domain":"cache.outcomes"},"memoized":{"const":"false","domain":"cache.memoized"},"reason":{"const":"runtime","domain":"cache.reason"}}},{"attributes":{"component":{"const":"cache","domain":"components"},"cache_layer":{"const":"facade","domain":"cache.layer"},"operation_name":{"const":"lookup_many","domain":"cache.operations"},"operation_outcome":{"const":"complete","domain":"cache.outcomes"},"memoized":{"const":"false","domain":"cache.memoized"}},"absent":["reason"]},{"attributes":{"component":{"const":"cache","domain":"components"},"cache_layer":{"const":"facade","domain":"cache.layer"},"operation_name":{"const":"load","domain":"cache.operations"},"operation_outcome":{"const":"loaded","domain":"cache.outcomes"},"memoized":{"const":"false","domain":"cache.memoized"}},"absent":["reason"]},{"attributes":{"component":{"const":"cache","domain":"components"},"cache_layer":{"const":"facade","domain":"cache.layer"},"operation_name":{"const":"load","domain":"cache.operations"},"operation_outcome":{"const":"negative","domain":"cache.outcomes"},"memoized":{"const":"false","domain":"cache.memoized"}},"absent":["reason"]},{"attributes":{"component":{"const":"cache","domain":"components"},"cache_layer":{"const":"facade","domain":"cache.layer"},"operation_name":{"const":"load","domain":"cache.operations"},"operation_outcome":{"const":"error","domain":"cache.outcomes"},"memoized":{"const":"false","domain":"cache.memoized"}},"absent":["reason"]},{"attributes":{"component":{"const":"cache","domain":"components"},"cache_layer":{"const":"facade","domain":"cache.layer"},"operation_name":{"const":"load","domain":"cache.operations"},"operation_outcome":{"const":"superseded","domain":"cache.outcomes"},"memoized":{"const":"false","domain":"cache.memoized"}},"absent":["reason"]},{"attributes":{"component":{"const":"cache","domain":"components"},"cache_layer":{"const":"facade","domain":"cache.layer"},"operation_name":{"const":"load_many","domain":"cache.operations"},"operation_outcome":{"const":"complete","domain":"cache.outcomes"},"memoized":{"const":"false","domain":"cache.memoized"}},"absent":["reason"]},{"attributes":{"component":{"const":"cache","domain":"components"},"cache_layer":{"const":"facade","domain":"cache.layer"},"operation_name":{"const":"load_many","domain":"cache.operations"},"operation_outcome":{"const":"stored","domain":"cache.outcomes"},"memoized":{"const":"false","domain":"cache.memoized"}},"absent":["reason"]},{"attributes":{"component":{"const":"cache","domain":"components"},"cache_layer":{"const":"facade","domain":"cache.layer"},"operation_name":{"const":"load_many","domain":"cache.operations"},"operation_outcome":{"const":"error","domain":"cache.outcomes"},"memoized":{"const":"false","domain":"cache.memoized"}},"absent":["reason"]},{"attributes":{"component":{"const":"cache","domain":"components"},"cache_layer":{"const":"facade","domain":"cache.layer"},"operation_name":{"const":"load_many","domain":"cache.operations"},"operation_outcome":{"const":"error","domain":"cache.outcomes"},"memoized":{"const":"false","domain":"cache.memoized"},"reason":{"const":"limit","domain":"cache.reason"}}},{"attributes":{"component":{"const":"cache","domain":"components"},"cache_layer":{"const":"facade","domain":"cache.layer"},"operation_name":{"const":"load_many","domain":"cache.operations"},"operation_outcome":{"const":"error","domain":"cache.outcomes"},"memoized":{"const":"false","domain":"cache.memoized"},"reason":{"const":"backend","domain":"cache.reason"}}},{"attributes":{"component":{"const":"cache","domain":"components"},"cache_layer":{"const":"facade","domain":"cache.layer"},"operation_name":{"const":"put","domain":"cache.operations"},"operation_outcome":{"const":"stored","domain":"cache.outcomes"},"memoized":{"const":"false","domain":"cache.memoized"}},"absent":["reason"]},{"attributes":{"component":{"const":"cache","domain":"components"},"cache_layer":{"const":"facade","domain":"cache.layer"},"operation_name":{"const":"put","domain":"cache.operations"},"operation_outcome":{"const":"superseded","domain":"cache.outcomes"},"memoized":{"const":"false","domain":"cache.memoized"}},"absent":["reason"]},{"attributes":{"component":{"const":"cache","domain":"components"},"cache_layer":{"const":"facade","domain":"cache.layer"},"operation_name":{"const":"put","domain":"cache.operations"},"operation_outcome":{"const":"error","domain":"cache.outcomes"},"memoized":{"const":"false","domain":"cache.memoized"},"reason":{"const":"backend","domain":"cache.reason"}}},{"attributes":{"component":{"const":"cache","domain":"components"},"cache_layer":{"const":"facade","domain":"cache.layer"},"operation_name":{"const":"forget","domain":"cache.operations"},"operation_outcome":{"const":"deleted","domain":"cache.outcomes"},"memoized":{"const":"false","domain":"cache.memoized"}},"absent":["reason"]},{"attributes":{"component":{"const":"cache","domain":"components"},"cache_layer":{"const":"facade","domain":"cache.layer"},"operation_name":{"const":"forget","domain":"cache.operations"},"operation_outcome":{"const":"error","domain":"cache.outcomes"},"memoized":{"const":"false","domain":"cache.memoized"},"reason":{"const":"backend","domain":"cache.reason"}}}],
       "signal_id": 10,
       "provider": "context_only",
       "go_name": "EventCache",
       "inputs": [
         "cache_observer.Observe",
+        "cache_event.Memoized",
         "cache_event.Operation",
-        "cache_event.Outcome"
+        "cache_event.Outcome",
+        "cache_event.Reason"
       ],
       "computed_source": "logical_call"
     },
@@ -6063,19 +6054,15 @@
       "maturity": "development",
       "semconv": "none",
       "availability": "implemented",
-      "variants": [
-        {
-          "base": "cache_backend.legacy",
-          "attributes": {}
-        }
-      ],
+      "variants": [{"attributes":{"component":{"const":"cache_backend","domain":"components"},"cache_layer":{"const":"memory_backend","domain":"cache_backend.layer"},"operation_name":{"const":"get","domain":"cache_backend.operations"},"operation_outcome":{"const":"hit","domain":"cache_backend.outcomes"}}},{"attributes":{"component":{"const":"cache_backend","domain":"components"},"cache_layer":{"const":"memory_backend","domain":"cache_backend.layer"},"operation_name":{"const":"get","domain":"cache_backend.operations"},"operation_outcome":{"const":"miss","domain":"cache_backend.outcomes"}}},{"attributes":{"component":{"const":"cache_backend","domain":"components"},"cache_layer":{"const":"memory_backend","domain":"cache_backend.layer"},"operation_name":{"const":"get","domain":"cache_backend.operations"},"operation_outcome":{"const":"miss","domain":"cache_backend.outcomes"},"reason":{"const":"expired","domain":"cache_backend.reason"}}},{"attributes":{"component":{"const":"cache_backend","domain":"components"},"cache_layer":{"const":"memory_backend","domain":"cache_backend.layer"},"operation_name":{"const":"get","domain":"cache_backend.operations"},"operation_outcome":{"const":"rejected","domain":"cache_backend.outcomes"},"reason":{"const":"read_limit","domain":"cache_backend.reason"}}},{"attributes":{"component":{"const":"cache_backend","domain":"components"},"cache_layer":{"const":"memory_backend","domain":"cache_backend.layer"},"operation_name":{"const":"get_many","domain":"cache_backend.operations"},"operation_outcome":{"const":"complete","domain":"cache_backend.outcomes"}}},{"attributes":{"component":{"const":"cache_backend","domain":"components"},"cache_layer":{"const":"memory_backend","domain":"cache_backend.layer"},"operation_name":{"const":"get_many","domain":"cache_backend.operations"},"operation_outcome":{"const":"rejected","domain":"cache_backend.outcomes"},"reason":{"const":"batch_item_limit","domain":"cache_backend.reason"}}},{"attributes":{"component":{"const":"cache_backend","domain":"components"},"cache_layer":{"const":"memory_backend","domain":"cache_backend.layer"},"operation_name":{"const":"get_many","domain":"cache_backend.operations"},"operation_outcome":{"const":"rejected","domain":"cache_backend.outcomes"},"reason":{"const":"batch_total_limit","domain":"cache_backend.reason"}}},{"attributes":{"component":{"const":"cache_backend","domain":"components"},"cache_layer":{"const":"memory_backend","domain":"cache_backend.layer"},"operation_name":{"const":"put","domain":"cache_backend.operations"},"operation_outcome":{"const":"stored","domain":"cache_backend.outcomes"}}},{"attributes":{"component":{"const":"cache_backend","domain":"components"},"cache_layer":{"const":"memory_backend","domain":"cache_backend.layer"},"operation_name":{"const":"put","domain":"cache_backend.operations"},"operation_outcome":{"const":"replaced","domain":"cache_backend.outcomes"}}},{"attributes":{"component":{"const":"cache_backend","domain":"components"},"cache_layer":{"const":"memory_backend","domain":"cache_backend.layer"},"operation_name":{"const":"put","domain":"cache_backend.operations"},"operation_outcome":{"const":"rejected","domain":"cache_backend.outcomes"},"reason":{"const":"max_item_bytes","domain":"cache_backend.reason"}}},{"attributes":{"component":{"const":"cache_backend","domain":"components"},"cache_layer":{"const":"memory_backend","domain":"cache_backend.layer"},"operation_name":{"const":"put","domain":"cache_backend.operations"},"operation_outcome":{"const":"rejected","domain":"cache_backend.outcomes"},"reason":{"const":"max_bytes","domain":"cache_backend.reason"}}},{"attributes":{"component":{"const":"cache_backend","domain":"components"},"cache_layer":{"const":"memory_backend","domain":"cache_backend.layer"},"operation_name":{"const":"delete","domain":"cache_backend.operations"},"operation_outcome":{"const":"miss","domain":"cache_backend.outcomes"}}},{"attributes":{"component":{"const":"cache_backend","domain":"components"},"cache_layer":{"const":"memory_backend","domain":"cache_backend.layer"},"operation_name":{"const":"delete","domain":"cache_backend.operations"},"operation_outcome":{"const":"deleted","domain":"cache_backend.outcomes"}}},{"attributes":{"component":{"const":"cache_backend","domain":"components"},"cache_layer":{"const":"memory_backend","domain":"cache_backend.layer"},"operation_name":{"const":"evict","domain":"cache_backend.operations"},"operation_outcome":{"const":"evicted","domain":"cache_backend.outcomes"},"reason":{"const":"expired","domain":"cache_backend.reason"}}},{"attributes":{"component":{"const":"cache_backend","domain":"components"},"cache_layer":{"const":"memory_backend","domain":"cache_backend.layer"},"operation_name":{"const":"evict","domain":"cache_backend.operations"},"operation_outcome":{"const":"evicted","domain":"cache_backend.outcomes"},"reason":{"const":"max_entries","domain":"cache_backend.reason"}}},{"attributes":{"component":{"const":"cache_backend","domain":"components"},"cache_layer":{"const":"memory_backend","domain":"cache_backend.layer"},"operation_name":{"const":"evict","domain":"cache_backend.operations"},"operation_outcome":{"const":"evicted","domain":"cache_backend.outcomes"},"reason":{"const":"max_bytes","domain":"cache_backend.reason"}}},{"attributes":{"component":{"const":"cache_backend","domain":"components"},"cache_layer":{"const":"memory_backend","domain":"cache_backend.layer"},"operation_name":{"const":"reset","domain":"cache_backend.operations"},"operation_outcome":{"const":"complete","domain":"cache_backend.outcomes"},"reason":{"const":"reset","domain":"cache_backend.reason"}}},{"attributes":{"component":{"const":"cache_backend","domain":"components"},"cache_layer":{"const":"memory_backend","domain":"cache_backend.layer"},"operation_name":{"const":"close","domain":"cache_backend.operations"},"operation_outcome":{"const":"complete","domain":"cache_backend.outcomes"},"reason":{"const":"close","domain":"cache_backend.reason"}}}],
       "signal_id": 11,
       "provider": "context_only",
       "go_name": "EventCacheBackend",
       "inputs": [
         "cache_memory_observer.Observe",
         "cache_backend_event.Operation",
-        "cache_backend_event.Outcome"
+        "cache_backend_event.Outcome",
+        "cache_backend_event.Reason"
       ],
       "computed_source": "logical_call"
     },
@@ -6091,7 +6078,7 @@
       "privacy_class": "safe",
       "maturity": "development",
       "semconv": "none",
-      "availability": "planned",
+      "availability": "implemented",
       "min": 0,
       "variants": [
         {
@@ -7378,7 +7365,7 @@
       "privacy_class": "safe",
       "maturity": "development",
       "semconv": "none",
-      "availability": "planned",
+      "availability": "implemented",
       "boundaries": [
         0,
         1,
@@ -8680,7 +8667,7 @@
       "privacy_class": "safe",
       "maturity": "development",
       "semconv": "none",
-      "availability": "planned",
+      "availability": "implemented",
       "boundaries": [
         0,
         64,
@@ -9190,7 +9177,7 @@
       "privacy_class": "safe",
       "maturity": "development",
       "semconv": "none",
-      "availability": "planned",
+      "availability": "implemented",
       "boundaries": [
         0,
         64,
@@ -9429,7 +9416,7 @@
       "privacy_class": "safe",
       "maturity": "development",
       "semconv": "none",
-      "availability": "planned",
+      "availability": "implemented",
       "boundaries": [
         0,
         64,
@@ -9762,7 +9749,7 @@
       "privacy_class": "safe",
       "maturity": "development",
       "semconv": "none",
-      "availability": "planned",
+      "availability": "implemented",
       "boundaries": [
         0,
         64,
@@ -10043,11 +10030,11 @@
       "number_type": "int64",
       "unit": "{entry}",
       "description": "Aggregate resident entries of active registered backends; omitted when none is active",
-      "source": "cachememory.Backend.Stats aggregate",
+      "source": "cachememory.Backend.StatsContext aggregate",
       "privacy_class": "safe",
       "maturity": "development",
       "semconv": "none",
-      "availability": "planned",
+      "availability": "implemented",
       "min": 0,
       "variants": [
         {
@@ -10061,7 +10048,7 @@
       "series_budget": 1,
       "record_when": "non_negative",
       "inputs": [
-        "cache_memory_backend.Stats",
+        "cache_memory_backend.StatsContext",
         "cache_memory_stats.Closed",
         "cache_memory_stats.Entries"
       ],
@@ -10075,11 +10062,11 @@
       "number_type": "int64",
       "unit": "By",
       "description": "Aggregate charged bytes of active registered backends; omitted when none is active",
-      "source": "cachememory.Backend.Stats aggregate",
+      "source": "cachememory.Backend.StatsContext aggregate",
       "privacy_class": "safe",
       "maturity": "development",
       "semconv": "none",
-      "availability": "planned",
+      "availability": "implemented",
       "min": 0,
       "variants": [
         {
@@ -10093,7 +10080,7 @@
       "series_budget": 1,
       "record_when": "non_negative",
       "inputs": [
-        "cache_memory_backend.Stats",
+        "cache_memory_backend.StatsContext",
         "cache_memory_stats.ChargedBytes",
         "cache_memory_stats.Closed"
       ],
@@ -10107,11 +10094,11 @@
       "number_type": "int64",
       "unit": "{entry}",
       "description": "Aggregate declared entry limits of active backends; omitted when none is active",
-      "source": "cachememory.Backend.Stats aggregate",
+      "source": "cachememory.Backend.StatsContext aggregate",
       "privacy_class": "safe",
       "maturity": "development",
       "semconv": "none",
-      "availability": "planned",
+      "availability": "implemented",
       "min": 0,
       "variants": [
         {
@@ -10125,7 +10112,7 @@
       "series_budget": 1,
       "record_when": "non_negative",
       "inputs": [
-        "cache_memory_backend.Stats",
+        "cache_memory_backend.StatsContext",
         "cache_memory_limits.MaxEntries",
         "cache_memory_stats.Closed"
       ],
@@ -10139,11 +10126,11 @@
       "number_type": "int64",
       "unit": "By",
       "description": "Aggregate declared byte limits of active backends; omitted when none is active",
-      "source": "cachememory.Backend.Stats aggregate",
+      "source": "cachememory.Backend.StatsContext aggregate",
       "privacy_class": "safe",
       "maturity": "development",
       "semconv": "none",
-      "availability": "planned",
+      "availability": "implemented",
       "min": 0,
       "variants": [
         {
@@ -10157,7 +10144,7 @@
       "series_budget": 1,
       "record_when": "non_negative",
       "inputs": [
-        "cache_memory_backend.Stats",
+        "cache_memory_backend.StatsContext",
         "cache_memory_limits.MaxBytes",
         "cache_memory_stats.Closed"
       ],
@@ -10171,11 +10158,11 @@
       "number_type": "int64",
       "unit": "{backend}",
       "description": "Count of active backends in the fixed registration",
-      "source": "cachememory.Backend.Stats aggregate",
+      "source": "cachememory.Backend.StatsContext aggregate",
       "privacy_class": "safe",
       "maturity": "development",
       "semconv": "none",
-      "availability": "planned",
+      "availability": "implemented",
       "min": 0,
       "variants": [
         {
@@ -10189,7 +10176,7 @@
       "series_budget": 1,
       "record_when": "non_negative",
       "inputs": [
-        "cache_memory_backend.Stats",
+        "cache_memory_backend.StatsContext",
         "cache_memory_stats.Closed"
       ],
       "computed_source": "aggregate"
@@ -10202,11 +10189,11 @@
       "number_type": "int64",
       "unit": "{backend}",
       "description": "Count of closed backends in the fixed registration",
-      "source": "cachememory.Backend.Stats aggregate",
+      "source": "cachememory.Backend.StatsContext aggregate",
       "privacy_class": "safe",
       "maturity": "development",
       "semconv": "none",
-      "availability": "planned",
+      "availability": "implemented",
       "min": 0,
       "variants": [
         {
@@ -10220,7 +10207,7 @@
       "series_budget": 1,
       "record_when": "non_negative",
       "inputs": [
-        "cache_memory_backend.Stats",
+        "cache_memory_backend.StatsContext",
         "cache_memory_stats.Closed"
       ],
       "computed_source": "aggregate"
@@ -16665,11 +16652,13 @@
             "operation_outcome"
           ]
         },
-        "Reason": {
-          "type": "Reason",
-          "signals": [
-            "cache_events",
-            "cache_items"
+      "Reason": {
+        "type": "Reason",
+        "signals": [
+          "cache_operations",
+          "cache_event",
+          "cache_events",
+          "cache_items"
           ],
           "attributes": [
             "reason"
@@ -16694,10 +16683,12 @@
             "cache_payload_bytes"
           ]
         },
-        "Memoized": {
-          "type": "bool",
-          "signals": [
-            "cache_events",
+      "Memoized": {
+        "type": "bool",
+        "signals": [
+          "cache_operations",
+          "cache_event",
+          "cache_events",
             "cache_items",
             "cache_encoded_bytes",
             "cache_payload_bytes"
@@ -16773,10 +16764,12 @@
             "operation_outcome"
           ]
         },
-        "Reason": {
-          "type": "Reason",
-          "signals": [
-            "cache_events",
+      "Reason": {
+        "type": "Reason",
+        "signals": [
+          "cache_operations",
+          "cache_backend_event",
+          "cache_events",
             "cache_items",
             "cache_value_bytes",
             "cache_charged_bytes"
@@ -16937,17 +16930,21 @@
           "type": "func(ctx context.Context, addresses []cache.Address, limit cache.BatchReadLimit) (map[cache.Address][]byte, error)",
           "excluded": "Metric collection never executes batch cache reads."
         },
-        "Stats": {
-          "type": "func() Stats",
-          "signals": [
-            "cache_memory_entries",
+      "Stats": {
+        "type": "func() Stats",
+        "excluded": "Blocking application snapshot remains public but telemetry collection uses only the bounded context-aware accessor."
+      },
+      "StatsContext": {
+        "type": "func(ctx context.Context) (Stats, bool)",
+        "signals": [
+          "cache_memory_entries",
             "cache_memory_bytes",
             "cache_memory_entry_limit",
             "cache_memory_byte_limit",
             "cache_memory_active",
             "cache_memory_closed"
-          ],
-          "nested": "cache_memory_stats"
+        ],
+        "nested": "cache_memory_stats"
         },
         "Reset": {
           "type": "func() error",
@@ -18619,18 +18616,17 @@
       }
     },
     "storage_stream": {
-      "availability": "planned",
-      "evolution": "new",
+      "availability": "current",
       "components": [
         "storage_stream"
       ],
       "kind": "interface",
       "file": "otel/storage_stream.go",
       "type": "StorageStream",
-      "scope": "B03 prospective public stream wrapper contract. Read, Close and deliberate Unwrap are the only stream lifecycle effects.",
+      "scope": "Complete public stream wrapper contract. Read and Close results plus deliberate Unwrap are the only stream lifecycle effects; buffers and raw error values are never exported.",
       "members": {
         "Read": {
-          "type": "func(p []byte) (int, error)",
+          "type": "func([]byte) (int, error)",
           "signals": [
             "storage_stream_span",
             "storage_stream_duration",
@@ -18797,7 +18793,7 @@
       "kind": "functions",
       "file": "otel/storage.go",
       "type": "StorageFunctions",
-      "scope": "Complete storage assembly function inventory. WithStorageResource contributes only an approved trace-only logical resource declaration.",
+      "scope": "Complete storage assembly function inventory. WithStorageResource contributes only an approved trace-only logical resource declaration; WithStorageStreams opts into returned-reader lifetime observation.",
       "members": {
         "WithStorageResource": {
           "type": "func(name ApprovedName) StorageOption",
@@ -18808,13 +18804,18 @@
             "resource_name"
           ]
         },
+        "WithStorageStreams": {
+          "type": "func() StorageOption",
+          "excluded": "Assembly enables the stream decorator; Read, Close and Unwrap remain the effect and signal boundaries."
+        },
         "Store": {
           "type": "func(t *Telemetry, opts ...StorageOption) storage.Middleware",
           "excluded": "Assembly selects a decorator; Store methods remain the effect and signal boundary."
         }
       },
       "components": [
-        "storage"
+        "storage",
+        "storage_stream"
       ],
       "availability": "current"
     },

@@ -178,13 +178,8 @@ vuln() {
 
 version() {
 	[[ -n ${V:-} ]] || { echo 'usage: make version V=v0.1.0' >&2; exit 1; }
-	local module
-	while IFS= read -r module; do
-		(cd "$module" && "$GO" mod edit -require="$VV_MODULE@$V")
-		echo "$module -> $V"
-	done < <(satellites)
+	V="$V" "$SCRIPT_DIR/release-modules.sh" rewrite
 	(cd "$REPO_ROOT" && "$GO" run ./cmd/vv-otel-gen -write-scope-version "$V" -registry internal/otelreg/registry.json -out otel/schema_gen.go -manifest otel/wire_manifest.json)
-	"${BASH_SOURCE[0]}" tidy
 }
 
 case ${1:-} in

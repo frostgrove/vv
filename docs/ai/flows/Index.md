@@ -57,12 +57,9 @@ through it.
 | a transactional enqueue, a staged placement, a lease, a takeover, or an effect that must not outlive a rollback | [[FL-035]] |
 | an aggregate declaration, a fact, a reader chain, an expected-version append, a stream replay, a log walk or an event store | [[FL-036]] |
 | the PostgreSQL event schema, its migration or verification, the one-statement append, the settled-watermark cursor or the conformance run | [[FL-037]] |
-<<<<<<< HEAD
-| an i18n declaration, locale resolver, MF2 template, typed message, usage extraction, catalogue artifact, overlay, render, error source or publication controller | [[FL-038]] |
-| the audit trace registry, semantic or completeness authority, tagged design import, or section checkpoint | [[FL-039]] |
-=======
 | a projection, a checkpoint store, a router, the retry and quarantine passes, or how a settled cursor becomes a durable row | [[FL-038]] |
->>>>>>> 5fedaae3d4e688198eb0116509c76d075429340e
+| an i18n declaration, locale resolver, MF2 template, typed message, usage extraction, catalogue artifact, overlay, render, error source or publication controller | [[FL-039]] |
+| the audit trace registry, semantic or completeness authority, tagged design import, or section checkpoint | [[FL-040]] |
 
 **A code change that alters a path must update its flow document in the same
 change.** Not afterwards, not in a follow-up. A flow that describes a path the
@@ -116,12 +113,9 @@ phase 3 landed FL-014 and before phase 5 landed FL-015.
 | [FL-035](FL-035-a-committed-decision-becomes-a-delivered-effect.md) | A committed decision becomes a delivered effect | `jobs.Enqueue` / `jobs.EnqueueIn` / `jobspg.Driver.Place` | [[UC-031]] |
 | [FL-036](FL-036-a-decision-becomes-a-recorded-fact.md) | A decision becomes a recorded fact | `event.Define` / `event.Bind` / `event.Repo.Load` / `event.Repo.Append` | [[UC-032]] |
 | [FL-037](FL-037-a-recorded-fact-becomes-a-postgresql-row.md) | A recorded fact becomes a PostgreSQL row | `eventpg.New` / `eventpg.Store.Prepare` / `eventpg.Store.Append` / `eventpg.Store.ReadAll` | [[UC-032]] |
-<<<<<<< HEAD
-| [FL-038](FL-038-a-message-declaration-becomes-rendered-presentation.md) | A message declaration becomes rendered presentation | `i18n.New` / `vv-i18n extract|merge` / `Snapshot.Resolve` / `Snapshot.Bind` / `DefineStruct` / `View.Render` / `NewFormatter` / `Controller.Activate` | [[UC-033]] |
-| [FL-039](FL-039-an-audit-contract-becomes-an-executable-checkpoint.md) | An audit contract becomes an executable checkpoint | `scripts/audit-trace.sh` / `scripts/audit_trace_test.go:TestAuditTraceRegistry` / `scripts/audit_trace_import_test.go:TestAuditTraceDesignImport` | [[UC-034]] |
-=======
 | [FL-038](FL-038-a-settled-cursor-becomes-a-durable-checkpoint.md) | A settled cursor becomes a durable checkpoint | `projection.New` / `projection.Projection.Run` / `event.Track` / `eventtest.RunCheckpoints` | [[UC-032]] |
->>>>>>> 5fedaae3d4e688198eb0116509c76d075429340e
+| [FL-039](FL-039-a-message-declaration-becomes-rendered-presentation.md) | A message declaration becomes rendered presentation | `i18n.New` / `vv-i18n extract|merge` / `Snapshot.Resolve` / `Snapshot.Bind` / `DefineStruct` / `View.Render` / `NewFormatter` / `Controller.Activate` | [[UC-033]] |
+| [FL-040](FL-040-an-audit-contract-becomes-an-executable-checkpoint.md) | An audit contract becomes an executable checkpoint | `scripts/audit-trace.sh` / `scripts/audit_trace_test.go:TestAuditTraceRegistry` / `scripts/audit_trace_import_test.go:TestAuditTraceDesignImport` | [[UC-034]] |
 
 ## By file — which flows touch this file
 
@@ -273,12 +267,12 @@ phase 3 landed FL-014 and before phase 5 landed FL-015.
 | `auth/authjwt/jwks.go` | FL-019 |
 | `auth/authjwt/claims.go` | FL-019 |
 | `auth/authjwt/authenticator.go` | FL-019 |
-| `auth/http/authhttp/authhttp.go` | FL-019, FL-011, FL-034, FL-038 |
+| `auth/http/authhttp/authhttp.go` | FL-019, FL-011, FL-034, FL-039 |
 | `auth/http/authhttp/cookie.go` | FL-019, FL-023 |
 | `auth/http/authnet/authnet.go` | FL-019, FL-013 |
 | `auth/http/authgin/authgin.go` | FL-019, FL-013 |
 | `auth/http/authfiber/authfiber.go` | FL-019, FL-013 |
-| `auth/http/authfiber/locale.go` | FL-019, FL-038 |
+| `auth/http/authfiber/locale.go` | FL-019, FL-039 |
 | `auth/rpc/authgrpc/interceptor.go` | FL-019, FL-013 |
 | `crud/decorators/security/principal.go` | FL-020, FL-007, FL-008 |
 | `cmd/vv/main.go` | FL-010, FL-029, FL-031, FL-032 |
@@ -330,7 +324,7 @@ phase 3 landed FL-014 and before phase 5 landed FL-015.
 | `errs/violation.go` | FL-011, FL-014, FL-017 |
 | `errs/fault.go` | FL-011, FL-014, FL-017 |
 | `errs/build.go` | FL-011, FL-014 |
-| `errs/spi.go` | FL-011, FL-014, FL-038 |
+| `errs/spi.go` | FL-011, FL-014, FL-039 |
 | `errs/message.go` | FL-011 |
 | `errs/catalogue.go` | FL-011 |
 | `errs/bridge.go` | FL-011 |
@@ -358,18 +352,18 @@ phase 3 landed FL-014 and before phase 5 landed FL-015.
 | `crud/scope.go` | FL-004, FL-005, FL-006, FL-007 |
 | `crud/update.go` | FL-002, FL-004, FL-008, FL-010, FL-017 |
 | `*/vv_gen.go` — ten checked-in files under `test/` and `_examples/` | FL-010 |
-| `crud/http/crudfiber/handler.go` | FL-001, FL-002, FL-003, FL-011, FL-012, FL-013, FL-015, FL-029, FL-038 |
+| `crud/http/crudfiber/handler.go` | FL-001, FL-002, FL-003, FL-011, FL-012, FL-013, FL-015, FL-029, FL-039 |
 | `crud/http/crudfiber/routing_test.go` | FL-013 |
 | `crud/http/crudgin/routing_test.go` | FL-013 |
 | `crud/http/crudnet/routing_test.go` | FL-013 |
-| `crud/http/crudfiber/options.go` | FL-002, FL-011, FL-013, FL-015, FL-034, FL-038 |
-| `crud/http/crudfiber/middleware.go` | FL-013, FL-034, FL-038 |
-| `crud/http/crudgin/middleware.go` | FL-013, FL-034, FL-038 |
-| `crud/http/crudnet/middleware.go` | FL-013, FL-034, FL-038 |
-| `crud/http/crudgin/handler.go` | FL-001, FL-002, FL-003, FL-011, FL-012, FL-013, FL-015, FL-029, FL-038 |
-| `crud/http/crudgin/options.go` | FL-002, FL-011, FL-013, FL-015, FL-034, FL-038 |
-| `crud/http/crudnet/handler.go` | FL-001, FL-002, FL-003, FL-011, FL-012, FL-013, FL-015, FL-029, FL-038 |
-| `crud/http/crudnet/options.go` | FL-002, FL-011, FL-013, FL-015, FL-034, FL-038 |
+| `crud/http/crudfiber/options.go` | FL-002, FL-011, FL-013, FL-015, FL-034, FL-039 |
+| `crud/http/crudfiber/middleware.go` | FL-013, FL-034, FL-039 |
+| `crud/http/crudgin/middleware.go` | FL-013, FL-034, FL-039 |
+| `crud/http/crudnet/middleware.go` | FL-013, FL-034, FL-039 |
+| `crud/http/crudgin/handler.go` | FL-001, FL-002, FL-003, FL-011, FL-012, FL-013, FL-015, FL-029, FL-039 |
+| `crud/http/crudgin/options.go` | FL-002, FL-011, FL-013, FL-015, FL-034, FL-039 |
+| `crud/http/crudnet/handler.go` | FL-001, FL-002, FL-003, FL-011, FL-012, FL-013, FL-015, FL-029, FL-039 |
+| `crud/http/crudnet/options.go` | FL-002, FL-011, FL-013, FL-015, FL-034, FL-039 |
 | `crud/http/crudhttp/doc.go` | FL-013, FL-015 |
 | `auth/http/authnet/binding_test.go` | FL-019 |
 | `auth/http/authgin/binding_test.go` | FL-019 |
@@ -381,7 +375,7 @@ phase 3 landed FL-014 and before phase 5 landed FL-015.
 | `crud/http/crudhttp/request.go` | FL-001, FL-002, FL-012, FL-013, FL-015 |
 | `crud/http/crudhttp/porthttp.go` | FL-011, FL-013, FL-015 |
 | `port/porthttp/errors.go` | FL-011, FL-013, FL-014, FL-015, FL-018 |
-| `port/porthttp/render.go` | FL-011, FL-015, FL-038 |
+| `port/porthttp/render.go` | FL-011, FL-015, FL-039 |
 | `port/porthttp/envelope.go` | FL-011 |
 | `port/porthttp/decode.go` | FL-013, FL-018 |
 | `port/porthttp/bodyindex.go` | FL-011, FL-015 |
@@ -402,8 +396,8 @@ phase 3 landed FL-014 and before phase 5 landed FL-015.
 | `port/request.go` | FL-001, FL-002, FL-012, FL-013, FL-015, FL-018 |
 | `port/sentinel.go` | FL-011, FL-015 |
 | `port/kind.go` | FL-011, FL-014, FL-015, FL-018 |
-| `port/violations.go` | FL-011, FL-013, FL-015, FL-038 |
-| `port/locale.go` | FL-011, FL-013, FL-015, FL-038 |
+| `port/violations.go` | FL-011, FL-013, FL-015, FL-039 |
+| `port/locale.go` | FL-011, FL-013, FL-015, FL-039 |
 | `remote/dto.go` | FL-018 |
 | `remote/options.go` | FL-018 |
 | `remote/resource.go` | FL-018 |
@@ -411,13 +405,13 @@ phase 3 landed FL-014 and before phase 5 landed FL-015.
 | `remote/remotehttp/doc.go` | FL-018 |
 | `remote/remotehttp/transport.go` | FL-018 |
 | `crud/rpc/crudgrpc/doc.go` | FL-013 |
-| `crud/rpc/crudgrpc/handler.go` | FL-013, FL-015, FL-029, FL-038 |
+| `crud/rpc/crudgrpc/handler.go` | FL-013, FL-015, FL-029, FL-039 |
 | `crud/rpc/crudgrpc/service.go` | FL-013 |
 | `crud/rpc/crudgrpc/message.go` | FL-013 |
-| `crud/rpc/crudgrpc/status.go` | FL-011, FL-013, FL-015, FL-018, FL-034, FL-038 |
+| `crud/rpc/crudgrpc/status.go` | FL-011, FL-013, FL-015, FL-018, FL-034, FL-039 |
 | `crud/rpc/crudgrpc/options.go` | FL-011, FL-013, FL-015 |
-| `crud/rpc/crudgrpc/interceptor.go` | FL-013, FL-038 |
-| `crud/rpc/crudgrpc/locale.go` | FL-011, FL-013, FL-038 |
+| `crud/rpc/crudgrpc/interceptor.go` | FL-013, FL-039 |
+| `crud/rpc/crudgrpc/locale.go` | FL-011, FL-013, FL-039 |
 | `crud/rpc/crudgrpc/transport.go` | FL-018 |
 | `crud/probe/doc.go` | FL-017 |
 | `crud/probe/probe.go` | FL-017 |
@@ -589,55 +583,6 @@ phase 3 landed FL-014 and before phase 5 landed FL-015.
 | `event/eventpg/append.go` | FL-037 |
 | `event/eventpg/read.go` | FL-037 |
 | `event/eventpg/cursor.go` | FL-037 |
-<<<<<<< HEAD
-| `i18n/go.mod` | FL-038 |
-| `i18n/catalog.go` | FL-038 |
-| `i18n/source.go` | FL-038 |
-| `i18n/merge.go` | FL-038 |
-| `i18n/check.go` | FL-038 |
-| `i18n/artifact.go` | FL-038 |
-| `i18n/locale.go` | FL-038 |
-| `i18n/value.go` | FL-038 |
-| `i18n/optional.go` | FL-038 |
-| `i18n/struct_definition.go` | FL-038 |
-| `i18n/numeric.go` | FL-038 |
-| `i18n/datetime.go` | FL-038 |
-| `i18n/formatlocale.go` | FL-038 |
-| `i18n/work.go` | FL-038 |
-| `i18n/bounded_text.go` | FL-038 |
-| `i18n/render.go` | FL-038 |
-| `i18n/formatter.go` | FL-038 |
-| `i18n/formatters.go` | FL-038 |
-| `i18n/errorsource.go` | FL-038 |
-| `i18n/overlay.go` | FL-038 |
-| `i18n/controller.go` | FL-038 |
-| `i18n/pseudo.go` | FL-038 |
-| `i18n/generate.go` | FL-038 |
-| `i18n/export.go` | FL-038 |
-| `i18n/observer.go` | FL-038 |
-| `i18n/problem.go` | FL-038 |
-| `i18n/cmd/vv-i18n/main.go` | FL-038 |
-| `i18n/cmd/vv-i18n/usage.go` | FL-038 |
-| `i18n/cmd/vv-i18n/extract.go` | FL-038 |
-| `i18n/cmd/vv-i18n/extract_analysis.go` | FL-038 |
-| `i18n/cmd/vv-i18n/extract_loader.go` | FL-038 |
-| `i18n/cmd/vv-i18n/merge.go` | FL-038 |
-| `i18n/cmd/vv-i18n/review.go` | FL-038 |
-| `i18n/cmd/vv-i18n/limits.go` | FL-038 |
-| `i18n/cmd/vv-i18n/publication.go` | FL-038 |
-| `i18n/cmd/vv-i18n/atomic.go` | FL-038 |
-| `test/i18nflow/` | FL-038 |
-| `scripts/i18n-consumer.sh` | FL-038 |
-| `scripts/i18n_test.go` | FL-038 |
-| `scripts/i18n_release_test.go` | FL-038 |
-| `scripts/audit-trace.sh` | FL-039 |
-| `scripts/audit_trace_test.go` | FL-039 |
-| `scripts/audit_trace_model_test.go` | FL-039 |
-| `scripts/audit_trace_import_test.go` | FL-039 |
-| `scripts/testdata/audit_trace.tsv` | FL-039 |
-| `scripts/testdata/audit_trace_semantics.json` | FL-039 |
-| `scripts/testdata/audit_trace_anchor.json` | FL-039 |
-=======
 | `event/eventpg/checkpoints.go` | FL-037, FL-038 |
 | `event/projection/doc.go` | FL-038 |
 | `event/projection/errors.go` | FL-038 |
@@ -648,7 +593,53 @@ phase 3 landed FL-014 and before phase 5 landed FL-015.
 | `event/projection/router.go` | FL-038 |
 | `event/projection/projection.go` | FL-038 |
 | `event/projection/pass.go` | FL-038 |
->>>>>>> 5fedaae3d4e688198eb0116509c76d075429340e
+| `i18n/go.mod` | FL-039 |
+| `i18n/catalog.go` | FL-039 |
+| `i18n/source.go` | FL-039 |
+| `i18n/merge.go` | FL-039 |
+| `i18n/check.go` | FL-039 |
+| `i18n/artifact.go` | FL-039 |
+| `i18n/locale.go` | FL-039 |
+| `i18n/value.go` | FL-039 |
+| `i18n/optional.go` | FL-039 |
+| `i18n/struct_definition.go` | FL-039 |
+| `i18n/numeric.go` | FL-039 |
+| `i18n/datetime.go` | FL-039 |
+| `i18n/formatlocale.go` | FL-039 |
+| `i18n/work.go` | FL-039 |
+| `i18n/bounded_text.go` | FL-039 |
+| `i18n/render.go` | FL-039 |
+| `i18n/formatter.go` | FL-039 |
+| `i18n/formatters.go` | FL-039 |
+| `i18n/errorsource.go` | FL-039 |
+| `i18n/overlay.go` | FL-039 |
+| `i18n/controller.go` | FL-039 |
+| `i18n/pseudo.go` | FL-039 |
+| `i18n/generate.go` | FL-039 |
+| `i18n/export.go` | FL-039 |
+| `i18n/observer.go` | FL-039 |
+| `i18n/problem.go` | FL-039 |
+| `i18n/cmd/vv-i18n/main.go` | FL-039 |
+| `i18n/cmd/vv-i18n/usage.go` | FL-039 |
+| `i18n/cmd/vv-i18n/extract.go` | FL-039 |
+| `i18n/cmd/vv-i18n/extract_analysis.go` | FL-039 |
+| `i18n/cmd/vv-i18n/extract_loader.go` | FL-039 |
+| `i18n/cmd/vv-i18n/merge.go` | FL-039 |
+| `i18n/cmd/vv-i18n/review.go` | FL-039 |
+| `i18n/cmd/vv-i18n/limits.go` | FL-039 |
+| `i18n/cmd/vv-i18n/publication.go` | FL-039 |
+| `i18n/cmd/vv-i18n/atomic.go` | FL-039 |
+| `test/i18nflow/` | FL-039 |
+| `scripts/i18n-consumer.sh` | FL-039 |
+| `scripts/i18n_test.go` | FL-039 |
+| `scripts/i18n_release_test.go` | FL-039 |
+| `scripts/audit-trace.sh` | FL-040 |
+| `scripts/audit_trace_test.go` | FL-040 |
+| `scripts/audit_trace_model_test.go` | FL-040 |
+| `scripts/audit_trace_import_test.go` | FL-040 |
+| `scripts/testdata/audit_trace.tsv` | FL-040 |
+| `scripts/testdata/audit_trace_semantics.json` | FL-040 |
+| `scripts/testdata/audit_trace_anchor.json` | FL-040 |
 
 `crud/sqlrepo/repository.go` is in eleven of them. It is the layer everything else
 decorates, and almost no change to it is local.

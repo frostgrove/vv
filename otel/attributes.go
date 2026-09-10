@@ -36,22 +36,31 @@ func storageSpanAttributes(operation string, outcome string, errorType string, r
 	return admitSignalAttributes(SignalStorageSpan, spanStatus(outcome, errorType), attributes)
 }
 
-func cacheFacadeAttributes(signal Signal, operation string, outcome string) ([]attribute.KeyValue, bool) {
-	return admitSignalAttributes(signal, "", []attribute.KeyValue{
+func cacheFacadeAttributes(signal Signal, operation string, outcome string, reason string, memoized bool, facts ...SignalSourceValue) ([]attribute.KeyValue, bool) {
+	attributes := []attribute.KeyValue{
 		AttrComponent.String(ComponentCache),
 		AttrCacheLayer.String(CacheLayerFacade),
 		AttrOperationName.String(operation),
 		AttrOperationOutcome.String(outcome),
-	})
+		AttrMemoized.Bool(memoized),
+	}
+	if reason != "" {
+		attributes = append(attributes, AttrReason.String(reason))
+	}
+	return admitSignalAttributes(signal, "", attributes, facts...)
 }
 
-func cacheBackendAttributes(signal Signal, operation string, outcome string) ([]attribute.KeyValue, bool) {
-	return admitSignalAttributes(signal, "", []attribute.KeyValue{
+func cacheBackendAttributes(signal Signal, operation string, outcome string, reason string) ([]attribute.KeyValue, bool) {
+	attributes := []attribute.KeyValue{
 		AttrComponent.String(ComponentCacheBackend),
 		AttrCacheLayer.String(CacheBackendLayerMemoryBackend),
 		AttrOperationName.String(operation),
 		AttrOperationOutcome.String(outcome),
-	})
+	}
+	if reason != "" {
+		attributes = append(attributes, AttrReason.String(reason))
+	}
+	return admitSignalAttributes(signal, "", attributes)
 }
 
 func operationAttributes(component string, operation string, outcome string, errorType string) []attribute.KeyValue {

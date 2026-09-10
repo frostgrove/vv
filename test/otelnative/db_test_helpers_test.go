@@ -14,11 +14,12 @@ import (
 const databaseServiceName = "database-fixture"
 
 type databaseTelemetryFixture struct {
-	providers Providers
-	spans     *tracetest.InMemoryExporter
-	metrics   *metricCapture
-	traces    *sdktrace.TracerProvider
-	meters    *metric.MeterProvider
+	providers  Providers
+	spans      *tracetest.InMemoryExporter
+	metrics    *metricCapture
+	rawMetrics *metricCapture
+	traces     *sdktrace.TracerProvider
+	meters     *metric.MeterProvider
 }
 
 func newDatabaseTelemetryFixture(t *testing.T, pools []DatabasePoolName, sampler sdktrace.Sampler) *databaseTelemetryFixture {
@@ -51,7 +52,8 @@ func newDatabaseTelemetryFixture(t *testing.T, pools []DatabasePoolName, sampler
 	if err != nil {
 		t.Fatal(err)
 	}
-	reader := metric.NewPeriodicReader(metricExporter)
+	rawMetricSink := &metricCapture{}
+	reader := metric.NewPeriodicReader(&nativeRawMetricTap{next: metricExporter, capture: rawMetricSink})
 	metricOptions := []metric.Option{
 		metric.WithReader(reader),
 		metric.WithResource(telemetryResource),
@@ -59,11 +61,12 @@ func newDatabaseTelemetryFixture(t *testing.T, pools []DatabasePoolName, sampler
 	metricOptions = append(metricOptions, DatabaseMetricOptions(pools...)...)
 	meterProvider := metric.NewMeterProvider(metricOptions...)
 	fixture := &databaseTelemetryFixture{
-		providers: Providers{Tracer: tracerProvider, Meter: meterProvider},
-		spans:     spanSink,
-		metrics:   metricSink,
-		traces:    tracerProvider,
-		meters:    meterProvider,
+		providers:  Providers{Tracer: tracerProvider, Meter: meterProvider},
+		spans:      spanSink,
+		metrics:    metricSink,
+		rawMetrics: rawMetricSink,
+		traces:     tracerProvider,
+		meters:     meterProvider,
 	}
 	t.Cleanup(func() {
 		_ = meterProvider.Shutdown(context.Background())

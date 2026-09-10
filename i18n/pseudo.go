@@ -79,38 +79,43 @@ func PseudoContext(ctx context.Context, spec CatalogSpec, pseudo PseudoSpec) (re
 	if err != nil {
 		return CatalogSpec{}, fmt.Errorf("%w: pseudolocale: %v", ErrInvalidLocale, err)
 	}
-	inputValidation, err := pseudoValidationCatalogContext(ctx, spec)
-	if err != nil {
-		return CatalogSpec{}, err
-	}
-	inputValidation.Required = slices.DeleteFunc(inputValidation.Required, func(locale string) bool {
-		_, canonical, localeErr := canonicalLocale(locale, limits.Locale.MaxTagBytes)
-		return localeErr == nil && canonical == target
-	})
-	snapshot, err := NewContext(ctx, inputValidation)
-	if err != nil {
-		return CatalogSpec{}, err
-	}
-	if target == snapshot.sourceLocale {
+	_, sourceLocale, sourceLocaleErr := canonicalLocale(spec.SourceLocale, limits.Locale.MaxTagBytes)
+	if sourceLocaleErr == nil && target == sourceLocale {
 		return CatalogSpec{}, fmt.Errorf("%w: pseudolocale %q is the source locale", ErrInvalidCatalog, target)
 	}
-	if !slices.Contains(snapshot.supported, target) {
+	targetSupported := false
+	for _, locale := range spec.Supported {
+		if err := ctx.Err(); err != nil {
+			return CatalogSpec{}, err
+		}
+		_, canonical, localeErr := canonicalLocale(locale, limits.Locale.MaxTagBytes)
+		if localeErr == nil && canonical == target {
+			targetSupported = true
+		}
+	}
+	if !targetSupported {
 		return CatalogSpec{}, fmt.Errorf("%w: pseudolocale %q is not supported", ErrInvalidLocale, target)
 	}
-
 	material, translations, err := pseudoInputMaterialContext(ctx, spec, limits)
 	if err != nil {
 		return CatalogSpec{}, err
 	}
-	if len(snapshot.records) > limits.MaxTranslations-translations {
+	if translations > limits.MaxTranslations {
 		return CatalogSpec{}, fmt.Errorf("%w: pseudolocale exceeds %d translations", ErrLimitExceeded, limits.MaxTranslations)
 	}
-	type pendingTranslation struct {
-		moduleIndex  int
-		messageIndex int
-		translation  Translation
+	messageCount := 0
+	for _, module := range spec.Modules {
+		if err := ctx.Err(); err != nil {
+			return CatalogSpec{}, err
+		}
+		if messageCount > limits.MaxTranslations-translations || len(module.Messages) > limits.MaxTranslations-translations-messageCount {
+			return CatalogSpec{}, fmt.Errorf("%w: pseudolocale exceeds %d translations", ErrLimitExceeded, limits.MaxTranslations)
+		}
+		messageCount += len(module.Messages)
 	}
-	pending := make([]pendingTranslation, 0, min(len(snapshot.records), 1024))
+	preflightOutput := outputFloor
+	preflightMaterial := material
+	placeholderDigest := strings.Repeat("0", 64)
 	for moduleIndex := range spec.Modules {
 		if err := ctx.Err(); err != nil {
 			return CatalogSpec{}, err
@@ -136,17 +141,40 @@ func PseudoContext(ctx context.Context, spec CatalogSpec, pseudo PseudoSpec) (re
 			if translationCollision || overrideCollision {
 				return CatalogSpec{}, fmt.Errorf("%w: pseudolocale %q already defines %q", ErrInvalidCatalog, target, key)
 			}
-			before := outputFloor
-			placeholderDigest := strings.Repeat("0", 64)
 			lowerBound := sourceTranslation{
 				Locale: target, Text: message.Source, Review: ReviewRequired.String(),
 				ContractRevision: message.Revision, SourceDigest: placeholderDigest, ReviewDigest: placeholderDigest,
 			}
-			if !outputFloor.addArrayValue(lowerBound, len(message.Translations), 7) {
-				if outputFloor.err != nil {
-					return CatalogSpec{}, outputFloor.err
+			if !preflightOutput.addArrayValue(lowerBound, len(message.Translations), 7) {
+				if preflightOutput.err != nil {
+					return CatalogSpec{}, preflightOutput.err
 				}
 				return CatalogSpec{}, fmt.Errorf("%w: pseudolocale output exceeds %d bytes", ErrLimitExceeded, maximum)
+			}
+			if !preflightMaterial.add(target, message.Source, message.Revision, placeholderDigest, placeholderDigest) {
+				return CatalogSpec{}, fmt.Errorf("%w: pseudolocale exceeds catalog material bounds", ErrLimitExceeded)
+			}
+		}
+	}
+	type pendingTranslation struct {
+		moduleIndex  int
+		messageIndex int
+		translation  Translation
+	}
+	pending := make([]pendingTranslation, 0, min(messageCount, 1024))
+	for moduleIndex := range spec.Modules {
+		if err := ctx.Err(); err != nil {
+			return CatalogSpec{}, err
+		}
+		module := &spec.Modules[moduleIndex]
+		for messageIndex := range module.Messages {
+			if err := ctx.Err(); err != nil {
+				return CatalogSpec{}, err
+			}
+			message := &module.Messages[messageIndex]
+			key := message.Key
+			if key == "" {
+				key = Qualify(module.Name, message.ID)
 			}
 			text, transformErr := pseudolocalizeMessageContext(ctx, message.Source, pseudo.Mode, limits.MaxTemplateBytes)
 			if transformErr != nil {
@@ -155,26 +183,9 @@ func PseudoContext(ctx context.Context, spec CatalogSpec, pseudo PseudoSpec) (re
 				}
 				return CatalogSpec{}, fmt.Errorf("%w: pseudolocale %q for %q: %v", ErrInvalidCatalog, target, key, transformErr)
 			}
-			digest, digestErr := ExpectedSourceDigestForLocale(snapshot.Profile(), spec.SourceLocale, module.Name, *message)
-			if digestErr != nil {
-				return CatalogSpec{}, fmt.Errorf("%w: source identity for %q: %v", ErrInvalidCatalog, key, digestErr)
-			}
-			reviewDigest, reviewDigestErr := ExpectedReviewDigest(digest, target, text)
-			if reviewDigestErr != nil {
-				return CatalogSpec{}, fmt.Errorf("%w: review identity for %q: %v", ErrInvalidCatalog, key, reviewDigestErr)
-			}
-			translation := Translation{
-				Locale:           target,
-				Text:             text,
-				Review:           ReviewRequired,
-				ContractRevision: message.Revision,
-				SourceDigest:     digest,
-				ReviewDigest:     reviewDigest,
-			}
-			outputFloor = before
 			exact := sourceTranslation{
-				Locale: translation.Locale, Text: translation.Text, Review: translation.Review.String(),
-				ContractRevision: translation.ContractRevision, SourceDigest: translation.SourceDigest, ReviewDigest: translation.ReviewDigest,
+				Locale: target, Text: text, Review: ReviewRequired.String(),
+				ContractRevision: message.Revision, SourceDigest: placeholderDigest, ReviewDigest: placeholderDigest,
 			}
 			if !outputFloor.addArrayValue(exact, len(message.Translations), 7) {
 				if outputFloor.err != nil {
@@ -182,11 +193,58 @@ func PseudoContext(ctx context.Context, spec CatalogSpec, pseudo PseudoSpec) (re
 				}
 				return CatalogSpec{}, fmt.Errorf("%w: pseudolocale output exceeds %d bytes", ErrLimitExceeded, maximum)
 			}
-			if !material.add(target, text, message.Revision, digest, reviewDigest) {
+			if !material.add(target, text, message.Revision, placeholderDigest, placeholderDigest) {
 				return CatalogSpec{}, fmt.Errorf("%w: pseudolocale exceeds catalog material bounds", ErrLimitExceeded)
 			}
-			pending = append(pending, pendingTranslation{moduleIndex: moduleIndex, messageIndex: messageIndex, translation: translation})
+			pending = append(pending, pendingTranslation{
+				moduleIndex: moduleIndex, messageIndex: messageIndex,
+				translation: Translation{
+					Locale: target, Text: text, Review: ReviewRequired,
+					ContractRevision: message.Revision,
+				},
+			})
 		}
+	}
+	inputValidation, err := pseudoValidationCatalogContext(ctx, spec)
+	if err != nil {
+		return CatalogSpec{}, err
+	}
+	inputValidation.Required = slices.DeleteFunc(inputValidation.Required, func(locale string) bool {
+		_, canonical, localeErr := canonicalLocale(locale, limits.Locale.MaxTagBytes)
+		return localeErr == nil && canonical == target
+	})
+	snapshot, err := NewContext(ctx, inputValidation)
+	if err != nil {
+		return CatalogSpec{}, err
+	}
+	if target == snapshot.sourceLocale {
+		return CatalogSpec{}, fmt.Errorf("%w: pseudolocale %q is the source locale", ErrInvalidCatalog, target)
+	}
+	if !slices.Contains(snapshot.supported, target) {
+		return CatalogSpec{}, fmt.Errorf("%w: pseudolocale %q is not supported", ErrInvalidLocale, target)
+	}
+
+	for pendingIndex := range pending {
+		if err := ctx.Err(); err != nil {
+			return CatalogSpec{}, err
+		}
+		value := &pending[pendingIndex]
+		module := &spec.Modules[value.moduleIndex]
+		message := &module.Messages[value.messageIndex]
+		key := message.Key
+		if key == "" {
+			key = Qualify(module.Name, message.ID)
+		}
+		digest, digestErr := ExpectedSourceDigestForLocale(snapshot.Profile(), spec.SourceLocale, module.Name, *message)
+		if digestErr != nil {
+			return CatalogSpec{}, fmt.Errorf("%w: source identity for %q: %v", ErrInvalidCatalog, key, digestErr)
+		}
+		reviewDigest, reviewDigestErr := ExpectedReviewDigest(digest, target, value.translation.Text)
+		if reviewDigestErr != nil {
+			return CatalogSpec{}, fmt.Errorf("%w: review identity for %q: %v", ErrInvalidCatalog, key, reviewDigestErr)
+		}
+		value.translation.SourceDigest = digest
+		value.translation.ReviewDigest = reviewDigest
 	}
 
 	result, err = cloneCatalogSpecForPseudoContext(ctx, spec)
@@ -267,21 +325,33 @@ func pseudoInputMaterialContext(ctx context.Context, spec CatalogSpec, limits Li
 				return counter, 0, err
 			}
 			for _, argument := range message.Arguments {
+				if err := ctx.Err(); err != nil {
+					return counter, 0, err
+				}
 				if err := add(argument.Name); err != nil {
 					return counter, 0, err
 				}
 				for _, value := range argument.Values {
+					if err := ctx.Err(); err != nil {
+						return counter, 0, err
+					}
 					if err := add(value); err != nil {
 						return counter, 0, err
 					}
 				}
 			}
 			for _, markup := range message.Markup {
+				if err := ctx.Err(); err != nil {
+					return counter, 0, err
+				}
 				if err := add(markup); err != nil {
 					return counter, 0, err
 				}
 			}
 			for _, translation := range message.Translations {
+				if err := ctx.Err(); err != nil {
+					return counter, 0, err
+				}
 				if err := add(translation.Locale, translation.Text, translation.ContractRevision, translation.SourceDigest, translation.ReviewDigest); err != nil {
 					return counter, 0, err
 				}

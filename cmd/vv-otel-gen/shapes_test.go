@@ -183,7 +183,10 @@ func TestStructuredSourceMappingsAreReciprocalAndPrivate(t *testing.T) {
 			modifySignal(r, "cache_encoded_bytes", func(s *Signal) { s.ValueSource = "cache_event.Operation" })
 		},
 		"implemented_planned_source": func(r *Registry) {
-			modifySignal(r, "storage_stream_duration", func(s *Signal) { s.Availability = "implemented" })
+			shape := r.SourceShapes["storage_stream"]
+			shape.Availability = "planned"
+			shape.Evolution = "new"
+			r.SourceShapes["storage_stream"] = shape
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -635,42 +638,28 @@ func TestBoundedCleanupAndRecoveryResults(t *testing.T) {
 	}
 }
 
-func TestPlannedSourcesRequireReciprocalInputsAndFailPrematurePromotion(t *testing.T) {
-	for _, key := range []string{"storage_stream"} {
-		t.Run(key, func(t *testing.T) {
-			r := validRegistryFixture(t)
-			shape := r.SourceShapes[key]
-			if shape.Availability != "planned" {
-				t.Fatal("prospective source is not explicitly planned")
-			}
-			if !oneOf(shape.Evolution, "new", "additive") {
-				t.Fatal("prospective source has no evolution mode")
-			}
-			shape.Availability = "current"
-			r.SourceShapes[key] = shape
-			if err := validateInventories(r, "../.."); err == nil {
-				t.Fatal("premature source promotion accepted")
-			}
-			for name, member := range shape.Members {
-				if len(member.Signals) > 0 {
-					r = validRegistryFixture(t)
-					signal := member.Signals[0]
-					s := r.Signals[signal]
-					inputs := []string{}
-					for _, input := range s.Inputs {
-						if input != key+"."+name {
-							inputs = append(inputs, input)
-						}
-					}
-					s.Inputs = inputs
-					r.Signals[signal] = s
-					if err := validate(r); err == nil {
-						t.Fatal("planned source lost its reciprocal input")
-					}
-					break
-				}
-			}
-		})
+func TestStorageStreamSourceIsCurrentAndReciprocal(t *testing.T) {
+	r := validRegistryFixture(t)
+	shape := r.SourceShapes["storage_stream"]
+	if shape.Availability != "current" || shape.Evolution != "" {
+		t.Fatalf("storage stream source availability=%q evolution=%q", shape.Availability, shape.Evolution)
+	}
+	if err := validateInventories(r, "../.."); err != nil {
+		t.Fatal(err)
+	}
+	member := shape.Members["Read"]
+	signal := member.Signals[0]
+	s := r.Signals[signal]
+	inputs := []string{}
+	for _, input := range s.Inputs {
+		if input != "storage_stream.Read" {
+			inputs = append(inputs, input)
+		}
+	}
+	s.Inputs = inputs
+	r.Signals[signal] = s
+	if err := validate(r); err == nil {
+		t.Fatal("current storage stream source lost its reciprocal input")
 	}
 }
 

@@ -15,6 +15,12 @@ import (
 
 var ErrNativeBudgetViolation = errors.New("otelnative: native metric budget violation")
 
+type NativeBudgetInstrumentRef struct {
+	Resource string
+	Scope    string
+	Name     string
+}
+
 type NativeBudgetScanner struct {
 	mu          sync.Mutex
 	manifest    NativeBudgetManifest
@@ -55,7 +61,27 @@ func (s *NativeBudgetScanner) Scan(metrics metricdata.ResourceMetrics) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.scan(metrics, nil)
+}
+
+func (s *NativeBudgetScanner) ScanExact(metrics metricdata.ResourceMetrics, expected []NativeBudgetInstrumentRef) error {
+	if s == nil {
+		return nativeBudgetViolation("scanner is nil")
+	}
+	if len(expected) == 0 {
+		return nativeBudgetViolation("exact roster is empty")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.scan(metrics, expected)
+}
+
+func (s *NativeBudgetScanner) scan(metrics metricdata.ResourceMetrics, expected []NativeBudgetInstrumentRef) error {
 	resourceID, err := s.matchResource(metrics.Resource)
+	if err != nil {
+		return err
+	}
+	exactInstruments, exactScopes, err := s.exactRoster(resourceID, expected)
 	if err != nil {
 		return err
 	}
@@ -70,6 +96,11 @@ func (s *NativeBudgetScanner) Scan(metrics metricdata.ResourceMetrics) error {
 		if _, duplicate := batchScopes[scopeTuple]; duplicate {
 			return nativeBudgetViolation("duplicate scope tuple %q/%q", resourceID, scopeID)
 		}
+		if exactScopes != nil {
+			if _, wanted := exactScopes[scopeTuple]; !wanted {
+				return nativeBudgetViolation("unexpected scope tuple %q/%q", resourceID, scopeID)
+			}
+		}
 		batchScopes[scopeTuple] = struct{}{}
 		batchInstruments := make(map[string]struct{}, len(scopeMetrics.Metrics))
 		for _, measurement := range scopeMetrics.Metrics {
@@ -80,6 +111,11 @@ func (s *NativeBudgetScanner) Scan(metrics metricdata.ResourceMetrics) error {
 			}
 			if _, duplicate := batchInstruments[key]; duplicate {
 				return nativeBudgetViolation("duplicate instrument tuple %q/%q/%q", resourceID, scopeID, measurement.Name)
+			}
+			if exactInstruments != nil {
+				if _, wanted := exactInstruments[key]; !wanted {
+					return nativeBudgetViolation("unexpected instrument tuple %q/%q/%q", resourceID, scopeID, measurement.Name)
+				}
 			}
 			batchInstruments[key] = struct{}{}
 			metricType, temporality, monotonic, points, err := nativeMetricShape(measurement.Data)
@@ -104,6 +140,16 @@ func (s *NativeBudgetScanner) Scan(metrics metricdata.ResourceMetrics) error {
 			}
 		}
 	}
+	for scopeTuple := range exactScopes {
+		if _, present := batchScopes[scopeTuple]; !present {
+			return nativeBudgetViolation("missing scope tuple %q", scopeTuple)
+		}
+	}
+	for key := range exactInstruments {
+		if _, present := pending[key]; !present {
+			return nativeBudgetViolation("missing instrument tuple %q", key)
+		}
+	}
 	for key, additions := range pending {
 		count := uint64(len(s.series[key]))
 		for series := range additions {
@@ -121,6 +167,29 @@ func (s *NativeBudgetScanner) Scan(metrics metricdata.ResourceMetrics) error {
 		}
 	}
 	return nil
+}
+
+func (s *NativeBudgetScanner) exactRoster(resourceID string, expected []NativeBudgetInstrumentRef) (map[string]struct{}, map[string]struct{}, error) {
+	if expected == nil {
+		return nil, nil, nil
+	}
+	instruments := make(map[string]struct{}, len(expected))
+	scopes := make(map[string]struct{}, len(expected))
+	for _, item := range expected {
+		if item.Resource != resourceID {
+			return nil, nil, nativeBudgetViolation("expected resource %q does not match captured resource %q", item.Resource, resourceID)
+		}
+		key := nativeInstrumentKey(item.Resource, item.Scope, item.Name)
+		if _, known := s.instruments[key]; !known {
+			return nil, nil, nativeBudgetViolation("exact roster contains unknown instrument tuple %q/%q/%q", item.Resource, item.Scope, item.Name)
+		}
+		if _, duplicate := instruments[key]; duplicate {
+			return nil, nil, nativeBudgetViolation("exact roster duplicates instrument tuple %q/%q/%q", item.Resource, item.Scope, item.Name)
+		}
+		instruments[key] = struct{}{}
+		scopes[item.Resource+"\x00"+item.Scope] = struct{}{}
+	}
+	return instruments, scopes, nil
 }
 
 func (s *NativeBudgetScanner) SeriesCount(resourceID, scopeID, name string) uint64 {

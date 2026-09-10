@@ -416,6 +416,124 @@ func TestPublicPublicationPreCommitFailuresKeepThePreviousPointer(t *testing.T) 
 	})
 }
 
+func TestPublicPublicationPointerCommitRequiresTheInitialTargetIdentity(t *testing.T) {
+	t.Run("absent target appears", func(t *testing.T) {
+		rootPath := filepath.Join(t.TempDir(), "public.i18n")
+		concurrent := []byte("concurrent pointer")
+		err := writePublicPublication(context.Background(), rootPath, publicationTestExport("candidate"), false, publicationHooks{
+			beforeCommit: func() error {
+				return os.WriteFile(filepath.Join(rootPath, publicationPointerName), concurrent, 0o644)
+			},
+		})
+		if !errors.Is(err, errPublicationPointerChanged) {
+			t.Fatalf("appeared pointer error = %v", err)
+		}
+		raw, readErr := os.ReadFile(filepath.Join(rootPath, publicationPointerName))
+		if readErr != nil || !bytes.Equal(raw, concurrent) {
+			t.Fatalf("concurrent pointer = %q, %v", raw, readErr)
+		}
+	})
+
+	t.Run("existing target is replaced", func(t *testing.T) {
+		rootPath := filepath.Join(t.TempDir(), "public.i18n")
+		first := publicationTestExport("first")
+		if err := writePublicPublication(context.Background(), rootPath, first, false, publicationHooks{}); err != nil {
+			t.Fatal(err)
+		}
+		pointerPath := filepath.Join(rootPath, publicationPointerName)
+		original, err := os.ReadFile(pointerPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		replacement := filepath.Join(rootPath, "replacement.json")
+		if err := os.WriteFile(replacement, original, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		err = writePublicPublication(context.Background(), rootPath, publicationTestExport("candidate"), false, publicationHooks{
+			beforeCommit: func() error {
+				if err := os.Remove(pointerPath); err != nil {
+					return err
+				}
+				return os.Rename(replacement, pointerPath)
+			},
+		})
+		if !errors.Is(err, errPublicationPointerChanged) {
+			t.Fatalf("replaced pointer error = %v", err)
+		}
+		_, files, err := readPublicPublication(context.Background(), rootPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		assertPublicationFiles(t, files, first)
+	})
+}
+
+func TestPublicPublicationPinsTheGenerationsDirectoryUntilPointerCommit(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows does not permit renaming an open directory")
+	}
+	rootPath := filepath.Join(t.TempDir(), "public.i18n")
+	first := publicationTestExport("first")
+	if err := writePublicPublication(context.Background(), rootPath, first, false, publicationHooks{}); err != nil {
+		t.Fatal(err)
+	}
+	pointerPath := filepath.Join(rootPath, publicationPointerName)
+	originalPointer, err := os.ReadFile(pointerPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second := publicationTestExport("second")
+	secondPointer, _, err := publicPublication(second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	generations := filepath.Join(rootPath, publicationGenerationsName)
+	retained := filepath.Join(rootPath, "retained-generations")
+	marker := filepath.Join(generations, "alternate-marker")
+	err = writePublicPublication(context.Background(), rootPath, second, false, publicationHooks{
+		beforeGenerationCommit: func() error {
+			if err := os.Rename(generations, retained); err != nil {
+				return err
+			}
+			if err := os.Mkdir(generations, 0o755); err != nil {
+				return err
+			}
+			return os.WriteFile(marker, []byte("alternate"), 0o644)
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "changed before pointer commit") {
+		t.Fatalf("retargeted generations error = %v", err)
+	}
+	currentPointer, readErr := os.ReadFile(pointerPath)
+	if readErr != nil || !bytes.Equal(currentPointer, originalPointer) {
+		t.Fatalf("pointer changed after generations retarget: %q, %v", currentPointer, readErr)
+	}
+	if _, err := os.Stat(filepath.Join(retained, publicationGenerationName(secondPointer.Generation))); err != nil {
+		t.Fatalf("pinned generation was not committed beneath retained directory: %v", err)
+	}
+	entries, err := os.ReadDir(generations)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Name() != filepath.Base(marker) {
+		t.Fatalf("alternate generations directory was mutated: %v", entries)
+	}
+	if err := os.Remove(marker); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(generations); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(retained, generations); err != nil {
+		t.Fatal(err)
+	}
+	_, files, err := readPublicPublication(context.Background(), rootPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertPublicationFiles(t, files, first)
+}
+
 func TestPublicPublicationCheckIsExactReadOnlyAndBounded(t *testing.T) {
 	if err := writePublicPublication(nil, "unused", publicationTestExport("nil"), false, publicationHooks{}); err == nil {
 		t.Fatal("nil publication context accepted")

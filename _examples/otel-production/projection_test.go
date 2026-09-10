@@ -21,11 +21,13 @@ const projectionSecret = "projection-secret-84291"
 
 type captureSpanExporter struct {
 	spans         []sdktrace.ReadOnlySpan
+	batches       []int
 	shutdownCalls int
 }
 
 func (exporter *captureSpanExporter) ExportSpans(_ context.Context, spans []sdktrace.ReadOnlySpan) error {
 	exporter.spans = append(exporter.spans, spans...)
+	exporter.batches = append(exporter.batches, len(spans))
 	return nil
 }
 
@@ -35,8 +37,9 @@ func (exporter *captureSpanExporter) Shutdown(context.Context) error {
 }
 
 type captureMetricExporter struct {
-	metrics       []metricdata.ResourceMetrics
-	shutdownCalls int
+	metrics         []metricdata.ResourceMetrics
+	forceFlushCalls int
+	shutdownCalls   int
 }
 
 func (*captureMetricExporter) Temporality(sdkmetric.InstrumentKind) metricdata.Temporality {
@@ -52,7 +55,10 @@ func (exporter *captureMetricExporter) Export(_ context.Context, metrics *metric
 	return nil
 }
 
-func (*captureMetricExporter) ForceFlush(context.Context) error { return nil }
+func (exporter *captureMetricExporter) ForceFlush(context.Context) error {
+	exporter.forceFlushCalls++
+	return nil
+}
 
 func (exporter *captureMetricExporter) Shutdown(context.Context) error {
 	exporter.shutdownCalls++
@@ -63,7 +69,8 @@ func TestSpanExportProjectionRemovesEveryUnapprovedField(t *testing.T) {
 	config := validTelemetryConfig()
 	projection := newExportProjection(config)
 	downstream := &captureSpanExporter{}
-	exporter := &projectingSpanExporter{next: downstream, projection: projection}
+	gate := &scopeGateSpanExporter{next: downstream, scopes: []instrumentation.Scope{projection.scope}}
+	exporter := &projectingSpanExporter{next: gate, projection: projection}
 	traceState, err := trace.ParseTraceState("vendor=" + projectionSecret)
 	if err != nil {
 		t.Fatal(err)
@@ -150,7 +157,8 @@ func TestSpanExportProjectionRemovesEveryUnapprovedField(t *testing.T) {
 func TestSpanExportProjectionDropsUnknownScopeAndInvalidContract(t *testing.T) {
 	projection := newExportProjection(validTelemetryConfig())
 	downstream := &captureSpanExporter{}
-	exporter := &projectingSpanExporter{next: downstream, projection: projection}
+	gate := &scopeGateSpanExporter{next: downstream, scopes: []instrumentation.Scope{projection.scope}}
+	exporter := &projectingSpanExporter{next: gate, projection: projection}
 	unknownScope := tracetest.SpanStub{
 		Name:                 "vv.command get",
 		InstrumentationScope: instrumentation.Scope{Name: projectionSecret},
@@ -175,7 +183,8 @@ func TestSpanExportProjectionDropsUnknownScopeAndInvalidContract(t *testing.T) {
 func TestMetricExportProjectionCopiesAndBoundsDatapointsAndExemplars(t *testing.T) {
 	projection := newExportProjection(validTelemetryConfig())
 	downstream := &captureMetricExporter{}
-	exporter := &projectingMetricExporter{next: downstream, projection: projection}
+	gate := &scopeGateMetricExporter{next: downstream, scopes: []instrumentation.Scope{projection.scope}}
+	exporter := &projectingMetricExporter{next: gate, projection: projection}
 	validAttributes := []attribute.KeyValue{
 		vvotel.AttrComponent.String(vvotel.ComponentJobsScheduler),
 		vvotel.AttrOperationName.String(vvotel.OpJobsSchedulerRunDue),

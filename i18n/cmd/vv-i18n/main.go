@@ -488,7 +488,7 @@ func runReview(ctx context.Context, arguments []string, stdin io.Reader, stdout,
 	if err != nil {
 		return err
 	}
-	updated, _, err := reviewCatalogContext(ctx, spec, reviewSelector{locale: *locale, key: i18n.Key(*key), scope: *scope, state: state})
+	updated, _, err := reviewCatalogBoundedContext(ctx, spec, reviewSelector{locale: *locale, key: i18n.Key(*key), scope: *scope, state: state}, limits.sourceCodec(), limits.sourceBytes())
 	if err != nil {
 		return err
 	}

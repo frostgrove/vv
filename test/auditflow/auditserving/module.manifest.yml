@@ -1,0 +1,33 @@
+{
+  "format": 1,
+  "generated_by": "vv generate module",
+  "package": "auditserving",
+  "module": "audit",
+  "order": 400,
+  "contributions": [
+    {
+      "symbol": "NewHealth",
+      "kind": "check",
+      "source": "inferred-from-signature",
+      "signature_fingerprint": "f56bb2e46a4ced798a92fd3af5b9b8b0ac9012e0c1b7aeda3c9a94faed9a902b",
+      "excluded": false,
+      "confirmed": true
+    },
+    {
+      "symbol": "NewHistory",
+      "kind": "provide",
+      "source": "inferred-from-signature",
+      "signature_fingerprint": "080e12a6bf61f82b2a51c2f7bdc3e9e278c0c5ea8d57b4a46bb84e322f6b3c99",
+      "excluded": false,
+      "confirmed": true
+    },
+    {
+      "symbol": "NewRecorder",
+      "kind": "provide",
+      "source": "inferred-from-signature",
+      "signature_fingerprint": "86903ff0f06144852c0aa19072aecb4a4b795a26d91bab3c9c77aa9eee484ee5",
+      "excluded": false,
+      "confirmed": true
+    }
+  ]
+}

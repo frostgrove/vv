@@ -10,6 +10,7 @@ import (
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/sdk/instrumentation"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/semconv/v1.41.0/goconv"
 )
 
 var (
@@ -64,16 +65,78 @@ func StartRuntimeMetrics(provider metric.MeterProvider) error {
 }
 
 func RuntimeMetricOptions() []sdkmetric.Option {
-	filter := func(item attribute.KeyValue) bool {
-		return len(projectRuntimeMetricAttributes([]attribute.KeyValue{item})) == 1
+	specs := runtimeMetricSpecs()
+	options := make([]sdkmetric.Option, 0, len(specs))
+	for name, spec := range specs {
+		filter := func(item attribute.KeyValue) bool {
+			projected := spec.attributes([]attribute.KeyValue{item})
+			return len(projected) == 1 && projected[0] == item
+		}
+		options = append(options, sdkmetric.WithView(sdkmetric.NewView(
+			sdkmetric.Instrument{
+				Name:  name,
+				Scope: instrumentation.Scope{Name: otelruntime.ScopeName},
+			},
+			sdkmetric.Stream{AttributeFilter: filter},
+		)))
 	}
-	return []sdkmetric.Option{sdkmetric.WithView(sdkmetric.NewView(
-		sdkmetric.Instrument{
-			Name:  "*",
-			Scope: instrumentation.Scope{Name: otelruntime.ScopeName},
+	return options
+}
+
+func runtimeMetricSpecs() map[string]nativeMetricSpec {
+	noAttributes := func([]attribute.KeyValue) []attribute.KeyValue { return nil }
+	return map[string]nativeMetricSpec{
+		goconv.MemoryUsed{}.Name(): {
+			description: goconv.MemoryUsed{}.Description(),
+			unit:        goconv.MemoryUsed{}.Unit(),
+			shape:       metricSumInt64,
+			attributes:  projectRuntimeMetricAttributes,
 		},
-		sdkmetric.Stream{AttributeFilter: filter},
-	))}
+		goconv.MemoryLimit{}.Name(): {
+			description: goconv.MemoryLimit{}.Description(),
+			unit:        goconv.MemoryLimit{}.Unit(),
+			shape:       metricSumInt64,
+			attributes:  noAttributes,
+		},
+		goconv.MemoryAllocated{}.Name(): {
+			description: goconv.MemoryAllocated{}.Description(),
+			unit:        goconv.MemoryAllocated{}.Unit(),
+			shape:       metricSumInt64,
+			monotonic:   true,
+			attributes:  noAttributes,
+		},
+		goconv.MemoryAllocations{}.Name(): {
+			description: goconv.MemoryAllocations{}.Description(),
+			unit:        goconv.MemoryAllocations{}.Unit(),
+			shape:       metricSumInt64,
+			monotonic:   true,
+			attributes:  noAttributes,
+		},
+		goconv.MemoryGCGoal{}.Name(): {
+			description: goconv.MemoryGCGoal{}.Description(),
+			unit:        goconv.MemoryGCGoal{}.Unit(),
+			shape:       metricSumInt64,
+			attributes:  noAttributes,
+		},
+		goconv.GoroutineCount{}.Name(): {
+			description: goconv.GoroutineCount{}.Description(),
+			unit:        goconv.GoroutineCount{}.Unit(),
+			shape:       metricSumInt64,
+			attributes:  noAttributes,
+		},
+		goconv.ProcessorLimit{}.Name(): {
+			description: goconv.ProcessorLimit{}.Description(),
+			unit:        goconv.ProcessorLimit{}.Unit(),
+			shape:       metricSumInt64,
+			attributes:  noAttributes,
+		},
+		goconv.ConfigGogc{}.Name(): {
+			description: goconv.ConfigGogc{}.Description(),
+			unit:        goconv.ConfigGogc{}.Unit(),
+			shape:       metricSumInt64,
+			attributes:  noAttributes,
+		},
+	}
 }
 
 func projectRuntimeMetricAttributes(items []attribute.KeyValue) []attribute.KeyValue {

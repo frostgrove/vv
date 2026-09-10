@@ -5,9 +5,22 @@ import (
 	"strings"
 )
 
+type boundedStringWriter interface {
+	Write([]byte) (int, error)
+	WriteString(string) (int, error)
+}
+
 type boundedTextBuilder struct {
 	value    strings.Builder
 	maximum  int
+	overflow bool
+	ctx      context.Context
+	err      error
+}
+
+type boundedTextCounter struct {
+	maximum  int
+	written  int
 	overflow bool
 	ctx      context.Context
 	err      error
@@ -72,4 +85,47 @@ func (b *boundedTextBuilder) String() string {
 
 func (b *boundedTextBuilder) Err() error {
 	return b.err
+}
+
+func newContextBoundedTextCounter(ctx context.Context, maximum int) *boundedTextCounter {
+	return &boundedTextCounter{maximum: maximum, ctx: ctx}
+}
+
+func (c *boundedTextCounter) Write(value []byte) (int, error) {
+	c.reserve(len(value))
+	return len(value), nil
+}
+
+func (c *boundedTextCounter) WriteString(value string) (int, error) {
+	c.reserve(len(value))
+	return len(value), nil
+}
+
+func (c *boundedTextCounter) reserve(size int) {
+	if c.err != nil || c.overflow {
+		return
+	}
+	if c.ctx != nil {
+		if err := c.ctx.Err(); err != nil {
+			c.err = err
+			return
+		}
+	}
+	if size < 0 || size > c.maximum-c.written {
+		c.overflow = true
+		return
+	}
+	c.written += size
+}
+
+func (c *boundedTextCounter) Len() int {
+	return c.written
+}
+
+func (c *boundedTextCounter) Overflow() bool {
+	return c.overflow
+}
+
+func (c *boundedTextCounter) Err() error {
+	return c.err
 }

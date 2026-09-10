@@ -359,6 +359,7 @@ func runAuditTraceImporterAdversarialControls(t *testing.T, repoRoot string, bas
 		{name: "duplicate exception route", planOld: "| AM-OBS-001 | PKG-AUDITFLOW |", planNew: "| AM-OBS-001 | PKG-AUDITFLOW |\n| AM-OBS-001 | PKG-AUDITFLOW |", requireRefusal: true},
 		{name: "node count", planOld: "| actor-goal | 11 |", planNew: "| actor-goal | 12 |", requireRefusal: true},
 		{name: "duplicate node count", planOld: "| actor-goal | 11 |", planNew: "| actor-goal | 11 |\n| actor-goal | 11 |", requireRefusal: true},
+		{name: "graph count in node table", planOld: "| package | 8 |\n| total | 642 |", planNew: "| package | 8 |\n| semantic | 999 |\n| total | 642 |", requireRefusal: true},
 		{name: "fact count", planOld: "| node | 642 |", planNew: "| node | 643 |", requireRefusal: true},
 		{name: "duplicate fact count", planOld: "| node | 642 |", planNew: "| node | 642 |\n| node | 642 |", requireRefusal: true},
 		{name: "node total", planOld: "| total | 642 |", planNew: "| total | 641 |", requireRefusal: true},
@@ -885,21 +886,47 @@ func validateAuditTraceFrozenCounts(plan string, registry *auditTraceRegistry, s
 	if err != nil {
 		return err
 	}
+	nodeKinds := map[string]struct{}{
+		"actor-goal": {}, "happy-requirement": {}, "edge-requirement": {}, "invariant": {},
+		"test-obligation": {}, "implementation-section": {}, "defect-mutant": {},
+		"positive-neighbor": {}, "test-reservation": {}, "package": {},
+	}
+	graphKinds := map[string]struct{}{
+		"node": {}, "section": {}, "actor-goal requires requirement": {},
+		"requirement proved-by test-obligation": {}, "requirement implemented-in section": {},
+		"test-obligation activated-in section": {}, "requirement guards defect-mutant": {},
+		"defect-mutant killed-by test-obligation": {}, "defect-mutant owned-by section": {},
+		"defect-mutant reserved-by test-reservation": {}, "defect-mutant contrasted-by positive-neighbor": {},
+		"positive-neighbor proved-by test-obligation": {}, "positive-neighbor reserved-by test-reservation": {},
+		"test-obligation reserved-by test-reservation": {}, "semantic": {}, "test": {}, "package": {},
+	}
 	wantKinds := make(map[string]uint64)
 	wantGraph := make(map[string]uint64)
 	var wantNodes, wantFacts, wantSemantics uint64
-	graphTable := false
+	table := ""
+	nodeHeaderSet := false
+	graphHeaderSet := false
 	nodeTotalSet := false
 	graphTotalSet := false
-	if strings.Count(section, "| NodeKind | Count |") != 1 || strings.Count(section, "| GraphFactKind | Count |") != 1 {
-		return fmt.Errorf("frozen count tables must each appear exactly once")
-	}
+	semanticCountSet := false
 	for _, line := range strings.Split(section, "\n") {
-		if strings.HasPrefix(line, "| GraphFactKind") {
-			graphTable = true
+		switch line {
+		case "| NodeKind | Count |":
+			if nodeHeaderSet || table != "" {
+				return fmt.Errorf("frozen node count table appears twice or out of position")
+			}
+			nodeHeaderSet = true
+			table = "node"
+			continue
+		case "| GraphFactKind | Count |":
+			if graphHeaderSet || table != "node" || !nodeTotalSet {
+				return fmt.Errorf("frozen graph count table appears twice or out of position")
+			}
+			graphHeaderSet = true
+			table = "graph"
 			continue
 		}
-		if !strings.HasPrefix(line, "| ") || strings.HasPrefix(line, "| NodeKind") || strings.HasPrefix(line, "|---") {
+		if !strings.HasPrefix(line, "| ") {
 			continue
 		}
 		cells, err := splitAuditTraceMarkdownRow(line, 2)
@@ -910,46 +937,52 @@ func validateAuditTraceFrozenCounts(plan string, registry *auditTraceRegistry, s
 		if err != nil {
 			return err
 		}
-		if _, known := map[string]bool{
-			"actor-goal": true, "happy-requirement": true, "edge-requirement": true, "invariant": true,
-			"test-obligation": true, "implementation-section": true, "defect-mutant": true,
-			"positive-neighbor": true, "test-reservation": true, "package": true,
-		}[cells[0]]; known && !graphTable {
+		switch table {
+		case "node":
+			if cells[0] == "total" {
+				if nodeTotalSet {
+					return fmt.Errorf("frozen node counts duplicate total")
+				}
+				nodeTotalSet = true
+				wantNodes = count
+				continue
+			}
+			if _, known := nodeKinds[cells[0]]; !known {
+				return fmt.Errorf("unknown frozen node count %s", cells[0])
+			}
 			if _, exists := wantKinds[cells[0]]; exists {
 				return fmt.Errorf("frozen node counts duplicate %s", cells[0])
 			}
 			wantKinds[cells[0]] = count
-			continue
-		}
-		if graphTable && cells[0] != "total non-schema facts" {
+		case "graph":
+			if cells[0] == "total non-schema facts" {
+				if graphTotalSet {
+					return fmt.Errorf("frozen graph counts duplicate total")
+				}
+				graphTotalSet = true
+				wantFacts = count
+				continue
+			}
+			if _, known := graphKinds[cells[0]]; !known {
+				return fmt.Errorf("unknown frozen graph count %s", cells[0])
+			}
 			if _, exists := wantGraph[cells[0]]; exists {
 				return fmt.Errorf("frozen graph counts duplicate %s", cells[0])
 			}
 			wantGraph[cells[0]] = count
-		}
-		switch cells[0] {
-		case "total":
-			if graphTable || nodeTotalSet {
-				return fmt.Errorf("frozen node counts duplicate or misplace total")
+			if cells[0] == "semantic" {
+				if semanticCountSet {
+					return fmt.Errorf("frozen graph counts duplicate semantic")
+				}
+				semanticCountSet = true
+				wantSemantics = count
 			}
-			nodeTotalSet = true
-			wantNodes = count
-		case "total non-schema facts":
-			if !graphTable || graphTotalSet {
-				return fmt.Errorf("frozen graph counts duplicate or misplace total")
-			}
-			graphTotalSet = true
-			wantFacts = count
-		case "semantic":
-			wantSemantics = count
 		default:
-			if !graphTable {
-				return fmt.Errorf("unknown frozen node count %s", cells[0])
-			}
+			return fmt.Errorf("frozen count row %s appears outside its table", cells[0])
 		}
 	}
-	if !nodeTotalSet || !graphTotalSet {
-		return fmt.Errorf("frozen counts omit a total")
+	if !nodeHeaderSet || !graphHeaderSet || !nodeTotalSet || !graphTotalSet || !semanticCountSet {
+		return fmt.Errorf("frozen counts omit a table, total, or semantic count")
 	}
 	actualKinds := make(map[string]uint64)
 	for _, kind := range registry.nodes {

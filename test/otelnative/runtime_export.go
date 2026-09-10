@@ -23,10 +23,9 @@ func NewRuntimeMetricExporter(next sdkmetric.Exporter, policy RuntimeProjectionP
 		resources: resources,
 		scopes: map[string]metricScopeProjection{
 			runtime.ScopeName: {
-				name:       runtime.ScopeName,
-				version:    runtime.Version,
-				metrics:    runtimeMetricNames,
-				attributes: projectRuntimeMetricAttributes,
+				name:    runtime.ScopeName,
+				version: runtime.Version,
+				metrics: runtimeMetricSpecs(),
 			},
 		},
 	}, nil

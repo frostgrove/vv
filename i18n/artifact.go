@@ -146,6 +146,10 @@ func (c Compiler) EncodeContext(ctx context.Context, snapshot *Snapshot) (raw []
 }
 
 func (c Compiler) encode(ctx context.Context, snapshot *Snapshot) ([]byte, error) {
+	return c.encodeWithSnapshotValidation(ctx, snapshot, validateArtifactSnapshotContext)
+}
+
+func (c Compiler) encodeWithSnapshotValidation(ctx context.Context, snapshot *Snapshot, validate func(context.Context, *Snapshot) error) ([]byte, error) {
 	if ctx == nil {
 		return nil, fmt.Errorf("%w: encode context is nil", ErrInvalidArtifact)
 	}
@@ -166,10 +170,17 @@ func (c Compiler) encode(ctx context.Context, snapshot *Snapshot) ([]byte, error
 	if err := requireCatalogLimitCeiling(snapshot.limits, catalogLimits); err != nil {
 		return nil, err
 	}
-	if snapshotCatalogBytes(snapshot) > artifactLimits.MaxBytes {
+	if err := checkSnapshotArtifactOutputContext(ctx, snapshot, artifactLimits); err != nil {
+		return nil, err
+	}
+	snapshotBytes, _, err := snapshotCatalogMaterialContext(ctx, snapshot)
+	if err != nil {
+		return nil, err
+	}
+	if snapshotBytes > artifactLimits.MaxBytes {
 		return nil, fmt.Errorf("%w: snapshot material cannot fit within artifact bytes", ErrLimitExceeded)
 	}
-	if err := validateControllerSnapshot(snapshot); err != nil {
+	if err := validate(ctx, snapshot); err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrInvalidArtifact, err)
 	}
 	document, err := artifactFromSnapshotContext(ctx, snapshot)
@@ -450,6 +461,105 @@ func checkCatalogArtifactFloorContext(ctx context.Context, spec CatalogSpec, lim
 		}
 	}
 	return nil
+}
+
+func checkSnapshotArtifactOutputContext(ctx context.Context, snapshot *Snapshot, artifactLimits ArtifactLimits) error {
+	document := artifactDocument{
+		Artifact: ArtifactVersion, Profile: snapshot.profile, Engine: EngineVersion, LocaleData: LocaleDataVersion,
+		TimeZoneDataModel: TimeZoneDataModel, SemanticDigest: snapshot.digest,
+		Snapshot: artifactSnapshot{
+			Revision: snapshot.revision, SourceLocale: snapshot.sourceLocale, DefaultLocale: snapshot.defaultLocale,
+			DefaultTimeZone: snapshot.defaultTimeZone, TimeZoneDataVersion: snapshot.timeZoneDataVersion,
+			MatchMode: snapshot.matchMode.String(), HighestLayer: snapshot.highestLayer.String(),
+			DefaultOnMiss: snapshot.defaultOnMiss, Supported: []string{}, Required: []string{},
+			Parents: []artifactParent{}, Capabilities: []string{}, Limits: encodeArtifactLimits(snapshot.limits),
+			Messages: []artifactMessage{},
+		},
+	}
+	counter := artifactFloorCounter{limits: artifactLimits, ctx: ctx}
+	failed := func() error {
+		if counter.err != nil {
+			return counter.err
+		}
+		return fmt.Errorf("%w: snapshot cannot fit within artifact bounds", ErrLimitExceeded)
+	}
+	if !counter.addValue(document, 1) {
+		return failed()
+	}
+	for index, locale := range snapshot.supported {
+		if !counter.addArrayValue(locale, index, 4) {
+			return failed()
+		}
+	}
+	for index, locale := range snapshot.required {
+		if !counter.addArrayValue(locale, index, 4) {
+			return failed()
+		}
+	}
+	parentIndex := 0
+	for locale, parent := range snapshot.parents {
+		if !counter.addArrayValue(artifactParent{Locale: locale, Parent: parent}, parentIndex, 4) {
+			return failed()
+		}
+		parentIndex++
+	}
+	capabilityIndex := 0
+	for _, capability := range []Capability{CapabilityDateTime, CapabilityUnit} {
+		if !snapshot.capabilities[capability] {
+			continue
+		}
+		if !counter.addArrayValue(capability.String(), capabilityIndex, 4) {
+			return failed()
+		}
+		capabilityIndex++
+	}
+	messageIndex := 0
+	for key, record := range snapshot.records {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if record == nil {
+			return fmt.Errorf("%w: snapshot contains an incomplete message", ErrInvalidArtifact)
+		}
+		message := artifactMessage{
+			Key: string(key), Revision: record.descriptor.Revision, Description: record.descriptor.Description,
+			Output: record.descriptor.Output.String(), Override: record.descriptor.Override.String(),
+			AllowEmpty: record.descriptor.AllowEmpty, Public: record.descriptor.Public,
+			ContractDigest: record.contractHash, SourceDigest: record.sourceDigest,
+			Arguments: []artifactArgument{}, Markup: []string{}, Templates: []artifactTemplate{},
+		}
+		if !counter.addArrayValue(message, messageIndex, 4) {
+			return failed()
+		}
+		messageIndex++
+		for argumentIndex, argument := range record.descriptor.Arguments {
+			values := argument.Values
+			if values == nil {
+				values = []string{}
+			}
+			encoded := artifactArgument{
+				Name: argument.Name, Type: argument.Type.String(), Required: argument.Required,
+				Nullable: argument.Nullable, Values: values,
+			}
+			if !counter.addArrayValue(encoded, argumentIndex, 6) {
+				return failed()
+			}
+		}
+		for markupIndex, markup := range record.descriptor.Markup {
+			if !counter.addArrayValue(markup, markupIndex, 6) {
+				return failed()
+			}
+		}
+		templateIndex := 0
+		for locale, template := range record.templates {
+			encoded := artifactTemplate{Locale: locale, Layer: template.layer.String(), Text: template.text}
+			if !counter.addArrayValue(encoded, templateIndex, 6) {
+				return failed()
+			}
+			templateIndex++
+		}
+	}
+	return ctx.Err()
 }
 
 type artifactFloorCounter struct {
@@ -1346,23 +1456,53 @@ func snapshotFromArtifact(ctx context.Context, document artifactDocument, catalo
 		observer:            observer,
 		highestLayer:        highestLayer,
 	}
-	snapshot.formatRequirements, err = snapshotFormattingRequirements(snapshot)
+	snapshot.formatRequirements, err = snapshotFormattingRequirementsContext(ctx, snapshot)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrInvalidArtifact, err)
 	}
-	if bytes := snapshotCatalogBytes(snapshot); bytes > limits.MaxCatalogBytes {
+	bytes, _, err := snapshotCatalogMaterialContext(ctx, snapshot)
+	if err != nil {
+		return nil, err
+	}
+	if bytes > limits.MaxCatalogBytes {
 		return nil, fmt.Errorf("%w: %w: catalog bytes exceed %d", ErrInvalidArtifact, ErrLimitExceeded, limits.MaxCatalogBytes)
 	}
 	requiredProblems := &problemSet{}
-	validateRequiredLocales(snapshot, requiredProblems)
+	if err := validateRequiredLocalesContext(ctx, snapshot, requiredProblems); err != nil {
+		return nil, err
+	}
 	if err := requiredProblems.err(); err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrInvalidArtifact, err)
 	}
-	snapshot.digest = snapshotDigest(snapshot)
+	snapshot.digest, err = snapshotDigestContext(ctx, snapshot)
+	if err != nil {
+		return nil, err
+	}
 	if snapshot.digest != document.SemanticDigest {
 		return nil, fmt.Errorf("%w: semantic digest does not match the compiled snapshot", ErrInvalidArtifact)
 	}
 	return snapshot, nil
+}
+
+func validateArtifactSnapshotContext(ctx context.Context, snapshot *Snapshot) error {
+	if snapshot == nil {
+		return fmt.Errorf("%w: controller snapshot is nil", ErrInvalidCatalog)
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	reference := snapshot.Reference()
+	if !reference.Valid() || snapshot.resolver == nil || len(snapshot.records) == 0 {
+		return fmt.Errorf("%w: controller snapshot is incomplete or its semantic digest is invalid", ErrInvalidCatalog)
+	}
+	digest, err := snapshotDigestContext(ctx, snapshot)
+	if err != nil {
+		return err
+	}
+	if snapshot.digest != digest {
+		return fmt.Errorf("%w: controller snapshot is incomplete or its semantic digest is invalid", ErrInvalidCatalog)
+	}
+	return nil
 }
 
 func preflightArtifactSnapshot(ctx context.Context, snapshot artifactSnapshot, limits Limits) error {

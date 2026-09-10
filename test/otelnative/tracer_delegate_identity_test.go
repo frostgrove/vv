@@ -4,25 +4,42 @@ import (
 	"context"
 	"testing"
 
+	"go.opentelemetry.io/otel/attribute"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	"go.opentelemetry.io/otel/trace"
 )
 
+type scopedTracerContextKey struct{}
+
 func TestScopedTracerForwardsBorrowedSpanProviderAndContextIdentity(t *testing.T) {
-	provider := sdktrace.NewTracerProvider()
+	recorder := tracetest.NewSpanRecorder()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
 	t.Cleanup(func() { _ = provider.Shutdown(context.Background()) })
 	delegate := scopedTracerProvider{
 		TracerProvider: provider,
 		scope:          "scoped",
-		normalizeName:  func(string) string { return "normalized" },
+		normalizeName:  normalizePGXSpanName,
 	}
-	ctx, span := delegate.Tracer("scoped").Start(context.Background(), "private")
-	defer span.End()
+	caller := context.WithValue(context.Background(), scopedTracerContextKey{}, "kept")
+	ctx, span := delegate.Tracer("scoped").Start(caller, "private-start-secret", trace.WithSpanKind(trace.SpanKindClient), trace.WithAttributes(attribute.String("kept", "value")))
 	contextSpan := trace.SpanFromContext(ctx)
 	if span.TracerProvider() != provider || contextSpan.TracerProvider() != provider {
 		t.Fatalf("span providers = %T/%T, want borrowed %T", span.TracerProvider(), contextSpan.TracerProvider(), provider)
 	}
 	if !span.SpanContext().Equal(contextSpan.SpanContext()) {
 		t.Fatalf("returned/context span contexts = %v/%v", span.SpanContext(), contextSpan.SpanContext())
+	}
+	if ctx.Value(scopedTracerContextKey{}) != "kept" {
+		t.Fatal("scoped tracer lost caller context values")
+	}
+	span.SetName("copy_from private-table-secret")
+	span.End()
+	ended := recorder.Ended()
+	if len(ended) != 1 || ended[0].Name() != "db.copy" || ended[0].SpanKind() != trace.SpanKindClient {
+		t.Fatalf("ended spans = %#v", ended)
+	}
+	if len(ended[0].Attributes()) != 1 || ended[0].Attributes()[0].Key != "kept" || ended[0].Attributes()[0].Value.AsString() != "value" {
+		t.Fatalf("forwarded attributes = %v", ended[0].Attributes())
 	}
 }

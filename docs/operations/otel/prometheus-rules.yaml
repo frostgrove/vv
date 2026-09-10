@@ -1,0 +1,264 @@
+groups:
+  - name: frostgrove-slo-recording
+    interval: 30s
+    rules:
+      - record: vv:command:error_ratio5m
+        expr: |
+          sum(rate(vv_command_duration_count{vv_operation_outcome=~"error|timeout"}[5m]))
+          /
+          sum(rate(vv_command_duration_count[5m]))
+      - record: vv:command:p95_seconds5m
+        expr: |
+          histogram_quantile(0.95, sum by (le) (rate(vv_command_duration_bucket[5m])))
+      - record: vv:storage:error_ratio5m
+        expr: |
+          sum(rate(vv_storage_operation_duration_count{vv_operation_outcome=~"error|timeout"}[5m]))
+          /
+          sum(rate(vv_storage_operation_duration_count[5m]))
+      - record: vv:storage:p95_seconds5m
+        expr: |
+          histogram_quantile(0.95, sum by (le) (rate(vv_storage_operation_duration_bucket[5m])))
+      - record: vv:storage_stream:failure_ratio5m
+        expr: |
+          sum(rate(vv_storage_stream_duration_count{vv_operation_outcome="error"}[5m]))
+          /
+          sum(rate(vv_storage_stream_duration_count[5m]))
+      - record: vv:http:server_error_ratio5m
+        expr: |
+          sum(rate(http_server_request_duration_count{vv_http_management!="true",http_response_status_code=~"5.."}[5m]))
+          /
+          sum(rate(http_server_request_duration_count{vv_http_management!="true"}[5m]))
+      - record: vv:http:p95_seconds5m
+        expr: |
+          histogram_quantile(0.95,
+            sum by (le) (rate(http_server_request_duration_bucket{vv_http_management!="true"}[5m])))
+
+  - name: frostgrove-subsystems-recording
+    interval: 30s
+    rules:
+      - record: vv:cache:hit_ratio5m
+        expr: |
+          sum(rate(vv_cache_operations{vv_cache_layer="facade",vv_operation_name=~"load|load_many|lookup|lookup_many",vv_operation_outcome="hit"}[5m]))
+          /
+          sum(rate(vv_cache_operations{vv_cache_layer="facade",vv_operation_name=~"load|load_many|lookup|lookup_many",vv_operation_outcome=~"hit|miss|loaded|negative|stale"}[5m]))
+      - record: vv:cache:stale_ratio5m
+        expr: |
+          sum(rate(vv_cache_operations{vv_cache_layer="facade",vv_operation_name=~"load|load_many|lookup|lookup_many",vv_operation_outcome="stale"}[5m]))
+          /
+          sum(rate(vv_cache_operations{vv_cache_layer="facade",vv_operation_name=~"load|load_many|lookup|lookup_many",vv_operation_outcome=~"hit|miss|loaded|negative|stale"}[5m]))
+      - record: vv:cache:negative_ratio5m
+        expr: |
+          sum(rate(vv_cache_operations{vv_cache_layer="facade",vv_operation_name=~"load|load_many|lookup|lookup_many",vv_operation_outcome="negative"}[5m]))
+          /
+          sum(rate(vv_cache_operations{vv_cache_layer="facade",vv_operation_name=~"load|load_many|lookup|lookup_many",vv_operation_outcome=~"hit|miss|loaded|negative|stale"}[5m]))
+      - record: vv:cache:evictions_per_second5m
+        expr: |
+          sum(rate(vv_cache_operations{vv_cache_layer="memory_backend",vv_operation_name="evict",vv_operation_outcome="evicted"}[5m]))
+      - record: vv:cache:bytes_occupancy_ratio
+        expr: |
+          sum(vv_cache_memory_charged_bytes)
+          /
+          sum(vv_cache_memory_byte_limit)
+      - record: vv:cache:entries_occupancy_ratio
+        expr: |
+          sum(vv_cache_memory_entries)
+          /
+          sum(vv_cache_memory_entry_limit)
+      - record: vv:auth_refusal:reason_share5m
+        expr: |
+          sum by (vv_reason) (rate(vv_auth_refusals[5m]))
+          /
+          ignoring (vv_reason) group_left
+          sum(rate(vv_auth_refusals[5m]))
+      - record: vv:auth_refusal:reason_share1h
+        expr: |
+          sum by (vv_reason) (rate(vv_auth_refusals[1h]))
+          /
+          ignoring (vv_reason) group_left
+          sum(rate(vv_auth_refusals[1h]))
+      - record: vv:auth_refusal:reason_share_shift5m
+        expr: |
+          vv:auth_refusal:reason_share5m
+          -
+          vv:auth_refusal:reason_share1h
+      - record: vv:health:failure_ratio5m
+        expr: |
+          sum by (vv_health_importance) (rate(vv_health_checks{vv_health_state="failing"}[5m]))
+          /
+          ignoring (vv_health_state) group_left
+          sum by (vv_health_importance) (rate(vv_health_checks[5m]))
+      - record: vv:runtime:operation_failure_ratio5m
+        expr: |
+          sum by (vv_operation_name) (rate(vv_runtime_operations{vv_operation_outcome=~"error|timeout"}[5m]))
+          /
+          ignoring (vv_operation_outcome) group_left
+          sum by (vv_operation_name) (rate(vv_runtime_operations[5m]))
+      - record: vv:runtime:periodic_failure_ratio5m
+        expr: |
+          sum(rate(vv_runtime_periodic_duration_count{vv_operation_outcome=~"error|timeout"}[5m]))
+          /
+          sum(rate(vv_runtime_periodic_duration_count[5m]))
+
+  - name: frostgrove-jobs-recording
+    interval: 30s
+    rules:
+      - record: vv:jobs:queue_delay_p95_seconds5m
+        expr: |
+          histogram_quantile(0.95, sum by (le) (rate(vv_jobs_handler_queue_delay_bucket[5m])))
+      - record: vv:jobs:handler_failure_ratio5m
+        expr: |
+          sum(rate(vv_jobs_handler_duration_count{vv_operation_outcome=~"error|timeout"}[5m]))
+          /
+          sum(rate(vv_jobs_handler_duration_count[5m]))
+      - record: vv:jobs:worker_failure_ratio5m
+        expr: |
+          sum by (vv_operation_name) (rate(vv_jobs_worker_operations{vv_operation_name=~"renew|apply",vv_operation_outcome=~"failed|timeout"}[5m]))
+          /
+          ignoring (vv_operation_outcome) group_left
+          sum by (vv_operation_name) (rate(vv_jobs_worker_operations{vv_operation_name=~"renew|apply"}[5m]))
+      - record: vv:jobs:admission_saturation_ratio5m
+        expr: |
+          sum(rate(vv_jobs_worker_admission{vv_operation_outcome="saturated"}[5m]))
+          /
+          sum(rate(vv_jobs_worker_admission[5m]))
+      - record: vv:jobs:scheduler_failure_ratio5m
+        expr: |
+          sum(rate(vv_jobs_scheduler_cycles{vv_operation_outcome=~"error|timeout"}[5m]))
+          /
+          sum(rate(vv_jobs_scheduler_cycles[5m]))
+      - record: vv:jobs:scheduler_placement_ratio5m
+        expr: |
+          sum(rate(vv_jobs_scheduler_results_sum{vv_jobs_scheduler_result="placed"}[5m]))
+          /
+          sum(rate(vv_jobs_scheduler_results_sum{vv_jobs_scheduler_result="due"}[5m]))
+
+  - name: frostgrove-alerts
+    interval: 30s
+    rules:
+      - alert: FrostgroveCommandErrorBudgetBurn
+        expr: vv:command:error_ratio5m > 0.05
+        for: 10m
+        labels:
+          severity: page
+        annotations:
+          summary: Command error ratio exceeds 5 percent
+      - alert: FrostgroveStorageErrorBudgetBurn
+        expr: vv:storage:error_ratio5m > 0.02
+        for: 10m
+        labels:
+          severity: page
+        annotations:
+          summary: Storage error ratio exceeds 2 percent
+      - alert: FrostgroveStorageStreamFailures
+        expr: vv:storage_stream:failure_ratio5m > 0.01
+        for: 10m
+        labels:
+          severity: page
+        annotations:
+          summary: Storage stream failure ratio exceeds 1 percent
+      - alert: FrostgroveCacheNearCapacity
+        expr: vv:cache:bytes_occupancy_ratio > 0.9 or vv:cache:entries_occupancy_ratio > 0.9
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: Cache occupancy exceeds 90 percent
+      - alert: FrostgroveHealthRequiredFailures
+        expr: vv:health:failure_ratio5m{vv_health_importance="required"} > 0
+        for: 5m
+        labels:
+          severity: page
+        annotations:
+          summary: A required health check is failing
+      - alert: FrostgroveAuthRefusalReasonShift
+        expr: vv:auth_refusal:reason_share_shift5m > 0.2
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: An authentication refusal reason share exceeds its one-hour baseline by 20 percentage points
+      - alert: FrostgroveRuntimeFailures
+        expr: vv:runtime:operation_failure_ratio5m > 0.01 or vv:runtime:periodic_failure_ratio5m > 0.01
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: Runtime run, drain, or periodic failures exceed 1 percent
+      - alert: FrostgroveJobsQueueDelay
+        expr: vv:jobs:queue_delay_p95_seconds5m > 30
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: Job queue delay p95 exceeds 30 seconds
+      - alert: FrostgroveJobsFailures
+        expr: vv:jobs:handler_failure_ratio5m > 0.05 or vv:jobs:worker_failure_ratio5m > 0.05 or vv:jobs:scheduler_failure_ratio5m > 0.05
+        for: 10m
+        labels:
+          severity: page
+        annotations:
+          summary: Job handler, renew/apply, or scheduler failures exceed 5 percent
+      - alert: FrostgroveJobsAdmissionSaturated
+        expr: vv:jobs:admission_saturation_ratio5m > 0.1
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: Job worker admission saturation exceeds 10 percent
+      - alert: FrostgroveCriticalTelemetryMissing
+        expr: absent(vv_command_duration_count) or absent(vv_storage_operation_duration_count) or absent(vv_health_checks)
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: A critical Frostgrove metric family is absent
+
+  - name: collector-alerts
+    interval: 30s
+    rules:
+      - alert: OTelCollectorExporterEnqueueFailures
+        expr: |
+          sum by (exporter) (rate(otelcol_exporter_enqueue_failed_spans[5m])) > 0
+          or sum by (exporter) (rate(otelcol_exporter_enqueue_failed_metric_points[5m])) > 0
+          or sum by (exporter) (rate(otelcol_exporter_enqueue_failed_log_records[5m])) > 0
+        for: 5m
+        labels:
+          severity: page
+        annotations:
+          summary: Collector exporter is dropping telemetry before enqueue
+      - alert: OTelCollectorExporterSendFailures
+        expr: |
+          sum by (exporter) (rate(otelcol_exporter_send_failed_spans[5m])) > 0
+          or sum by (exporter) (rate(otelcol_exporter_send_failed_metric_points[5m])) > 0
+          or sum by (exporter) (rate(otelcol_exporter_send_failed_log_records[5m])) > 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: Collector exporter cannot send telemetry
+      - alert: OTelCollectorQueueNearCapacity
+        expr: |
+          otelcol_exporter_queue_size
+          / otelcol_exporter_queue_capacity > 0.8
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: Collector exporter queue exceeds 80 percent
+      - alert: OTelCollectorReceiverRefusedTelemetry
+        expr: |
+          sum by (receiver) (rate(otelcol_receiver_refused_spans[5m])) > 0
+          or sum by (receiver) (rate(otelcol_receiver_refused_metric_points[5m])) > 0
+          or sum by (receiver) (rate(otelcol_receiver_refused_log_records[5m])) > 0
+        for: 5m
+        labels:
+          severity: page
+        annotations:
+          summary: Collector receiver is refusing telemetry
+      - alert: OTelCollectorTailSamplingEarlyDrops
+        expr: sum(rate(otelcol_processor_tail_sampling_sampling_trace_dropped_too_early[5m])) > 0
+        for: 5m
+        labels:
+          severity: page
+        annotations:
+          summary: Tail sampler evicts traces before its decision

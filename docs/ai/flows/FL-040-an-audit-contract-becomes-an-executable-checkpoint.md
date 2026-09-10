@@ -1,11 +1,11 @@
-# FL-039 — An audit contract becomes an executable checkpoint
+# FL-040 — An audit contract becomes an executable checkpoint
 
 **Entry points:** `scripts/audit-trace.sh`,
 `scripts/audit_trace_test.go:TestAuditTraceRegistry`, and the S0-only
 `scripts/audit_trace_import_test.go:TestAuditTraceDesignImport`
 **Implements:** the S0 traceability boundary for [[UC-034]]; no runtime audit
 behavior
-**Governed by:** [[D-020]] [[D-033]] [[D-121]] [[D-130]]
+**Governed by:** [[D-020]] [[D-033]] [[D-121]] [[D-136]]
 
 This is the path from the reviewed audit contract and implementation plan to a
 tracked, cumulative checkpoint that can fail on a missing guarantee, test,
@@ -133,9 +133,9 @@ passes and add the obligations activated by the section being delivered.
 
 | File | What it holds |
 |---|---|
-| `docs/ai/decisions/D-130-audit-evidence-is-explicit-protected-and-transaction-honest.md` | the binding audit boundary and owed-runtime status |
+| `docs/ai/decisions/D-136-audit-evidence-is-explicit-protected-and-transaction-honest.md` | the binding audit boundary and owed-runtime status |
 | `docs/ai/usecases/modules/audit/UC-034-record-and-investigate-auditable-evidence.md` | the consumer-visible audit contract, with no implementation coordinates |
-| `docs/ai/flows/FL-039-an-audit-contract-becomes-an-executable-checkpoint.md` | this implementation map and the current-versus-owed boundary |
+| `docs/ai/flows/FL-040-an-audit-contract-becomes-an-executable-checkpoint.md` | this implementation map and the current-versus-owed boundary |
 | `docs/roadmaps/2026-09-01-audit-log-roadmap.md` | current topology, competitive evidence, delivery order and release gates |
 | `scripts/testdata/audit_trace.tsv` | normalized graph and execution routing |
 | `scripts/testdata/audit_trace_semantics.json` | exact behavior text |

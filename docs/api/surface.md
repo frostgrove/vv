@@ -2758,7 +2758,9 @@ const OutcomeOk = "ok" ...
 const ErrorTypeInvalid = "invalid" ...
 const ErrorCodeUnique = "unique" ...
 const MetricCacheOperations = "vv.cache.operations" ...
+const MaxCacheMemoryStatsBackends = 64
 const MaxResourceNameValues = 32
+var ErrInvalidRegistration = errors.New("vvotel: invalid registration") ...
 var ErrNilConfig = errors.New("vvotel: config is nil") ...
 var AttributeMetadataByKey = map[string]AttributeMetadata{ ... }
 var MetricMetadataByKey = map[string]MetricMetadata{ ... }
@@ -2780,6 +2782,9 @@ type CacheOption func(*cacheSettings)
     func WithCacheSpanEvents(enabled bool) CacheOption
 type Config struct{ ... }
 type MetricMetadata struct{ ... }
+type Registration interface{ ... }
+    func CacheMemoryStats(tel *Telemetry, backends ...*cachememory.Backend) (Registration, error)
+    func MustCacheMemoryStats(tel *Telemetry, backends ...*cachememory.Backend) Registration
 type ServiceOption func(*serviceSettings)
     func WithServiceResource(name string) ServiceOption
 type StorageOption func(*storageSettings)
@@ -2873,4 +2878,3 @@ type ReadWriteOption func(*readWriteOptions)
 ```go
 func Execute(config *vvdb.Config)
 ```
-

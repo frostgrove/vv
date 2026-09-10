@@ -2,10 +2,8 @@ package audit
 
 import (
 	"bytes"
-	"fmt"
 	"reflect"
 	"slices"
-	"strings"
 
 	"github.com/frostgrove/vv/crud"
 	"github.com/frostgrove/vv/utils"
@@ -40,7 +38,7 @@ type ModelMember[M, F any] struct {
 
 type entityFieldValue[M, V any] struct {
 	source         string
-	member         func(*M) *V
+	member         func(*M) any
 	name           FieldName
 	codec          Codec[V]
 	classification Classification
@@ -89,7 +87,6 @@ type extractedEntityValue struct {
 type resourcePolicy[M any, ID comparable] struct {
 	seal       declarationSeal
 	schema     *crud.Schema
-	table      string
 	descriptor Descriptor
 	subject    subjectPolicy[ID]
 	actions    []EntityAction
@@ -241,7 +238,7 @@ func (field entityFieldValue[M, V]) bindEntityField(schema *crud.Schema) (boundE
 	if err := validateEntityFieldType(resolved.Type, reflect.TypeFor[V](), field.optional); err != nil {
 		return nil, err
 	}
-	if err := validateFieldPrivacy(field.classification, field.mode, resolved.Secret); err != nil {
+	if err := validateFieldPrivacy(field.classification, field.mode, resolved.Secret || field.classification == Secret); err != nil {
 		return nil, err
 	}
 	if field.reconstruct && (resolved.Secret || field.mode != AsPlaintext && field.mode != AsProtected) {
@@ -261,7 +258,7 @@ func (index EntityIndex[M, V]) Field() EntityField[M] {
 	return index.value
 }
 
-func newEntityField[M, V any](source string, member func(*M) *V, name FieldName, codec Codec[V], classification Classification, mode StorageMode, optional, reconstruct, historicalOnly, queryIndex bool) entityFieldValue[M, V] {
+func newEntityField[M, V any](source string, member func(*M) any, name FieldName, codec Codec[V], classification Classification, mode StorageMode, optional, reconstruct, historicalOnly, queryIndex bool) entityFieldValue[M, V] {
 	if !validSemanticName(string(name)) {
 		panic(auditErrorAt(ErrDeclaration, "field.name"))
 	}
@@ -281,12 +278,12 @@ func newEntityField[M, V any](source string, member func(*M) *V, name FieldName,
 	}
 }
 
-func adaptMember[M, F, V any](member ModelMember[M, F]) func(*M) *V {
-	if member.value.selectField == nil || reflect.TypeFor[F]() != reflect.TypeFor[V]() {
+func adaptMember[M, F, V any](member ModelMember[M, F]) func(*M) any {
+	if member.value.selectField == nil {
 		panic(auditErrorAt(ErrDeclaration, "member.type"))
 	}
-	return func(model *M) *V {
-		return any(member.value.selectField(model)).(*V)
+	return func(model *M) any {
+		return member.value.selectField(model)
 	}
 }
 
@@ -298,7 +295,7 @@ func (field entityFieldValue[M, V]) description(source string) FieldDescription 
 	}
 }
 
-func resolveEntityField[M, V any](schema *crud.Schema, source string, member func(*M) *V) (_ *crud.Field, err error) {
+func resolveEntityField[M any](schema *crud.Schema, source string, member func(*M) any) (_ *crud.Field, err error) {
 	if member != nil {
 		defer func() {
 			if recover() != nil {
@@ -307,7 +304,7 @@ func resolveEntityField[M, V any](schema *crud.Schema, source string, member fun
 		}()
 		model := new(M)
 		selected := member(model)
-		if selected == nil {
+		if nilByReflection(selected) {
 			return nil, auditErrorAt(ErrDeclaration, "member.selector")
 		}
 		pointers, pointerErr := schema.Pointers(model, schema.Fields)
@@ -378,7 +375,7 @@ func TryDefine[M any, ID comparable](policy Policy[M, ID]) (*ResourcePolicy[M, I
 	if policy.Subject.value.mapReference == nil {
 		return nil, auditErrorAt(ErrDeclaration, "subject")
 	}
-	if err := validateSubjectPrivacy(policy.Subject.value.classification, policy.Subject.value.mode, policy.Model.PK.Secret); err != nil {
+	if err := validateSubjectPrivacy(policy.Subject.value.classification, policy.Subject.value.mode, policy.Model.PK.Secret || policy.Subject.value.classification == Secret); err != nil {
 		return nil, err
 	}
 	actions, err := canonicalEntityActions(policy.Actions)
@@ -400,7 +397,7 @@ func TryDefine[M any, ID comparable](policy Policy[M, ID]) (*ResourcePolicy[M, I
 	description.Semantics = policy.Semantics.description(PolicyFingerprint{})
 	description.Semantics.Fingerprint = policyFingerprint(description, resourceMetadata(policy.Model, descriptions))
 	resource := &resourcePolicy[M, ID]{
-		schema: schema, table: policy.Model.TableReference().String(), descriptor: policy.Descriptor,
+		schema: schema, descriptor: policy.Descriptor,
 		subject: policy.Subject.value, actions: actions, fields: bound,
 	}
 	resource.seal.description = description
@@ -421,6 +418,39 @@ func validateResourceModel[M any, ID comparable](meta *crud.Meta) error {
 	if meta == nil || meta.Schema == nil || meta.PK == nil || meta.Schema.Type != reflect.TypeFor[M]() {
 		return auditErrorAt(ErrDeclaration, "model")
 	}
+	canonical, err := crud.SchemaOf[M]()
+	if err != nil || len(meta.Fields) == 0 || len(meta.Fields) != len(canonical.Fields) {
+		return auditErrorAt(ErrDeclaration, "model.fields")
+	}
+	owned := make(map[*crud.Field]struct{}, len(meta.Fields))
+	primaryKeys := 0
+	tombstones := 0
+	for index, field := range meta.Fields {
+		if field == nil || canonical.Fields[index] == nil || field.Ordinal != index || !sameCRUDField(field, canonical.Fields[index]) {
+			return auditErrorAt(ErrDeclaration, "model.fields")
+		}
+		if _, duplicate := owned[field]; duplicate {
+			return auditErrorAt(ErrDeclaration, "model.fields")
+		}
+		owned[field] = struct{}{}
+		if field.PK {
+			primaryKeys++
+		}
+		if field.Tombstone {
+			tombstones++
+		}
+	}
+	if _, ok := owned[meta.PK]; !ok || primaryKeys != 1 || !meta.PK.PK {
+		return auditErrorAt(ErrDeclaration, "model.pk")
+	}
+	if meta.Tombstone == nil && tombstones != 0 || meta.Tombstone != nil && (tombstones != 1 || !meta.Tombstone.Tombstone) {
+		return auditErrorAt(ErrDeclaration, "model.tombstone")
+	}
+	if meta.Tombstone != nil {
+		if _, ok := owned[meta.Tombstone]; !ok {
+			return auditErrorAt(ErrDeclaration, "model.tombstone")
+		}
+	}
 	if err := meta.CheckID(reflect.TypeFor[ID]()); err != nil {
 		return auditError(ErrDeclaration, err)
 	}
@@ -428,6 +458,13 @@ func validateResourceModel[M any, ID comparable](meta *crud.Meta) error {
 		return auditError(ErrDeclaration, err)
 	}
 	return nil
+}
+
+func sameCRUDField(left, right *crud.Field) bool {
+	return left.Name == right.Name && left.Column == right.Column && left.Type == right.Type && left.Offset == right.Offset &&
+		left.Ordinal == right.Ordinal && left.PK == right.PK && left.Auto == right.Auto && left.Immutable == right.Immutable &&
+		left.Generated == right.Generated && left.ServerOwned == right.ServerOwned && left.Tombstone == right.Tombstone &&
+		left.Secret == right.Secret && left.Version == right.Version && left.Optional == right.Optional
 }
 
 func freezeSchema(input *crud.Schema) *crud.Schema {
@@ -465,6 +502,9 @@ func validEntityAction(action EntityAction) bool {
 }
 
 func bindEntityFields[M any](schema *crud.Schema, fields []EntityField[M]) ([]boundEntityField[M], []FieldDescription, error) {
+	if len(fields) == 0 {
+		return nil, nil, auditErrorAt(ErrDeclaration, "fields")
+	}
 	if len(fields) > MaxFieldsPerItem {
 		return nil, nil, auditTooLarge("fields", MaxFieldsPerItem)
 	}
@@ -541,6 +581,7 @@ func (field boundEntityFieldValue[M, V]) extract(model *M) (_ extractedEntityVal
 	comparison := append([]byte{1}, wire...)
 	if field.descriptionValue.Mode == AsRedacted {
 		draft.state = ValueRedacted
+		draft.canonical = bytes.Clone(wire)
 		return extractedEntityValue{value: draft, comparison: comparison}, nil
 	}
 	draft.state = ValuePresent
@@ -830,15 +871,4 @@ func policyHasFixture(description PolicySemanticsDescription, name FixtureName) 
 		}
 	}
 	return false
-}
-
-func (p *ResourcePolicy[M, ID]) String() string {
-	if p == nil || p.value == nil {
-		return "[invalid audit resource policy]"
-	}
-	return fmt.Sprintf("[audit resource %s]", p.value.seal.description.Resource)
-}
-
-func entityFieldIdentity(description FieldDescription) string {
-	return strings.Join([]string{description.Source, string(description.Name), description.Codec.Name}, "\x00")
 }

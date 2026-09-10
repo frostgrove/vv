@@ -1,4 +1,4 @@
-# D-130 — Audit evidence is explicit, protected, and transaction-honest
+# D-136 — Audit evidence is explicit, protected, and transaction-honest
 
 **Status:** in force from audit S1; the S0 contract and trace authority are
 current, while runtime proof is owed by the sections that implement it
@@ -161,7 +161,7 @@ values or authority and never changes an audit result.
 ### The design graph is executable authority
 
 The tracked normalized adjacency registry, exact semantic manifest and
-independent completeness anchor defined by [[FL-039]] become the executable
+independent completeness anchor defined by [[FL-040]] become the executable
 design authority at S0. Their separation is deliberate: adjacency proves
 connectivity, semantic records freeze observable meaning, and the independent
 anchor catches deletion of a closed subgraph or highest identifier that an
@@ -220,7 +220,7 @@ the right product meaning; that remains a review obligation.
 S0 currently proves that the complete reviewed goal, happy-case, hostile-case,
 invariant, test-obligation, mutant, positive-control, package and section graph
 is materialized, independently anchored and executable as described in
-[[FL-039]].
+[[FL-040]].
 
 Runtime evidence is owed by audit S1 through S7. Each section must activate its
 declared coverage test, every mutant-kill test and a distinct positive neighbour;
@@ -245,4 +245,4 @@ None of those runtime guarantees is current merely because it is named here.
 ## See also
 
 [[D-020]] [[D-021]] [[D-033]] [[D-061]] [[D-082]] [[D-115]] [[D-118]]
-[[D-121]] [[D-128]] [[D-129]] [[UC-034]] [[FL-039]]
+[[D-121]] [[D-134]] [[D-135]] [[UC-034]] [[FL-040]]

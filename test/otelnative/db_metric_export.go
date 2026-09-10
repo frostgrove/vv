@@ -13,27 +13,6 @@ import (
 var ErrInvalidDatabaseMetricExporter = errors.New("otelnative: downstream database metric exporter is required")
 
 var (
-	pgxMetricNames = map[string]struct{}{
-		"db.client.operation.duration": {},
-		"db.client.operation.errors":   {},
-	}
-	sqlMetricNames = map[string]struct{}{
-		"db.client.operation.duration":           {},
-		"db.sql.connection.max_open":             {},
-		"db.sql.connection.open":                 {},
-		"db.sql.connection.wait":                 {},
-		"db.sql.connection.wait_duration":        {},
-		"db.sql.connection.closed_max_idle":      {},
-		"db.sql.connection.closed_max_idle_time": {},
-		"db.sql.connection.closed_max_lifetime":  {},
-	}
-	pgxPoolMetricNames = map[string]struct{}{
-		pgxPoolAcquiredMetric:    {},
-		pgxPoolIdleMetric:        {},
-		pgxPoolMaximumMetric:     {},
-		pgxPoolAcquireWaitMetric: {},
-		pgxPoolAcquireTimeMetric: {},
-	}
 	pgxOperations = map[string]struct{}{
 		"query": {}, "copy": {}, "batch": {}, "connect": {}, "prepare": {}, "acquire": {},
 	}
@@ -44,11 +23,28 @@ var (
 	}
 )
 
+type metricShape uint8
+
+const (
+	metricGaugeInt64 metricShape = iota + 1
+	metricSumInt64
+	metricSumFloat64
+	metricHistogramInt64
+	metricHistogramFloat64
+)
+
+type nativeMetricSpec struct {
+	description string
+	unit        string
+	shape       metricShape
+	monotonic   bool
+	attributes  func([]attribute.KeyValue) []attribute.KeyValue
+}
+
 type metricScopeProjection struct {
-	name       string
-	version    string
-	metrics    map[string]struct{}
-	attributes func([]attribute.KeyValue) []attribute.KeyValue
+	name    string
+	version string
+	metrics map[string]nativeMetricSpec
 }
 
 type boundedMetricExporter struct {
@@ -77,18 +73,21 @@ func DatabaseMetricOptions(poolNames ...DatabasePoolName) []sdkmetric.Option {
 		}
 	}
 	scopes := databaseMetricScopes(pools)
-	options := make([]sdkmetric.Option, 0, len(scopes))
+	options := make([]sdkmetric.Option, 0, 15)
 	for _, policy := range scopes {
-		filter := func(item attribute.KeyValue) bool {
-			return len(policy.attributes([]attribute.KeyValue{item})) == 1
+		for name, spec := range policy.metrics {
+			filter := func(item attribute.KeyValue) bool {
+				projected := spec.attributes([]attribute.KeyValue{item})
+				return len(projected) == 1 && projected[0] == item
+			}
+			options = append(options, sdkmetric.WithView(sdkmetric.NewView(
+				sdkmetric.Instrument{
+					Name:  name,
+					Scope: instrumentation.Scope{Name: policy.name},
+				},
+				sdkmetric.Stream{AttributeFilter: filter},
+			)))
 		}
-		options = append(options, sdkmetric.WithView(sdkmetric.NewView(
-			sdkmetric.Instrument{
-				Name:  "*",
-				Scope: instrumentation.Scope{Name: policy.name},
-			},
-			sdkmetric.Stream{AttributeFilter: filter},
-		)))
 	}
 	return options
 }
@@ -98,25 +97,110 @@ func databaseMetricScopes(pools map[string]struct{}) map[string]metricScopeProje
 		pgxScopeName: {
 			name:    pgxScopeName,
 			version: pgxScopeVersion,
-			metrics: pgxMetricNames,
-			attributes: func(items []attribute.KeyValue) []attribute.KeyValue {
-				return projectPGXMetricAttributes(items)
+			metrics: map[string]nativeMetricSpec{
+				"db.client.operation.duration": {
+					description: "Duration of database client operations.",
+					unit:        "s",
+					shape:       metricHistogramFloat64,
+					attributes:  projectPGXMetricAttributes,
+				},
+				"db.client.operation.errors": {
+					description: "The count of database client operation errors",
+					shape:       metricSumInt64,
+					monotonic:   true,
+					attributes:  projectPGXMetricAttributes,
+				},
 			},
 		},
 		sqlScopeName: {
 			name:    sqlScopeName,
 			version: "0.43.0",
-			metrics: sqlMetricNames,
-			attributes: func(items []attribute.KeyValue) []attribute.KeyValue {
-				return projectSQLMetricAttributes(items, pools)
+			metrics: map[string]nativeMetricSpec{
+				"db.client.operation.duration": {
+					description: "Duration of database client operations.",
+					unit:        "s",
+					shape:       metricHistogramFloat64,
+					attributes:  projectSQLDurationAttributes,
+				},
+				"db.sql.connection.max_open": {
+					description: "Maximum number of open connections to the database",
+					shape:       metricGaugeInt64,
+					attributes:  poolAttributeProjector(pools, false),
+				},
+				"db.sql.connection.open": {
+					description: "The number of established connections both in use and idle",
+					shape:       metricGaugeInt64,
+					attributes:  poolAttributeProjector(pools, true),
+				},
+				"db.sql.connection.wait": {
+					description: "The total number of connections waited for",
+					shape:       metricSumInt64,
+					monotonic:   true,
+					attributes:  poolAttributeProjector(pools, false),
+				},
+				"db.sql.connection.wait_duration": {
+					description: "The total time blocked waiting for a new connection",
+					unit:        "ms",
+					shape:       metricSumFloat64,
+					monotonic:   true,
+					attributes:  poolAttributeProjector(pools, false),
+				},
+				"db.sql.connection.closed_max_idle": {
+					description: "The total number of connections closed due to SetMaxIdleConns",
+					shape:       metricSumInt64,
+					monotonic:   true,
+					attributes:  poolAttributeProjector(pools, false),
+				},
+				"db.sql.connection.closed_max_idle_time": {
+					description: "The total number of connections closed due to SetConnMaxIdleTime",
+					shape:       metricSumInt64,
+					monotonic:   true,
+					attributes:  poolAttributeProjector(pools, false),
+				},
+				"db.sql.connection.closed_max_lifetime": {
+					description: "The total number of connections closed due to SetConnMaxLifetime",
+					shape:       metricSumInt64,
+					monotonic:   true,
+					attributes:  poolAttributeProjector(pools, false),
+				},
 			},
 		},
 		pgxPoolScopeName: {
 			name:    pgxPoolScopeName,
 			version: pgxPoolVersion,
-			metrics: pgxPoolMetricNames,
-			attributes: func(items []attribute.KeyValue) []attribute.KeyValue {
-				return projectPoolMetricAttributes(items, pools)
+			metrics: map[string]nativeMetricSpec{
+				pgxPoolAcquiredMetric: {
+					description: pgxPoolAcquiredDescription,
+					unit:        "{connection}",
+					shape:       metricGaugeInt64,
+					attributes:  poolAttributeProjector(pools, false),
+				},
+				pgxPoolIdleMetric: {
+					description: pgxPoolIdleDescription,
+					unit:        "{connection}",
+					shape:       metricGaugeInt64,
+					attributes:  poolAttributeProjector(pools, false),
+				},
+				pgxPoolMaximumMetric: {
+					description: pgxPoolMaximumDescription,
+					unit:        "{connection}",
+					shape:       metricGaugeInt64,
+					attributes:  poolAttributeProjector(pools, false),
+				},
+				pgxPoolAcquireWaitMetric: {
+					description: pgxPoolAcquireWaitDescription,
+					unit:        "{wait}",
+					shape:       metricSumInt64,
+					monotonic:   true,
+					attributes:  poolAttributeProjector(pools, false),
+				},
+				pgxPoolAcquireTimeMetric: {
+					description: pgxPoolAcquireTimeDescription,
+					unit:        "s",
+					shape:       metricSumFloat64,
+					monotonic:   true,
+					attributes:  poolAttributeProjector(pools, false),
+				},
 			},
 		},
 	}
@@ -141,24 +225,11 @@ func projectPGXMetricAttributes(items []attribute.KeyValue) []attribute.KeyValue
 	return projected
 }
 
-func projectSQLMetricAttributes(items []attribute.KeyValue, pools map[string]struct{}) []attribute.KeyValue {
+func projectSQLDurationAttributes(items []attribute.KeyValue) []attribute.KeyValue {
 	projected := make([]attribute.KeyValue, 0, len(items))
 	for _, item := range items {
-		switch string(item.Key) {
-		case "db.operation.name":
-			if item.Value.Type() == attribute.STRING {
-				if _, allowed := sqlOperations[item.Value.AsString()]; allowed {
-					projected = append(projected, item)
-				}
-			}
-		case databasePoolKey:
-			if item.Value.Type() == attribute.STRING {
-				if _, allowed := pools[item.Value.AsString()]; allowed {
-					projected = append(projected, item)
-				}
-			}
-		case "status":
-			if item.Value.Type() == attribute.STRING && (item.Value.AsString() == "inuse" || item.Value.AsString() == "idle") {
+		if string(item.Key) == "db.operation.name" && item.Value.Type() == attribute.STRING {
+			if _, allowed := sqlOperations[item.Value.AsString()]; allowed {
 				projected = append(projected, item)
 			}
 		}
@@ -166,17 +237,25 @@ func projectSQLMetricAttributes(items []attribute.KeyValue, pools map[string]str
 	return projected
 }
 
-func projectPoolMetricAttributes(items []attribute.KeyValue, pools map[string]struct{}) []attribute.KeyValue {
-	projected := make([]attribute.KeyValue, 0, 1)
-	for _, item := range items {
-		if string(item.Key) != databasePoolKey || item.Value.Type() != attribute.STRING {
-			continue
+func poolAttributeProjector(pools map[string]struct{}, includeStatus bool) func([]attribute.KeyValue) []attribute.KeyValue {
+	return func(items []attribute.KeyValue) []attribute.KeyValue {
+		projected := make([]attribute.KeyValue, 0, 2)
+		for _, item := range items {
+			switch string(item.Key) {
+			case databasePoolKey:
+				if item.Value.Type() == attribute.STRING {
+					if _, allowed := pools[item.Value.AsString()]; allowed {
+						projected = append(projected, item)
+					}
+				}
+			case "status":
+				if includeStatus && item.Value.Type() == attribute.STRING && (item.Value.AsString() == "inuse" || item.Value.AsString() == "idle") {
+					projected = append(projected, item)
+				}
+			}
 		}
-		if _, allowed := pools[item.Value.AsString()]; allowed {
-			projected = append(projected, item)
-		}
+		return projected
 	}
-	return projected
 }
 
 func (e *boundedMetricExporter) Temporality(kind sdkmetric.InstrumentKind) metricdata.Temporality {
@@ -224,17 +303,18 @@ func projectBoundedResourceMetrics(original *metricdata.ResourceMetrics, resourc
 		}
 		measurements := make([]metricdata.Metrics, 0, len(scopeMetrics.Metrics))
 		for _, measurement := range scopeMetrics.Metrics {
-			if _, allowed := policy.metrics[measurement.Name]; !allowed {
+			spec, allowed := policy.metrics[measurement.Name]
+			if !allowed {
 				continue
 			}
-			data, ok := projectBoundedAggregation(measurement.Data, policy.attributes)
+			data, ok := projectBoundedAggregation(measurement.Data, spec)
 			if !ok {
 				continue
 			}
 			measurements = append(measurements, metricdata.Metrics{
 				Name:        measurement.Name,
-				Description: measurement.Description,
-				Unit:        measurement.Unit,
+				Description: spec.description,
+				Unit:        spec.unit,
 				Data:        data,
 			})
 		}
@@ -245,35 +325,45 @@ func projectBoundedResourceMetrics(original *metricdata.ResourceMetrics, resourc
 	return projected
 }
 
-func projectBoundedAggregation(aggregation metricdata.Aggregation, project func([]attribute.KeyValue) []attribute.KeyValue) (metricdata.Aggregation, bool) {
-	switch data := aggregation.(type) {
-	case metricdata.Gauge[int64]:
-		data.DataPoints = projectBoundedDataPoints(data.DataPoints, project)
+func projectBoundedAggregation(aggregation metricdata.Aggregation, spec nativeMetricSpec) (metricdata.Aggregation, bool) {
+	switch spec.shape {
+	case metricGaugeInt64:
+		data, ok := aggregation.(metricdata.Gauge[int64])
+		if !ok {
+			return nil, false
+		}
+		data.DataPoints = projectBoundedDataPoints(data.DataPoints, spec.attributes)
 		return data, true
-	case metricdata.Gauge[float64]:
-		data.DataPoints = projectBoundedDataPoints(data.DataPoints, project)
+	case metricSumInt64:
+		data, ok := aggregation.(metricdata.Sum[int64])
+		if !ok || data.IsMonotonic != spec.monotonic {
+			return nil, false
+		}
+		data.DataPoints = projectBoundedDataPoints(data.DataPoints, spec.attributes)
 		return data, true
-	case metricdata.Sum[int64]:
-		data.DataPoints = projectBoundedDataPoints(data.DataPoints, project)
+	case metricSumFloat64:
+		data, ok := aggregation.(metricdata.Sum[float64])
+		if !ok || data.IsMonotonic != spec.monotonic {
+			return nil, false
+		}
+		data.DataPoints = projectBoundedDataPoints(data.DataPoints, spec.attributes)
 		return data, true
-	case metricdata.Sum[float64]:
-		data.DataPoints = projectBoundedDataPoints(data.DataPoints, project)
+	case metricHistogramFloat64:
+		data, ok := aggregation.(metricdata.Histogram[float64])
+		if !ok {
+			return nil, false
+		}
+		data.DataPoints = projectBoundedHistogramPoints(data.DataPoints, spec.attributes)
 		return data, true
-	case metricdata.Histogram[int64]:
-		data.DataPoints = projectBoundedHistogramPoints(data.DataPoints, project)
+	case metricHistogramInt64:
+		data, ok := aggregation.(metricdata.Histogram[int64])
+		if !ok {
+			return nil, false
+		}
+		data.DataPoints = projectBoundedHistogramPoints(data.DataPoints, spec.attributes)
 		return data, true
-	case metricdata.Histogram[float64]:
-		data.DataPoints = projectBoundedHistogramPoints(data.DataPoints, project)
-		return data, true
-	case metricdata.ExponentialHistogram[int64]:
-		data.DataPoints = projectBoundedExponentialHistogramPoints(data.DataPoints, project)
-		return data, true
-	case metricdata.ExponentialHistogram[float64]:
-		data.DataPoints = projectBoundedExponentialHistogramPoints(data.DataPoints, project)
-		return data, true
-	default:
-		return nil, false
 	}
+	return nil, false
 }
 
 func projectBoundedDataPoints[N int64 | float64](points []metricdata.DataPoint[N], project func([]attribute.KeyValue) []attribute.KeyValue) []metricdata.DataPoint[N] {
@@ -292,18 +382,6 @@ func projectBoundedHistogramPoints[N int64 | float64](points []metricdata.Histog
 		point.Attributes = attribute.NewSet(project(point.Attributes.ToSlice())...)
 		point.Bounds = append([]float64(nil), point.Bounds...)
 		point.BucketCounts = append([]uint64(nil), point.BucketCounts...)
-		point.Exemplars = projectBoundedExemplars(point.Exemplars, project)
-		result[index] = point
-	}
-	return result
-}
-
-func projectBoundedExponentialHistogramPoints[N int64 | float64](points []metricdata.ExponentialHistogramDataPoint[N], project func([]attribute.KeyValue) []attribute.KeyValue) []metricdata.ExponentialHistogramDataPoint[N] {
-	result := make([]metricdata.ExponentialHistogramDataPoint[N], len(points))
-	for index, point := range points {
-		point.Attributes = attribute.NewSet(project(point.Attributes.ToSlice())...)
-		point.PositiveBucket.Counts = append([]uint64(nil), point.PositiveBucket.Counts...)
-		point.NegativeBucket.Counts = append([]uint64(nil), point.NegativeBucket.Counts...)
 		point.Exemplars = projectBoundedExemplars(point.Exemplars, project)
 		result[index] = point
 	}

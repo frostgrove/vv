@@ -375,7 +375,7 @@ func TestCheckDetectsEitherStaleOutputWithoutWriting(t *testing.T) {
 }
 func TestCardinalityIsAUnionWithExplicitAbsence(t *testing.T) {
 	r := validRegistryFixture(t)
-	for key, want := range map[string]int{"command_duration": 100, "cache_operations": 116} {
+	for key, want := range map[string]int{"command_duration": 100, "cache_operations": 49} {
 		s := r.Signals[key]
 		s.SeriesBudget = 100000
 		bound, err := metricCardinality(r, s)
@@ -462,7 +462,8 @@ func TestNewComponentsNeedNoGeneratorBranch(t *testing.T) {
 			s.Component = "quasar"
 			s.Name = "vv.quasar.active"
 			s.SignalID = id
-			s.Inputs = []string{"cache_memory_backend.Stats", "cache_memory_stats.Closed"}
+			s.Availability = "planned"
+			s.Inputs = []string{"cache_memory_backend.StatsContext", "cache_memory_stats.Closed"}
 			s.Variants = []Variant{{Attributes: map[string]Binding{"component": {Const: "quasar"}}}}
 			r.Signals["quasar_active"] = s
 			shape := r.SourceShapes["cache_memory_stats"]
@@ -473,9 +474,9 @@ func TestNewComponentsNeedNoGeneratorBranch(t *testing.T) {
 			r.SourceShapes["cache_memory_stats"] = shape
 			backend := r.SourceShapes["cache_memory_backend"]
 			backend.Components = append(backend.Components, "quasar")
-			stats := backend.Members["Stats"]
+			stats := backend.Members["StatsContext"]
 			stats.Signals = append(stats.Signals, "quasar_active")
-			backend.Members["Stats"] = stats
+			backend.Members["StatsContext"] = stats
 			r.SourceShapes["cache_memory_backend"] = backend
 			limits := r.SourceShapes["cache_memory_limits"]
 			limits.Components = append(limits.Components, "quasar")

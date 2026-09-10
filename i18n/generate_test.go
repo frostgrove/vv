@@ -1,8 +1,10 @@
 package i18n
 
 import (
+	"bytes"
 	"context"
 	"go/ast"
+	"go/format"
 	"go/parser"
 	"go/token"
 	"os"
@@ -56,6 +58,17 @@ func TestGenerateGoCoversEveryArgumentTypeAndResolvesIdentifiers(t *testing.T) {
 	}
 	if !reflect.DeepEqual(first, second) {
 		t.Fatal("Go generation is not byte deterministic")
+	}
+	var unformatted []byte
+	third, err := generateGoContext(context.Background(), snapshot, GoGeneratorSpec{Package: "messages"}, func(source []byte) ([]byte, error) {
+		unformatted = bytes.Clone(source)
+		return format.Source(source)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(unformatted, third) {
+		t.Fatalf("generated source is not canonical before formatter:\ninput: %q\nformatted: %q", unformatted, third)
 	}
 	parsed, err := parser.ParseFile(token.NewFileSet(), "messages.go", first, parser.AllErrors)
 	if err != nil {

@@ -64,8 +64,12 @@ func (r EntityHeadResult) ChainID() EntityChainID { return r.value.Chain }
 func (r EntityHeadResult) Previous() LeafDigest   { return r.value.Previous }
 func (r EntityHeadResult) Authority() Authority   { return r.value.Authority }
 
-func entityChainCandidate(resource Resource, commitment IdentityCommitment) EntityChainID {
-	hash := auditSHA256("frostgrove.audit/entity-chain/v1", []byte(resource), commitment.Bytes())
+func entityChainCandidate(resource Resource, scope EvidenceScopeCommitment, scopePresent bool, commitment IdentityCommitment) EntityChainID {
+	presence := []byte{0}
+	if scopePresent {
+		presence[0] = 1
+	}
+	hash := auditSHA256("frostgrove.audit/entity-chain/v1", []byte(resource), presence, scope[:], commitment.Bytes())
 	return EntityChainID(hash)
 }
 

@@ -22,15 +22,11 @@ Usage: make <command>
   check-deps, check-tiers      Run an individual dependency check
   check-utils, check-triplets
   check-todo, check-replaces
-<<<<<<< HEAD
-  check-tidy, check-otel-schema, check-otel-module, check-otel-live, check-workspace, check-otel-consumer, check-i18n-consumer
-  check-event-kernel
-=======
-  check-tidy, check-otel-schema, check-otel-module, check-workspace, check-otel-consumer
+  check-tidy, check-otel-schema, check-otel-module, check-otel-live, check-otel-native-budget, check-otel-operations, check-workspace, check-otel-consumer, check-i18n-consumer
+  check-otel-wire, check-otel-collector, check-otel-prometheus, check-otel-weaver
   check-event-kernel           Compare event/ outside event/eventpg with its manifest
   check-event-kernel-baseline  Record that manifest, in the same change as the code
   check-event-kernel-moved     Read what a re-baseline moved: <predecessor> <allowed> [required...]
->>>>>>> 5fedaae3d4e688198eb0116509c76d075429340e
   api, vuln                    Regenerate API baseline or scan vulnerabilities
   main-deps, version, release  Maintain module versions and publish a release
   clean                        Stop databases and clear Go's test cache
@@ -61,6 +57,16 @@ case ${1:-help} in
 		echo 'check-otel-live: real SDK and in-process OTLP proof'
 		exec env GOWORK=off "$GO" test -race -count=1 ./oteltelemetry
 		;;
+	check-otel-native-budget)
+		cd test
+		echo 'check-otel-native-budget: pinned native metric identities and series ceilings'
+		exec env -u OTEL_SEMCONV_STABILITY_OPT_IN GOWORK=off "$GO" test -race -count=1 ./otelnative -run '^TestNativeBudget'
+		;;
+	check-otel-operations) exec "$SCRIPT_DIR/otel-operations.sh" offline ;;
+	check-otel-wire) exec "$SCRIPT_DIR/otel-operations.sh" wire ;;
+	check-otel-collector) exec "$SCRIPT_DIR/otel-operations.sh" collector ;;
+	check-otel-prometheus) exec "$SCRIPT_DIR/otel-operations.sh" prometheus ;;
+	check-otel-weaver) exec "$SCRIPT_DIR/otel-operations.sh" weaver ;;
 	check-workspace) exec "$SCRIPT_DIR/checks.sh" workspace ;;
 	check-event-kernel) exec "$SCRIPT_DIR/checks.sh" event-kernel ;;
 	check-event-kernel-baseline) exec "$SCRIPT_DIR/checks.sh" event-kernel-baseline ;;

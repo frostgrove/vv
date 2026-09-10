@@ -304,6 +304,19 @@ func projectTraceAttributes(scope string, attributes []attribute.KeyValue, polic
 	return projected
 }
 
+func projectTransportMetricAttributes(scope string, attributes []attribute.KeyValue, policy compiledTracePolicy) []attribute.KeyValue {
+	projected := projectTraceAttributes(scope, attributes, policy)
+	if scope != otelhttp.ScopeName {
+		return projected
+	}
+	for _, item := range attributes {
+		if string(item.Key) == httpManagementMetricAttribute && item.Value.Type() == attribute.STRING && (item.Value.AsString() == httpManagementMetricValue || item.Value.AsString() == httpApplicationMetricValue) {
+			projected = append(projected, item)
+		}
+	}
+	return projected
+}
+
 func normalizeRPCStatus(value string) (string, bool) {
 	switch value {
 	case "OK", "CANCELLED", "UNKNOWN", "INVALID_ARGUMENT", "DEADLINE_EXCEEDED", "NOT_FOUND", "ALREADY_EXISTS", "PERMISSION_DENIED", "RESOURCE_EXHAUSTED", "FAILED_PRECONDITION", "ABORTED", "OUT_OF_RANGE", "UNIMPLEMENTED", "INTERNAL", "UNAVAILABLE", "DATA_LOSS", "UNAUTHENTICATED":

@@ -506,15 +506,19 @@ func NewContext(ctx context.Context, spec CatalogSpec) (*Snapshot, error) {
 		observer:            spec.Observer,
 		highestLayer:        LayerModule,
 	}
-	snapshot.formatRequirements, err = snapshotFormattingRequirements(snapshot)
+	snapshot.formatRequirements, err = snapshotFormattingRequirementsContext(ctx, snapshot)
 	if err != nil {
 		return nil, err
 	}
-	if bytes := snapshotCatalogBytes(snapshot); bytes > limits.MaxCatalogBytes {
+	bytes, items, err := snapshotCatalogMaterialContext(ctx, snapshot)
+	if err != nil {
+		return nil, err
+	}
+	if bytes > limits.MaxCatalogBytes {
 		problems.add(ProblemLimit, "catalog_bytes", strconv.Itoa(bytes))
 		return nil, problems.err()
 	}
-	if items := snapshotCatalogItems(snapshot); items > limits.MaxCatalogItems {
+	if items > limits.MaxCatalogItems {
 		problems.add(ProblemLimit, "catalog_items", strconv.Itoa(items))
 		return nil, problems.err()
 	}
@@ -529,13 +533,15 @@ func NewContext(ctx context.Context, spec CatalogSpec) (*Snapshot, error) {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		snapshot, err = snapshot.overlay(OverlaySpec{Layer: LayerApplication, Revision: revision, Overrides: spec.Overrides}, false)
+		snapshot, err = snapshot.overlayContext(ctx, OverlaySpec{Layer: LayerApplication, Revision: revision, Overrides: spec.Overrides}, false)
 		if err != nil {
 			return nil, err
 		}
 	}
 	requiredProblems := &problemSet{}
-	validateRequiredLocales(snapshot, requiredProblems)
+	if err := validateRequiredLocalesContext(ctx, snapshot, requiredProblems); err != nil {
+		return nil, err
+	}
 	if err := requiredProblems.err(); err != nil {
 		return nil, err
 	}
@@ -578,15 +584,29 @@ func (s *Snapshot) Supported() []string {
 }
 
 func (s *Snapshot) Keys() []Key {
-	if s == nil {
-		return nil
+	keys, _ := snapshotKeysContext(context.Background(), s)
+	return keys
+}
+
+func snapshotKeysContext(ctx context.Context, snapshot *Snapshot) ([]Key, error) {
+	if ctx == nil {
+		return nil, fmt.Errorf("%w: snapshot keys context is nil", ErrInvalidCatalog)
 	}
-	keys := make([]Key, 0, len(s.records))
-	for key := range s.records {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if snapshot == nil {
+		return nil, nil
+	}
+	keys := make([]Key, 0, len(snapshot.records))
+	for key := range snapshot.records {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		keys = append(keys, key)
 	}
 	slices.Sort(keys)
-	return keys
+	return keys, ctx.Err()
 }
 
 func (s *Snapshot) Descriptor(key Key) (Descriptor, bool) {
@@ -805,14 +825,30 @@ func validateLookupKey(key Key, maximum int) error {
 }
 
 func cloneDescriptor(descriptor Descriptor) Descriptor {
+	clone, _ := cloneDescriptorContext(context.Background(), descriptor)
+	return clone
+}
+
+func cloneDescriptorContext(ctx context.Context, descriptor Descriptor) (Descriptor, error) {
 	clone := descriptor
 	clone.Arguments = make([]ArgumentSpec, len(descriptor.Arguments))
 	for i, argument := range descriptor.Arguments {
+		if err := ctx.Err(); err != nil {
+			return Descriptor{}, err
+		}
 		clone.Arguments[i] = argument
-		clone.Arguments[i].Values = slices.Clone(argument.Values)
+		values, err := cloneSliceContext(ctx, argument.Values)
+		if err != nil {
+			return Descriptor{}, err
+		}
+		clone.Arguments[i].Values = values
 	}
-	clone.Markup = slices.Clone(descriptor.Markup)
-	return clone
+	markup, err := cloneSliceContext(ctx, descriptor.Markup)
+	if err != nil {
+		return Descriptor{}, err
+	}
+	clone.Markup = markup
+	return clone, ctx.Err()
 }
 
 func buildMessageRecord(
@@ -2116,19 +2152,35 @@ func preflightCatalogContext(ctx context.Context, spec CatalogSpec, limits Limit
 	return nil
 }
 
-func validateRequiredLocales(snapshot *Snapshot, problems *problemSet) {
-	if snapshot == nil {
-		return
+func validateRequiredLocalesContext(ctx context.Context, snapshot *Snapshot, problems *problemSet) error {
+	if ctx == nil {
+		return fmt.Errorf("%w: required locale validation context is nil", ErrInvalidCatalog)
 	}
-	keys := snapshot.Keys()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if snapshot == nil {
+		return nil
+	}
+	keys, err := snapshotKeysContext(ctx, snapshot)
+	if err != nil {
+		return err
+	}
 	for _, key := range keys {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		record := snapshot.records[key]
 		for _, locale := range snapshot.required {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 			if _, ok := record.templates[locale]; !ok {
 				problems.add(ProblemMissing, "messages."+string(key)+".translations."+locale, "required locale is missing")
 			}
 		}
 	}
+	return ctx.Err()
 }
 
 func checkedLimits(limits Limits) (Limits, error) {
@@ -2255,7 +2307,10 @@ func snapshotDigestContext(ctx context.Context, snapshot *Snapshot) (string, err
 		writeDigestField(hash.Write, prefix+"locale", locale)
 		writeDigestField(hash.Write, prefix+"parent", snapshot.parents[locale])
 	}
-	keys := snapshot.Keys()
+	keys, err := snapshotKeysContext(ctx, snapshot)
+	if err != nil {
+		return "", err
+	}
 	writeDigestField(hash.Write, "messages.count", strconv.Itoa(len(keys)))
 	for index, key := range keys {
 		if err := ctx.Err(); err != nil {
@@ -2352,8 +2407,13 @@ func writeLimitsDigest(write func([]byte) (int, error), limits Limits) {
 }
 
 func snapshotCatalogMaterial(snapshot *Snapshot) (int, int) {
+	bytes, items, _ := snapshotCatalogMaterialContext(context.Background(), snapshot)
+	return bytes, items
+}
+
+func snapshotCatalogMaterialContext(ctx context.Context, snapshot *Snapshot) (int, int, error) {
 	if snapshot == nil {
-		return 0, 0
+		return 0, 0, nil
 	}
 	bytes := 0
 	items := 0
@@ -2365,33 +2425,60 @@ func snapshotCatalogMaterial(snapshot *Snapshot) (int, int) {
 	}
 	add(snapshot.revision, snapshot.sourceLocale, snapshot.defaultLocale, snapshot.defaultTimeZone, snapshot.timeZoneDataVersion, snapshot.matchMode.String(), snapshot.highestLayer.String())
 	for _, locale := range snapshot.supported {
+		if err := ctx.Err(); err != nil {
+			return 0, 0, err
+		}
 		add(locale)
 	}
 	for _, locale := range snapshot.required {
+		if err := ctx.Err(); err != nil {
+			return 0, 0, err
+		}
 		add(locale)
 	}
 	for child, parent := range snapshot.parents {
+		if err := ctx.Err(); err != nil {
+			return 0, 0, err
+		}
 		add(child, parent)
 	}
 	for capability := range snapshot.capabilities {
+		if err := ctx.Err(); err != nil {
+			return 0, 0, err
+		}
 		add(capability.String())
 	}
 	for key, record := range snapshot.records {
+		if err := ctx.Err(); err != nil {
+			return 0, 0, err
+		}
 		add(string(key), record.descriptor.Revision, record.descriptor.Description, record.descriptor.Output.String(), record.descriptor.Override.String(), record.contractHash, record.sourceDigest)
 		for _, argument := range record.descriptor.Arguments {
+			if err := ctx.Err(); err != nil {
+				return 0, 0, err
+			}
 			add(argument.Name, argument.Type.String())
 			for _, value := range argument.Values {
+				if err := ctx.Err(); err != nil {
+					return 0, 0, err
+				}
 				add(value)
 			}
 		}
 		for _, markup := range record.descriptor.Markup {
+			if err := ctx.Err(); err != nil {
+				return 0, 0, err
+			}
 			add(markup)
 		}
 		for locale, translation := range record.templates {
+			if err := ctx.Err(); err != nil {
+				return 0, 0, err
+			}
 			add(locale, translation.layer.String(), translation.text)
 		}
 	}
-	return bytes, items
+	return bytes, items, ctx.Err()
 }
 
 func snapshotCatalogBytes(snapshot *Snapshot) int {

@@ -1,7 +1,7 @@
 # UC-033 — Render one message correctly now or later
 
 **Actor:** the application author presenting a message to a person
-**Covered by:** [[FL-038]]
+**Covered by:** [[FL-039]]
 
 ## Scenario
 
@@ -81,7 +81,13 @@ request happened to populate a cache.
 13. Every input and produced artefact is bounded: catalogue files and bytes,
     messages, locales, arguments, template depth, fallback depth, output bytes,
     rich parts and diagnostic steps. Invalid UTF-8 and duplicate object members
-    are refused rather than normalized silently.
+    are refused rather than normalized silently. A per-file output ceiling is
+    enforced inside the producer before proportional cloning, code formatting
+    or content hashing, and a canceled context interrupts meaningful build,
+    encode and digest loops without publishing partial output.
+    Count-only passes account exact JSON and TypeScript escaping, generated-Go
+    formatting, fixed digest widths and source review stamps: an exact ceiling
+    succeeds while one byte less fails before clone, formatter or hash work.
 14. Application and tenant wording overrides replace a whole declared message
     in an allowed locale. They cannot change its identity, schema, output kind,
     machine error code, visibility or permission to be overridden, and applying
@@ -129,7 +135,10 @@ request happened to populate a cache.
     not a catalogue input to review. Source merge preserves structurally
     eligible authoring work, including stale/rejected identities for later
     classification, and requires explicit intent before discarding obsolete
-    entries.
+    entries. Merge preflights aggregate catalogue and canonical-source budgets
+    before appending carried work and retains only the obsolete count plus its
+    lexicographically first diagnostic. Review rejects an invalid locale, scope
+    or state before cloning authoring material.
 22. A delayed delivery records an application-owned intent and an explicit
     current-or-pinned presentation policy. Processing restores and authorizes
     its recipient before selecting a catalogue and locale; a catalogue pin is

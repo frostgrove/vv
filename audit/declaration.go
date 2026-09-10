@@ -91,8 +91,9 @@ type DeclarationDescription struct {
 }
 
 type declarationSeal struct {
-	description DeclarationDescription
-	members     []declarationMember
+	description      DeclarationDescription
+	members          []declarationMember
+	operationMembers []declarationMember
 }
 
 type declarationMember struct {
@@ -119,7 +120,9 @@ type compiledOperationMember interface {
 	sealedOperationMember() declarationMember
 }
 
-type historyValue struct{}
+type historyValue struct {
+	runtime *historyRuntime
+}
 
 type History struct {
 	value historyValue

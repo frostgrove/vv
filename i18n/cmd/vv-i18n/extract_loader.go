@@ -31,6 +31,7 @@ const (
 	maximumGoListPackages  = 100000
 	maximumMetadataWork    = 512 << 20
 	maximumMetadataRecords = 100000
+	maximumExportBytes     = 64 << 20
 )
 
 func createUsageGoCache() (string, func(), error) {
@@ -131,6 +132,16 @@ type goListPackage struct {
 	IgnoredGoFiles  []string
 	TestGoFiles     []string
 	XTestGoFiles    []string
+	CFiles          []string
+	CXXFiles        []string
+	MFiles          []string
+	HFiles          []string
+	FFiles          []string
+	SFiles          []string
+	SwigFiles       []string
+	SwigCXXFiles    []string
+	SysoFiles       []string
+	EmbedFiles      []string
 	Imports         []string
 	ImportMap       map[string]string
 	Module          *goListModule
@@ -706,7 +717,7 @@ func (l *goUsageLoader) loadRoot(ctx context.Context, root *goUsageRootModel) er
 		if pkg.Export == "" && pkg.ImportPath != "unsafe" {
 			l.complete = false
 		} else if pkg.Export != "" {
-			content, err := readSecureRegularFile(ctx, pkg.Export, 64<<20)
+			content, err := readSecureRegularFile(ctx, pkg.Export, maximumExportBytes)
 			if err != nil {
 				l.complete = false
 			} else if int64(len(content)) > maximumMetadataWork-l.metadataWork {
@@ -732,6 +743,10 @@ func (l *goUsageLoader) loadRoot(ctx context.Context, root *goUsageRootModel) er
 		l.goListFacts = append(l.goListFacts, fact)
 		if pkg.DepOnly {
 			continue
+		}
+		if len(pkg.CFiles)+len(pkg.CXXFiles)+len(pkg.MFiles)+len(pkg.HFiles)+len(pkg.FFiles)+len(pkg.SFiles)+
+			len(pkg.SwigFiles)+len(pkg.SwigCXXFiles)+len(pkg.SysoFiles)+len(pkg.EmbedFiles) != 0 {
+			l.complete = false
 		}
 		if !pathWithin(root.path, pkg.Dir) {
 			l.complete = false
@@ -846,6 +861,26 @@ func (l *goUsageLoader) addSelection(root *goUsageRootModel, pkg goListPackage, 
 		}
 	}
 	root.selections[source] = selection
+}
+
+func (l *goUsageLoader) openExport(ctx context.Context, importPath string) (io.ReadCloser, error) {
+	path := l.exports[importPath]
+	if path == "" {
+		return nil, fmt.Errorf("go list provided no export data for %q", importPath)
+	}
+	expected := l.exportDigests[importPath]
+	if expected == "" {
+		return nil, fmt.Errorf("go list export data for %q has no verified digest", importPath)
+	}
+	content, err := readSecureRegularFile(ctx, path, maximumExportBytes)
+	if err != nil {
+		return nil, err
+	}
+	digest := sha256.Sum256(content)
+	if hex.EncodeToString(digest[:]) != expected {
+		return nil, fmt.Errorf("go list export data for %q changed during extraction", importPath)
+	}
+	return io.NopCloser(bytes.NewReader(content)), nil
 }
 
 func (l *goUsageLoader) overlayReadPath(path string) string {
@@ -1187,35 +1222,6 @@ func usageEnvironmentMode(value string) string {
 	return "active"
 }
 
-func rejectSymlinkAncestors(path string) error {
-	absolute, err := filepath.Abs(path)
-	if err != nil {
-		return err
-	}
-	absolute = filepath.Clean(absolute)
-	volumeRoot := filepath.VolumeName(absolute) + string(filepath.Separator)
-	if absolute == filepath.Clean(volumeRoot) {
-		root, err := openStableAbsoluteRoot(context.Background(), absolute, false, nil)
-		if err != nil {
-			return err
-		}
-		return root.Close()
-	}
-	root, name, _, err := openStableParent(context.Background(), absolute)
-	if err != nil {
-		return err
-	}
-	defer root.Close()
-	info, err := root.Lstat(name)
-	if err != nil {
-		return err
-	}
-	if info.Mode()&fs.ModeSymlink != 0 {
-		return fmt.Errorf("path component %q is a symbolic link", absolute)
-	}
-	return nil
-}
-
 func readSecureRegularFile(ctx context.Context, path string, maximum int64) ([]byte, error) {
 	root, name, absolute, err := openStableParent(ctx, path)
 	if err != nil {
@@ -1229,10 +1235,20 @@ func readSecureRegularFile(ctx context.Context, path string, maximum int64) ([]b
 	if info.Mode()&fs.ModeSymlink != 0 || !info.Mode().IsRegular() {
 		return nil, fmt.Errorf("input %q is not a regular file", absolute)
 	}
-	return readRootRegularFile(ctx, root, name, maximum)
+	return readRootRegularFileWithIdentity(ctx, root, name, maximum, info)
 }
 
 func readRootRegularFile(ctx context.Context, root *os.Root, path string, maximum int64) ([]byte, error) {
+	return readRootRegularFileWithIdentity(ctx, root, path, maximum, nil)
+}
+
+func readRootRegularFileWithIdentity(ctx context.Context, root *os.Root, path string, maximum int64, expected fs.FileInfo) ([]byte, error) {
+	if ctx == nil {
+		return nil, errors.New("read context is nil")
+	}
+	if root == nil {
+		return nil, errors.New("read root is nil")
+	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -1245,7 +1261,7 @@ func readRootRegularFile(ctx context.Context, root *os.Root, path string, maximu
 	if err != nil {
 		return nil, err
 	}
-	if before.Mode()&fs.ModeSymlink != 0 || !before.Mode().IsRegular() {
+	if before.Mode()&fs.ModeSymlink != 0 || !before.Mode().IsRegular() || expected != nil && !os.SameFile(expected, before) {
 		return nil, fmt.Errorf("%q is not a regular file", path)
 	}
 	file, err := parent.Open(name)
@@ -1268,7 +1284,7 @@ func readRootRegularFile(ctx context.Context, root *os.Root, path string, maximu
 		return nil, err
 	}
 	after, err := parent.Lstat(name)
-	if err != nil || !os.SameFile(before, after) {
+	if err != nil || !os.SameFile(before, after) || expected != nil && !os.SameFile(expected, after) {
 		return nil, fmt.Errorf("%q changed identity while being read", path)
 	}
 	return content, nil

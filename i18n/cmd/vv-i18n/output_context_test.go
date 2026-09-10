@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -58,6 +59,46 @@ func TestReviewValidatesSelectorBeforeCloningCatalog(t *testing.T) {
 	}
 }
 
+func TestReviewStampedOutputLimitPrecedesCloneAtExactBoundary(t *testing.T) {
+	spec := commandSourceFixture(t)
+	translation := &spec.Modules[0].Messages[0].Translations[0]
+	translation.ContractRevision = ""
+	translation.SourceDigest = ""
+	translation.ReviewDigest = ""
+	selector := reviewSelector{locale: translation.Locale, key: "app.welcome", scope: "translations", state: i18n.ReviewRejected}
+	updated, _, err := reviewCatalog(spec, selector)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := (i18n.SourceCodec{CatalogLimits: spec.Limits}).Encode(updated)
+	if err != nil {
+		t.Fatal(err)
+	}
+	maximum := len(raw)
+	cloned := false
+	codec := i18n.SourceCodec{Limits: i18n.ArtifactLimits{MaxBytes: maximum - 1}, CatalogLimits: spec.Limits}
+	_, _, err = reviewCatalogBoundedWithClone(context.Background(), spec, selector, codec, maximum-1, func(context.Context, i18n.CatalogSpec) (i18n.CatalogSpec, error) {
+		cloned = true
+		return i18n.CatalogSpec{}, errors.New("clone called")
+	})
+	if !errors.Is(err, i18n.ErrLimitExceeded) || cloned {
+		t.Fatalf("undersized reviewed source = cloned %v, error %v", cloned, err)
+	}
+	cloned = false
+	codec.Limits.MaxBytes = maximum
+	exact, count, err := reviewCatalogBoundedWithClone(context.Background(), spec, selector, codec, maximum, func(ctx context.Context, value i18n.CatalogSpec) (i18n.CatalogSpec, error) {
+		cloned = true
+		return cloneReviewCatalogContext(ctx, value)
+	})
+	if err != nil || !cloned || count != 1 {
+		t.Fatalf("exact reviewed source = cloned %v, count %d, error %v", cloned, count, err)
+	}
+	exactRaw, err := codec.Encode(exact)
+	if err != nil || len(exactRaw) != maximum {
+		t.Fatalf("exact reviewed source bytes = %d, error %v", len(exactRaw), err)
+	}
+}
+
 func TestCommandJSONEncodingPollsContext(t *testing.T) {
 	values := make([]string, 100000)
 	for index := range values {
@@ -73,5 +114,33 @@ func TestUsageOutputFloorRejectsBeforeProportionalEncoding(t *testing.T) {
 	keys := make([]i18n.Key, 100000)
 	if _, err := encodeUsageBoundedContext(context.Background(), i18n.UsageManifest{Keys: keys}, 64); !errors.Is(err, errCommandJSONTooLarge) {
 		t.Fatalf("usage output floor error = %v", err)
+	}
+}
+
+func TestUsageOutputPreflightUsesExactWireBoundaryBeforeCloning(t *testing.T) {
+	keys := make([]i18n.Key, 100)
+	for index := range keys {
+		keys[index] = i18n.Key("app.key" + strconv.Itoa(index))
+	}
+	for name, usage := range map[string]i18n.UsageManifest{
+		"unscoped": {Keys: keys},
+		"scoped":   testUsageDocumentManifest(),
+	} {
+		t.Run(name, func(t *testing.T) {
+			raw, err := encodeUsageBoundedContext(context.Background(), usage, maximumCommandOutputBytes)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ctx := context.Context(context.Background())
+			if name == "unscoped" {
+				ctx = newCommandCancelOnPollContext(104)
+			}
+			if _, err := encodeUsageBoundedContext(ctx, usage, len(raw)-1); !errors.Is(err, errCommandJSONTooLarge) {
+				t.Fatalf("usage N-1 preflight error = %v", err)
+			}
+			if exact, err := encodeUsageBoundedContext(context.Background(), usage, len(raw)); err != nil || len(exact) != len(raw) {
+				t.Fatalf("usage exact preflight bytes = %d, want %d, error %v", len(exact), len(raw), err)
+			}
+		})
 	}
 }

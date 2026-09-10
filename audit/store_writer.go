@@ -123,10 +123,34 @@ func readReconcileFrame(input []byte, offset int) ([]byte, int, bool) {
 	return input[offset : offset+size], offset + size, true
 }
 
-type EntityAliasBinding struct{ value struct{} }
+type entityAliasBinding struct {
+	resource     Resource
+	chain        EntityChainID
+	scopePresent bool
+	scope        EvidenceScopeCommitment
+	commitments  IdentityCommitmentSet
+}
+
+type EntityAliasBinding struct{ value entityAliasBinding }
 type AttemptIdentityAliasBinding struct{ value struct{} }
 type HoldIDAliasBinding struct{ value struct{} }
 type HoldMatterAliasBinding struct{ value struct{} }
+
+func newEntityAliasBinding(resource Resource, chain EntityChainID, scope EvidenceScopeCommitment, scopePresent bool, commitments IdentityCommitmentSet) (EntityAliasBinding, error) {
+	if !validSemanticName(string(resource)) || chain == (EntityChainID{}) || commitments.Domain() != CommitEntitySubject || len(commitments.Aliases()) == 0 || scopePresent != (scope != (EvidenceScopeCommitment{})) {
+		return EntityAliasBinding{}, auditErrorAt(ErrInvalid, "entity_alias")
+	}
+	return EntityAliasBinding{value: entityAliasBinding{
+		resource: resource, chain: chain, scopePresent: scopePresent, scope: scope, commitments: commitments,
+	}}, nil
+}
+
+func (b EntityAliasBinding) Resource() Resource     { return b.value.resource }
+func (b EntityAliasBinding) ChainID() EntityChainID { return b.value.chain }
+func (b EntityAliasBinding) Scope() (EvidenceScopeCommitment, bool) {
+	return b.value.scope, b.value.scopePresent
+}
+func (b EntityAliasBinding) Commitments() IdentityCommitmentSet { return b.value.commitments }
 
 type HoldAppendCandidateView struct {
 	Disposition HoldTransitionDisposition
@@ -184,11 +208,20 @@ type AppendRequest struct {
 }
 
 func newAppendRequest(revision Revision, intent AppendIntentDigest, idempotency IdentityCommitmentSet) (AppendRequest, error) {
+	return newAppendRequestWithEntities(revision, intent, idempotency, nil)
+}
+
+func newAppendRequestWithEntities(revision Revision, intent AppendIntentDigest, idempotency IdentityCommitmentSet, entities []EntityAliasBinding) (AppendRequest, error) {
 	if !revision.valid() || intent == (AppendIntentDigest{}) {
 		return AppendRequest{}, auditErrorAt(ErrInvalid, "append_request")
 	}
+	for _, entity := range entities {
+		if entity.value.resource == "" || entity.value.chain == (EntityChainID{}) || len(entity.value.commitments.Aliases()) == 0 {
+			return AppendRequest{}, auditErrorAt(ErrInvalid, "entities")
+		}
+	}
 	return AppendRequest{value: appendRequest{
-		view:   AppendRequestView{Revision: revision, Intent: intent, Idempotency: idempotency},
+		view:   AppendRequestView{Revision: revision, Intent: intent, Idempotency: idempotency, Entities: slices.Clone(entities)},
 		origin: &appendRequestOrigin{},
 	}}, nil
 }
@@ -296,12 +329,11 @@ func NewAppendResult(request AppendRequest, stored StoredHeader, disposition App
 	if !request.valid() || !stored.valid() || !authority.Valid() || disposition != Inserted && disposition != Replayed {
 		return AppendResult{}, auditErrorAt(ErrMalformedEvidence, "append_result")
 	}
-	candidate := request.value.view.Revision.View().Header
-	actual := stored.Revision()
-	if disposition == Inserted && (candidate.RevisionID != actual.RevisionID || candidate.Catalog != actual.Catalog || candidate.Semantic != actual.Semantic || request.value.view.Intent != stored.Intent()) {
-		return AppendResult{}, auditErrorAt(ErrMalformedEvidence, "append_result")
+	result := AppendResult{value: appendResult{stored: stored, disposition: disposition, authority: authority}}
+	if err := validateAppendResult(request, result); err != nil {
+		return AppendResult{}, err
 	}
-	return AppendResult{value: appendResult{stored: stored, disposition: disposition, authority: authority}}, nil
+	return result, nil
 }
 
 func NewHoldAppendResult(request AppendRequest, stored StoredHeader, disposition AppendDisposition, authority Authority) (AppendResult, error) {
@@ -364,22 +396,24 @@ type LookupResultData struct {
 
 type lookupResult struct {
 	data LookupResultData
+	key  ReconcileKey
 }
 
 type LookupResult struct{ value lookupResult }
 
 func NewLookupResult(request LookupRequest, data LookupResultData) (LookupResult, error) {
-	if request.value.origin == nil || data.State != Found && data.State != AbsentNow || !data.Authority.Valid() {
+	if request.value.origin == nil || data.State != Found && data.State != AbsentNow || data.Visibility != Committed || data.Authority.Valid() {
 		return LookupResult{}, auditErrorAt(ErrMalformedEvidence, "lookup_result")
 	}
 	if data.State == Found {
-		if !data.Stored.valid() || data.Stored.Revision().RevisionID != request.value.view.Revision {
+		header := data.Stored.Revision()
+		if !data.Stored.valid() || header.Log != request.value.view.Key.value.log || header.Catalog.ID != request.value.view.Catalog || header.Operation != request.value.view.Operation || header.RevisionID != request.value.view.Revision {
 			return LookupResult{}, auditErrorAt(ErrMalformedEvidence, "lookup_result")
 		}
 	} else if data.Stored.valid() {
 		return LookupResult{}, auditErrorAt(ErrMalformedEvidence, "lookup_result")
 	}
-	return LookupResult{value: lookupResult{data: data}}, nil
+	return LookupResult{value: lookupResult{data: data, key: request.value.view.Key}}, nil
 }
 
 func (r LookupResult) State() LookupState { return r.value.data.State }
@@ -388,7 +422,7 @@ func (r LookupResult) Receipt() (Receipt, bool) {
 	if r.value.data.State != Found {
 		return Receipt{}, false
 	}
-	return receiptFromStored(r.value.data.Stored, r.value.data.Visibility), true
+	return receiptFromStored(r.value.data.Stored, r.value.data.Visibility, r.value.key), true
 }
 
 func (r LookupResult) HoldDisposition() (HoldTransitionDisposition, bool) {
@@ -432,7 +466,15 @@ func (r IdempotencyLookupRequest) View() IdempotencyLookupRequestView {
 }
 
 func NewIdempotencyLookupResult(request IdempotencyLookupRequest, data IdempotencyLookupResultData) (IdempotencyLookupResult, error) {
-	if !request.value.Catalog.valid() || data.State != Found && data.State != AbsentNow || data.State == Found && !data.Stored.valid() {
+	if !request.value.Catalog.valid() || data.State != Found && data.State != AbsentNow {
+		return IdempotencyLookupResult{}, auditErrorAt(ErrMalformedEvidence, "idempotency_lookup")
+	}
+	if data.State == Found {
+		header := data.Stored.Revision()
+		if !data.Stored.valid() || header.Catalog != request.value.Catalog || header.CatalogSet != request.value.CatalogSet || header.Operation != request.value.Domain.Operation || header.Semantic != request.value.Semantic {
+			return IdempotencyLookupResult{}, auditErrorAt(ErrMalformedEvidence, "idempotency_lookup")
+		}
+	} else if data.Stored.valid() {
 		return IdempotencyLookupResult{}, auditErrorAt(ErrMalformedEvidence, "idempotency_lookup")
 	}
 	return IdempotencyLookupResult{value: data}, nil

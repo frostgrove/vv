@@ -41,6 +41,7 @@ func TestLegacyPanicNilModePreservesPanicAndGoexitSemantics(t *testing.T) {
 	targets := []string{
 		"TestService_PanicNilIsNotSuppressed",
 		"TestStorage_PanicNilIsNotSuppressed",
+		"TestStorageStream_PanicNilIsNotSuppressed",
 		"TestService_GoexitPreservesGoroutineTermination",
 		"TestStorage_GoexitPreservesGoroutineTermination",
 	}
@@ -318,17 +319,23 @@ func TestService_ProviderPanicsDoNotReplaceBusinessError(t *testing.T) {
 
 func TestCacheAndCacheMemory_FaultsKeepSignalsIndependent(t *testing.T) {
 	adapters := []struct {
-		name    string
-		observe func(*vvotel.Telemetry, context.Context)
+		name                  string
+		observe               func(*vvotel.Telemetry, context.Context)
+		normalMetrics         int
+		metricsOnCounterPanic int
 	}{
 		{
-			name: "cache",
+			name:                  "cache",
+			normalMetrics:         3,
+			metricsOnCounterPanic: 1,
 			observe: func(tel *vvotel.Telemetry, ctx context.Context) {
 				vvotel.Cache(tel, vvotel.WithCacheSpanEvents(true)).Observe(ctx, cache.Event{Operation: cache.LookupOperation, Outcome: cache.HitOutcome})
 			},
 		},
 		{
-			name: "cache_memory",
+			name:                  "cache_memory",
+			normalMetrics:         5,
+			metricsOnCounterPanic: 3,
 			observe: func(tel *vvotel.Telemetry, ctx context.Context) {
 				vvotel.CacheMemory(tel, vvotel.WithCacheMemorySpanEvents(true)).Observe(ctx, cachememory.Event{Operation: cachememory.GetOperation, Outcome: cachememory.HitOutcome})
 			},
@@ -340,7 +347,7 @@ func TestCacheAndCacheMemory_FaultsKeepSignalsIndependent(t *testing.T) {
 		wantIsRecording int
 		wantAddEvent    int
 		wantEvents      int
-		wantMetrics     int
+		counterPanics   bool
 	}{
 		{
 			name: "span_is_recording_panics",
@@ -348,7 +355,6 @@ func TestCacheAndCacheMemory_FaultsKeepSignalsIndependent(t *testing.T) {
 				tp.panicIsRecording = true
 			},
 			wantIsRecording: 1,
-			wantMetrics:     1,
 		},
 		{
 			name: "span_add_event_panics",
@@ -357,7 +363,6 @@ func TestCacheAndCacheMemory_FaultsKeepSignalsIndependent(t *testing.T) {
 			},
 			wantIsRecording: 1,
 			wantAddEvent:    1,
-			wantMetrics:     1,
 		},
 		{
 			name: "counter_add_panics",
@@ -367,6 +372,7 @@ func TestCacheAndCacheMemory_FaultsKeepSignalsIndependent(t *testing.T) {
 			wantIsRecording: 1,
 			wantAddEvent:    1,
 			wantEvents:      1,
+			counterPanics:   true,
 		},
 	}
 
@@ -385,8 +391,12 @@ func TestCacheAndCacheMemory_FaultsKeepSignalsIndependent(t *testing.T) {
 				if tp.isRecordingCalls != fault.wantIsRecording || tp.eventCalls() != fault.wantAddEvent || len(tp.spans[0].events) != fault.wantEvents {
 					t.Fatalf("span calls: is_recording=%d add_event=%d recorded_events=%d", tp.isRecordingCalls, tp.eventCalls(), len(tp.spans[0].events))
 				}
-				if mp.counterAdds() != 1 || mp.metricCount() != fault.wantMetrics {
-					t.Fatalf("counter calls=%d recorded_metrics=%d, want 1/%d", mp.counterAdds(), mp.metricCount(), fault.wantMetrics)
+				wantMetrics := adapter.normalMetrics
+				if fault.counterPanics {
+					wantMetrics = adapter.metricsOnCounterPanic
+				}
+				if mp.counterAdds() != 2 || mp.metricCount() != wantMetrics {
+					t.Fatalf("counter calls=%d recorded_metrics=%d, want 2/%d", mp.counterAdds(), mp.metricCount(), wantMetrics)
 				}
 				span.End()
 			})

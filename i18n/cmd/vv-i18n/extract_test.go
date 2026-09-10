@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"go/ast"
 	"go/constant"
 	"go/importer"
+	"go/parser"
 	"go/token"
 	"go/types"
 	"io"
@@ -297,6 +299,107 @@ func TestExtractUsageRejectsAncestorSymlinks(t *testing.T) {
 	}
 	if _, err := extractUsage(context.Background(), []string{filepath.Join(linkedParent, "module")}, true); err == nil || !strings.Contains(err.Error(), "symbolic link") {
 		t.Fatalf("ancestor symlink error = %v", err)
+	}
+}
+
+func TestExtractSourceEvidenceUsesThePinnedRootAfterAnAncestorReplacement(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("open directories cannot be renamed on Windows")
+	}
+	parent := t.TempDir()
+	selected := filepath.Join(parent, "selected")
+	retained := filepath.Join(parent, "retained")
+	alternate := filepath.Join(parent, "alternate")
+	originalPath := filepath.Join(selected, "nested", "use.go")
+	writeTestFile(t, filepath.Join(selected, "go.mod"), "module example.test/original\n\ngo 1.26.0\n")
+	writeTestFile(t, originalPath, "package original\n")
+	writeTestFile(t, filepath.Join(alternate, "go.mod"), "module example.test/alternate\n\ngo 1.26.0\n")
+	writeTestFile(t, filepath.Join(alternate, "nested", "use.go"), "package alternate\n")
+	root, err := openExtractSourceRoot(context.Background(), selected)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := extractState{sourceRoots: []extractSourceRoot{root}}
+	defer state.closeSourceRoots()
+	if err := os.Rename(selected, retained); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(alternate, selected); err != nil {
+		t.Fatal(err)
+	}
+	content, err := state.readSource(context.Background(), originalPath, originalPath, maximumExtractFileBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(content) != "package original\n" {
+		t.Fatalf("pinned source = %q", content)
+	}
+	redirected, err := os.ReadFile(originalPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(redirected) != "package alternate\n" {
+		t.Fatalf("replacement source = %q", redirected)
+	}
+	loader := &goUsageLoader{metadataSeen: make(map[string]string), physicalMetadata: make(map[string]physicalMetadata)}
+	model, err := loader.openModuleRoot(context.Background(), &state.sourceRoots[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer model.handle.Close()
+	if model.logical != "example.test/original" {
+		t.Fatalf("pinned module = %q", model.logical)
+	}
+}
+
+func TestExtractSourceEvidenceRejectsALinkedNestedAncestor(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation requires platform privileges")
+	}
+	directory := t.TempDir()
+	realDirectory := filepath.Join(directory, "real")
+	writeTestFile(t, filepath.Join(realDirectory, "use.go"), "package sample\n")
+	root, err := openExtractSourceRoot(context.Background(), directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := extractState{sourceRoots: []extractSourceRoot{root}}
+	defer state.closeSourceRoots()
+	linkedDirectory := filepath.Join(directory, "linked")
+	if err := os.Symlink(filepath.Base(realDirectory), linkedDirectory); err != nil {
+		t.Skipf("symbolic links unavailable: %v", err)
+	}
+	path := filepath.Join(linkedDirectory, "use.go")
+	if _, err := state.readSource(context.Background(), path, path, maximumExtractFileBytes); err == nil || !strings.Contains(err.Error(), "symbolic link") {
+		t.Fatalf("linked ancestor error = %v", err)
+	}
+}
+
+func TestGoUsageExportEvidenceRejectsAnAncestorReplacement(t *testing.T) {
+	parent := t.TempDir()
+	selected := filepath.Join(parent, "selected")
+	retained := filepath.Join(parent, "retained")
+	alternate := filepath.Join(parent, "alternate")
+	path := filepath.Join(selected, "package.a")
+	original := []byte("verified export data")
+	writeTestFile(t, path, string(original))
+	writeTestFile(t, filepath.Join(alternate, "package.a"), "redirected export data")
+	loader := goUsageLoader{
+		exports:       map[string]string{"example.test/dependency": path},
+		exportDigests: map[string]string{"example.test/dependency": strings.TrimPrefix(sha256Address(original), "sha256:")},
+	}
+	if err := os.Rename(selected, retained); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(alternate, selected); err != nil {
+		t.Fatal(err)
+	}
+	reader, err := loader.openExport(context.Background(), "example.test/dependency")
+	if reader != nil {
+		_ = reader.Close()
+	}
+	if err == nil || !strings.Contains(err.Error(), "changed during extraction") {
+		t.Fatalf("replaced export evidence error = %v", err)
 	}
 }
 
@@ -849,8 +952,16 @@ func TestSyntheticAPIMirrorsPinnedI18nConstants(t *testing.T) {
 		}
 	}
 	for name, fields := range map[string][]string{
-		"Subpart": {"Type", "Text"},
-		"Part":    {"Kind", "Type", "Text", "Name", "ID", "Locale", "Direction", "Subparts"},
+		"Subpart":          {"Type", "Text"},
+		"Part":             {"Kind", "Type", "Text", "Name", "ID", "Locale", "Direction", "Subparts"},
+		"UsageLimits":      {"MaxKeys", "MaxDynamic", "MaxOccurrences", "MaxRoots", "MaxFiles", "MaxMetadata", "MaxTags", "MaxEnvironment", "MaxStringBytes", "MaxMaterialBytes"},
+		"CheckPolicy":      {"Usage", "UsageLimits", "StrictOptional", "MaxFindings"},
+		"Compiler":         {"Limits", "CatalogLimits", "Observer"},
+		"PseudoSpec":       {"Locale", "Mode", "MaxOutputBytes"},
+		"GoGeneratorSpec":  {"Package", "MaxOutputBytes"},
+		"PublicExportSpec": {"MaxOutputBytes"},
+		"SourceCodec":      {"Limits", "CatalogLimits"},
+		"SourceMerger":     {"CatalogLimits", "SourceLimits"},
 	} {
 		object := packageValue.Scope().Lookup(name)
 		if object == nil {
@@ -871,6 +982,75 @@ func TestSyntheticAPIMirrorsPinnedI18nConstants(t *testing.T) {
 		if !slices.Equal(actual, fields) {
 			t.Fatalf("synthetic %s fields = %v, want %v", name, actual, fields)
 		}
+	}
+	for _, name := range []string{
+		"NewContext", "CompileContext", "EncodeContext", "PseudoContext", "GenerateGoContext",
+		"ExportPublicContext", "ExpectedPublicExportAddress", "ExpectedPublicExportAddressContext", "EncodeSourceContext",
+	} {
+		if _, ok := packageValue.Scope().Lookup(name).(*types.Func); !ok {
+			t.Fatalf("synthetic %s is not a function", name)
+		}
+	}
+	for typeName, methods := range map[string][]string{
+		"Compiler":    {"CompileContext", "EncodeContext"},
+		"SourceCodec": {"EncodeContext", "EncodedSize", "EncodedSizeContext"},
+	} {
+		typeObject := packageValue.Scope().Lookup(typeName)
+		for _, method := range methods {
+			object, _, _ := types.LookupFieldOrMethod(typeObject.Type(), true, packageValue, method)
+			if _, ok := object.(*types.Func); !ok {
+				t.Fatalf("synthetic %s.%s is not a method", typeName, method)
+			}
+		}
+	}
+}
+
+func TestSyntheticAPITypeChecksContextAndOutputBudgetSurface(t *testing.T) {
+	fallback := importer.Default()
+	errsPackage, err := syntheticErrsPackage(fallback)
+	if err != nil {
+		t.Fatal(err)
+	}
+	graph := &extractPackageGraph{byPath: make(map[string]*extractPackageUnit), fallback: fallback, standard: fallback, errs: errsPackage}
+	graph.i18n, err = syntheticI18nPackage(graph)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fileset := token.NewFileSet()
+	file, err := parser.ParseFile(fileset, "surface.go", `package surface
+import (
+  "context"
+  "github.com/frostgrove/vv/i18n"
+)
+func use(ctx context.Context, spec i18n.CatalogSpec, snapshot *i18n.Snapshot) {
+  snapshot, _ = i18n.NewContext(ctx, spec)
+  raw, _ := i18n.CompileContext(ctx, spec)
+  raw, _ = i18n.EncodeContext(ctx, snapshot)
+  compiler := i18n.Compiler{}
+  raw, _ = compiler.CompileContext(ctx, spec)
+  raw, _ = compiler.EncodeContext(ctx, snapshot)
+  pseudo := i18n.PseudoSpec{Locale: "en-XA", Mode: i18n.PseudoAccent, MaxOutputBytes: 1024}
+  spec, _ = i18n.PseudoContext(ctx, spec, pseudo)
+  generator := i18n.GoGeneratorSpec{Package: "messages", MaxOutputBytes: 1024}
+  raw, _ = i18n.GenerateGoContext(ctx, snapshot, generator)
+  exported, _ := i18n.ExportPublicContext(ctx, snapshot, i18n.PublicExportSpec{MaxOutputBytes: 1024})
+  _ = i18n.ExpectedPublicExportAddress(exported.Manifest, exported.TypeScript)
+  _, _ = i18n.ExpectedPublicExportAddressContext(ctx, exported.Manifest, exported.TypeScript)
+  raw, _ = i18n.EncodeSourceContext(ctx, spec)
+  codec := i18n.SourceCodec{}
+  raw, _ = codec.EncodeContext(ctx, spec)
+  _, _ = codec.EncodedSize(spec)
+  _, _ = codec.EncodedSizeContext(ctx, spec)
+  merger := i18n.SourceMerger{SourceLimits: i18n.DefaultArtifactLimits()}
+  spec, _ = merger.MergeContext(ctx, spec, spec, i18n.SourceMergePolicy{})
+  _, _, _ = snapshot, raw, spec
+}
+`, parser.SkipObjectResolution)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := (&types.Config{Importer: graph}).Check("example.test/synthetic-surface", fileset, []*ast.File{file}, nil); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -1252,7 +1432,10 @@ func Hidden(snapshot *Snapshot) { _, _ = snapshot.Bind("app.hidden_dependency") 
 	writeTestFile(t, goModPath, string(goMod)+"\nrequire example.test/wrapper v0.0.0\nreplace example.test/wrapper => "+filepath.ToSlash(wrapper)+"\n")
 	writeTestFile(t, filepath.Join(application, "use.go"), `package application
 import "example.test/wrapper"
-func use(snapshot *wrapper.Snapshot) { _, _ = snapshot.Bind("app.application") }
+func use(snapshot *wrapper.Snapshot) {
+  _, _ = snapshot.Bind("app.application")
+  wrapper.Hidden(snapshot)
+}
 `)
 	tidyTestModule(t, application)
 	beforeMod, _ := os.ReadFile(goModPath)

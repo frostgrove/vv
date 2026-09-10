@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"unicode/utf8"
 
 	"golang.org/x/text/language"
 
@@ -26,6 +27,15 @@ func reviewCatalogContext(ctx context.Context, spec i18n.CatalogSpec, selector r
 }
 
 func reviewCatalogWithClone(ctx context.Context, spec i18n.CatalogSpec, selector reviewSelector, clone func(context.Context, i18n.CatalogSpec) (i18n.CatalogSpec, error)) (i18n.CatalogSpec, int, error) {
+	limits := i18n.DefaultArtifactLimits()
+	return reviewCatalogBoundedWithClone(ctx, spec, selector, i18n.SourceCodec{Limits: limits, CatalogLimits: spec.Limits}, limits.MaxBytes, clone)
+}
+
+func reviewCatalogBoundedContext(ctx context.Context, spec i18n.CatalogSpec, selector reviewSelector, codec i18n.SourceCodec, maximum int) (i18n.CatalogSpec, int, error) {
+	return reviewCatalogBoundedWithClone(ctx, spec, selector, codec, maximum, cloneReviewCatalogContext)
+}
+
+func reviewCatalogBoundedWithClone(ctx context.Context, spec i18n.CatalogSpec, selector reviewSelector, codec i18n.SourceCodec, maximum int, clone func(context.Context, i18n.CatalogSpec) (i18n.CatalogSpec, error)) (i18n.CatalogSpec, int, error) {
 	if ctx == nil {
 		return i18n.CatalogSpec{}, 0, fmt.Errorf("review context is nil")
 	}
@@ -41,6 +51,26 @@ func reviewCatalogWithClone(ctx context.Context, spec i18n.CatalogSpec, selector
 	}
 	if selector.state != i18n.ReviewApproved && selector.state != i18n.ReviewRequired && selector.state != i18n.ReviewRejected {
 		return i18n.CatalogSpec{}, 0, fmt.Errorf("unsupported review state %q", selector.state.String())
+	}
+	if maximum < 1 {
+		return i18n.CatalogSpec{}, 0, fmt.Errorf("%w: reviewed source output limit must be positive", i18n.ErrLimitExceeded)
+	}
+	baseline, err := codec.EncodedSizeContext(ctx, spec)
+	if err != nil {
+		return i18n.CatalogSpec{}, 0, err
+	}
+	delta, selected, err := reviewStampDeltaContext(ctx, spec, selector, locale)
+	if err != nil {
+		return i18n.CatalogSpec{}, 0, err
+	}
+	if selected == 0 {
+		if selector.key == "" {
+			return i18n.CatalogSpec{}, 0, fmt.Errorf("no %s entries found for locale %q", selector.scope, locale)
+		}
+		return i18n.CatalogSpec{}, 0, fmt.Errorf("no %s entries found for key %q and locale %q", selector.scope, selector.key, locale)
+	}
+	if baseline > maximum || delta > maximum-baseline {
+		return i18n.CatalogSpec{}, 0, fmt.Errorf("%w: reviewed source exceeds %d bytes", i18n.ErrLimitExceeded, maximum)
 	}
 	spec, err = clone(ctx, spec)
 	if err != nil {
@@ -154,6 +184,144 @@ func reviewCatalogWithClone(ctx context.Context, spec i18n.CatalogSpec, selector
 		}
 	}
 	return spec, updated, nil
+}
+
+func reviewStampDeltaContext(ctx context.Context, spec i18n.CatalogSpec, selector reviewSelector, locale string) (int, int, error) {
+	revisions := make(map[i18n.Key]string)
+	delta := 0
+	selected := 0
+	for _, module := range spec.Modules {
+		if err := ctx.Err(); err != nil {
+			return 0, 0, err
+		}
+		for _, message := range module.Messages {
+			if err := ctx.Err(); err != nil {
+				return 0, 0, err
+			}
+			key := message.Key
+			if key == "" {
+				key = i18n.Qualify(module.Name, message.ID)
+			}
+			if selector.key != "" && key != selector.key {
+				continue
+			}
+			revisions[key] = message.Revision
+			if selector.scope == "overrides" {
+				continue
+			}
+			for _, translation := range message.Translations {
+				translationLocale, localeErr := canonicalCommandLocale(translation.Locale)
+				if localeErr != nil || translationLocale != locale {
+					continue
+				}
+				stampDelta, stampErr := reviewEntryStampDeltaContext(ctx, reviewStateWire(translation.Review), translation.ContractRevision, translation.SourceDigest, translation.ReviewDigest, selector.state.String(), message.Revision)
+				if stampErr != nil {
+					return 0, 0, stampErr
+				}
+				delta += stampDelta
+				selected++
+			}
+		}
+	}
+	if selector.scope != "translations" {
+		for index, override := range spec.Overrides {
+			if index&255 == 0 {
+				if err := ctx.Err(); err != nil {
+					return 0, 0, err
+				}
+			}
+			if selector.key != "" && override.Key != selector.key {
+				continue
+			}
+			overrideLocale, localeErr := canonicalCommandLocale(override.Locale)
+			if localeErr != nil || overrideLocale != locale {
+				continue
+			}
+			revision, exists := revisions[override.Key]
+			if !exists {
+				continue
+			}
+			stampDelta, stampErr := reviewEntryStampDeltaContext(ctx, reviewStateWire(override.Review), override.ContractRevision, override.SourceDigest, override.ReviewDigest, selector.state.String(), revision)
+			if stampErr != nil {
+				return 0, 0, stampErr
+			}
+			delta += stampDelta
+			selected++
+		}
+	}
+	return delta, selected, ctx.Err()
+}
+
+func reviewStateWire(state i18n.ReviewState) string {
+	if !state.Valid() {
+		return ""
+	}
+	return state.String()
+}
+
+func reviewEntryStampDeltaContext(ctx context.Context, oldState, oldRevision, oldSourceDigest, oldReviewDigest, state, revision string) (int, error) {
+	delta := 0
+	for _, values := range [][2]string{
+		{oldState, state},
+		{oldRevision, revision},
+	} {
+		oldSize, err := commandJSONStringSizeContext(ctx, values[0])
+		if err != nil {
+			return 0, err
+		}
+		newSize, err := commandJSONStringSizeContext(ctx, values[1])
+		if err != nil {
+			return 0, err
+		}
+		delta += newSize - oldSize
+	}
+	for _, digest := range []string{oldSourceDigest, oldReviewDigest} {
+		oldSize, err := commandJSONStringSizeContext(ctx, digest)
+		if err != nil {
+			return 0, err
+		}
+		delta += 66 - oldSize
+	}
+	return delta, ctx.Err()
+}
+
+func commandJSONStringSizeContext(ctx context.Context, value string) (int, error) {
+	if !utf8.ValidString(value) {
+		return 0, fmt.Errorf("source string is not valid UTF-8")
+	}
+	size := 2
+	for index := 0; index < len(value); {
+		if index&4095 == 0 {
+			if err := ctx.Err(); err != nil {
+				return 0, err
+			}
+		}
+		current := value[index]
+		if current >= utf8.RuneSelf {
+			r, width := utf8.DecodeRuneInString(value[index:])
+			if r == '\u2028' || r == '\u2029' {
+				size += 6
+			} else {
+				size += width
+			}
+			index += width
+			continue
+		}
+		switch current {
+		case '\\', '"', '\b', '\f', '\n', '\r', '\t':
+			size += 2
+		case '<', '>', '&':
+			size += 6
+		default:
+			if current < 0x20 {
+				size += 6
+			} else {
+				size++
+			}
+		}
+		index++
+	}
+	return size, ctx.Err()
 }
 
 func cloneReviewCatalog(spec i18n.CatalogSpec) i18n.CatalogSpec {

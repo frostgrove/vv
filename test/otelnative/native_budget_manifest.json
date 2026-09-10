@@ -2,7 +2,7 @@
   "version": 1,
   "semconv_mode": {
     "environment": "OTEL_SEMCONV_STABILITY_OPT_IN",
-    "value": ""
+    "unset": true
   },
   "domains": {
     "http_methods": {
@@ -15,7 +15,11 @@
     },
     "servemux_route_projections": {
       "type": "string",
-      "string_values": ["/items/{id}"]
+      "string_values": ["/items/{id}", "/live"]
+    },
+    "http_management": {
+      "type": "string",
+      "string_values": ["false", "true"]
     },
     "router_route_templates": {
       "type": "string",
@@ -74,16 +78,11 @@
     {"id": "runtime", "module": "go.opentelemetry.io/contrib/instrumentation/runtime", "module_version": "v0.69.0", "name": "go.opentelemetry.io/contrib/instrumentation/runtime", "version": "0.69.0", "schema_url": "", "attributes": {}}
   ],
   "instruments": [
-    {"resource": "transport", "scope": "otelhttp", "name": "http.server.request.body.size", "type": "histogram_int64", "unit": "By", "temporality": "cumulative", "attributes": [{"key": "http.request.method", "domain": "http_methods", "allow_absent": true}, {"key": "http.response.status_code", "domain": "http_status_codes", "allow_absent": true}, {"key": "http.route", "domain": "servemux_route_projections", "allow_absent": true}], "series_ceiling": 11022},
-    {"resource": "transport", "scope": "otelhttp", "name": "http.server.response.body.size", "type": "histogram_int64", "unit": "By", "temporality": "cumulative", "attributes": [{"key": "http.request.method", "domain": "http_methods", "allow_absent": true}, {"key": "http.response.status_code", "domain": "http_status_codes", "allow_absent": true}, {"key": "http.route", "domain": "servemux_route_projections", "allow_absent": true}], "series_ceiling": 11022},
-    {"resource": "transport", "scope": "otelhttp", "name": "http.server.request.duration", "type": "histogram_float64", "unit": "s", "temporality": "cumulative", "attributes": [{"key": "http.request.method", "domain": "http_methods", "allow_absent": true}, {"key": "http.response.status_code", "domain": "http_status_codes", "allow_absent": true}, {"key": "http.route", "domain": "servemux_route_projections", "allow_absent": true}], "series_ceiling": 11022},
-    {"resource": "transport", "scope": "otelhttp", "name": "http.server.active_requests", "type": "sum_int64", "unit": "{request}", "temporality": "cumulative", "monotonic": false, "attributes": [{"key": "http.request.method", "domain": "http_methods", "allow_absent": true}], "series_ceiling": 11},
+    {"resource": "transport", "scope": "otelhttp", "name": "http.server.request.body.size", "type": "histogram_int64", "unit": "By", "temporality": "cumulative", "attributes": [{"key": "http.request.method", "domain": "http_methods", "allow_absent": true}, {"key": "http.response.status_code", "domain": "http_status_codes", "allow_absent": true}, {"key": "http.route", "domain": "servemux_route_projections", "allow_absent": true}, {"key": "vv.http.management", "domain": "http_management", "allow_absent": false}], "series_ceiling": 33066},
+    {"resource": "transport", "scope": "otelhttp", "name": "http.server.response.body.size", "type": "histogram_int64", "unit": "By", "temporality": "cumulative", "attributes": [{"key": "http.request.method", "domain": "http_methods", "allow_absent": true}, {"key": "http.response.status_code", "domain": "http_status_codes", "allow_absent": true}, {"key": "http.route", "domain": "servemux_route_projections", "allow_absent": true}, {"key": "vv.http.management", "domain": "http_management", "allow_absent": false}], "series_ceiling": 33066},
+    {"resource": "transport", "scope": "otelhttp", "name": "http.server.request.duration", "type": "histogram_float64", "unit": "s", "temporality": "cumulative", "attributes": [{"key": "http.request.method", "domain": "http_methods", "allow_absent": true}, {"key": "http.response.status_code", "domain": "http_status_codes", "allow_absent": true}, {"key": "http.route", "domain": "servemux_route_projections", "allow_absent": true}, {"key": "vv.http.management", "domain": "http_management", "allow_absent": false}], "series_ceiling": 33066},
     {"resource": "transport", "scope": "otelhttp", "name": "http.client.request.body.size", "type": "histogram_int64", "unit": "By", "temporality": "cumulative", "attributes": [{"key": "http.request.method", "domain": "http_methods", "allow_absent": true}, {"key": "http.response.status_code", "domain": "http_status_codes", "allow_absent": true}], "series_ceiling": 5511},
-    {"resource": "transport", "scope": "otelhttp", "name": "http.client.response.body.size", "type": "histogram_int64", "unit": "By", "temporality": "cumulative", "attributes": [{"key": "http.request.method", "domain": "http_methods", "allow_absent": true}, {"key": "http.response.status_code", "domain": "http_status_codes", "allow_absent": true}], "series_ceiling": 5511},
     {"resource": "transport", "scope": "otelhttp", "name": "http.client.request.duration", "type": "histogram_float64", "unit": "s", "temporality": "cumulative", "attributes": [{"key": "http.request.method", "domain": "http_methods", "allow_absent": true}, {"key": "http.response.status_code", "domain": "http_status_codes", "allow_absent": true}], "series_ceiling": 5511},
-    {"resource": "transport", "scope": "otelhttp", "name": "http.client.active_requests", "type": "sum_int64", "unit": "{request}", "temporality": "cumulative", "monotonic": false, "attributes": [{"key": "http.request.method", "domain": "http_methods", "allow_absent": true}], "series_ceiling": 11},
-    {"resource": "transport", "scope": "otelhttp", "name": "http.client.connection.duration", "type": "histogram_float64", "unit": "s", "temporality": "cumulative", "attributes": [], "series_ceiling": 1},
-    {"resource": "transport", "scope": "otelhttp", "name": "http.client.open_connections", "type": "sum_int64", "unit": "{connection}", "temporality": "cumulative", "monotonic": false, "attributes": [], "series_ceiling": 1},
 
     {"resource": "transport", "scope": "otelgin", "name": "http.server.request.body.size", "type": "histogram_int64", "unit": "By", "temporality": "cumulative", "attributes": [{"key": "http.request.method", "domain": "http_methods", "allow_absent": true}, {"key": "http.response.status_code", "domain": "http_status_codes", "allow_absent": true}, {"key": "http.route", "domain": "router_route_templates", "allow_absent": true}], "series_ceiling": 16533},
     {"resource": "transport", "scope": "otelgin", "name": "http.server.response.body.size", "type": "histogram_int64", "unit": "By", "temporality": "cumulative", "attributes": [{"key": "http.request.method", "domain": "http_methods", "allow_absent": true}, {"key": "http.response.status_code", "domain": "http_status_codes", "allow_absent": true}, {"key": "http.route", "domain": "router_route_templates", "allow_absent": true}], "series_ceiling": 16533},
@@ -109,10 +108,10 @@
     {"resource": "database", "scope": "otelsql", "name": "db.sql.connection.closed_max_idle_time", "type": "sum_int64", "unit": "", "temporality": "cumulative", "monotonic": true, "attributes": [{"key": "db.client.connection.pool.name", "domain": "database_pools", "allow_absent": true}], "series_ceiling": 2},
     {"resource": "database", "scope": "otelsql", "name": "db.sql.connection.closed_max_lifetime", "type": "sum_int64", "unit": "", "temporality": "cumulative", "monotonic": true, "attributes": [{"key": "db.client.connection.pool.name", "domain": "database_pools", "allow_absent": true}], "series_ceiling": 2},
 
-    {"resource": "database", "scope": "pgxpool", "name": "app.db.pool.connections.acquired", "type": "gauge_int64", "unit": "", "attributes": [{"key": "db.client.connection.pool.name", "domain": "database_pools", "allow_absent": true}], "series_ceiling": 2},
-    {"resource": "database", "scope": "pgxpool", "name": "app.db.pool.connections.idle", "type": "gauge_int64", "unit": "", "attributes": [{"key": "db.client.connection.pool.name", "domain": "database_pools", "allow_absent": true}], "series_ceiling": 2},
-    {"resource": "database", "scope": "pgxpool", "name": "app.db.pool.connections.max", "type": "gauge_int64", "unit": "", "attributes": [{"key": "db.client.connection.pool.name", "domain": "database_pools", "allow_absent": true}], "series_ceiling": 2},
-    {"resource": "database", "scope": "pgxpool", "name": "app.db.pool.acquire.waits", "type": "sum_int64", "unit": "", "temporality": "cumulative", "monotonic": true, "attributes": [{"key": "db.client.connection.pool.name", "domain": "database_pools", "allow_absent": true}], "series_ceiling": 2},
+    {"resource": "database", "scope": "pgxpool", "name": "app.db.pool.connections.acquired", "type": "gauge_int64", "unit": "{connection}", "attributes": [{"key": "db.client.connection.pool.name", "domain": "database_pools", "allow_absent": true}], "series_ceiling": 2},
+    {"resource": "database", "scope": "pgxpool", "name": "app.db.pool.connections.idle", "type": "gauge_int64", "unit": "{connection}", "attributes": [{"key": "db.client.connection.pool.name", "domain": "database_pools", "allow_absent": true}], "series_ceiling": 2},
+    {"resource": "database", "scope": "pgxpool", "name": "app.db.pool.connections.max", "type": "gauge_int64", "unit": "{connection}", "attributes": [{"key": "db.client.connection.pool.name", "domain": "database_pools", "allow_absent": true}], "series_ceiling": 2},
+    {"resource": "database", "scope": "pgxpool", "name": "app.db.pool.acquire.waits", "type": "sum_int64", "unit": "{wait}", "temporality": "cumulative", "monotonic": true, "attributes": [{"key": "db.client.connection.pool.name", "domain": "database_pools", "allow_absent": true}], "series_ceiling": 2},
     {"resource": "database", "scope": "pgxpool", "name": "app.db.pool.acquire.wait.duration", "type": "sum_float64", "unit": "s", "temporality": "cumulative", "monotonic": true, "attributes": [{"key": "db.client.connection.pool.name", "domain": "database_pools", "allow_absent": true}], "series_ceiling": 2},
 
     {"resource": "runtime", "scope": "runtime", "name": "go.memory.used", "type": "sum_int64", "unit": "By", "temporality": "cumulative", "monotonic": false, "attributes": [{"key": "go.memory.type", "domain": "runtime_memory_types", "allow_absent": true}], "series_ceiling": 3},

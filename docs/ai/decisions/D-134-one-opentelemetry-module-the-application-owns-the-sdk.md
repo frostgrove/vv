@@ -1,4 +1,4 @@
-# D-128 — One OpenTelemetry module; the application owns the SDK
+# D-134 — One OpenTelemetry module; the application owns the SDK
 
 **Status:** in force from OpenTelemetry roadmap slices O1–O3; v2 registry and
 manifest current
@@ -132,7 +132,7 @@ its other values and cancellation cause. The exact copy operations live in
 
 Newly injected carriers must satisfy the native OTel Trace Context parser before
 they enter a durable record. The existing jobs carrier grammar is not tightened.
-A record valid before D-128 remains restorable. When its legacy trace data is not
+A record valid before D-134 remains restorable. When its legacy trace data is not
 acceptable to the OTel parser, extraction drops only tracing or invalid
 tracestate; it does not reject identity restoration or handler execution. The
 built-in path propagates `traceparent` and `tracestate` only. Baggage is an

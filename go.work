@@ -15,6 +15,7 @@ use (
 	./auth/http/authfiber
 	./auth/http/authgin
 	./auth/rpc/authgrpc
+	./audit/auditpg
 	./cache/cachefx
 	./crud/adapter/crudpgx
 	./crud/adapter/crudsql/crudsqlfx

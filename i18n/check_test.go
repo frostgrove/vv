@@ -258,6 +258,8 @@ func TestCheckUsageRejectsSelfConsistentForgedV4Provenance(t *testing.T) {
 			value.GoScope.Metadata = append(value.GoScope.Metadata, value.GoScope.Metadata[0])
 		}},
 		{name: "environment contradiction", mutate: func(value *UsageManifest) { value.GoScope.Environment[1].Value = "arm64" }},
+		{name: "unsorted build tags", mutate: func(value *UsageManifest) { value.GoScope.BuildTags = []string{"z", "a"} }},
+		{name: "repeated build tag", mutate: func(value *UsageManifest) { value.GoScope.BuildTags = []string{"edge", "edge"} }},
 		{name: "occurrence on excluded file", mutate: func(value *UsageManifest) {
 			value.GoScope.Files[0].Selected = false
 			value.GoScope.SelectedFiles = 0
@@ -379,6 +381,114 @@ func TestCheckUsageBoundsOccurrenceItemsAndMaterial(t *testing.T) {
 	}, limits, &collector)
 	if valid || len(collector.findings) == 0 || collector.findings[len(collector.findings)-1].Detail != "usage manifest exceeds configured byte bounds" {
 		t.Fatalf("occurrence byte bound = valid %v, findings %+v", valid, collector.findings)
+	}
+}
+
+func TestUsageLimitsHaveStableDefaultsAndCannotExceedHardBounds(t *testing.T) {
+	want := UsageLimits{
+		MaxKeys: 1 << 18, MaxDynamic: 1 << 18, MaxOccurrences: 1 << 18,
+		MaxRoots: 1024, MaxFiles: 100000, MaxMetadata: 100000,
+		MaxTags: 256, MaxEnvironment: 256, MaxStringBytes: 4 << 20, MaxMaterialBytes: 64 << 20,
+	}
+	if got := DefaultUsageLimits(); got != want {
+		t.Fatalf("default usage limits = %+v, want %+v", got, want)
+	}
+	for _, limit := range []int{-1, want.MaxKeys + 1} {
+		t.Run(fmt.Sprint(limit), func(t *testing.T) {
+			configured := UsageLimits{MaxKeys: limit}
+			report := Check(checkFixture(t), CheckPolicy{UsageLimits: configured})
+			if len(report.Findings) != 1 || report.Findings[0].Path != "policy.usage_limits" || report.Findings[0].Status != CheckInvalid {
+				t.Fatalf("invalid usage limit report = %+v", report)
+			}
+		})
+	}
+}
+
+func TestUsageDigestContextMatchesStableWrappersAndHonorsCancellation(t *testing.T) {
+	scope := testGoUsageScope()
+	manifest := completeUsage([]Key{"app.notice"}, nil)
+	sourceDigest, err := ExpectedUsageSourceDigestContext(context.Background(), *scope)
+	if err != nil || sourceDigest != ExpectedUsageSourceDigest(*scope) {
+		t.Fatalf("context source digest = %q, %v", sourceDigest, err)
+	}
+	manifestDigest, err := ExpectedUsageManifestDigestContext(context.Background(), manifest)
+	if err != nil || manifestDigest != ExpectedUsageManifestDigest(manifest) {
+		t.Fatalf("context manifest digest = %q, %v", manifestDigest, err)
+	}
+	if _, err := ExpectedUsageSourceDigestContext(nil, *scope); err == nil {
+		t.Fatal("nil source digest context was accepted")
+	}
+	if _, err := ExpectedUsageManifestDigestContext(nil, manifest); err == nil {
+		t.Fatal("nil manifest digest context was accepted")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := ExpectedUsageSourceDigestContext(ctx, *scope); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled source digest = %v", err)
+	}
+	if _, err := ExpectedUsageManifestDigestContext(ctx, manifest); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled manifest digest = %v", err)
+	}
+}
+
+func TestCheckUsageLimitsAreIndependentFromCatalogLimits(t *testing.T) {
+	spec := checkFixture(t)
+	probe, err := New(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	limits := DefaultLimits()
+	limits.MaxMessages = 1
+	limits.MaxCatalogItems = snapshotCatalogItems(probe)
+	limits.MaxCatalogBytes = snapshotCatalogBytes(probe)
+	spec.Limits = limits
+
+	usage := completeUsage([]Key{"app.notice"}, nil)
+	path := "example.test/app/generated/" + strings.Repeat("x", 512) + ".go"
+	usage.GoScope.Files[0].Path = strings.TrimPrefix(path, usage.GoScope.Files[0].Root+"/")
+	usage.GoScope.Files[0].LogicalPath = path
+	usage.Occurrences = make([]UsageOccurrence, 64)
+	for index := range usage.Occurrences {
+		usage.Occurrences[index] = UsageOccurrence{Key: "app.notice", Path: path, Line: index + 1, Column: 1}
+	}
+	usage.GoScope.SourceDigest = ExpectedUsageSourceDigest(*usage.GoScope)
+	usage.ManifestDigest = ExpectedUsageManifestDigest(usage)
+	if len(path)*len(usage.Occurrences) <= limits.MaxCatalogBytes {
+		t.Fatalf("usage fixture does not exceed catalog byte policy: %d <= %d", len(path)*len(usage.Occurrences), limits.MaxCatalogBytes)
+	}
+	report := Check(spec, CheckPolicy{Usage: usage})
+	if !report.OK() {
+		t.Fatalf("catalog limits rejected independent usage evidence: %+v", report.Findings)
+	}
+
+	usageLimits := UsageLimits{MaxOccurrences: 1}
+	narrow := Check(spec, CheckPolicy{Usage: usage, UsageLimits: usageLimits})
+	assertCheckFinding(t, narrow, CheckInvalid, SeverityError, "", "")
+	for _, finding := range narrow.Findings {
+		if finding.Path == "usage" && finding.Detail == "usage manifest exceeds configured item bounds" {
+			return
+		}
+	}
+	t.Fatalf("narrow usage limit was not enforced: %+v", narrow.Findings)
+}
+
+func TestCheckTreatsLegacyUsageScopeAsNonAuthoritative(t *testing.T) {
+	scope := testGoUsageScope()
+	scope.Analyzer = GoUsageAnalyzerV1
+	usage := UsageManifest{
+		Keys:        []Key{"app.notice"},
+		Occurrences: []UsageOccurrence{{Key: "app.notice", Path: "legacy/use.go", Line: 1, Column: 1}},
+		GoScope:     scope,
+		Complete:    true,
+	}
+	report := Check(checkFixture(t), CheckPolicy{Usage: usage})
+	if !report.OK() {
+		t.Fatalf("legacy positive usage failed: %+v", report.Findings)
+	}
+	for _, finding := range report.Findings {
+		if strings.HasPrefix(finding.Path, "usage.") || finding.Status == CheckUnused {
+			t.Fatalf("legacy scope became v4 authority: %+v", report.Findings)
+		}
 	}
 }
 

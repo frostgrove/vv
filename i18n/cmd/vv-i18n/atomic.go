@@ -114,13 +114,15 @@ type stagedOutput struct {
 	existed   bool
 	published bool
 	identity  fs.FileInfo
+	candidate fs.FileInfo
+	protected fs.FileInfo
 }
 
 func publishStagedSet(ctx context.Context, directory string, outputs []outputFile, hooks stagedSetHooks) error {
 	return publishStagedSetBounded(ctx, directory, outputs, hooks, maximumCommandInput)
 }
 
-func publishStagedSetBounded(ctx context.Context, directory string, outputs []outputFile, hooks stagedSetHooks, maximum int) error {
+func publishStagedSetBounded(ctx context.Context, directory string, outputs []outputFile, hooks stagedSetHooks, maximum int) (resultErr error) {
 	if ctx == nil {
 		return errors.New("publication context is nil")
 	}
@@ -129,6 +131,9 @@ func publishStagedSetBounded(ctx context.Context, directory string, outputs []ou
 	}
 	if maximum < 1 || maximum > maximumCommandOutputBytes {
 		return fmt.Errorf("output limit %d is outside supported bounds", maximum)
+	}
+	if err := ensurePublisherLockSupported(); err != nil {
+		return err
 	}
 	absoluteDirectory, err := filepath.Abs(directory)
 	if err != nil {
@@ -140,6 +145,13 @@ func publishStagedSetBounded(ctx context.Context, directory string, outputs []ou
 		return fmt.Errorf("open publication directory: %w", err)
 	}
 	defer root.Close()
+	lock, err := acquirePublisherLock(ctx, root)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		resultErr = errors.Join(resultErr, lock.close())
+	}()
 	staged := make([]stagedOutput, len(outputs))
 	defer cleanupStagedOutputs(root, staged)
 	for index, output := range outputs {
@@ -150,11 +162,15 @@ func publishStagedSetBounded(ctx context.Context, directory string, outputs []ou
 		if candidateDirectory != absoluteDirectory {
 			return errors.New("a staged output set must share one directory")
 		}
-		mode, _, _, targetErr := inspectPublicationTarget(root, name, output.path)
+		mode, identity, _, targetErr := inspectPublicationTarget(root, name, output.path)
 		if targetErr != nil {
 			return targetErr
 		}
+		if targetErr := lock.validateTarget(identity, output.path); targetErr != nil {
+			return targetErr
+		}
 		staged[index].name = name
+		staged[index].protected = lock.identity
 		temporary, file, createErr := createTemporary(root, name, mode)
 		if createErr != nil {
 			return createErr
@@ -168,6 +184,12 @@ func publishStagedSetBounded(ctx context.Context, directory string, outputs []ou
 			_ = file.Close()
 			return fmt.Errorf("sync temporary output: %w", syncErr)
 		}
+		candidate, inspectErr := file.Stat()
+		if inspectErr != nil || !candidate.Mode().IsRegular() {
+			_ = file.Close()
+			return errors.Join(errors.New("inspect temporary output candidate"), inspectErr)
+		}
+		staged[index].candidate = candidate
 		if closeErr := file.Close(); closeErr != nil {
 			return fmt.Errorf("close temporary output: %w", closeErr)
 		}
@@ -198,6 +220,12 @@ func publishStagedSetBounded(ctx context.Context, directory string, outputs []ou
 		if err := validateStagedOutputTarget(root, staged[index]); err != nil {
 			return errors.Join(err, rollbackOutputSet(root, staged))
 		}
+		if err := validateStagedOutputCandidate(root, staged[index]); err != nil {
+			return errors.Join(err, rollbackOutputSet(root, staged))
+		}
+		if err := lock.validate(); err != nil {
+			return errors.Join(err, rollbackOutputSet(root, staged))
+		}
 		if err := ctx.Err(); err != nil {
 			return errors.Join(err, rollbackOutputSet(root, staged))
 		}
@@ -206,6 +234,9 @@ func publishStagedSetBounded(ctx context.Context, directory string, outputs []ou
 		}
 		staged[index].temporary = ""
 		staged[index].published = true
+		if err := validatePublishedOutputCandidate(root, staged[index]); err != nil {
+			return errors.Join(err, rollbackOutputSet(root, staged))
+		}
 	}
 	if err := ctx.Err(); err != nil {
 		return errors.Join(err, rollbackOutputSet(root, staged))
@@ -239,6 +270,9 @@ func stageOutputBackupBounded(ctx context.Context, root *os.Root, output *staged
 	}
 	if info.Mode()&fs.ModeSymlink != 0 || !info.Mode().IsRegular() {
 		return fmt.Errorf("publication target %q is not a regular file", output.name)
+	}
+	if output.protected != nil && os.SameFile(output.protected, info) {
+		return fmt.Errorf("publication target %q aliases the reserved publisher lock", output.name)
 	}
 	if info.Size() > int64(maximum) {
 		return fmt.Errorf("publication target %q exceeds %d bytes", output.name, maximum)
@@ -297,6 +331,28 @@ func validateStagedOutputTarget(root *os.Root, output stagedOutput) error {
 	return nil
 }
 
+func validateStagedOutputCandidate(root *os.Root, output stagedOutput) error {
+	info, err := root.Lstat(output.temporary)
+	if err != nil {
+		return fmt.Errorf("inspect temporary output candidate: %w", err)
+	}
+	if info.Mode()&fs.ModeSymlink != 0 || !info.Mode().IsRegular() || output.candidate == nil || !os.SameFile(output.candidate, info) {
+		return fmt.Errorf("temporary output candidate %q changed before commit", output.name)
+	}
+	return nil
+}
+
+func validatePublishedOutputCandidate(root *os.Root, output stagedOutput) error {
+	info, err := root.Lstat(output.name)
+	if err != nil {
+		return fmt.Errorf("inspect published output candidate %q: %w", output.name, err)
+	}
+	if info.Mode()&fs.ModeSymlink != 0 || !info.Mode().IsRegular() || output.candidate == nil || !os.SameFile(output.candidate, info) {
+		return fmt.Errorf("published output candidate %q changed identity", output.name)
+	}
+	return nil
+}
+
 func copyReaderContext(ctx context.Context, destination io.Writer, source io.Reader) (int64, error) {
 	buffer := make([]byte, 32<<10)
 	var total int64
@@ -334,6 +390,17 @@ func rollbackOutputSet(root *os.Root, staged []stagedOutput) error {
 		if !output.published {
 			continue
 		}
+		if err := validatePublishedOutputCandidate(root, *output); err != nil {
+			preserved := output.backup
+			output.backup = ""
+			output.published = false
+			if preserved != "" {
+				joined = errors.Join(joined, fmt.Errorf("refuse rollback of output %q after concurrent replacement; backup preserved as %q: %w", output.name, preserved, err))
+			} else {
+				joined = errors.Join(joined, fmt.Errorf("refuse rollback of output %q after concurrent replacement: %w", output.name, err))
+			}
+			continue
+		}
 		if output.existed && output.backup != "" {
 			if err := root.Rename(output.backup, output.name); err != nil {
 				preserved := output.backup
@@ -362,23 +429,7 @@ func cleanupStagedOutputs(root *os.Root, staged []stagedOutput) {
 	}
 }
 
-func syncRootDirectory(root *os.Root) error {
-	directory, err := root.Open(".")
-	if err != nil {
-		return fmt.Errorf("open publication directory for sync: %w", err)
-	}
-	syncErr := directory.Sync()
-	closeErr := directory.Close()
-	if syncErr != nil {
-		return fmt.Errorf("sync publication directory: %w", syncErr)
-	}
-	if closeErr != nil {
-		return fmt.Errorf("close publication directory: %w", closeErr)
-	}
-	return nil
-}
-
-func publishAtomic(ctx context.Context, path string, content []byte, hooks publishHooks) error {
+func publishAtomic(ctx context.Context, path string, content []byte, hooks publishHooks) (resultErr error) {
 	if ctx == nil {
 		return errors.New("publication context is nil")
 	}
@@ -389,13 +440,26 @@ func publishAtomic(ctx context.Context, path string, content []byte, hooks publi
 	if err != nil {
 		return err
 	}
+	if err := ensurePublisherLockSupported(); err != nil {
+		return err
+	}
 	root, err := openStableAbsoluteRoot(ctx, directory, false, nil)
 	if err != nil {
 		return fmt.Errorf("open publication directory: %w", err)
 	}
 	defer root.Close()
+	lock, err := acquirePublisherLock(ctx, root)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		resultErr = errors.Join(resultErr, lock.close())
+	}()
 	mode, identity, existed, err := inspectPublicationTarget(root, name, path)
 	if err != nil {
+		return err
+	}
+	if err := lock.validateTarget(identity, path); err != nil {
 		return err
 	}
 
@@ -434,6 +498,9 @@ func publishAtomic(ctx context.Context, path string, content []byte, hooks publi
 	if err := validatePublicationTarget(root, name, path, identity, existed); err != nil {
 		return err
 	}
+	if err := lock.validate(); err != nil {
+		return err
+	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -441,19 +508,7 @@ func publishAtomic(ctx context.Context, path string, content []byte, hooks publi
 		return fmt.Errorf("publish output: %w", err)
 	}
 	keepTemporary = false
-	directoryFile, err := root.Open(".")
-	if err != nil {
-		return fmt.Errorf("open publication directory for sync: %w", err)
-	}
-	syncErr := directoryFile.Sync()
-	closeErr := directoryFile.Close()
-	if syncErr != nil {
-		return fmt.Errorf("sync publication directory: %w", syncErr)
-	}
-	if closeErr != nil {
-		return fmt.Errorf("close publication directory: %w", closeErr)
-	}
-	return nil
+	return syncRootDirectory(root)
 }
 
 func publicationTarget(path string) (string, string, string, error) {
@@ -470,7 +525,15 @@ func publicationTarget(path string) (string, string, string, error) {
 	if name == "." || name == ".." || name == string(filepath.Separator) {
 		return "", "", "", fmt.Errorf("output path %q has no file name", path)
 	}
+	if publisherLockNameReserved(name) {
+		return "", "", "", fmt.Errorf("output path %q uses the reserved publisher lock name", path)
+	}
 	return absolute, directory, name, nil
+}
+
+func publisherLockNameReserved(name string) bool {
+	base, _, _ := strings.Cut(name, ":")
+	return strings.EqualFold(strings.TrimRight(base, ". "), publisherLockName)
 }
 
 func inspectPublicationTarget(root *os.Root, name, path string) (fs.FileMode, fs.FileInfo, bool, error) {
@@ -624,70 +687,99 @@ func openStableParent(ctx context.Context, path string) (*os.Root, string, strin
 }
 
 func openStableRootedParent(ctx context.Context, base *os.Root, path string) (*os.Root, string, error) {
-	if ctx == nil {
-		return nil, "", errors.New("path context is nil")
-	}
-	if err := ctx.Err(); err != nil {
-		return nil, "", err
-	}
 	path = filepath.Clean(path)
-	if path == "." || filepath.IsAbs(path) {
+	if path == "." || filepath.IsAbs(path) || filepath.VolumeName(path) != "" {
 		return nil, "", fmt.Errorf("rooted path %q has no file name", path)
 	}
-	directory := filepath.Dir(path)
 	name := filepath.Base(path)
-	baseInfo, err := base.Stat(".")
+	if name == "." || name == ".." || name == string(filepath.Separator) {
+		return nil, "", fmt.Errorf("rooted path %q has no file name", path)
+	}
+	root, err := openStableRootedDirectory(ctx, base, filepath.Dir(path))
 	if err != nil {
 		return nil, "", err
+	}
+	return root, name, nil
+}
+
+func openStableRootedDirectory(ctx context.Context, base *os.Root, path string) (*os.Root, error) {
+	if ctx == nil {
+		return nil, errors.New("path context is nil")
+	}
+	if base == nil {
+		return nil, errors.New("rooted base is nil")
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	path = filepath.Clean(path)
+	if filepath.IsAbs(path) || filepath.VolumeName(path) != "" || path == ".." || strings.HasPrefix(path, ".."+string(filepath.Separator)) {
+		return nil, fmt.Errorf("rooted directory %q escapes its base", path)
+	}
+	baseInfo, err := base.Stat(".")
+	if err != nil {
+		return nil, err
 	}
 	root, err := base.OpenRoot(".")
 	if err != nil {
-		return nil, "", err
+		return nil, err
 	}
 	opened, err := root.Stat(".")
 	if err != nil || !os.SameFile(baseInfo, opened) {
 		_ = root.Close()
-		return nil, "", errors.New("rooted base changed while opening")
+		return nil, errors.New("rooted base changed while opening")
 	}
-	if directory == "." {
-		return root, name, nil
+	if path == "." {
+		if err := ctx.Err(); err != nil {
+			_ = root.Close()
+			return nil, err
+		}
+		return root, nil
 	}
-	for _, component := range strings.Split(directory, string(filepath.Separator)) {
+	for _, component := range strings.Split(path, string(filepath.Separator)) {
 		if component == "" || component == "." || component == ".." {
 			_ = root.Close()
-			return nil, "", errors.New("rooted path contains an invalid component")
+			return nil, errors.New("rooted path contains an invalid component")
 		}
 		if err := ctx.Err(); err != nil {
 			_ = root.Close()
-			return nil, "", err
+			return nil, err
 		}
 		info, err := root.Lstat(component)
 		if err != nil {
 			_ = root.Close()
-			return nil, "", err
+			return nil, err
 		}
-		if info.Mode()&fs.ModeSymlink != 0 || !info.Mode().IsDir() {
+		if info.Mode()&fs.ModeSymlink != 0 {
 			_ = root.Close()
-			return nil, "", fmt.Errorf("rooted path component %q is not a regular directory", component)
+			return nil, fmt.Errorf("rooted path component %q is a symbolic link", component)
+		}
+		if !info.Mode().IsDir() {
+			_ = root.Close()
+			return nil, fmt.Errorf("rooted path component %q is not a regular directory", component)
 		}
 		next, err := root.OpenRoot(component)
 		if err != nil {
 			_ = root.Close()
-			return nil, "", err
+			return nil, err
 		}
 		opened, err := next.Stat(".")
 		if err != nil || !os.SameFile(info, opened) {
 			_ = next.Close()
 			_ = root.Close()
-			return nil, "", fmt.Errorf("rooted path component %q changed while opening", component)
+			return nil, fmt.Errorf("rooted path component %q changed while opening", component)
 		}
 		if err := root.Close(); err != nil {
 			_ = next.Close()
-			return nil, "", err
+			return nil, err
 		}
 		root = next
 	}
-	return root, name, nil
+	if err := ctx.Err(); err != nil {
+		_ = root.Close()
+		return nil, err
+	}
+	return root, nil
 }
 
 func createTemporary(root *os.Root, target string, mode fs.FileMode) (string, *os.File, error) {

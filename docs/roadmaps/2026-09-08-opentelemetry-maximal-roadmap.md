@@ -1,6 +1,7 @@
 # OpenTelemetry: maximal integration roadmap — 2026-09-08
 
-**Status:** accepted baseline; O2 base integration breadth is implementing.
+**Status:** accepted baseline; O3 advanced capability pass passed; O4 edge and
+vulnerability closure is active.
 Fresh clean-context source-audit and delivery-order reviews passed. Every card
 is an implementation commitment, not a list of possible ideas; existing
 checkboxes describe only their stated current proof.
@@ -155,14 +156,14 @@ statically typed wrappers (generated code may remove internal repetition).
    [OTel library guidelines](https://opentelemetry.io/docs/specs/otel/library-guidelines/).
 2. **Why:** durable jobs need the standard propagation API, while transport,
    SDK and exporter ownership must remain outside Frostgrove.
-3. **Adaptation:** write [[D-128]]. It keeps one published `otel/` module and all
+3. **Adaptation:** write [[D-134]]. It keeps one published `otel/` module and all
    other modules OTel-free. It permits stable OTel API packages `trace`,
    `metric`, `propagation`, `attribute` and `codes` plus stdlib `slog` in
    production. It exhaustively names the allowed root seams and explicitly
    permits the four parity-tested
    jobs enqueue call-site wrappers and callback wrappers; they are conveniences,
    not kernel middleware. SDK, exporters, `otelhttp`, `otelgrpc`, `otelslog`,
-   driver instrumentation and global setters remain forbidden. [[D-128]] also
+   driver instrumentation and global setters remain forbidden. [[D-134]] also
    reconciles [[D-062]] with the existing application-owned logger fields on
    long-lived runtime components: those fields stay, but every call with a
    context must use a context-bearing slog method. [[D-114]] becomes superseded,
@@ -173,7 +174,7 @@ statically typed wrappers (generated code may remove internal repetition).
 5. **Top-level DX:** the application passes native providers once; every
    `vvotel` adapter remains an ordinary function.
 
-**Implementation:** [[D-128]], decision index, expanded use case and flow map. The
+**Implementation:** [[D-134]], decision index, expanded use case and flow map. The
 decision lists `port.Service`, `storage.Store`, cache observers, `crud.Source`,
 `remote.Transport`, auth, health, runtime and jobs seams individually and keeps
 event sourcing in its own roadmap. Structural Go tests reject every production
@@ -888,7 +889,7 @@ capability preservation through `runtimefx`.
    users pass `otelslog.NewHandler` or any native handler directly.
 
 **Current implementation:** handler, all eleven affected call sites, reciprocal
-[[D-062]]/[[D-128]] narrowing, collision/group/WithAttrs tests and an app-owned
+[[D-062]]/[[D-134]] narrowing, collision/group/WithAttrs tests and an app-owned
 redaction + `otelslog` recipe.
 
 **Done proof:** `TestEveryContextBearingFrameworkLogPassesItsContext`
@@ -1166,7 +1167,7 @@ base value/error preservation, and one-outcome precedence.
    the caller's transaction commits.
 2. **Why:** propagation alone connects traces but does not show encoding,
    admission or sender latency and failures.
-3. **Adaptation:** [[D-128]] explicitly permits typed `vvotel.Enqueue`,
+3. **Adaptation:** [[D-134]] explicitly permits typed `vvotel.Enqueue`,
    `EnqueueOnce`, `EnqueueIn` and
    `EnqueueOnceIn` call the corresponding jobs function exactly once.
    Non-transactional calls use PRODUCER spans; staged calls use INTERNAL spans
@@ -1425,13 +1426,14 @@ name. The route-policy calls `ServeMux.Handler` and admits a candidate only when
 the returned handler is the exact registered wrapper for the returned full
 pattern. It then dispatches through the same mux while the wrapper records its
 token in request-private state before calling application code. After dispatch,
-the policy preserves `Request.Pattern` only when candidate and executed tokens
-are identical and the final value still equals the captured full pattern;
-otherwise it clears the field before returning to outer `otelhttp`. This rejects
+the policy restores the captured full `Request.Pattern` only when candidate and
+executed tokens are identical; otherwise it clears the field before returning
+to outer `otelhttp`. Restoring the captured value makes nested ServeMux or
+handler mutation unable to change the admitted route. This rejects
 ServeMux-generated slash/path-cleaning/CONNECT redirects: `Handler` reports a
 target pattern for those, but the registered wrapper never executes. It also
-rejects unmatched, malformed, concurrently substituted and handler-tampered
-routes without comparing arbitrary handlers or reading `URL.Path`.
+rejects unmatched, malformed and concurrently substituted routes without
+comparing arbitrary handlers or reading `URL.Path`.
 
 The admission domain is the allow-list of full ServeMux patterns, including
 optional method and host qualifiers. The native metric domain is a separate,
@@ -1449,12 +1451,13 @@ read `Request.Pattern` directly before applying that projection.
 The `GOWORK=off` fixture covers ordinary, method-qualified and host-qualified
 patterns, projection collisions, HEAD-via-GET, unmatched/malformed paths,
 slash/path-cleaning/CONNECT redirects, `RequestURI == "*"`, many raw IDs and a
-handler replacing its selected pattern with another allow-listed value. It
-proves fallback span naming and absent `http.route` whenever no registered
-wrapper ran. Registration after sealing fails before serving and concurrent
-requests cannot exchange admission tokens. Exact full-pattern tests also prove
-that a host- or method-qualified `/live` or `/ready` is not accidentally treated
-as the path-only management route.
+handler delegating to a nested ServeMux that replaces `Request.Pattern`. It
+proves captured-pattern restoration for an executed wrapper, and fallback span
+naming plus absent `http.route` whenever no registered wrapper ran. Registration
+after sealing fails before serving and concurrent requests cannot exchange
+admission tokens. Exact full-pattern tests also prove that a host- or
+method-qualified `/live` or `/ready` is not accidentally treated as the
+path-only management route.
 
 Pinned `otelsql.RegisterDBStatsMetrics` discards a non-nil registration when
 its `Meter.RegisterCallback` returns `(registration, error)`, while OTel SDK
@@ -1531,6 +1534,13 @@ excluded by `RecordError`. Row iteration is checked separately from Close: the
 pinned `otelsql` span sees a non-EOF `Rows.Next` error, but its duration callback
 receives the Close result and therefore cannot be treated as an iteration-
 outcome metric. True driver errors remain failures.
+
+Pinned `otelsql v0.43.0` constructs its deferred duration recorder before
+`createSpan` and closes over the incoming context. Its duration exemplar
+therefore identifies the immediate caller span, not the DB CLIENT span. The O2
+full-stack canary asserts that exact upstream behavior instead of claiming false
+DB-span correlation. O3 re-checks newer pins or a narrowly owned application
+bridge; concurrent parent-to-child guessing is not an acceptable projection.
 
 **Done when:** one sample request shows SERVER → command INTERNAL → DB CLIENT
 parentage without duplicate boundary spans. Public-edge fixtures get a new
@@ -1689,17 +1699,18 @@ sampled tail variant presents both candidates to the Collector.
    saturation and Collector drops.
    Every ratio states its denominator and layer. Missing series remain unknown,
    never healthy zero. Default recipes retain native transport spans and metrics
-   for the exact path-only full patterns `/live` and `/ready`; HTTP availability
-   and latency SLO queries exclude their projected `http.route` values from both
-   numerator and denominator. Any route-value query or datapoint exclusion is
-   permitted only when the sealed route table proves those management
-   projections unique; otherwise assembly fails and the app must include the
-   management traffic or keep a disambiguating bounded dimension. OT-B06 probe
-   telemetry remains included in its separate health rules. The metrics-only
-   variant filters datapoints in Collector/backend policy, preserving request
-   spans and probe parentage. Native `WithFilter` resolves the handler against
-   the same sealed table and suppresses a request only when the selected wrapper
-   has the exact full pattern `/live` or `/ready`; redirects, host-qualified and
+   for the exact path-only full patterns `/live` and `/ready`. The net/http
+   policy writes the reserved bounded metric dimension
+   `vv.http.management=true` only after one of those exact registered wrappers
+   executes and writes `false` on every other server datapoint. This late value
+   overrides a same-key `otelhttp.Labeler` value. HTTP availability and latency
+   SLO queries exclude only `true` from numerator and denominator; they never
+   classify by projected `http.route`. OT-B06 probe telemetry remains included
+   in its separate health rules. The metrics-only variant filters `true`
+   datapoints in Collector/backend policy, preserving request spans and probe
+   parentage. Native `WithFilter` resolves the handler against the same sealed
+   table and suppresses a request only when the selected wrapper has the exact
+   full pattern `/live` or `/ready`; redirects, host-qualified and
    method-qualified patterns do not match. It suppresses both trace and metric
    instrumentation and is documented only as an explicit both-signals exclusion
    variant, never as a metrics-only switch.
@@ -1717,11 +1728,13 @@ registry, native manifest or pinned Collector self-metric contract, and
 empty input and zero denominator. Missing data cannot render as healthy zero.
 Management-route fixtures cover default inclusion, metric-only exclusion and
 both-signals exclusion: assert transport signal counts, exact HTTP SLO
-denominators, projection-uniqueness failure, unchanged probe
-calls/counts/durations and the expected probe span parent (request span when
-retained; no fabricated request parent when excluded). An unmatched path,
-ServeMux redirect, or host-/method-qualified pattern projecting to `/live` or
-`/ready` is not a management route.
+denominators, authoritative marker values, unchanged probe calls/counts/
+durations and the expected probe span parent (request span when retained; no
+fabricated request parent when excluded). One sealed table contains exact plus
+host-/method-qualified colliding patterns; selected-wrapper precedence and
+same-key Labeler spoofing cannot change classification. An unmatched path or
+ServeMux redirect is not a management route; an admitted outer route remains
+authoritative when its handler invokes a nested ServeMux.
 
 ### [ ] OT-D05. Gate schema, local consumption and live OTLP
 
@@ -1906,7 +1919,7 @@ hostage.
 
 | Slice | Cards | Gate before next slice |
 |---|---|---|
-| O0 architecture | A01–A02 | corrected roadmap re-reviewed; [[D-128]]/[[UC-030]]/flow shape accepted |
+| O0 architecture | A01–A02 | corrected roadmap re-reviewed; [[D-134]]/[[UC-030]]/flow shape accepted |
 | O1 foundation | A03–A06 and B01 base | `otel/` focused tests, real-SDK command proof, schema check and clean implementation review |
 | O2 base integration breadth | base paths of B02, B05–B07, B09–B12 and C01–C06; executable D01 integrations for net/http, Gin, Fiber, gRPC, HTTP client, pgx/`database/sql` and Go runtime; D02 SDK; each integration's D06 export projection/privacy row; base native-budget manifest/calculator/scanner from D05 | one ordinary application can assemble every advertised integration without reading framework source; smoke tests cover success plus one representative failure, exact call/result/context preservation, explicit providers, bounded attributes and secret exclusion at exported OTLP; CRUD covers direct source, primary transaction and replica paths; jobs cover enqueue, handler, worker and scheduler paths; every native integration passes its base export canary and calculated series ceiling; local OTLP export and clean implementation review pass |
 | O3 advanced capability pass | B03–B04; advanced B11 capability/transaction/native-bulk matrix; C07; D03–D05; remaining advanced D01–D02/D06 operations | stream lifetimes, aggregate callbacks, nested/savepoint/native capabilities, restart/retry propagation, full native composition, collector/rules/release workflows and clean implementation review pass |
@@ -1919,6 +1932,28 @@ checkboxes remain open after their base recipes because O3 and O4 still owe the
 advanced operational matrix and edge proofs. This changes delivery order, not
 scope. The declared no-secret, bounded-name, explicit-provider, exact-effect and
 fail-open invariants apply to every base adapter immediately.
+
+**O2 proof (2026-09-09):** real-SDK tests cover every listed Frost adapter,
+direct/transaction/replica/bulk CRUD and enqueue/handler/worker/scheduler jobs.
+The native gate requires exact real rosters for HTTP, Gin, Fiber, gRPC, pgx,
+`database/sql`, pgxpool and runtime, validates raw metadata before projection
+and scans projected series/privacy. The production recipe composes Frost plus
+two isolated exact native scopes into one app-owned OTLP pipeline. Fresh
+post-fix reviews passed native budget/semconv mode and production multi-layer
+composition; CRUD/jobs post-fix review passed exact contexts, exemplars and
+trace-start fail-open behavior. `check-otel-schema`, `check-otel-module`,
+`check-otel-live` and `check-otel-native-budget` are green.
+
+**O3 proof (2026-09-09):** storage stream lifetime, bounded cache-memory
+aggregate registration, CRUD optional/native/nested transaction capabilities
+and durable restart/retry propagation pass focused race and real-SDK tests. All
+59 registry signals are implemented. The app-owned native/production recipes,
+five digest-pinned Collector configurations, 41 Prometheus rules, strict v2
+OTLP wire fixture, hermetic root-versus-nested release proof and pinned Weaver
+listener/send/report cycle pass. HTTP management classification uses an
+authoritative bounded `true`/`false` metric dimension proven against Labeler
+spoofing, colliding patterns and nested ServeMux mutation. Two independent
+post-fix reviews found no remaining O3 critical/high/medium gap.
 
 Every implementation slice requires a fresh reviewer with no inherited task
 context. Critical/high findings are fixed and re-reviewed before the next

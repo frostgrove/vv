@@ -295,7 +295,7 @@ not to mirror each base seam.
    adapts do not cost the same graph, because folding them into one package
    charges every consumer for the heaviest of them. That is a measurement, not a
    preference. In `vvotel` every admitted seam costs the same stable
-   OpenTelemetry API module, so files are right and [[D-128]] retains the
+   OpenTelemetry API module, so files are right and [[D-134]] retains the
    one-package rule while superseding [[D-114]]. In tenancy the row policy reaches
    `crud/decorators/security`, and through it `auth` and `errs`, while the cache
    partition reaches `cache` — one package would make a deployment that wanted a

@@ -17,17 +17,17 @@ var (
 )
 
 type NativeBudgetManifest struct {
-	Version      int                      `json:"version"`
-	SemconvMode NativeBudgetSemconvMode  `json:"semconv_mode"`
-	Domains      map[string]NativeBudgetDomain `json:"domains"`
-	Resources    []NativeBudgetResource  `json:"resources"`
-	Scopes       []NativeBudgetScope     `json:"scopes"`
-	Instruments  []NativeBudgetInstrument `json:"instruments"`
+	Version     int                           `json:"version"`
+	SemconvMode NativeBudgetSemconvMode       `json:"semconv_mode"`
+	Domains     map[string]NativeBudgetDomain `json:"domains"`
+	Resources   []NativeBudgetResource        `json:"resources"`
+	Scopes      []NativeBudgetScope           `json:"scopes"`
+	Instruments []NativeBudgetInstrument      `json:"instruments"`
 }
 
 type NativeBudgetSemconvMode struct {
 	Environment string `json:"environment"`
-	Value       string `json:"value"`
+	Unset       bool   `json:"unset"`
 }
 
 type NativeBudgetDomain struct {
@@ -58,15 +58,15 @@ type NativeBudgetScope struct {
 }
 
 type NativeBudgetInstrument struct {
-	Resource      string                    `json:"resource"`
-	Scope         string                    `json:"scope"`
-	Name          string                    `json:"name"`
-	Type          string                    `json:"type"`
-	Unit          string                    `json:"unit"`
-	Temporality   string                    `json:"temporality,omitempty"`
-	Monotonic     *bool                     `json:"monotonic,omitempty"`
-	Attributes    []NativeBudgetAttribute  `json:"attributes"`
-	SeriesCeiling uint64                    `json:"series_ceiling"`
+	Resource      string                  `json:"resource"`
+	Scope         string                  `json:"scope"`
+	Name          string                  `json:"name"`
+	Type          string                  `json:"type"`
+	Unit          string                  `json:"unit"`
+	Temporality   string                  `json:"temporality,omitempty"`
+	Monotonic     *bool                   `json:"monotonic,omitempty"`
+	Attributes    []NativeBudgetAttribute `json:"attributes"`
+	SeriesCeiling uint64                  `json:"series_ceiling"`
 }
 
 type NativeBudgetAttribute struct {
@@ -101,7 +101,7 @@ func (m NativeBudgetManifest) Validate() error {
 	if m.Version != 1 {
 		return nativeBudgetError("version must be 1")
 	}
-	if m.SemconvMode.Environment != "OTEL_SEMCONV_STABILITY_OPT_IN" || m.SemconvMode.Value != "" {
+	if m.SemconvMode.Environment != "OTEL_SEMCONV_STABILITY_OPT_IN" || !m.SemconvMode.Unset {
 		return nativeBudgetError("default semconv mode must be an unset OTEL_SEMCONV_STABILITY_OPT_IN")
 	}
 	if len(m.Domains) == 0 || len(m.Resources) == 0 || len(m.Scopes) == 0 || len(m.Instruments) == 0 {
@@ -186,6 +186,16 @@ func (m NativeBudgetManifest) Validate() error {
 			return nativeBudgetError("instrument %q domain product %d exceeds ceiling %d", instrument.Name, calculated, instrument.SeriesCeiling)
 		}
 		instruments[key] = struct{}{}
+	}
+	return nil
+}
+
+func (m NativeBudgetManifest) ValidateEnvironment() error {
+	if err := m.Validate(); err != nil {
+		return err
+	}
+	if _, present := os.LookupEnv(m.SemconvMode.Environment); present {
+		return nativeBudgetError("%s must be unset", m.SemconvMode.Environment)
 	}
 	return nil
 }

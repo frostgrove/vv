@@ -21,11 +21,16 @@ var (
 )
 
 const (
-	pgxPoolAcquiredMetric    = "app.db.pool.connections.acquired"
-	pgxPoolIdleMetric        = "app.db.pool.connections.idle"
-	pgxPoolMaximumMetric     = "app.db.pool.connections.max"
-	pgxPoolAcquireWaitMetric = "app.db.pool.acquire.waits"
-	pgxPoolAcquireTimeMetric = "app.db.pool.acquire.wait.duration"
+	pgxPoolAcquiredMetric         = "app.db.pool.connections.acquired"
+	pgxPoolIdleMetric             = "app.db.pool.connections.idle"
+	pgxPoolMaximumMetric          = "app.db.pool.connections.max"
+	pgxPoolAcquireWaitMetric      = "app.db.pool.acquire.waits"
+	pgxPoolAcquireTimeMetric      = "app.db.pool.acquire.wait.duration"
+	pgxPoolAcquiredDescription    = "Current acquired connections in the pgx pool."
+	pgxPoolIdleDescription        = "Current idle connections in the pgx pool."
+	pgxPoolMaximumDescription     = "Configured maximum connections in the pgx pool."
+	pgxPoolAcquireWaitDescription = "Acquire attempts that waited for a pgx pool connection."
+	pgxPoolAcquireTimeDescription = "Total time spent waiting for a pgx pool connection."
 )
 
 type PGXPoolStatsSource interface {
@@ -64,23 +69,23 @@ func RegisterPGXPoolStats(providers Providers, pool PGXPoolStatsSource, poolName
 		pgxPoolScopeName,
 		metric.WithInstrumentationVersion(pgxPoolVersion),
 	)
-	acquired, err := meter.Int64ObservableGauge(pgxPoolAcquiredMetric)
+	acquired, err := meter.Int64ObservableGauge(pgxPoolAcquiredMetric, metric.WithDescription(pgxPoolAcquiredDescription), metric.WithUnit("{connection}"))
 	if err != nil {
 		return nil, err
 	}
-	idle, err := meter.Int64ObservableGauge(pgxPoolIdleMetric)
+	idle, err := meter.Int64ObservableGauge(pgxPoolIdleMetric, metric.WithDescription(pgxPoolIdleDescription), metric.WithUnit("{connection}"))
 	if err != nil {
 		return nil, err
 	}
-	maximum, err := meter.Int64ObservableGauge(pgxPoolMaximumMetric)
+	maximum, err := meter.Int64ObservableGauge(pgxPoolMaximumMetric, metric.WithDescription(pgxPoolMaximumDescription), metric.WithUnit("{connection}"))
 	if err != nil {
 		return nil, err
 	}
-	waits, err := meter.Int64ObservableCounter(pgxPoolAcquireWaitMetric)
+	waits, err := meter.Int64ObservableCounter(pgxPoolAcquireWaitMetric, metric.WithDescription(pgxPoolAcquireWaitDescription), metric.WithUnit("{wait}"))
 	if err != nil {
 		return nil, err
 	}
-	waitDuration, err := meter.Float64ObservableCounter(pgxPoolAcquireTimeMetric, metric.WithUnit("s"))
+	waitDuration, err := meter.Float64ObservableCounter(pgxPoolAcquireTimeMetric, metric.WithDescription(pgxPoolAcquireTimeDescription), metric.WithUnit("s"))
 	if err != nil {
 		return nil, err
 	}

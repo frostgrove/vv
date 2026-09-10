@@ -1,6 +1,7 @@
 package i18n
 
 import (
+	"context"
 	"fmt"
 	"maps"
 	"slices"
@@ -33,10 +34,20 @@ func TenantOverlay(revision string, overrides ...Override) OverlaySpec {
 }
 
 func (s *Snapshot) Overlay(spec OverlaySpec) (*Snapshot, error) {
-	return s.overlay(spec, true)
+	return s.overlayContext(context.Background(), spec, true)
 }
 
 func (s *Snapshot) overlay(spec OverlaySpec, appendRevision bool) (*Snapshot, error) {
+	return s.overlayContext(context.Background(), spec, appendRevision)
+}
+
+func (s *Snapshot) overlayContext(ctx context.Context, spec OverlaySpec, appendRevision bool) (*Snapshot, error) {
+	if ctx == nil {
+		return nil, fmt.Errorf("%w: overlay context is nil", ErrInvalidCatalog)
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if s == nil {
 		return nil, fmt.Errorf("%w: snapshot is nil", ErrInvalidCatalog)
 	}
@@ -65,6 +76,9 @@ func (s *Snapshot) overlay(spec OverlaySpec, appendRevision bool) (*Snapshot, er
 		return nil, problems.err()
 	}
 	for i, override := range spec.Overrides {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if !counter.add(string(override.Key), override.Locale, override.Text, override.ContractRevision, override.SourceDigest, override.ReviewDigest) {
 			problems.add(ProblemLimit, problemPath("overlay.overrides[%d]", i), "overlay material exceeds configured bounds")
 			return nil, problems.err()
@@ -74,10 +88,17 @@ func (s *Snapshot) overlay(spec OverlaySpec, appendRevision bool) (*Snapshot, er
 	records := make(map[Key]*messageRecord, len(s.records))
 	totalTranslations := 0
 	for key, record := range s.records {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		templates := maps.Clone(record.templates)
+		descriptor, err := cloneDescriptorContext(ctx, record.descriptor)
+		if err != nil {
+			return nil, err
+		}
 		totalTranslations += len(templates)
 		records[key] = &messageRecord{
-			descriptor:   cloneDescriptor(record.descriptor),
+			descriptor:   descriptor,
 			contractHash: record.contractHash,
 			sourceDigest: record.sourceDigest,
 			allowEmpty:   record.allowEmpty,
@@ -86,17 +107,26 @@ func (s *Snapshot) overlay(spec OverlaySpec, appendRevision bool) (*Snapshot, er
 	}
 	allowedLocales := make(map[string]bool, len(s.supported)+len(s.parents)+2)
 	for _, locale := range s.supported {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		allowedLocales[locale] = true
 	}
 	allowedLocales[s.sourceLocale] = true
 	allowedLocales[s.defaultLocale] = true
 	for child, parent := range s.parents {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		allowedLocales[child] = true
 		allowedLocales[parent] = true
 	}
 
 	seen := make(map[string]string, len(spec.Overrides))
 	for i, override := range spec.Overrides {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		path := problemPath("overlay.overrides[%d]", i)
 		record, ok := records[override.Key]
 		if !ok {
@@ -220,21 +250,28 @@ func (s *Snapshot) overlay(spec OverlaySpec, appendRevision bool) (*Snapshot, er
 		observer:            s.observer,
 		highestLayer:        spec.Layer,
 	}
-	formatRequirements, err := snapshotFormattingRequirements(clone)
+	formatRequirements, err := snapshotFormattingRequirementsContext(ctx, clone)
 	if err != nil {
 		return nil, err
 	}
 	clone.formatRequirements = formatRequirements
-	if bytes := snapshotCatalogBytes(clone); bytes > s.limits.MaxCatalogBytes {
+	bytes, items, err := snapshotCatalogMaterialContext(ctx, clone)
+	if err != nil {
+		return nil, err
+	}
+	if bytes > s.limits.MaxCatalogBytes {
 		problems.add(ProblemLimit, "overlay.catalog_bytes", strconv.Itoa(bytes))
 	}
-	if items := snapshotCatalogItems(clone); items > s.limits.MaxCatalogItems {
+	if items > s.limits.MaxCatalogItems {
 		problems.add(ProblemLimit, "overlay.catalog_items", strconv.Itoa(items))
 	}
 	if err := problems.err(); err != nil {
 		return nil, err
 	}
-	clone.digest = snapshotDigest(clone)
+	clone.digest, err = snapshotDigestContext(ctx, clone)
+	if err != nil {
+		return nil, err
+	}
 	return clone, nil
 }
 

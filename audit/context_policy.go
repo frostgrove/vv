@@ -40,6 +40,7 @@ type ContextFactDescription struct {
 	Allowed        []Provenance
 	Classification Classification
 	Mode           StorageMode
+	Generated      bool
 }
 
 type ContextPolicyDescription struct {
@@ -181,6 +182,7 @@ func (p ContextPolicy) description() ContextPolicyDescription {
 			Allowed:        slices.Clone(fact.allowed),
 			Classification: fact.classification,
 			Mode:           fact.mode,
+			Generated:      fact.generated,
 		}
 	}
 	return description

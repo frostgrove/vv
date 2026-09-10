@@ -57,7 +57,7 @@ transport. CRUD was worse: ten entry points — `crud/`, `repo/`, `query/`,
 **Because the transport axis made every new subsystem pay every transport.**
 [[D-035]]'s historical grid illustrated this with an `i18n` row containing
 `i18nfiber` and `i18ngin`: on the old layout those cells would have added two
-directories to `http/` and no directory saying where i18n lived. [[D-129]] later
+directories to `http/` and no directory saying where i18n lived. [[D-135]] later
 made the stronger choice for that subsystem — one optional `i18n` module and no
 transport-specific i18n packages at all.
 

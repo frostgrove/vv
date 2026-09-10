@@ -4,30 +4,17 @@ import (
 	"context"
 	"errors"
 
+	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/sdk/instrumentation"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 	semconv "go.opentelemetry.io/otel/semconv/v1.41.0"
+	"go.opentelemetry.io/otel/semconv/v1.41.0/rpcconv"
 )
 
 var ErrInvalidMetricExporter = errors.New("otelnative: downstream metric exporter is required")
-
-var nativeMetricNames = map[string]struct{}{
-	"http.client.active_requests":     {},
-	"http.client.connection.duration": {},
-	"http.client.open_connections":    {},
-	"http.client.request.body.size":   {},
-	"http.client.request.duration":    {},
-	"http.client.response.body.size":  {},
-	"http.server.active_requests":     {},
-	"http.server.request.body.size":   {},
-	"http.server.request.duration":    {},
-	"http.server.response.body.size":  {},
-	"rpc.client.call.duration":        {},
-	"rpc.server.call.duration":        {},
-}
 
 func NewTransportMetricExporter(next sdkmetric.Exporter, policy TraceProjectionPolicy) (sdkmetric.Exporter, error) {
 	if nilInterface(next) {
@@ -72,24 +59,36 @@ func projectResourceMetrics(original *metricdata.ResourceMetrics, policy compile
 	}
 	for _, scopeMetrics := range original.ScopeMetrics {
 		scope, native := nativeMetricScope(scopeMetrics.Scope)
+		specs := transportMetricSpecs(scopeMetrics.Scope.Name, policy)
 		if !native {
 			scope = cloneScope(scopeMetrics.Scope)
 		}
 		metrics := make([]metricdata.Metrics, 0, len(scopeMetrics.Metrics))
 		for _, item := range scopeMetrics.Metrics {
+			description := item.Description
+			unit := item.Unit
 			if native {
-				if _, allowed := nativeMetricNames[item.Name]; !allowed {
+				spec, allowed := specs[item.Name]
+				if !allowed {
 					continue
 				}
+				data, ok := projectTransportAggregation(item.Data, spec)
+				if !ok {
+					continue
+				}
+				description = spec.description
+				unit = spec.unit
+				metrics = append(metrics, metricdata.Metrics{Name: item.Name, Description: description, Unit: unit, Data: data})
+				continue
 			}
-			data, ok := projectAggregation(scopeMetrics.Scope.Name, item.Data, policy, native)
+			data, ok := projectAggregation(scopeMetrics.Scope.Name, item.Data, policy, false)
 			if !ok {
 				continue
 			}
 			metrics = append(metrics, metricdata.Metrics{
 				Name:        item.Name,
-				Description: item.Description,
-				Unit:        item.Unit,
+				Description: description,
+				Unit:        unit,
 				Data:        data,
 			})
 		}
@@ -98,6 +97,115 @@ func projectResourceMetrics(original *metricdata.ResourceMetrics, policy compile
 		}
 	}
 	return projected
+}
+
+func transportMetricSpecs(scope string, policy compiledTracePolicy) map[string]nativeMetricSpec {
+	serverProjector := transportMetricProjector(scope, httpServerMetricAttributes, policy)
+	clientProjector := transportMetricProjector(scope, httpClientMetricAttributes, policy)
+	activeProjector := transportMetricProjector(scope, httpActiveMetricAttributes, policy)
+	rpcProjector := transportMetricProjector(scope, rpcMetricAttributes, policy)
+	server := map[string]nativeMetricSpec{
+		"http.server.request.body.size": {
+			description: "Size of HTTP server request bodies.",
+			unit:        "By",
+			shape:       metricHistogramInt64,
+			attributes:  serverProjector,
+		},
+		"http.server.response.body.size": {
+			description: "Size of HTTP server response bodies.",
+			unit:        "By",
+			shape:       metricHistogramInt64,
+			attributes:  serverProjector,
+		},
+		"http.server.request.duration": {
+			description: "Duration of HTTP server requests.",
+			unit:        "s",
+			shape:       metricHistogramFloat64,
+			attributes:  serverProjector,
+		},
+	}
+	switch scope {
+	case otelgin.ScopeName:
+		return server
+	case fiberScopeName:
+		server["http.server.active_requests"] = nativeMetricSpec{
+			description: "Number of active HTTP server requests.",
+			unit:        "1",
+			shape:       metricSumInt64,
+			attributes:  activeProjector,
+		}
+		return server
+	case otelgrpc.ScopeName:
+		return map[string]nativeMetricSpec{
+			"rpc.client.call.duration": {
+				description: rpcconv.ClientCallDuration{}.Description(),
+				unit:        rpcconv.ClientCallDuration{}.Unit(),
+				shape:       metricHistogramFloat64,
+				attributes:  rpcProjector,
+			},
+			"rpc.server.call.duration": {
+				description: rpcconv.ServerCallDuration{}.Description(),
+				unit:        rpcconv.ServerCallDuration{}.Unit(),
+				shape:       metricHistogramFloat64,
+				attributes:  rpcProjector,
+			},
+		}
+	default:
+		server["http.client.request.body.size"] = nativeMetricSpec{
+			description: "Size of HTTP client request bodies.",
+			unit:        "By",
+			shape:       metricHistogramInt64,
+			attributes:  clientProjector,
+		}
+		server["http.client.request.duration"] = nativeMetricSpec{
+			description: "Duration of HTTP client requests.",
+			unit:        "s",
+			shape:       metricHistogramFloat64,
+			attributes:  clientProjector,
+		}
+		return server
+	}
+}
+
+func transportMetricProjector(scope string, keys map[attribute.Key]struct{}, policy compiledTracePolicy) func([]attribute.KeyValue) []attribute.KeyValue {
+	return func(items []attribute.KeyValue) []attribute.KeyValue {
+		projected := projectTransportMetricAttributes(scope, items, policy)
+		result := make([]attribute.KeyValue, 0, len(projected))
+		for _, item := range projected {
+			if _, allowed := keys[item.Key]; allowed {
+				result = append(result, item)
+			}
+		}
+		return result
+	}
+}
+
+func projectTransportAggregation(aggregation metricdata.Aggregation, spec nativeMetricSpec) (metricdata.Aggregation, bool) {
+	project := func(items []attribute.KeyValue) []attribute.KeyValue { return spec.attributes(items) }
+	switch spec.shape {
+	case metricSumInt64:
+		data, ok := aggregation.(metricdata.Sum[int64])
+		if !ok || data.IsMonotonic != spec.monotonic {
+			return nil, false
+		}
+		data.DataPoints = projectBoundedDataPoints(data.DataPoints, project)
+		return data, true
+	case metricHistogramInt64:
+		data, ok := aggregation.(metricdata.Histogram[int64])
+		if !ok {
+			return nil, false
+		}
+		data.DataPoints = projectBoundedHistogramPoints(data.DataPoints, project)
+		return data, true
+	case metricHistogramFloat64:
+		data, ok := aggregation.(metricdata.Histogram[float64])
+		if !ok {
+			return nil, false
+		}
+		data.DataPoints = projectBoundedHistogramPoints(data.DataPoints, project)
+		return data, true
+	}
+	return nil, false
 }
 
 func nativeMetricScope(scope instrumentation.Scope) (instrumentation.Scope, bool) {

@@ -1,9 +1,9 @@
 # D-114 — One cross-cutting OpenTelemetry module over base seams
 
-**Status:** superseded by [[D-128]]
+**Status:** superseded by [[D-134]]
 **Invariant:** Exactly one published module `otel/` (`github.com/frostgrove/vv/otel`, package `vvotel`) represents the consumer decision to use Frostgrove's OpenTelemetry integration. It adapts multiple dependency-neutral base seams (`port`, `storage`, `cache`). Non-OTel modules and the root remain OTel-free, and combination packages are forbidden.
 
-[[D-128]] preserves the one-module, OTel-free-root, borrowed-provider and
+[[D-134]] preserves the one-module, OTel-free-root, borrowed-provider and
 no-combination-package rules. It replaces this decision's trace/metric-only
 import list and four-seam roster with the complete integration boundary.
 

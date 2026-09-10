@@ -2,7 +2,7 @@
 
 **Actor:** the application author defining accountable operations, the
 investigator reviewing them, and the operator preserving the ledger
-**Covered by:** [[FL-039]]
+**Covered by:** [[FL-040]]
 
 ## Scenario
 

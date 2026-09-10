@@ -63,10 +63,10 @@ func TestNarrowAttributeBuildersEnforceSignalOwnership(t *testing.T) {
 			return storageSpanAttributes(OpStoragePut, OutcomeOk, "", "objects", nil)
 		}, ok: true},
 		{name: "cache_facade", build: func() ([]attribute.KeyValue, bool) {
-			return cacheFacadeAttributes(SignalCacheOperations, OpCacheLookup, "hit")
+			return cacheFacadeAttributes(SignalCacheOperations, OpCacheLookup, "hit", "", false)
 		}, ok: true},
 		{name: "cache_backend", build: func() ([]attribute.KeyValue, bool) {
-			return cacheBackendAttributes(SignalCacheOperations, OpCacheBackendGet, "hit")
+			return cacheBackendAttributes(SignalCacheOperations, OpCacheBackendGet, "hit", "")
 		}, ok: true},
 		{name: "foreign_command_operation", build: func() ([]attribute.KeyValue, bool) {
 			return commandMetricAttributes(OpStoragePut, OutcomeOk, "")

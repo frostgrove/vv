@@ -48,6 +48,7 @@ type Telemetry struct {
 
 	configuredResourceName string
 	resourceNames          *approvedNameBudget
+	cacheMemoryStats       *cacheMemoryStatsSlot
 }
 
 type approvedNameBudget struct {
@@ -129,6 +130,7 @@ func newTelemetry(resourceName ApprovedName) *Telemetry {
 		resourceNames: &approvedNameBudget{
 			names: make(map[string]struct{}),
 		},
+		cacheMemoryStats: &cacheMemoryStatsSlot{},
 	}
 	return t
 }
@@ -194,6 +196,13 @@ func (t *Telemetry) int64Counter(signal Signal) metric.Int64Counter {
 		return nil
 	}
 	return t.int64Counters[signal]
+}
+
+func (t *Telemetry) int64Gauge(signal Signal) metric.Int64ObservableGauge {
+	if t == nil {
+		return nil
+	}
+	return t.int64ObservableGauge[signal]
 }
 
 func providerTracer(provider trace.TracerProvider, name string, options ...trace.TracerOption) (tracer trace.Tracer, panicked bool) {

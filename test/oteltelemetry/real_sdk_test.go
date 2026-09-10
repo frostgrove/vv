@@ -165,7 +165,6 @@ func (s *privacyScenario) emit(ctx context.Context) {
 		Cache:        cacheNameCanary,
 		Operation:    cache.LookupOperation,
 		Outcome:      cache.HitOutcome,
-		Reason:       cache.Reason(cacheReasonCanary),
 		Items:        937,
 		EncodedBytes: 8142,
 		PayloadBytes: 4815,
@@ -174,11 +173,12 @@ func (s *privacyScenario) emit(ctx context.Context) {
 	s.cacheMemoryObserver.Observe(ctx, cachememory.Event{
 		Operation:    cachememory.PutOperation,
 		Outcome:      cachememory.StoredOutcome,
-		Reason:       cachememory.Reason(cacheMemoryReasonCanary),
 		Items:        619,
 		ValueBytes:   2718,
 		ChargedBytes: 3141,
 	})
+	s.cacheObserver.Observe(ctx, cache.Event{Operation: cache.LookupOperation, Outcome: cache.HitOutcome, Reason: cache.Reason(cacheReasonCanary)})
+	s.cacheMemoryObserver.Observe(ctx, cachememory.Event{Operation: cachememory.PutOperation, Outcome: cachememory.StoredOutcome, Reason: cachememory.Reason(cacheMemoryReasonCanary)})
 	_, s.gotStorageErr = s.storage.Put(ctx, s.key, s.source, storage.PutOptions{})
 }
 
@@ -355,6 +355,7 @@ func TestRealSDKPreservesParentsLinksExemplarsAndPrivacy(t *testing.T) {
 					string(vvotel.AttrCacheLayer):       vvotel.CacheLayerFacade,
 					string(vvotel.AttrOperationName):    vvotel.OpCacheLookup,
 					string(vvotel.AttrOperationOutcome): string(cache.HitOutcome),
+					string(vvotel.AttrMemoized):         true,
 				},
 			},
 			{
@@ -394,8 +395,8 @@ func TestRealSDKPreservesParentsLinksExemplarsAndPrivacy(t *testing.T) {
 	}
 
 	metrics := collectMetricData(t, fixture.metrics)
-	if got := metricDataCount(metrics); got != 3 {
-		t.Fatalf("real SDK collected %d metrics, want command duration, storage duration, and cache operations", got)
+	if got := metricDataCount(metrics); got != 9 {
+		t.Fatalf("real SDK collected %d metrics, want 9 operation and cache metrics", got)
 	}
 	metric, point := commandHistogramFromMetrics(t, metrics)
 	if metric.Description != vvotel.MetricCommandDurationDescription {
@@ -424,6 +425,12 @@ func TestRealSDKPreservesParentsLinksExemplarsAndPrivacy(t *testing.T) {
 	assertExemplar(t, point.Exemplars, commandSpan.SpanContext(), point.Sum)
 	assertStorageDuration(t, metrics, storageSpan.SpanContext())
 	assertCacheCounter(t, metrics, commandSpan.SpanContext())
+	assertIntMetricExemplar(t, metrics, vvotel.MetricCacheEvents, commandSpan.SpanContext())
+	assertCacheSDKHistogram(t, metrics, vvotel.MetricCacheItems, commandSpan.SpanContext(), 937, 619)
+	assertCacheSDKHistogram(t, metrics, vvotel.MetricCacheEncodedBytes, commandSpan.SpanContext(), 8142)
+	assertCacheSDKHistogram(t, metrics, vvotel.MetricCachePayloadBytes, commandSpan.SpanContext(), 4815)
+	assertCacheSDKHistogram(t, metrics, vvotel.MetricCacheValueBytes, commandSpan.SpanContext(), 2718)
+	assertCacheSDKHistogram(t, metrics, vvotel.MetricCacheChargedBytes, commandSpan.SpanContext(), 3141)
 	assertSDKPrivacy(t, spans, metrics, privacy.secrets("customer-secret-4815"))
 	privacy.assertPreserved(t)
 }
@@ -679,16 +686,17 @@ func TestLocalOTLPRoundTripPreservesFrostgroveSignalContract(t *testing.T) {
 	assertOTLPEvents(t, commandSpan.Events, []otlpEventExpectation{
 		{
 			name: vvotel.EventCache,
-			attributes: map[string]string{
+			attributes: map[string]any{
 				string(vvotel.AttrComponent):        vvotel.ComponentCache,
 				string(vvotel.AttrCacheLayer):       vvotel.CacheLayerFacade,
 				string(vvotel.AttrOperationName):    vvotel.OpCacheLookup,
 				string(vvotel.AttrOperationOutcome): string(cache.HitOutcome),
+				string(vvotel.AttrMemoized):         true,
 			},
 		},
 		{
 			name: vvotel.EventCacheBackend,
-			attributes: map[string]string{
+			attributes: map[string]any{
 				string(vvotel.AttrComponent):        vvotel.ComponentCacheBackend,
 				string(vvotel.AttrCacheLayer):       vvotel.CacheBackendLayerMemoryBackend,
 				string(vvotel.AttrOperationName):    vvotel.OpCacheBackendPut,
@@ -775,8 +783,8 @@ func TestLocalOTLPRoundTripPreservesFrostgroveSignalContract(t *testing.T) {
 	if len(otlpExemplar.FilteredAttributes) != 0 {
 		t.Fatalf("OTLP command exemplar has filtered attributes: %v", otlpExemplar.FilteredAttributes)
 	}
-	if got := metrics.metricCount(); got != 3 {
-		t.Fatalf("OTLP receiver got %d metrics, want command duration, storage duration, and cache operations", got)
+	if got := metrics.metricCount(); got != 9 {
+		t.Fatalf("OTLP receiver got %d metrics, want 9 operation and cache metrics", got)
 	}
 	assertOTLPStorageDuration(t, metrics, storageSpan.TraceId, storageSpan.SpanId)
 	assertOTLPCacheCounter(t, metrics, commandSpan.TraceId, commandSpan.SpanId)
@@ -989,6 +997,7 @@ func assertCacheCounter(t *testing.T, data metricdata.ResourceMetrics, spanConte
 				string(vvotel.AttrCacheLayer):       vvotel.CacheLayerFacade,
 				string(vvotel.AttrOperationName):    vvotel.OpCacheLookup,
 				string(vvotel.AttrOperationOutcome): string(cache.HitOutcome),
+				string(vvotel.AttrMemoized):         true,
 			})
 		case vvotel.CacheBackendLayerMemoryBackend:
 			assertAttributes(t, attributes, map[string]any{
@@ -1005,6 +1014,26 @@ func assertCacheCounter(t *testing.T, data metricdata.ResourceMetrics, spanConte
 		}
 		seen[layer] = true
 		assertInt64Exemplar(t, point.Exemplars, spanContext, point.Value)
+	}
+}
+
+func assertCacheSDKHistogram(t *testing.T, data metricdata.ResourceMetrics, name string, spanContext trace.SpanContext, want ...int64) {
+	t.Helper()
+	metric := findMetricData(t, data, name)
+	histogram, ok := metric.Data.(metricdata.Histogram[int64])
+	if !ok || len(histogram.DataPoints) != len(want) {
+		t.Fatalf("cache histogram %q = %T/%d points, want %d", name, metric.Data, len(histogram.DataPoints), len(want))
+	}
+	remaining := make(map[int64]int, len(want))
+	for _, value := range want {
+		remaining[value]++
+	}
+	for _, point := range histogram.DataPoints {
+		if point.Count != 1 || remaining[point.Sum] == 0 {
+			t.Fatalf("cache histogram %q point = count %d sum %d", name, point.Count, point.Sum)
+		}
+		remaining[point.Sum]--
+		assertInt64Exemplar(t, point.Exemplars, spanContext, point.Sum)
 	}
 }
 
@@ -1330,7 +1359,7 @@ func newOTLPReceiver(t *testing.T) (*grpc.ClientConn, *recordingOTLPTraceReceive
 
 type otlpEventExpectation struct {
 	name       string
-	attributes map[string]string
+	attributes map[string]any
 }
 
 func assertOTLPEvents(t *testing.T, events []*tracepb.Span_Event, want []otlpEventExpectation) {
@@ -1348,7 +1377,7 @@ func assertOTLPEvents(t *testing.T, events []*tracepb.Span_Event, want []otlpEve
 		if event.GetDroppedAttributesCount() != 0 {
 			t.Fatalf("OTLP span event %q dropped %d attributes, want none", event.GetName(), event.GetDroppedAttributesCount())
 		}
-		assertOTLPAttributes(t, event.GetAttributes(), want[i].attributes)
+		assertOTLPAnyAttributes(t, event.GetAttributes(), want[i].attributes)
 	}
 }
 
@@ -1385,14 +1414,15 @@ func assertOTLPCacheCounter(t *testing.T, receiver *recordingOTLPMetricReceiver,
 		}
 		switch layer {
 		case vvotel.CacheLayerFacade:
-			assertOTLPAttributes(t, point.GetAttributes(), map[string]string{
+			assertOTLPAnyAttributes(t, point.GetAttributes(), map[string]any{
 				string(vvotel.AttrComponent):        vvotel.ComponentCache,
 				string(vvotel.AttrCacheLayer):       vvotel.CacheLayerFacade,
 				string(vvotel.AttrOperationName):    vvotel.OpCacheLookup,
 				string(vvotel.AttrOperationOutcome): string(cache.HitOutcome),
+				string(vvotel.AttrMemoized):         true,
 			})
 		case vvotel.CacheBackendLayerMemoryBackend:
-			assertOTLPAttributes(t, point.GetAttributes(), map[string]string{
+			assertOTLPAnyAttributes(t, point.GetAttributes(), map[string]any{
 				string(vvotel.AttrComponent):        vvotel.ComponentCacheBackend,
 				string(vvotel.AttrCacheLayer):       vvotel.CacheBackendLayerMemoryBackend,
 				string(vvotel.AttrOperationName):    vvotel.OpCacheBackendPut,
@@ -1588,6 +1618,24 @@ func assertOTLPAttributes(t *testing.T, attributes []*commonpb.KeyValue, want ma
 	got := make(map[string]string, len(attributes))
 	for _, attr := range attributes {
 		got[attr.Key] = attr.Value.GetStringValue()
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("OTLP attributes = %#v, want %#v", got, want)
+	}
+}
+
+func assertOTLPAnyAttributes(t *testing.T, attributes []*commonpb.KeyValue, want map[string]any) {
+	t.Helper()
+	got := make(map[string]any, len(attributes))
+	for _, attr := range attributes {
+		switch value := attr.Value.GetValue().(type) {
+		case *commonpb.AnyValue_StringValue:
+			got[attr.Key] = value.StringValue
+		case *commonpb.AnyValue_BoolValue:
+			got[attr.Key] = value.BoolValue
+		default:
+			got[attr.Key] = attr.Value.String()
+		}
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("OTLP attributes = %#v, want %#v", got, want)

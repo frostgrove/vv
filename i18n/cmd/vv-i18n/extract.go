@@ -128,7 +128,9 @@ func extractUsageWithTags(ctx context.Context, roots []string, complete bool, bu
 		state.sourceRoots = append(state.sourceRoots, resolved)
 		seenRoots[absolute] = true
 	}
-	state.normalizeSourceRoots()
+	if err := state.normalizeSourceRoots(ctx); err != nil {
+		return i18n.UsageManifest{}, err
+	}
 	loader, err := loadGoUsage(ctx, state.sourceRoots, buildTags, complete)
 	if err != nil {
 		return i18n.UsageManifest{}, err
@@ -294,41 +296,11 @@ func (s *extractState) extractRoot(ctx context.Context, root extractSourceRoot, 
 		}
 		return s.extractFile(ctx, root.path, seen)
 	}
+	var nested map[string]bool
 	if model := s.loader.roots[root.path]; model != nil {
-		err := fs.WalkDir(model.handle.FS(), ".", func(relative string, entry fs.DirEntry, walkErr error) error {
-			if walkErr != nil {
-				return walkErr
-			}
-			if err := s.accountEntry(); err != nil {
-				return err
-			}
-			if err := ctx.Err(); err != nil {
-				return err
-			}
-			if entry.Type()&fs.ModeSymlink != 0 {
-				return fmt.Errorf("source tree entry %q is a symbolic link", filepath.Join(root.path, relative))
-			}
-			if entry.IsDir() && model.nested[filepath.ToSlash(relative)] {
-				return filepath.SkipDir
-			}
-			if entry.IsDir() && relative != "." && ignoredExtractDirectory(entry.Name()) {
-				return filepath.SkipDir
-			}
-			if entry.IsDir() || filepath.Ext(entry.Name()) != ".go" {
-				return nil
-			}
-			return s.extractFile(ctx, filepath.Join(root.path, relative), seen)
-		})
-		if err != nil {
-			return fmt.Errorf("walk extraction root %q: %w", root.path, err)
-		}
-		current, err := os.Stat(root.path)
-		if err != nil || !os.SameFile(model.identity, current) {
-			return fmt.Errorf("extraction root %q changed identity during scan", root.path)
-		}
-		return nil
+		nested = model.nested
 	}
-	return filepath.WalkDir(root.path, func(path string, entry fs.DirEntry, walkErr error) error {
+	err := fs.WalkDir(root.handle.FS(), ".", func(relative string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
@@ -339,61 +311,136 @@ func (s *extractState) extractRoot(ctx context.Context, root extractSourceRoot, 
 			return err
 		}
 		if entry.Type()&fs.ModeSymlink != 0 {
-			return fmt.Errorf("source tree entry %q is a symbolic link", path)
+			return fmt.Errorf("source tree entry %q is a symbolic link", filepath.Join(root.path, filepath.FromSlash(relative)))
 		}
-		if entry.IsDir() && path != root.path && ignoredExtractDirectory(entry.Name()) {
+		if entry.IsDir() && nested[filepath.ToSlash(relative)] {
+			return filepath.SkipDir
+		}
+		if entry.IsDir() && relative != "." && ignoredExtractDirectory(entry.Name()) {
 			return filepath.SkipDir
 		}
 		if entry.IsDir() || filepath.Ext(entry.Name()) != ".go" {
 			return nil
 		}
-		return s.extractFile(ctx, path, seen)
+		return s.extractFile(ctx, filepath.Join(root.path, filepath.FromSlash(relative)), seen)
 	})
+	if err != nil {
+		return fmt.Errorf("walk extraction root %q: %w", root.path, err)
+	}
+	current, err := root.handle.Stat(".")
+	if err != nil || !os.SameFile(root.identity, current) {
+		return fmt.Errorf("extraction root %q changed identity during scan", root.path)
+	}
+	return nil
 }
 
-func (s *extractState) normalizeSourceRoots() {
+func (s *extractState) normalizeSourceRoots(ctx context.Context) error {
 	result := make([]extractSourceRoot, 0, len(s.sourceRoots))
-	for index, root := range s.sourceRoots {
+	for index := range s.sourceRoots {
+		root := s.sourceRoots[index]
 		covered := false
-		for otherIndex, other := range s.sourceRoots {
-			if index == otherIndex || !other.directory {
+		for otherIndex := range s.sourceRoots {
+			other := s.sourceRoots[otherIndex]
+			if index == otherIndex || !other.directory || other.handle == nil {
 				continue
 			}
 			relative, err := filepath.Rel(other.path, root.path)
-			if err == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator)) &&
-				!crossesModuleBoundary(other.path, root.path, root.directory) {
+			if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+				continue
+			}
+			if err := verifySourceRootWithin(ctx, other, root, relative); err != nil {
+				return fmt.Errorf("normalize extraction roots %q and %q: %w", other.path, root.path, err)
+			}
+			boundary, err := crossesModuleBoundary(ctx, other, relative, root.directory)
+			if err != nil {
+				return fmt.Errorf("inspect module boundary for extraction root %q: %w", root.path, err)
+			}
+			if !boundary {
 				covered = true
 				break
 			}
 		}
-		if !covered {
-			result = append(result, root)
+		if covered {
+			err := s.sourceRoots[index].handle.Close()
+			s.sourceRoots[index].handle = nil
+			if err != nil {
+				return fmt.Errorf("close covered extraction root %q: %w", root.path, err)
+			}
+			continue
 		}
+		result = append(result, root)
 	}
 	slices.SortFunc(result, func(left, right extractSourceRoot) int { return strings.Compare(left.path, right.path) })
 	s.sourceRoots = result
+	return nil
 }
 
-func crossesModuleBoundary(parent, child string, childDirectory bool) bool {
+func verifySourceRootWithin(ctx context.Context, parent, child extractSourceRoot, relative string) error {
+	if child.directory {
+		handle, err := openStableRootedDirectory(ctx, parent.handle, relative)
+		if err != nil {
+			return err
+		}
+		current, statErr := handle.Stat(".")
+		closeErr := handle.Close()
+		if statErr != nil {
+			return statErr
+		}
+		if closeErr != nil {
+			return closeErr
+		}
+		if !os.SameFile(child.identity, current) {
+			return errors.New("covered directory changed identity")
+		}
+		return nil
+	}
+	root, name, err := openStableRootedParent(ctx, parent.handle, relative)
+	if err != nil {
+		return err
+	}
+	current, statErr := root.Lstat(name)
+	closeErr := root.Close()
+	if statErr != nil {
+		return statErr
+	}
+	if closeErr != nil {
+		return closeErr
+	}
+	if current.Mode()&fs.ModeSymlink != 0 || !current.Mode().IsRegular() || !os.SameFile(child.identity, current) {
+		return errors.New("covered file changed identity")
+	}
+	return nil
+}
+
+func crossesModuleBoundary(ctx context.Context, parent extractSourceRoot, child string, childDirectory bool) (bool, error) {
 	current := child
 	if !childDirectory {
 		current = filepath.Dir(current)
 	}
-	for current != parent {
-		if info, err := os.Lstat(filepath.Join(current, "go.mod")); err == nil {
+	for current != "." {
+		root, name, err := openStableRootedParent(ctx, parent.handle, filepath.Join(current, "go.mod"))
+		if err != nil {
+			return false, err
+		}
+		info, inspectErr := root.Lstat(name)
+		closeErr := root.Close()
+		if inspectErr == nil {
 			if info.Mode().IsRegular() || info.Mode()&fs.ModeSymlink != 0 {
-				return true
+				return true, closeErr
 			}
-		} else if !errors.Is(err, fs.ErrNotExist) {
-			return true
+		} else if !errors.Is(inspectErr, fs.ErrNotExist) {
+			return false, inspectErr
+		}
+		if closeErr != nil {
+			return false, closeErr
 		}
 		next := filepath.Dir(current)
-		if next == current || !pathWithin(parent, next) {
-			return true
+		if next == current || next == ".." || strings.HasPrefix(next, ".."+string(filepath.Separator)) {
+			return false, errors.New("module boundary escaped its extraction root")
 		}
 		current = next
 	}
-	return false
+	return false, nil
 }
 
 func compareUsageOccurrence(left, right i18n.UsageOccurrence) int {
@@ -427,6 +474,39 @@ func (s *extractState) accountEntry() error {
 		return fmt.Errorf("extraction exceeds %d filesystem entries", maximumExtractEntries)
 	}
 	return nil
+}
+
+func (s *extractState) sourceRootFor(path string) *extractSourceRoot {
+	path = filepath.Clean(path)
+	var match *extractSourceRoot
+	for index := range s.sourceRoots {
+		root := &s.sourceRoots[index]
+		contained := root.directory && pathWithin(root.path, path) || !root.directory && root.path == path
+		if contained && (match == nil || len(root.path) > len(match.path)) {
+			match = root
+		}
+	}
+	return match
+}
+
+func (s *extractState) readSource(ctx context.Context, path, readPath string, maximum int64) ([]byte, error) {
+	path = filepath.Clean(path)
+	readPath = filepath.Clean(readPath)
+	if path != readPath {
+		return readSecureRegularFile(ctx, readPath, maximum)
+	}
+	root := s.sourceRootFor(path)
+	if root == nil {
+		return readSecureRegularFile(ctx, readPath, maximum)
+	}
+	if !root.directory {
+		return readRootRegularFileWithIdentity(ctx, root.handle, root.name, maximum, root.identity)
+	}
+	relative, err := filepath.Rel(root.path, path)
+	if err != nil || relative == "." || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		return nil, fmt.Errorf("source path %q escapes extraction root %q", path, root.path)
+	}
+	return readRootRegularFile(ctx, root.handle, relative, maximum)
 }
 
 func (s *extractState) extractFile(ctx context.Context, path string, seen map[string]bool) error {
@@ -466,7 +546,7 @@ func (s *extractState) extractFile(ctx context.Context, path string, seen map[st
 		}
 		readPath = path
 	}
-	content, err := readSecureRegularFile(ctx, readPath, maximumExtractFileBytes)
+	content, err := s.readSource(ctx, path, readPath, maximumExtractFileBytes)
 	if err != nil {
 		return err
 	}
@@ -566,7 +646,7 @@ func (s *extractState) usageScope(ctx context.Context) (*i18n.GoUsageScope, erro
 		return nil, err
 	}
 	for _, input := range inputs {
-		content, err := readSecureRegularFile(ctx, input.readPath, maximumExtractFileBytes)
+		content, err := s.readSource(ctx, input.path, input.readPath, maximumExtractFileBytes)
 		if err != nil {
 			return nil, fmt.Errorf("revalidate usage source %q: %w", input.logicalPath, err)
 		}

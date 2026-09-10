@@ -50,10 +50,21 @@ func runCheck(t *testing.T, root, check string) (string, int) {
 	return runCheckArguments(t, root, check)
 }
 
+func runCheckWithEnv(t *testing.T, root, check string, environment ...string) (string, int) {
+	t.Helper()
+	return runCheckCommand(t, root, environment, check)
+}
+
 func runCheckArguments(t *testing.T, root string, arguments ...string) (string, int) {
+	t.Helper()
+	return runCheckCommand(t, root, nil, arguments...)
+}
+
+func runCheckCommand(t *testing.T, root string, environment []string, arguments ...string) (string, int) {
 	t.Helper()
 	command := exec.Command("bash", append([]string{filepath.Join(root, "scripts", "checks.sh")}, arguments...)...)
 	command.Env = append(os.Environ(), "GOWORK=off", "GOPROXY=off", "GOTOOLCHAIN=local")
+	command.Env = append(command.Env, environment...)
 	output, err := command.CombinedOutput()
 	if err == nil {
 		return string(output), 0

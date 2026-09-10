@@ -269,6 +269,7 @@ func writeContextDescription(output interface{ Write([]byte) (int, error) }, val
 		}
 		writeUint32(output, uint32(fact.Classification))
 		writeUint32(output, uint32(fact.Mode))
+		writeBool(output, fact.Generated)
 	}
 }
 

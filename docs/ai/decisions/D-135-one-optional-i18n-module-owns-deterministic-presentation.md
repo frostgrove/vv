@@ -1,4 +1,4 @@
-# D-129 — One optional i18n module owns deterministic presentation
+# D-135 — One optional i18n module owns deterministic presentation
 
 **Status:** accepted
 **Implementation:** the core package, offline command and framework integration
@@ -156,6 +156,33 @@ is terminal rather than an invitation to continue with defaults. Usage-manifest
 and Go-source hostile-input bounds remain owned by those document/extraction
 contracts instead of being mislabeled as catalogue bounds.
 
+The library exposes that boundary as `UsageLimits` on `CheckPolicy`. Zero fields
+select `DefaultUsageLimits`; callers may narrow them but cannot exceed the hard
+contract maxima. Keys, dynamic ranges and occurrences are each capped at
+262144; roots at 1024; files and metadata records at 100000 each; every tag and
+environment ledger at 256; one retained string at 4 MiB; and aggregate semantic
+material at 64 MiB. The v4 decoder and core checker use those same limits, so a
+small catalogue policy cannot invalidate otherwise legitimate call-site
+evidence.
+
+Those ceilings reach the producer, not only the final writer. Compilation,
+canonical source encoding, pseudolocalization, Go generation, public manifest
+and TypeScript generation, reports and usage manifests reject an impossible
+output before proportional cloning, formatting or hashing. Their context-aware
+paths poll cancellation while walking and encoding retained material; legacy
+convenience functions use `context.Background()` and the same finite defaults.
+Source merge accounts aggregate catalogue material and canonical source bytes
+in a first pass before appending anything. It retains only the exact obsolete
+count and lexicographically first diagnostic; review validates its locale,
+scope and state before cloning the catalogue.
+Count-only wire passes include JSON escaping and fixed scaffolding. Generated
+Go is already gofmt-canonical before the formatter seam; public manifest and
+TypeScript sizes are exact before public-message cloning or address hashing;
+pseudolocale additions use fixed digest widths before hashing; review combines
+`SourceCodec.EncodedSizeContext` with the exact stamp delta before digesting or
+cloning. Exact limits succeed and one-byte-smaller limits fail before those
+later phases.
+
 Offline usage extraction derives the effective graph and compiled files from
 the local Go tool, then type-checks selected local packages with exact export
 data. It honors persisted Go environment, workspaces, nested modules,
@@ -165,14 +192,26 @@ root, conflicting evidence, or a reachable external dependency that could hide
 an i18n call turns requested completeness into an incomplete manifest; missing
 visibility never becomes a false unused claim. Build-excluded candidates remain
 hashed evidence but do not invalidate a proof about that exact effective build.
+`Snapshot.Bind`, its method expressions and values, binder-bearing interfaces,
+snapshots and other i18n capabilities also force incomplete evidence when they
+cross a return, field/map/heap store, reflection or unsafe boundary, or an
+unknown/external call. A typed call or callback with the exact capability type
+remains provable when its callee body belongs to the exact selected source graph,
+including a selected sibling package. A definition-bearing factory field is trusted only when
+every reaching assignment and return proves that same field; parameters, mixed
+paths and escapes remain untrusted, and a generated-file marker grants no
+authority.
 The usage document is evidence consumed by `check`, not a catalogue consumed by
 `review`. A separate loss-aware merge combines newly authored source with the
 previous reviewed source and refuses to discard obsolete work without explicit
 intent. Usage v4 adds reproducible call-site locations, canonical file and
 metadata ledgers, effective environment and package-graph identity, recomputable
 source and manifest digests, and bidirectional aggregate/occurrence evidence.
-Readers accept v1-v3 documents only as incomplete evidence, so legacy input
-cannot assert non-use. V4 digest validation establishes internal consistency,
+Readers preserve positive keys, ranges and occurrences from v1-v3 documents but
+discard their legacy scope and completeness authority, so legacy input cannot
+assert non-use or trigger v4 provenance errors. Build, tool and release tag
+ledgers are sorted and unique in canonical output and rejected otherwise by the
+decoder and checker. V4 digest validation establishes internal consistency,
 not authenticity or filesystem freshness; trusted release automation reruns
 `extract -check` against the physical checkout before consuming non-use proof.
 
@@ -196,13 +235,42 @@ Generational public export binds its two fixed output bodies twice: each file
 has a bounded byte count and digest, and the pointer's public address is
 recomputed from the exact canonical manifest and TypeScript bytes. Generation
 identity separately frames that address plus file roles, names and contents.
-An exported pure address helper lets independent Go consumers verify the same
-protocol without relying on publisher internals. Publisher and readers walk
-from the filesystem or volume root through stable descriptors, reject links and
-identity changes between inspection and opening, and cannot be redirected by a
-later ancestor replacement. A missing final publication root is created and
-its parent synced through the pinned parent descriptor. Readers bound directory
-entries and stop bounded file reads after cancellation.
+Exported pure address helpers, including a cancellation-aware variant, let
+independent Go consumers verify the same protocol without relying on publisher
+internals. Publisher and readers walk from the filesystem or volume root through
+stable descriptors, reject links and identity changes between inspection and
+opening, and cannot be redirected by a later ancestor replacement. A missing
+final publication root is created and its parent synced through the pinned
+parent descriptor. The writer also pins the verified `generations` directory:
+generation creation, writes, rename, cleanup and directory sync stay relative
+to that handle, and the parent entry must still name the same directory before
+the compare-and-swap of `current.json`. That pointer commit requires the
+initially absent target to remain absent or the initial regular-file identity to
+remain exact. Readers bound directory entries and stop bounded file reads after
+cancellation.
+
+Every mutating direct, staged and generational writer uses the same persistent
+`.vv-i18n.lock` regular file beneath its pinned output directory or publication
+root. The command creates it with exclusive creation or proves an existing
+non-link identity across inspect, open and stat, then obtains a context-aware
+nonblocking OS advisory lock before any output or pointer snapshot. Unix uses
+`flock`; Windows uses `LockFileEx`; unsupported targets fail before filesystem
+mutation. The descriptor and lock remain held through commit, rollback and the
+last directory sync, while process exit releases OS ownership without removing
+the file. `-check` remains read-only and neither creates nor acquires the lock.
+This serializes cooperating `vv-i18n` publishers on filesystems that implement
+those lock semantics. An external writer that ignores the lock can only be
+rejected at an identity checkpoint; the command does not claim linearizability
+against arbitrary filesystem mutation between checkpoints.
+
+Temporary file bodies are always synced before rename. On non-Windows systems
+the command also syncs each affected directory in dependency order. Go opens
+Windows directories read-only, where `File.Sync` returns `ACCESS_DENIED`, so the
+Windows implementation selects an explicit compile-time directory-sync no-op
+instead of swallowing an arbitrary runtime error. Same-directory rename,
+content-address verification and concurrent-reader integrity still hold there;
+power-loss durability of directory-entry updates is an operating-system and
+filesystem boundary rather than a guarantee made by this command.
 
 ## Alternatives rejected
 
@@ -261,6 +329,12 @@ entries and stop bounded file reads after cancellation.
   `TestCLILimitsWidenCatalogDecodeMergeAndCompileTogether` and
   `TestCLILimitsKeepSourceCompiledAndDerivedOutputBudgetsIndependent` pin the
   command's operator ceilings.
+  `TestDerivedOutputLimitsRefuseBeforeFormatterAndAddressWork`,
+  `TestBuildTransformsPollContextDuringMeaningfulLoops`,
+  `TestMergeSourcePreflightsMaterialAndSourceOutputBeforeAppending`,
+  `TestMergeSourceRetainsOnlyCountAndLexicalFirstObsoleteDiagnostic` and
+  `TestReviewValidatesSelectorBeforeCloningCatalog` pin the fail-early CPU,
+  cancellation and bounded-diagnostic boundaries.
   `TestStructDefinitionStrictlyParsesEveryStructTagBeforeMapping` and
   `TestDescriptorContractRefRejectsInvalidKeysBeforeDigest` pin reflective
   fail-early boundaries. External distribution, durable coordination and
@@ -270,5 +344,5 @@ entries and stop bounded file reads after cancellation.
 ## See also
 
 [[D-021]] [[D-033]] [[D-045]] [[D-048]] [[D-051]] [[D-058]] [[D-084]]
-[[D-128]] [[D-116]] [[UC-015]] [[UC-033]] [[FL-011]] [[FL-013]]
-[[FL-015]] [[FL-038]]
+[[D-134]] [[D-116]] [[UC-015]] [[UC-033]] [[FL-011]] [[FL-013]]
+[[FL-015]] [[FL-039]]

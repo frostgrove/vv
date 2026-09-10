@@ -18,16 +18,51 @@ func auditSHA256(domain string, frames ...[]byte) [sha256.Size]byte {
 	return output
 }
 
-func semanticDraftBytes(operation OperationName, operationID OperationID, values []draft) []byte {
+func semanticDraftBytes(operation OperationName, operationID OperationID, context Context, policy ContextPolicy, values []draft) []byte {
 	var output bytes.Buffer
 	writeFrame(&output, []byte("frostgrove.audit/record-semantic/v1"))
 	writeFrame(&output, []byte(operation))
 	writeFrame(&output, operationID[:])
+	writeSemanticContext(&output, context, policy)
 	writeUint32(&output, uint32(len(values)))
 	for _, value := range values {
 		writeDraft(&output, value)
 	}
 	return output.Bytes()
+}
+
+func writeSemanticContext(output interface{ Write([]byte) (int, error) }, context Context, policy ContextPolicy) {
+	writeUint32(output, uint32(len(context.Actors)))
+	for _, actor := range context.Actors {
+		writeUint32(output, uint32(actor.Kind))
+		writeFrame(output, []byte(actor.Reference))
+		writeUint32(output, uint32(actor.Provenance))
+	}
+	count := uint32(0)
+	for _, fact := range policy.value.facts {
+		if fact.kind == ActorChainContext {
+			continue
+		}
+		if present, _, _ := contextFactValue(context, fact.kind); present {
+			count++
+		}
+	}
+	writeUint32(output, count)
+	for _, fact := range policy.value.facts {
+		if fact.kind == ActorChainContext {
+			continue
+		}
+		present, provenance, raw := contextFactValue(context, fact.kind)
+		if !present {
+			continue
+		}
+		encoded, _ := contextValueBytes(raw)
+		writeUint32(output, uint32(fact.kind))
+		writeUint32(output, uint32(provenance))
+		writeUint32(output, uint32(fact.classification))
+		writeUint32(output, uint32(fact.mode))
+		writeFrame(output, encoded)
+	}
 }
 
 func writeDraft(output interface{ Write([]byte) (int, error) }, value draft) {
@@ -155,9 +190,25 @@ func writeRevisionHeader(output interface{ Write([]byte) (int, error) }, header 
 	writeFrame(output, []byte(header.Retention))
 	writeUint32(output, uint32(header.Consequence))
 	writeFrame(output, header.RetentionBasis[:])
+	writeAuthorizationSummary(output, header.Authorization)
 	writeFrame(output, header.Semantic[:])
 	if includeEnvelope {
 		writeFrame(output, header.Envelope[:])
+	}
+}
+
+func writeAuthorizationSummary(output interface{ Write([]byte) (int, error) }, summary RevisionAuthorizationSummaryView) {
+	writeUint32(output, uint32(len(summary.Resources)))
+	for _, resource := range summary.Resources {
+		writeFrame(output, []byte(resource))
+	}
+	writeUint32(output, uint32(len(summary.Actions)))
+	for _, action := range summary.Actions {
+		writeFrame(output, []byte(action))
+	}
+	writeUint32(output, uint32(len(summary.Classifications)))
+	for _, classification := range summary.Classifications {
+		writeUint32(output, uint32(classification))
 	}
 }
 

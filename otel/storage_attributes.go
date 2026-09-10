@@ -26,3 +26,19 @@ func storageCleanupRemovedAttributes(more bool) ([]attribute.KeyValue, bool) {
 		AttrMore.Bool(more),
 	})
 }
+
+func storageStreamSpanAttributes(outcome string, errorType string) ([]attribute.KeyValue, bool) {
+	return admitSignalAttributes(
+		SignalStorageStreamSpan,
+		spanStatus(outcome, errorType),
+		operationAttributes(ComponentStorageStream, OpStorageStreamConsume, outcome, errorType),
+	)
+}
+
+func storageStreamMetricAttributes(signal Signal, outcome string, errorType string) ([]attribute.KeyValue, bool) {
+	return admitSignalAttributes(
+		signal,
+		"",
+		operationAttributes(ComponentStorageStream, OpStorageStreamConsume, outcome, errorType),
+	)
+}

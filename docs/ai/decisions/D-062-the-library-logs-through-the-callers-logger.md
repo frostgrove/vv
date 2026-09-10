@@ -1,7 +1,7 @@
 # D-062 — The library logs through the caller's logger, and instruments through the Source
 
 **Status:** accepted; logging narrowing implemented
-**Narrowed by:** [[D-128]] (logging only; in force)
+**Narrowed by:** [[D-134]] (logging only; in force)
 **Invariant:** This library never writes directly to a process-wide logger.
 Request-scoped code obtains the caller's logger through `port.Logger(ctx)`;
 long-lived runtime components that already receive an application-owned
@@ -23,7 +23,7 @@ to be closed, a response would not marshal, a status could not carry its
 details, or a refusal could not be encoded or written. That history and its
 rationale remain binding.
 
-[[D-128]] narrows only how the logger is invoked. The jobs failure site uses
+[[D-134]] narrows only how the logger is invoked. The jobs failure site uses
 `port.Logger(ctx)`. Supervisor remains a long-lived component with its existing
 application-owned logger field and passes the runner context to that logger.
 Together with the original nine, the structural inventory is eleven framework
@@ -144,4 +144,4 @@ does so only to route the effect to its primary.
 
 ## See also
 
-[[D-021]] [[D-042]] [[D-044]] [[D-045]] [[D-048]] [[D-061]] [[D-128]]
+[[D-021]] [[D-042]] [[D-044]] [[D-045]] [[D-048]] [[D-061]] [[D-134]]

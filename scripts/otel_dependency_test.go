@@ -75,7 +75,7 @@ func TestVVOTelProductionImportsOnlyAllowedOTelAPIs(t *testing.T) {
 		if allowedOTelProductionImport(imported.path) {
 			continue
 		}
-		t.Errorf("%s imports a package outside the D-128 production allow-list: %s", imported.file, imported.path)
+		t.Errorf("%s imports a package outside the D-134 production allow-list: %s", imported.file, imported.path)
 	}
 }
 

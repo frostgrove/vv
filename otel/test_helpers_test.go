@@ -25,6 +25,8 @@ type recordedSpan struct {
 	ended           bool
 	startTime       time.Time
 	endTime         time.Time
+	spanContext     trace.SpanContext
+	parent          trace.SpanContext
 }
 
 type testTracerProvider struct {
@@ -47,6 +49,11 @@ type testTracerProvider struct {
 	attributeCalls   int
 	statusCalls      int
 	endCalls         int
+	blockSpanName    string
+	startEntered     chan struct{}
+	startRelease     chan struct{}
+	panicStartNames  map[string]bool
+	spanContexts     map[string]trace.SpanContext
 }
 
 func newTestTracerProvider() *testTracerProvider {
@@ -73,8 +80,10 @@ type spanKey struct{}
 func (t *testTracer) Start(ctx context.Context, spanName string, opts ...trace.SpanStartOption) (context.Context, trace.Span) {
 	t.provider.mu.Lock()
 	t.provider.startCalls++
+	panicForName := t.provider.panicStartNames[spanName]
+	spanContext := t.provider.spanContexts[spanName]
 	t.provider.mu.Unlock()
-	if t.provider.panicStart {
+	if t.provider.panicStart || panicForName {
 		panic("tracer start failed")
 	}
 	if t.provider.typedNilSpan {
@@ -82,15 +91,27 @@ func (t *testTracer) Start(ctx context.Context, spanName string, opts ...trace.S
 		return context.WithValue(ctx, spanKey{}, "discarded"), span
 	}
 	cfg := trace.NewSpanStartConfig(opts...)
+	if spanName == t.provider.blockSpanName && t.provider.startRelease != nil {
+		if t.provider.startEntered != nil {
+			t.provider.startEntered <- struct{}{}
+		}
+		<-t.provider.startRelease
+	}
+	startedAt := cfg.Timestamp()
+	if startedAt.IsZero() {
+		startedAt = time.Now()
+	}
 	span := &testSpan{
 		provider: t.provider,
 		rec: &recordedSpan{
-			name:       spanName,
-			kind:       cfg.SpanKind(),
-			newRoot:    cfg.NewRoot(),
-			attributes: make(map[attribute.Key]attribute.Value),
-			links:      append([]trace.Link(nil), cfg.Links()...),
-			startTime:  time.Now(),
+			name:        spanName,
+			kind:        cfg.SpanKind(),
+			newRoot:     cfg.NewRoot(),
+			attributes:  make(map[attribute.Key]attribute.Value),
+			links:       append([]trace.Link(nil), cfg.Links()...),
+			startTime:   startedAt,
+			spanContext: spanContext,
+			parent:      trace.SpanContextFromContext(ctx),
 		},
 	}
 	for _, kv := range cfg.Attributes() {
@@ -136,7 +157,12 @@ func (s *testSpan) End(options ...trace.SpanEndOption) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.rec.ended = true
-	s.rec.endTime = time.Now()
+	config := trace.NewSpanEndConfig(options...)
+	endedAt := config.Timestamp()
+	if endedAt.IsZero() {
+		endedAt = time.Now()
+	}
+	s.rec.endTime = endedAt
 }
 
 func (s *testSpan) AddEvent(name string, options ...trace.EventOption) {
@@ -170,7 +196,9 @@ func (s *testSpan) IsRecording() bool {
 func (s *testSpan) RecordError(err error, options ...trace.EventOption) {}
 
 func (s *testSpan) SpanContext() trace.SpanContext {
-	return trace.SpanContext{}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.rec.spanContext
 }
 
 func (s *testSpan) SetStatus(code codes.Code, description string) {
@@ -229,6 +257,8 @@ type testMeterProvider struct {
 	panicCounterCreate        bool
 	panicHistogramRecord      bool
 	panicCounterAdd           bool
+	panicFloatHistogramNames  map[string]bool
+	panicInt64HistogramNames  map[string]bool
 	counterAddCalls           int
 	histogramRecordCalls      int
 	int64HistogramRecordCalls int
@@ -357,7 +387,7 @@ func (h *testInt64Histogram) Record(ctx context.Context, incr int64, options ...
 	h.provider.mu.Lock()
 	h.provider.int64HistogramRecordCalls++
 	h.provider.mu.Unlock()
-	if h.provider.panicHistogramRecord {
+	if h.provider.panicHistogramRecord || h.provider.panicInt64HistogramNames[h.name] {
 		panic("histogram record failed")
 	}
 	cfg := metric.NewRecordConfig(options)
@@ -380,7 +410,7 @@ func (h *testHistogram) Record(ctx context.Context, incr float64, options ...met
 	h.provider.mu.Lock()
 	h.provider.histogramRecordCalls++
 	h.provider.mu.Unlock()
-	if h.provider.panicHistogramRecord {
+	if h.provider.panicHistogramRecord || h.provider.panicFloatHistogramNames[h.name] {
 		panic("histogram record failed")
 	}
 	cfg := metric.NewRecordConfig(options)

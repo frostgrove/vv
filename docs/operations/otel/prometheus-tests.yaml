@@ -1,0 +1,109 @@
+rule_files:
+  - prometheus-rules.yaml
+
+evaluation_interval: 1m
+
+tests:
+  - name: cache ratio ignores backend series and survives a counter reset
+    interval: 1m
+    input_series:
+      - series: 'vv_cache_operations{vv_cache_layer="facade",vv_operation_name="lookup",vv_operation_outcome="hit"}'
+        values: '0+30x5 0+30x5'
+      - series: 'vv_cache_operations{vv_cache_layer="facade",vv_operation_name="lookup",vv_operation_outcome="miss"}'
+        values: '0+30x5 0+30x5'
+      - series: 'vv_cache_operations{vv_cache_layer="memory_backend",vv_operation_name="get",vv_operation_outcome="hit"}'
+        values: '0+900x10'
+    promql_expr_test:
+      - expr: vv:cache:hit_ratio5m
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="vv:cache:hit_ratio5m"}'
+            value: 0.5
+
+  - name: empty input remains absent
+    interval: 1m
+    promql_expr_test:
+      - expr: vv:cache:hit_ratio5m
+        eval_time: 10m
+        exp_samples: []
+
+  - name: zero denominator is not a healthy zero
+    interval: 1m
+    input_series:
+      - series: 'vv_cache_operations{vv_cache_layer="facade",vv_operation_name="lookup",vv_operation_outcome="hit"}'
+        values: '0x10'
+      - series: 'vv_cache_operations{vv_cache_layer="facade",vv_operation_name="lookup",vv_operation_outcome="miss"}'
+        values: '0x10'
+    promql_expr_test:
+      - expr: vv:cache:hit_ratio5m == 0
+        eval_time: 10m
+        exp_samples: []
+
+  - name: management routes use an exact marker without swallowing a qualified route projection
+    interval: 1m
+    input_series:
+      - series: 'http_server_request_duration_count{http_route="/items/{id}",vv_http_management="false",http_response_status_code="200"}'
+        values: '0+10x10'
+      - series: 'http_server_request_duration_count{http_route="/items/{id}",vv_http_management="false",http_response_status_code="500"}'
+        values: '0+10x10'
+      - series: 'http_server_request_duration_count{http_route="/live",vv_http_management="true",http_response_status_code="500"}'
+        values: '0+1000x10'
+      - series: 'http_server_request_duration_count{http_route="/ready",vv_http_management="true",http_response_status_code="500"}'
+        values: '0+1000x10'
+      - series: 'http_server_request_duration_count{http_route="/live",vv_http_management="false",http_response_status_code="500",source="method-qualified"}'
+        values: '0+10x10'
+    promql_expr_test:
+      - expr: vv:http:server_error_ratio5m
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="vv:http:server_error_ratio5m"}'
+            value: 0.6666666666666666
+
+  - name: auth refusal shift uses the same-layer long window and leaves a missing baseline unknown
+    interval: 1m
+    input_series:
+      - series: 'vv:auth_refusal:reason_share5m{vv_reason="credential"}'
+        values: '0.8x20'
+      - series: 'vv:auth_refusal:reason_share1h{vv_reason="credential"}'
+        values: '0.2x20'
+      - series: 'vv:auth_refusal:reason_share5m{vv_reason="missing-baseline"}'
+        values: '0.9x20'
+    promql_expr_test:
+      - expr: vv:auth_refusal:reason_share_shift5m
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="vv:auth_refusal:reason_share_shift5m",vv_reason="credential"}'
+            value: 0.6000000000000001
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: FrostgroveAuthRefusalReasonShift
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              vv_reason: credential
+            exp_annotations:
+              summary: An authentication refusal reason share exceeds its one-hour baseline by 20 percentage points
+
+  - name: collector queue ratio keeps data type and instance during a mixed capacity rollout
+    interval: 1m
+    input_series:
+      - series: 'otelcol_exporter_queue_size{exporter="otlp",data_type="traces",instance="collector-a",job="collector"}'
+        values: '900x20'
+      - series: 'otelcol_exporter_queue_capacity{exporter="otlp",data_type="traces",instance="collector-a",job="collector"}'
+        values: '1000x20'
+      - series: 'otelcol_exporter_queue_size{exporter="otlp",data_type="metrics",instance="collector-b",job="collector"}'
+        values: '0x20'
+      - series: 'otelcol_exporter_queue_capacity{exporter="otlp",data_type="metrics",instance="collector-b",job="collector"}'
+        values: '10000x20'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: OTelCollectorQueueNearCapacity
+        exp_alerts:
+          - exp_labels:
+              data_type: traces
+              exporter: otlp
+              instance: collector-a
+              job: collector
+              severity: warning
+            exp_annotations:
+              summary: Collector exporter queue exceeds 80 percent

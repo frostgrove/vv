@@ -1,15 +1,20 @@
 # AUDIT — CHECKPOINTED IMPLEMENTATION PLAN
 
-**Status:** draft under clean-context review
+**Status:** active implementation; S0/S1 complete, recorder/memory/basic history
+and sealed CRUD alpha implemented, PostgreSQL append/deployment/basic-history
+alpha implemented, advanced investigation and remaining integration proofs in progress
+
 **Target repository:** `/home/user/ws/gd/lease/frostgrove/framework`
 **Contract:** `.agents/artifacts/usecases/AUDIT_USECASES.md`
 **Reconciliation:** `.agents/artifacts/usecases/AUDIT_RECONCILE.md`
 
 This plan replaces the stale one-module/PostgreSQL-first topology in
-`docs/roadmaps/2026-09-01-audit-log-roadmap.md`. No implementation section starts
-until two fresh reviewers have independently checked the contract and this plan:
-one for happy paths and declarative DX, one for adversarial/security/concurrency
-edges. Every later section repeats that pair after tests pass.
+`docs/roadmaps/2026-09-01-audit-log-roadmap.md`. The contract and plan passed
+fresh happy-path/DX and adversarial/security review before implementation. Each
+coherent implementation slice is checked by fresh happy-path and adversarial
+reviewers after its executable checkpoint; critical and high findings gate the
+next delivery slice, while lower-priority combinatorial hardening accumulates for
+S7 so that the usable base is delivered first.
 
 ## 1. Release boundary
 
@@ -8018,14 +8023,14 @@ S7 pass instead of delaying the first working core.
 
 ### S0 — decisions, public contract, and roadmap
 
-**Status:** pending
+**Status:** complete
 
 Files:
 
-- `docs/ai/decisions/D-130-audit-evidence-is-explicit-protected-and-transaction-honest.md`
+- `docs/ai/decisions/D-136-audit-evidence-is-explicit-protected-and-transaction-honest.md`
 - `docs/ai/usecases/modules/audit/UC-034-record-and-investigate-auditable-evidence.md`
 - `docs/ai/decisions/Index.md`, `docs/ai/usecases/Index.md`, and
-  `docs/ai/flows/FL-039-an-audit-contract-becomes-an-executable-checkpoint.md`,
+  `docs/ai/flows/FL-040-an-audit-contract-becomes-an-executable-checkpoint.md`,
   `docs/ai/flows/Index.md`, and `docs/roadmaps/Index.md`
 - `docs/roadmaps/2026-09-01-audit-log-roadmap.md`
 - `scripts/testdata/audit_trace.tsv`,
@@ -8050,7 +8055,7 @@ Work:
 4. Add the competitive matrix with primary-source links and dated caveats.
 5. Materialize the frozen normalized trace facts, exact AU/AH/AE/AI/AT/AM/PN semantic bodies,
    and independent completeness anchor, add their section-aware structural/behavioral checkpoint, and document
-   that real S0 path plus its invariant tests in FL-039. S0 documentation contains no
+   that real S0 path plus its invariant tests in FL-040. S0 documentation contains no
    runnable future API, exported-symbol link, module-path assertion, or deployment
    example; those land with their implementations in S4/S6.
 
@@ -8068,7 +8073,7 @@ reviewer; all critical/high gaps closed and re-reviewed.
 
 ### S1 — vocabulary, declarations, codecs, and catalog
 
-**Status:** pending
+**Status:** complete
 
 Files owned: `audit/names*.go`, `audit/bounds*.go`, `audit/errors*.go`,
 `audit/catalog*.go`, `audit/declaration*.go`, `audit/codec*.go`,
@@ -8111,7 +8116,9 @@ controls for every negative test.
 
 ### S2 — store seam, recorder, memory store, and conformance
 
-**Status:** pending
+**Status:** alpha implemented — recorder, grouping, retry/reconciliation,
+catalog-mutation readback, memory append and signed public one-page history pass
+the root conformance slice; protected disclosure and cursors remain S3
 
 Files owned:
 
@@ -8176,7 +8183,8 @@ reviewer; run conformance against both real and deliberately broken stores.
 
 ### S3 — attempts, advanced reader, reconstruction, and lifecycle kernel
 
-**Status:** pending
+**Status:** pending — intentionally follows the usable recorder/CRUD/integration
+base
 
 Files owned: `audit/attempt*.go`, advanced `audit/history*.go`,
 `audit/selector*.go`, `audit/grant*.go`, `audit/reconstruct*.go`,
@@ -8227,7 +8235,8 @@ lifecycle reviewer; cross-scope controls and cursor substitution attacks mandato
 
 ### S4 — transaction-aware CRUD adapter
 
-**Status:** pending
+**Status:** alpha implemented — supported CRUD paths and the first real
+composition stack pass; broader S7 edge coverage remains deferred
 
 Files owned:
 
@@ -8293,7 +8302,10 @@ audit-fault, source-mismatch, and concurrent-victim cases.
 
 ### S5 — PostgreSQL module and live conformance
 
-**Status:** pending
+**Status:** partial alpha — exact schema readiness, deployment, activation and
+bounded mutation readback, append, transaction joining, lookup/reconciliation,
+basic history and restart behavior are implemented; exact inspection and
+advanced control parity remain owed
 
 Files owned: `audit/auditpg/**` and auditpg-local conformance/schema fixtures.
 Workspace and consumer module files are reserved for S6, so S5 cannot race their
@@ -8343,7 +8355,10 @@ uncertainty reviewer; then a third clean reviewer after every fix round.
 
 ### S6 — integration fixtures, docs, examples, and structural checks
 
-**Status:** pending
+**Status:** partial alpha — auth/tenancy/security/faults/CRUD/SQL/event/jobs/
+storage/observer/i18n composition, generated serving/deployment profiles and a
+live PostgreSQL CRUD atomicity fixture pass; broader deployment graphs and
+adoption artifacts remain
 
 Files owned: new audit examples/docs/tests, the non-alpha remainder of
 `test/auditflow`, audit entries in `go.work`, `test/go.mod`, and `_examples/go.mod`, audit module manifests/generated module
@@ -8444,6 +8459,10 @@ integration reviewer; repeat both after fixes until no critical/high finding.
 5. Update docs/statuses to implemented, partially implemented, or deferred with
    exact evidence; never label a skipped live profile covered.
 6. Record remaining production rollout prerequisites and project-worktree mismatch.
+7. Close the deferred mutation controls without reopening base design: grouped
+   exact-subject sibling projection, zero PostgreSQL `LogID`, unexpected
+   non-unique PostgreSQL indexes, and replay of an older identical catalog
+   activation after a later generation is active and the deployment restarts.
 
 Final checkpoint:
 
@@ -8483,10 +8502,10 @@ the digest of every graph fact and semantic record, and the exact GoalTrace-edge
 count. The TSV remains the sole adjacency authority and the semantics manifest
 the sole behavioral-text authority. The anchor duplicates only completeness
 fingerprints and inventories so deletion of an internally closed subgraph,
-highest ID, or behavior body cannot pass as a smaller valid design. D-130 names
+highest ID, or behavior body cannot pass as a smaller valid design. D-136 names
 these tracked authorities and their review protocol but copies no digest. A
 content change updates TSV and/or semantics, the anchor, and fresh happy/edge
-review together; D-130 changes only when the protocol or authority paths change.
+review together; D-136 changes only when the protocol or authority paths change.
 The build-tagged S0 import test compares the complete design facts and semantic
 bodies and independently recomputes the anchor before these design artifacts
 cease to be runtime/CI inputs. Its only legal invocation is

@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"strconv"
 
 	vvotel "github.com/frostgrove/vv/otel"
@@ -15,6 +17,17 @@ import (
 	semconv "go.opentelemetry.io/otel/semconv/v1.41.0"
 	"go.opentelemetry.io/otel/trace"
 )
+
+func frostgroveInstrumentationScope() instrumentation.Scope {
+	return instrumentation.Scope{
+		Name:    vvotel.ScopeName,
+		Version: vvotel.ScopeVersion,
+	}
+}
+
+func instrumentationScopesEqual(left instrumentation.Scope, right instrumentation.Scope) bool {
+	return left.Name == right.Name && left.Version == right.Version && left.SchemaURL == right.SchemaURL && left.Attributes.Equals(&right.Attributes)
+}
 
 type exportProjection struct {
 	resource      *resource.Resource
@@ -32,10 +45,7 @@ func newExportProjection(config Config) *exportProjection {
 			semconv.ServiceVersion(config.ServiceVersion),
 			semconv.ServiceNamespace(config.ServiceNamespace),
 		),
-		scope: instrumentation.Scope{
-			Name:    vvotel.ScopeName,
-			Version: vvotel.ScopeVersion,
-		},
+		scope:         frostgroveInstrumentationScope(),
 		spanSignals:   make(map[string][]vvotel.SignalDescriptor),
 		eventSignals:  make(map[string][]vvotel.SignalDescriptor),
 		metricSignals: make(map[string][]vvotel.SignalDescriptor),
@@ -70,6 +80,224 @@ func newExportProjection(config Config) *exportProjection {
 	return projection
 }
 
+func composeTraceExporter(next sdktrace.SpanExporter, layers []TraceProjectionLayer, projection *exportProjection) (sdktrace.SpanExporter, error) {
+	scopes := []instrumentation.Scope{projection.scope}
+	for _, layer := range layers {
+		scopes = append(scopes, layer.Scopes...)
+	}
+	current := sdktrace.SpanExporter(&scopeGateSpanExporter{next: next, scopes: scopes})
+	for index := len(layers) - 1; index >= 0; index-- {
+		ownerOutput := &scopeGateSpanExporter{next: current, scopes: layers[index].Scopes}
+		wrapped, err := callTraceProjectionWrap(layers[index].Wrap, ownerOutput)
+		if err != nil {
+			if !nilInterfaceValue(wrapped) {
+				return wrapped, fmt.Errorf("trace projection layer %d: %w", index, err)
+			}
+			return current, fmt.Errorf("trace projection layer %d: %w", index, err)
+		}
+		if nilInterfaceValue(wrapped) {
+			return current, ErrInvalidTelemetryConfig
+		}
+		current = &scopedSpanProjectionExporter{
+			next:       current,
+			projection: wrapped,
+			scopes:     layers[index].Scopes,
+		}
+	}
+	return &projectingSpanExporter{next: current, projection: projection}, nil
+}
+
+func composeMetricExporter(next sdkmetric.Exporter, layers []MetricProjectionLayer, projection *exportProjection) (sdkmetric.Exporter, error) {
+	scopes := []instrumentation.Scope{projection.scope}
+	for _, layer := range layers {
+		scopes = append(scopes, layer.Scopes...)
+	}
+	current := sdkmetric.Exporter(&scopeGateMetricExporter{next: next, scopes: scopes})
+	for index := len(layers) - 1; index >= 0; index-- {
+		ownerOutput := &scopeGateMetricExporter{next: current, scopes: layers[index].Scopes}
+		wrapped, err := callMetricProjectionWrap(layers[index].Wrap, ownerOutput)
+		if err != nil {
+			if !nilInterfaceValue(wrapped) {
+				return wrapped, fmt.Errorf("metric projection layer %d: %w", index, err)
+			}
+			return current, fmt.Errorf("metric projection layer %d: %w", index, err)
+		}
+		if nilInterfaceValue(wrapped) {
+			return current, ErrInvalidTelemetryConfig
+		}
+		current = &scopedMetricProjectionExporter{
+			next:       current,
+			projection: wrapped,
+			scopes:     layers[index].Scopes,
+		}
+	}
+	return &projectingMetricExporter{next: current, projection: projection}, nil
+}
+
+func callTraceProjectionWrap(wrap func(sdktrace.SpanExporter) (sdktrace.SpanExporter, error), next sdktrace.SpanExporter) (result sdktrace.SpanExporter, err error) {
+	completed := false
+	defer func() {
+		_ = recover()
+		if !completed {
+			result = nil
+			err = ErrTelemetryAssembly
+		}
+	}()
+	result, err = wrap(next)
+	completed = true
+	return result, err
+}
+
+func callMetricProjectionWrap(wrap func(sdkmetric.Exporter) (sdkmetric.Exporter, error), next sdkmetric.Exporter) (result sdkmetric.Exporter, err error) {
+	completed := false
+	defer func() {
+		_ = recover()
+		if !completed {
+			result = nil
+			err = ErrTelemetryAssembly
+		}
+	}()
+	result, err = wrap(next)
+	completed = true
+	return result, err
+}
+
+type scopedSpanProjectionExporter struct {
+	next       sdktrace.SpanExporter
+	projection sdktrace.SpanExporter
+	scopes     []instrumentation.Scope
+}
+
+func (exporter *scopedSpanProjectionExporter) ExportSpans(ctx context.Context, spans []sdktrace.ReadOnlySpan) error {
+	matching := make([]sdktrace.ReadOnlySpan, 0, len(spans))
+	siblings := make([]sdktrace.ReadOnlySpan, 0, len(spans))
+	for _, span := range spans {
+		if span != nil && containsInstrumentationScope(exporter.scopes, span.InstrumentationScope()) {
+			matching = append(matching, span)
+		} else {
+			siblings = append(siblings, span)
+		}
+	}
+	var projectionErr error
+	if len(matching) > 0 {
+		projectionErr = exporter.projection.ExportSpans(ctx, matching)
+	}
+	var siblingErr error
+	if len(siblings) > 0 {
+		siblingErr = exporter.next.ExportSpans(ctx, siblings)
+	}
+	return errors.Join(projectionErr, siblingErr)
+}
+
+func (exporter *scopedSpanProjectionExporter) Shutdown(ctx context.Context) error {
+	return exporter.projection.Shutdown(ctx)
+}
+
+type scopedMetricProjectionExporter struct {
+	next       sdkmetric.Exporter
+	projection sdkmetric.Exporter
+	scopes     []instrumentation.Scope
+}
+
+func (exporter *scopedMetricProjectionExporter) Temporality(kind sdkmetric.InstrumentKind) metricdata.Temporality {
+	return exporter.next.Temporality(kind)
+}
+
+func (exporter *scopedMetricProjectionExporter) Aggregation(kind sdkmetric.InstrumentKind) sdkmetric.Aggregation {
+	return exporter.next.Aggregation(kind)
+}
+
+func (exporter *scopedMetricProjectionExporter) Export(ctx context.Context, input *metricdata.ResourceMetrics) error {
+	if input == nil {
+		return nil
+	}
+	matching := metricdata.ResourceMetrics{Resource: input.Resource}
+	siblings := metricdata.ResourceMetrics{Resource: input.Resource}
+	for _, scopeMetrics := range input.ScopeMetrics {
+		if containsInstrumentationScope(exporter.scopes, scopeMetrics.Scope) {
+			matching.ScopeMetrics = append(matching.ScopeMetrics, scopeMetrics)
+		} else {
+			siblings.ScopeMetrics = append(siblings.ScopeMetrics, scopeMetrics)
+		}
+	}
+	var projectionErr error
+	if len(matching.ScopeMetrics) > 0 {
+		projectionErr = exporter.projection.Export(ctx, &matching)
+	}
+	var siblingErr error
+	if len(siblings.ScopeMetrics) > 0 {
+		siblingErr = exporter.next.Export(ctx, &siblings)
+	}
+	return errors.Join(projectionErr, siblingErr)
+}
+
+func (exporter *scopedMetricProjectionExporter) ForceFlush(ctx context.Context) error {
+	return exporter.projection.ForceFlush(ctx)
+}
+
+func (exporter *scopedMetricProjectionExporter) Shutdown(ctx context.Context) error {
+	return exporter.projection.Shutdown(ctx)
+}
+
+type scopeGateSpanExporter struct {
+	next   sdktrace.SpanExporter
+	scopes []instrumentation.Scope
+}
+
+func (exporter *scopeGateSpanExporter) ExportSpans(ctx context.Context, spans []sdktrace.ReadOnlySpan) error {
+	allowed := make([]sdktrace.ReadOnlySpan, 0, len(spans))
+	for _, span := range spans {
+		if span != nil && containsInstrumentationScope(exporter.scopes, span.InstrumentationScope()) {
+			allowed = append(allowed, span)
+		}
+	}
+	if len(allowed) == 0 {
+		return nil
+	}
+	return exporter.next.ExportSpans(ctx, allowed)
+}
+
+func (exporter *scopeGateSpanExporter) Shutdown(ctx context.Context) error {
+	return exporter.next.Shutdown(ctx)
+}
+
+type scopeGateMetricExporter struct {
+	next   sdkmetric.Exporter
+	scopes []instrumentation.Scope
+}
+
+func (exporter *scopeGateMetricExporter) Temporality(kind sdkmetric.InstrumentKind) metricdata.Temporality {
+	return exporter.next.Temporality(kind)
+}
+
+func (exporter *scopeGateMetricExporter) Aggregation(kind sdkmetric.InstrumentKind) sdkmetric.Aggregation {
+	return exporter.next.Aggregation(kind)
+}
+
+func (exporter *scopeGateMetricExporter) Export(ctx context.Context, input *metricdata.ResourceMetrics) error {
+	if input == nil {
+		return nil
+	}
+	filtered := metricdata.ResourceMetrics{Resource: input.Resource}
+	for _, scopeMetrics := range input.ScopeMetrics {
+		if containsInstrumentationScope(exporter.scopes, scopeMetrics.Scope) {
+			filtered.ScopeMetrics = append(filtered.ScopeMetrics, scopeMetrics)
+		}
+	}
+	if len(filtered.ScopeMetrics) == 0 {
+		return nil
+	}
+	return exporter.next.Export(ctx, &filtered)
+}
+
+func (exporter *scopeGateMetricExporter) ForceFlush(ctx context.Context) error {
+	return exporter.next.ForceFlush(ctx)
+}
+
+func (exporter *scopeGateMetricExporter) Shutdown(ctx context.Context) error {
+	return exporter.next.Shutdown(ctx)
+}
+
 type projectingSpanExporter struct {
 	next       sdktrace.SpanExporter
 	projection *exportProjection
@@ -78,6 +306,13 @@ type projectingSpanExporter struct {
 func (exporter *projectingSpanExporter) ExportSpans(ctx context.Context, spans []sdktrace.ReadOnlySpan) error {
 	projected := make([]sdktrace.ReadOnlySpan, 0, len(spans))
 	for _, span := range spans {
+		if span == nil {
+			continue
+		}
+		if !instrumentationScopesEqual(span.InstrumentationScope(), exporter.projection.scope) {
+			projected = append(projected, span)
+			continue
+		}
 		if candidate, ok := exporter.projection.projectSpan(span); ok {
 			projected = append(projected, candidate)
 		}
@@ -134,7 +369,7 @@ func (span *projectedReadOnlySpan) SpanContext() trace.SpanContext { return span
 func (span *projectedReadOnlySpan) Parent() trace.SpanContext { return span.parent }
 
 func (projection *exportProjection) projectSpan(span sdktrace.ReadOnlySpan) (sdktrace.ReadOnlySpan, bool) {
-	if projection == nil || span == nil || span.InstrumentationScope() != projection.scope {
+	if projection == nil || span == nil || !instrumentationScopesEqual(span.InstrumentationScope(), projection.scope) {
 		return nil, false
 	}
 	signals := projection.spanSignals[span.Name()]
@@ -366,7 +601,11 @@ func (exporter *projectingMetricExporter) Aggregation(kind sdkmetric.InstrumentK
 
 func (exporter *projectingMetricExporter) Export(ctx context.Context, input *metricdata.ResourceMetrics) error {
 	projected := exporter.projection.projectResourceMetrics(input)
-	return exporter.next.Export(ctx, &projected)
+	var exportErrors []error
+	for index := range projected {
+		exportErrors = append(exportErrors, exporter.next.Export(ctx, &projected[index]))
+	}
+	return errors.Join(exportErrors...)
 }
 
 func (exporter *projectingMetricExporter) ForceFlush(ctx context.Context) error {
@@ -377,13 +616,15 @@ func (exporter *projectingMetricExporter) Shutdown(ctx context.Context) error {
 	return exporter.next.Shutdown(ctx)
 }
 
-func (projection *exportProjection) projectResourceMetrics(input *metricdata.ResourceMetrics) metricdata.ResourceMetrics {
-	result := metricdata.ResourceMetrics{Resource: projection.resource}
+func (projection *exportProjection) projectResourceMetrics(input *metricdata.ResourceMetrics) []metricdata.ResourceMetrics {
 	if input == nil {
-		return result
+		return nil
 	}
+	passthrough := metricdata.ResourceMetrics{Resource: input.Resource}
+	framework := metricdata.ResourceMetrics{Resource: projection.resource}
 	for _, scopeMetrics := range input.ScopeMetrics {
-		if scopeMetrics.Scope != projection.scope {
+		if !instrumentationScopesEqual(scopeMetrics.Scope, projection.scope) {
+			passthrough.ScopeMetrics = append(passthrough.ScopeMetrics, scopeMetrics)
 			continue
 		}
 		projected := metricdata.ScopeMetrics{Scope: projection.scope}
@@ -393,8 +634,15 @@ func (projection *exportProjection) projectResourceMetrics(input *metricdata.Res
 			}
 		}
 		if len(projected.Metrics) > 0 {
-			result.ScopeMetrics = append(result.ScopeMetrics, projected)
+			framework.ScopeMetrics = append(framework.ScopeMetrics, projected)
 		}
+	}
+	result := make([]metricdata.ResourceMetrics, 0, 2)
+	if len(passthrough.ScopeMetrics) > 0 {
+		result = append(result, passthrough)
+	}
+	if len(framework.ScopeMetrics) > 0 {
+		result = append(result, framework)
 	}
 	return result
 }

@@ -3,10 +3,11 @@
 **Status:** binding map for OpenTelemetry roadmap slices O1–O3. Current and
 owed behaviour are named separately below.
 **Current entry point:** `vvotel.New` or `vvotel.Must`, followed by `vvotel.Service`,
-`vvotel.Store`, `vvotel.Cache` or `vvotel.CacheMemory`; independent
+`vvotel.Store`, `vvotel.Cache`, `vvotel.CacheMemory` or
+`vvotel.CacheMemoryStats`; independent
 `vvotel.TraceHandler` for stdlib log correlation
 **Owed entry points:** every adapter explicitly marked **owed** below
-**Implements:** [[UC-030]] · **Governed by:** [[D-128]] [[D-048]] [[D-061]]
+**Implements:** [[UC-030]] · **Governed by:** [[D-134]] [[D-048]] [[D-061]]
 [[D-062]] [[D-084]] [[D-091]] [[D-096]] [[D-118]] [[D-119]]
 
 This flow is the complete ownership and call-lifecycle map. Every implemented
@@ -21,10 +22,7 @@ application code.
    `otel/schema_gen.go` + `otel/wire_manifest.json`.** The current
    `vv-otel/v2` registry, generated schema and wire manifest contain 59 stable
    signal IDs with the source-inventory and contract validation defined by the
-   schema specification. Six signals are marked
-   implemented: command duration/span, storage span, cache operation count,
-   cache facade event and cache backend event. The other 53 are marked planned;
-   their descriptors are current schema, not current emission. The registry is
+   schema specification. All 59 signals are marked implemented. The registry is
    the source of every component, operation, outcome, failure/reason,
    span/metric/attribute name, unit, bound, maturity and privacy/cardinality
    rule, component-owned span-name domain and exact declared-attribute source
@@ -35,18 +33,20 @@ application code.
    disabled/provider handling, unions exact legacy aliases, and builds a private
    active set. `Disabled` performs no provider/API work. Otherwise at least one
    provider is required; only selected provider families are obtained, tracer
-   before meter. All enabled provider-compatible metrics, including planned
-   descriptors, are constructed in numeric signal-ID order with registry
+   before meter. All enabled provider-compatible metrics are constructed in
+   numeric signal-ID order with registry
    description, unit and boundaries. No callback is registered. Provider and
    instrument nil/error/panic failures return a redacted `*AssemblyError` and
    stop construction without lifecycle rollback. Panic values are discarded;
    only a returned constructor error is unwrapped.
 3. **`otel/telemetry.go:Must`.** It calls `New` and panics only on its assembly
    error. It owns no Resource, global provider, goroutine, flush or shutdown.
-4. `Telemetry` holds only its immutable active set, borrowed tracer/meter and
-   eagerly constructed instruments. Current adapters read their exact signal
-   IDs independently; omitting an adapter removes that semantic layer. Native
-   OTel providers and APIs remain directly usable by the application.
+4. `Telemetry` holds its immutable active set, borrowed tracer/meter, eagerly
+   constructed instruments and the shared token state for one explicit cache
+   memory aggregate registration. Value copies share that token state. Current
+   adapters read their exact signal IDs independently; omitting an adapter
+   removes that semantic layer. Native OTel providers and APIs remain directly
+   usable by the application.
 
 ## Bounded-operation path
 
@@ -95,24 +95,24 @@ values defined by `jobs/delivery_command.go`, `jobs/disposition.go` and
 |---|---|---|---|
 | `vvotel.Service` | `otel/service.go:executeCommand`, `otel/operation.go` | One INTERNAL span and `vv.command.duration` per service command. The derived context reaches the inner service and histogram. Trace and metric faults are isolated; panic is rethrown unchanged; `runtime.Goexit` is span-only `goroutine_exit`. `Meta`, `Paths`, restore discovery and all ten effects are preserved. | Complete; later adapters reuse the recorder rather than adding a facade. |
 | `vvotel.Store` | `storage/store.go`, `otel/storage.go:executeStorage`, `otel/operation.go` | One fail-safe INTERNAL span for each of the nine Store calls. `Open` ends when the reader is returned; `TemporaryURL` ends when the link is created. Panic/Goexit follow the shared terminal rules. There is no storage duration or result metric. | Add `vv.storage.operation.duration` for all nine operations. Planned signal ID 5, `storage_operation_bytes`, emits only `put/ok` from returned `Info.Size` and `stage/ok` from returned `Staged.Info.Size`; it never reads the source. Planned signal ID 58, `storage_cleanup_removed`, emits only a successful returned `CleanupResult.Removed` in `0..storage.MaxCleanupLimit`, with the exact returned `More`; invalid results, errors and panics emit nothing. Trace, duration and both result paths remain independent. |
-| `vvotel.Store(..., vvotel.WithStorageStreams())` | OT-B03 | Absent. | The returned `vvotel.StorageStream` implements `io.ReadCloser` plus `Unwrap() io.ReadCloser`, starts a separate stream span lazily at first Read/Close and ends once on EOF, non-EOF error, close, unwrap or panic. It returns every underlying `(n, error)` unchanged and counts only valid `0 <= n <= len(p)` values with checked `int64` accumulation; the first invalid count or overflow suppresses only the byte sample. It retains only a captured SpanContext. |
-| `vvotel.Cache`, `vvotel.CacheMemory` | `cache/runtime.go`, `cache/cachememory/observer.go`, `otel/cache.go`, `otel/cachememory.go` | Facade/backend operation and outcome map to one bounded counter and optional active-span events. Reason, memoized state, items and byte fields are discarded. | Keep layers distinct; add closed reason/memoized attributes and item/value/payload/charged-byte histograms. One request may emit several phase events, so names say events rather than requests. |
-| `vvotel.CacheMemoryStats`, `vvotel.MustCacheMemoryStats` | `cache/cachememory/backend.go`, OT-B04 | Absent. `Backend.Stats()` is blocking and is not an admissible callback source. | Add `Backend.StatsContext(context.Context) (Stats, bool)`, which immediately returns unavailable for cancellation or mutex contention. One explicit registration accepts 1..64 unique backend pointers, aggregates only these bounded snapshots, omits the whole aggregate when admission fails, uses `Stats.Closed` to gate entries/bytes/limits, refuses a second registration, and returns the framework's minimal `Registration { Unregister() error }`, never native OTel's embedded-marker interface. Teardown is idempotent: deactivate → safe native unregister → in-flight drain → reference clear → token-checked singleton release. |
+| `vvotel.Store(..., vvotel.WithStorageStreams())` | `otel/storage.go`, `otel/storage_stream.go` | The returned `vvotel.StorageStream` implements `io.ReadCloser` plus `Unwrap() io.ReadCloser`, starts a separate stream span lazily at first Read/Close and ends once on EOF, non-EOF error, close, unwrap, panic or Goexit. It returns every underlying `(n, error)` unchanged and counts only valid `0 <= n <= len(p)` values with checked `int64` accumulation; the first invalid count or overflow suppresses only the byte sample. It retains only a captured SpanContext. | Re-run the hostile provider/nonconforming-reader matrix in O4; the production lifetime and concurrency contract is implemented. |
+| `vvotel.Cache`, `vvotel.CacheMemory` | `cache/runtime.go`, `cache/cachememory/observer.go`, `otel/cache.go`, `otel/cachememory.go` | Facade/backend layers emit separate closed operation/outcome/reason/memoized attribute sets to the compatibility and event counters, optional active-span events, the shared items histogram and their encoded/payload or value/charged byte histograms. Schema admission drops impossible tuples and negative/absent measurements; cache names and keys are never attributes. | Complete; O4 re-runs hostile provider and observer edges. |
+| `vvotel.CacheMemoryStats`, `vvotel.MustCacheMemoryStats` | `cache/cachememory/backend.go`, `otel/cache_stats.go` | `Backend.StatsContext(context.Context) (Stats, bool)` immediately returns unavailable for cancellation or mutex contention. One explicit registration accepts 1..64 unique backend pointers and uses only this bounded snapshot; it emits six enabled aggregate gauges, omits the whole aggregate when admission fails, and gates entries/bytes/limits on `Stats.Closed`. A Telemetry-shared token refuses a second registration, including through a value copy. The public `Registration { Unregister() error }` hides native OTel's embedded marker. Teardown is idempotent and concurrent-safe: deactivate → safe native unregister → in-flight drain → reference clear → token-checked singleton release. | Complete; the application still owns provider-wide uniqueness and SDK shutdown. |
 | `vvotel.Authenticator` | `otel/auth.go` (**owed**) | Absent. | One INTERNAL span and `vv.authentication.duration` surround one call to the complete authenticator chain. The derived context reaches that chain. |
 | `vvotel.Auth`, `vvotel.AuthEvents` | `otel/auth.go` (**owed**) | Absent. | `Auth` is counter-only: each terminal refusal increments unsampled `vv.auth.refusals`. `AuthEvents` is a separate event-only observer for the current span. Apply `auth.Sampled` only to `AuthEvents`, never to the counter. Both discard `Reason.Detail` and `Reason.Err`. |
 | `vvotel.Health` | `health/registry.go`, `otel/health.go` (**owed**) | Absent. | Return a disabled Contribution unchanged; otherwise copy it and wrap only its Probe. One registry pass calls the original Probe once and records count/duration plus an optional INTERNAL span; metric collection calls no Probe. |
 | `vvotel.Remote` | `otel/remote.go` (**owed**) | Absent. | One logical INTERNAL span and `vv.remote.duration` surround one `Transport.Do`. Application-owned client instrumentation emits the single wire CLIENT child. |
 | `vvotel.Periodic` | `otel/runtime.go` (**owed**) | Absent. | One INTERNAL span and duration measure one callback invocation. It creates no timer/goroutine/name and re-panics unchanged so `runtime.Periodic` remains the containment owner. |
 
-The owed `StorageStream` path treats only exact `err == io.EOF` as `eof`; a
+The `StorageStream` path treats only exact `err == io.EOF` as `eof`; a
 wrapped EOF is the `error` terminal returned to the caller. Pre-start Unwrap and
 an adapter with all three stream signals disabled preserve the raw reader and
 emit nothing. The first start contender stores `startedAt` before Start and uses
 only a background context carrying the captured SpanContext; the first terminal
 stores `endedAt` under the state lock. Start/End use those explicit timestamps
 and duration is `endedAt.Sub(startedAt)`, including when terminal wins while
-Start is blocked. IDs 6, 7 and 8 become implemented atomically with the wrapper
-and its availability history.
+Start is blocked. IDs 6, 7 and 8 are implemented with an appended availability
+history.
 
 ## Direct Source calls and transactions
 
@@ -235,7 +235,7 @@ All paths in this section are **owed**.
    valid remote parent. A failed `WithContext` copy returns the base identity.
    Each nil-error base call records exactly one closed propagation outcome; a
    base error or panic records none.
-4. Durable validation continues to accept the pre-D-128 jobs grammar. If the
+4. Durable validation continues to accept the pre-D-134 jobs grammar. If the
    OTel parser rejects legacy trace data, extraction records a closed propagation
    outcome and returns the successfully restored identity context without that
    invalid correlation. It never converts tracing into identity authority.
@@ -353,7 +353,7 @@ The Collector remains a lossy operations pipeline, not an audit store.
 - `TestAssembly_RegistryRosterAndEagerConstructorOptionsAreExact`,
   `TestAssembly_EveryMetricConstructorFailureStopsAtTheSignal`,
   `TestAssembly_ExplicitDisableValidationPrecedesDisabledAndProviders` and
-  `TestAssembly_CurrentSignalsDisableIndependentlyAndPlannedSignalsDoNotEmit`
+  `TestAssembly_EmittedSignalsDisableIndependently`
   for fail-fast construction, selection and availability semantics;
 - `TestRealSDKPreservesParentsLinksExemplarsAndPrivacy`,
   `TestRealSDKErrorStatusAndAllowListReachExportBoundary`,

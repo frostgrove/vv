@@ -24,16 +24,16 @@ const (
 )
 
 type telemetryFixture struct {
-	providers Providers
-	spans     *tracetest.InMemoryExporter
-	metrics   *metricCapture
-	traces    *sdktrace.TracerProvider
-	meters    *metric.MeterProvider
+	providers  Providers
+	spans      *tracetest.InMemoryExporter
+	metrics    *metricCapture
+	rawMetrics *metricCapture
+	traces     *sdktrace.TracerProvider
+	meters     *metric.MeterProvider
 }
 
 func newTelemetryFixture(t *testing.T, policy TraceProjectionPolicy, sampler sdktrace.Sampler) *telemetryFixture {
 	t.Helper()
-	t.Setenv("OTEL_SEMCONV_STABILITY_OPT_IN", "")
 	spanSink := tracetest.NewInMemoryExporter()
 	spanExporter, err := NewTransportSpanExporter(spanSink, policy)
 	if err != nil {
@@ -56,7 +56,8 @@ func newTelemetryFixture(t *testing.T, policy TraceProjectionPolicy, sampler sdk
 	if err != nil {
 		t.Fatal(err)
 	}
-	reader := metric.NewPeriodicReader(metricExporter)
+	rawMetricSink := &metricCapture{}
+	reader := metric.NewPeriodicReader(&nativeRawMetricTap{next: metricExporter, capture: rawMetricSink})
 	metricOptions := []metric.Option{
 		metric.WithReader(reader),
 		metric.WithResource(traceResource),
@@ -64,11 +65,12 @@ func newTelemetryFixture(t *testing.T, policy TraceProjectionPolicy, sampler sdk
 	metricOptions = append(metricOptions, TransportMetricOptions(policy)...)
 	meterProvider := metric.NewMeterProvider(metricOptions...)
 	fixture := &telemetryFixture{
-		providers: Providers{Tracer: tracerProvider, Meter: meterProvider},
-		spans:     spanSink,
-		metrics:   metricSink,
-		traces:    tracerProvider,
-		meters:    meterProvider,
+		providers:  Providers{Tracer: tracerProvider, Meter: meterProvider},
+		spans:      spanSink,
+		metrics:    metricSink,
+		rawMetrics: rawMetricSink,
+		traces:     tracerProvider,
+		meters:     meterProvider,
 	}
 	t.Cleanup(func() {
 		_ = meterProvider.Shutdown(context.Background())
