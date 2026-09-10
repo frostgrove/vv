@@ -340,6 +340,34 @@ func TestRestoreIsASeparateApplicationUseCase(t *testing.T) {
 	}
 }
 
+func TestRestoreManyForwardsAnEmptySetToTheRepository(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  error
+	}{
+		{name: "allowed no-op"},
+		{name: "repository refusal", err: errors.New("restore refused")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repository := &restorableFakeRepo{fakeRepo: &fakeRepo{err: tc.err}}
+			service := NewService[widget, int64, widgetUpdate](repository)
+			restore, ok := RestorableOf[int64](service)
+			if !ok {
+				t.Fatal("restorable repository lost its service capability")
+			}
+
+			n, err := restore.RestoreMany(context.Background(), BulkRestoreCommand[int64]{})
+			if n != 0 || !errors.Is(err, tc.err) {
+				t.Fatalf("RestoreMany empty set = (%d, %v), want (0, %v)", n, err, tc.err)
+			}
+			call := repository.only(t, "Restore")
+			if len(call.ids) != 0 {
+				t.Fatalf("RestoreMany changed the empty id set to %v", call.ids)
+			}
+		})
+	}
+}
+
 func TestTheReadsNarrowTheDocumentAndAppendTheCallersOptions(t *testing.T) {
 	tenant := crud.Where(crud.Eq("Price", 1))
 

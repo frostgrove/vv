@@ -43,6 +43,20 @@ func (*queryOnlyHandle) Exec(context.Context, string, ...any) (pgconn.CommandTag
 
 func (*queryOnlyHandle) Query(context.Context, string, ...any) (pgx.Rows, error) { return nil, nil }
 
+type wrappedPGXExecutor struct{ inner crud.Executor }
+
+func (w wrappedPGXExecutor) Exec(ctx context.Context, query string, args ...any) (crud.Result, error) {
+	return w.inner.Exec(ctx, query, args...)
+}
+
+func (w wrappedPGXExecutor) Query(ctx context.Context, query string, args ...any) (crud.Rows, error) {
+	return w.inner.Query(ctx, query, args...)
+}
+
+func (w wrappedPGXExecutor) UnwrapExecutor() crud.Executor { return w.inner }
+
+type pgxTransactionStub struct{ pgx.Tx }
+
 func TestUnsafeCopyFromTableHandsPgxSeparateExactIdentifierComponents(t *testing.T) {
 	handle := new(copyHandle)
 	executor := From(handle)
@@ -168,5 +182,36 @@ func TestContextResolvedBulkAcceptsPointerExecutorForms(t *testing.T) {
 				t.Fatalf("pool/target COPY calls = %d/%d", pool.called, targetHandle.called)
 			}
 		})
+	}
+}
+
+func TestContextResolvedBulkCrossesADeclaredExecutorWrapper(t *testing.T) {
+	pool := new(copyHandle)
+	target := new(copyHandle)
+	source := From(pool)
+	wrapped := wrappedPGXExecutor{inner: From(target)}
+
+	_, err := source.UnsafeBulkInsert(
+		context.Background(),
+		wrapped,
+		crud.TableRef{Name: "events"},
+		[]string{"id"},
+		[][]any{{1}},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pool.called != 0 || target.called != 1 {
+		t.Fatalf("pool/target COPY calls = %d/%d", pool.called, target.called)
+	}
+}
+
+func TestTransactionExtractionCrossesADeclaredExecutorWrapper(t *testing.T) {
+	native := &pgxTransactionStub{}
+	wrapper := wrappedPGXExecutor{inner: From(native)}
+
+	got, ok := Transaction(wrapper)
+	if !ok || got != native {
+		t.Fatalf("Transaction = %#v, %v; want %#v", got, ok, native)
 	}
 }

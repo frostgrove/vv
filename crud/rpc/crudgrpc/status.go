@@ -2,6 +2,7 @@ package crudgrpc
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"google.golang.org/genproto/googleapis/rpc/errdetails"
@@ -78,7 +79,21 @@ func Code(err error) codes.Code {
 	if err == nil {
 		return codes.OK
 	}
+	if code, ok := contextCode(err); ok {
+		return code
+	}
 	return CodeFor(port.KindOf(err))
+}
+
+func contextCode(err error) (codes.Code, bool) {
+	switch {
+	case errors.Is(err, context.Canceled):
+		return codes.Canceled, true
+	case errors.Is(err, context.DeadlineExceeded):
+		return codes.DeadlineExceeded, true
+	default:
+		return codes.Unknown, false
+	}
 }
 
 type StatusRenderer struct {
@@ -134,12 +149,18 @@ func (this *StatusRenderer) Code(err error) codes.Code {
 	if err == nil {
 		return codes.OK
 	}
+	if code, ok := contextCode(err); ok {
+		return code
+	}
 	return CodeFor(port.KindOfWith(err, this.codesOrNil()))
 }
 
 func (this *StatusRenderer) Render(ctx context.Context, err error) *status.Status {
 	if err == nil {
 		return nil
+	}
+	if _, ok := contextCode(err); ok {
+		return status.FromContextError(err)
 	}
 	code := CodeFor(port.KindOfWith(err, this.codesOrNil()))
 	if code == codes.Internal {
@@ -157,7 +178,7 @@ func (this *StatusRenderer) Render(ctx context.Context, err error) *status.Statu
 	st := status.New(code, headline(vs))
 	full, attachErr := st.WithDetails(this.details(ctx, f, vs, code)...)
 	if attachErr != nil {
-		port.Logger(ctx).Error("crudgrpc: attaching the error details", "err", attachErr)
+		port.Logger(ctx).ErrorContext(ctx, "crudgrpc: attaching the error details", "err", attachErr)
 		return st
 	}
 	return full
@@ -174,7 +195,6 @@ func headline(vs []errs.Violation) string {
 }
 
 func (this *StatusRenderer) details(ctx context.Context, f *errs.Fault, vs []errs.Violation, code codes.Code) []protoadapt.MessageV1 {
-	locale := port.LocaleFrom(ctx)
 	br := &errdetails.BadRequest{FieldViolations: make([]*errdetails.BadRequest_FieldViolation, 0, len(vs))}
 	for _, v := range vs {
 		fv := &errdetails.BadRequest_FieldViolation{
@@ -184,8 +204,8 @@ func (this *StatusRenderer) details(ctx context.Context, f *errs.Fault, vs []err
 			Reason: string(v.Code),
 		}
 
-		if locale != "" {
-			fv.LocalizedMessage = &errdetails.LocalizedMessage{Locale: locale, Message: v.Message}
+		if v.MessageLocale != "" {
+			fv.LocalizedMessage = &errdetails.LocalizedMessage{Locale: v.MessageLocale, Message: v.Message}
 		}
 		br.FieldViolations = append(br.FieldViolations, fv)
 	}

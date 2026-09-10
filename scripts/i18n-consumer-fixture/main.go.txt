@@ -1,0 +1,259 @@
+package main
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"net"
+	"net/http"
+	"net/http/httptest"
+	"os"
+
+	"google.golang.org/genproto/googleapis/rpc/errdetails"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
+	"google.golang.org/grpc/test/bufconn"
+	"google.golang.org/protobuf/types/known/structpb"
+
+	"github.com/frostgrove/vv/crud"
+	"github.com/frostgrove/vv/crud/http/crudhttp"
+	"github.com/frostgrove/vv/crud/http/crudnet"
+	"github.com/frostgrove/vv/crud/rpc/crudgrpc"
+	"github.com/frostgrove/vv/errs"
+	"github.com/frostgrove/vv/i18n"
+	"github.com/frostgrove/vv/port"
+)
+
+type Product struct {
+	ID    int64  `db:"id,pk,auto" json:"id"`
+	Label string `db:"name" json:"label"`
+}
+
+var productMeta = func() *crud.Meta {
+	meta, err := crud.NewMeta[Product]("products")
+	if err != nil {
+		panic(err)
+	}
+	return meta
+}()
+
+type productService struct {
+	created []string
+}
+
+func (*productService) Meta() *crud.Meta     { return productMeta }
+func (*productService) Paths() errs.Resolver { return nil }
+
+func (*productService) List(context.Context, port.ListCommand) (crud.PaginatedResponse[Product], error) {
+	return crud.PaginatedResponse[Product]{}, productFailure()
+}
+
+func (*productService) Count(context.Context, port.CountCommand) (int64, error) {
+	return 0, productFailure()
+}
+
+func (*productService) Get(context.Context, port.GetCommand[int64]) (Product, error) {
+	return Product{}, productFailure()
+}
+
+func (service *productService) Create(_ context.Context, command port.CreateCommand[Product]) (Product, error) {
+	service.created = append(service.created, command.Model.Label)
+	return Product{}, productFailure()
+}
+
+func (*productService) Update(context.Context, port.UpdateCommand[int64, ProductUpdate]) (Product, error) {
+	return Product{}, productFailure()
+}
+
+func (*productService) Replace(context.Context, port.ReplaceCommand[int64, Product]) (Product, error) {
+	return Product{}, productFailure()
+}
+
+func (*productService) Delete(context.Context, port.DeleteCommand[int64]) (int64, error) {
+	return 0, productFailure()
+}
+
+func (*productService) DeleteMany(context.Context, port.BulkDeleteCommand[int64]) (int64, error) {
+	return 0, productFailure()
+}
+
+func productFailure() error {
+	return errs.Validation().Code(errs.CodeRequired).
+		Field("Label").Code(errs.CodeRequired).Fault()
+}
+
+func approve(message i18n.MessageSpec) i18n.MessageSpec {
+	digest, err := i18n.ExpectedSourceDigestForLocale(i18n.GrammarProfile, "en", "errors", message)
+	if err != nil {
+		panic(err)
+	}
+	for index := range message.Translations {
+		message.Translations[index].SourceDigest = digest
+		message.Translations[index].ReviewDigest, err = i18n.ExpectedReviewDigest(digest, message.Translations[index].Locale, message.Translations[index].Text)
+		if err != nil {
+			panic(err)
+		}
+	}
+	return message
+}
+
+func catalogSpec() i18n.CatalogSpec {
+	required := approve(i18n.MessageSpec{
+		ID:          "required",
+		Revision:    "required/v1",
+		Description: "A public required-field error.",
+		Source:      "{$field} is required",
+		Arguments:   []i18n.ArgumentSpec{{Name: "field", Type: i18n.TypeText, Required: true}},
+		Public:      true,
+		Translations: []i18n.Translation{{
+			Locale:           "fr",
+			Text:             "{$field} est obligatoire",
+			Review:           i18n.ReviewApproved,
+			ContractRevision: "required/v1",
+		}},
+	})
+	label := approve(i18n.MessageSpec{
+		ID:          "label",
+		Revision:    "label/v1",
+		Description: "The public product label.",
+		Source:      "label",
+		Public:      true,
+		Translations: []i18n.Translation{{
+			Locale:           "fr",
+			Text:             "libellé",
+			Review:           i18n.ReviewApproved,
+			ContractRevision: "label/v1",
+		}},
+	})
+	return i18n.CatalogSpec{
+		Revision:        "consumer/v1",
+		SourceLocale:    "en",
+		DefaultLocale:   "en",
+		DefaultTimeZone: "UTC",
+		Supported:       []string{"en", "fr"},
+		Required:        []string{"en", "fr"},
+		Modules:         []i18n.Module{{Name: "errors", Messages: []i18n.MessageSpec{required, label}}},
+	}
+}
+
+func messages() i18n.LocalizedMessageSource {
+	snapshot, err := i18n.New(catalogSpec())
+	if err != nil {
+		panic(err)
+	}
+	plan, err := snapshot.ErrorPlan(i18n.ErrorPlanSpec{
+		Mappings: []i18n.ErrorMapping{{
+			Ladder:        "label.required",
+			Key:           i18n.Qualify("errors", "required"),
+			FieldArgument: "field",
+		}},
+		FieldLabels: []i18n.FieldLabel{{Field: "label", Key: i18n.Qualify("errors", "label")}},
+	})
+	if err != nil {
+		panic(err)
+	}
+	view, err := snapshot.View(i18n.ViewSpec{
+		Resolution:   snapshot.Resolve(i18n.Exact(i18n.SourceExplicit, "fr")),
+		Presentation: i18n.PresentationNoIsolation,
+	})
+	if err != nil {
+		panic(err)
+	}
+	source, err := view.ErrorMessages(plan)
+	if err != nil {
+		panic(err)
+	}
+	return source
+}
+
+func exerciseHTTP(service *productService, source i18n.LocalizedMessageSource) {
+	mux := http.NewServeMux()
+	renderer := crudhttp.NewRenderer(crudhttp.WithMessages(source))
+	MountProduct(mux, "/products", service, crudnet.WithRenderer[Product, int64, ProductUpdate](renderer))
+	request := httptest.NewRequest(http.MethodPost, "/products", bytes.NewBufferString(`{"label":"bolt"}`))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	mux.ServeHTTP(response, request)
+	if response.Code != http.StatusUnprocessableEntity || response.Header().Get("Content-Language") != "fr" {
+		panic(fmt.Sprintf("generated net/http resource lost localized status provenance: %d %q %s", response.Code, response.Header().Get("Content-Language"), response.Body.Bytes()))
+	}
+	var envelope struct {
+		Errors struct {
+			Validation []struct {
+				Field   []any  `json:"field"`
+				Code    string `json:"error_code"`
+				Message string `json:"message"`
+			} `json:"validation"`
+		} `json:"errors"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &envelope); err != nil {
+		panic(err)
+	}
+	violations := envelope.Errors.Validation
+	if len(violations) != 1 || len(violations[0].Field) != 1 || violations[0].Field[0] != "label" ||
+		violations[0].Code != string(errs.CodeRequired) || violations[0].Message != "libellé est obligatoire" {
+		panic(fmt.Sprintf("generated net/http resource lost its mapper path or i18n message: %s", response.Body.Bytes()))
+	}
+}
+
+func exerciseGRPC(service *productService, source i18n.LocalizedMessageSource) {
+	listener := bufconn.Listen(1 << 20)
+	server := grpc.NewServer(grpc.UnaryInterceptor(crudgrpc.Errors()))
+	crudgrpc.ServingFor[ProductInput, Product, int64, ProductUpdate](service, ProductMapper{}).
+		Rendering(crudgrpc.WithMessages(source)).Register(server, "Product")
+	go func() { _ = server.Serve(listener) }()
+	connection, err := grpc.NewClient("passthrough:///bufnet",
+		grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) {
+			return listener.DialContext(ctx)
+		}),
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	)
+	if err != nil {
+		panic(err)
+	}
+	defer connection.Close()
+	defer server.Stop()
+	defer listener.Close()
+	request, err := structpb.NewStruct(map[string]any{"label": "nut"})
+	if err != nil {
+		panic(err)
+	}
+	err = connection.Invoke(context.Background(), "/"+crudgrpc.ServiceName("Product")+"/Create", request, &structpb.Struct{})
+	result := status.Convert(err)
+	if err == nil || result.Code() != codes.InvalidArgument || result.Message() != "libellé est obligatoire" {
+		panic(fmt.Sprintf("generated gRPC resource lost localized status provenance: %s %q", result.Code(), result.Message()))
+	}
+	var violation *errdetails.BadRequest_FieldViolation
+	for _, detail := range result.Details() {
+		if badRequest, ok := detail.(*errdetails.BadRequest); ok && len(badRequest.GetFieldViolations()) == 1 {
+			violation = badRequest.GetFieldViolations()[0]
+		}
+	}
+	if violation == nil || violation.GetField() != "label" || violation.GetReason() != string(errs.CodeRequired) ||
+		violation.GetDescription() != "libellé est obligatoire" || violation.GetLocalizedMessage().GetLocale() != "fr" ||
+		violation.GetLocalizedMessage().GetMessage() != "libellé est obligatoire" {
+		panic("generated gRPC resource lost its mapper path or i18n detail")
+	}
+}
+
+func main() {
+	if path := os.Getenv("VV_I18N_SOURCE_OUT"); path != "" {
+		raw, err := i18n.EncodeSource(catalogSpec())
+		if err != nil {
+			panic(err)
+		}
+		if err := os.WriteFile(path, raw, 0o644); err != nil {
+			panic(err)
+		}
+	}
+	service := &productService{}
+	source := messages()
+	exerciseHTTP(service, source)
+	exerciseGRPC(service, source)
+	if len(service.created) != 2 || service.created[0] != "bolt" || service.created[1] != "nut" {
+		panic("generated input mapper did not reach both services")
+	}
+}

@@ -22,10 +22,15 @@ Usage: make <command>
   check-deps, check-tiers      Run an individual dependency check
   check-utils, check-triplets
   check-todo, check-replaces
+<<<<<<< HEAD
+  check-tidy, check-otel-schema, check-otel-module, check-otel-live, check-workspace, check-otel-consumer, check-i18n-consumer
+  check-event-kernel
+=======
   check-tidy, check-otel-schema, check-otel-module, check-workspace, check-otel-consumer
   check-event-kernel           Compare event/ outside event/eventpg with its manifest
   check-event-kernel-baseline  Record that manifest, in the same change as the code
   check-event-kernel-moved     Read what a re-baseline moved: <predecessor> <allowed> [required...]
+>>>>>>> 5fedaae3d4e688198eb0116509c76d075429340e
   api, vuln                    Regenerate API baseline or scan vulnerabilities
   main-deps, version, release  Maintain module versions and publish a release
   clean                        Stop databases and clear Go's test cache
@@ -51,11 +56,17 @@ case ${1:-help} in
 	check-tidy) exec "$SCRIPT_DIR/checks.sh" tidy ;;
 	check-otel-schema) exec "$SCRIPT_DIR/checks.sh" otel-schema ;;
 	check-otel-module) exec "$SCRIPT_DIR/checks.sh" otel-module ;;
+	check-otel-live)
+		cd test
+		echo 'check-otel-live: real SDK and in-process OTLP proof'
+		exec env GOWORK=off "$GO" test -race -count=1 ./oteltelemetry
+		;;
 	check-workspace) exec "$SCRIPT_DIR/checks.sh" workspace ;;
 	check-event-kernel) exec "$SCRIPT_DIR/checks.sh" event-kernel ;;
 	check-event-kernel-baseline) exec "$SCRIPT_DIR/checks.sh" event-kernel-baseline ;;
 	check-event-kernel-moved) shift; exec "$SCRIPT_DIR/checks.sh" event-kernel-moved "$@" ;;
 	check-otel-consumer) exec "$SCRIPT_DIR/otel-consumer.sh" ;;
+	check-i18n-consumer) exec "$SCRIPT_DIR/i18n-consumer.sh" ;;
 	up|down|logs|psql|mysql|mariadb) exec "$SCRIPT_DIR/database.sh" "$1" ;;
 	fmt) exec gofmt -l -w . ;;
 	integration)

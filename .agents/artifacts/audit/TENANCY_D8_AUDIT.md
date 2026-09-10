@@ -1,6 +1,6 @@
 # tenancy documentation — correctness & completeness — AUDIT (2026-09-06)
 
-Repository: `/home/user/ws/gd/lease/frostgrove/vv/framework`, module `github.com/frostgrove/vv`.
+Repository: `/home/user/ws/gd/lease/frostgrove/framework`, module `github.com/frostgrove/vv`.
 Rubric: repo `CLAUDE.md` ("Keeping the docs consistent"), which treats a stale doc as a failing
 test. Scope: every document that describes tenancy. **No file was modified by this audit.**
 

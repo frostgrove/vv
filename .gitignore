@@ -6,3 +6,5 @@
 # Local database state and editor scratch.
 *.db
 *.out
+
+tmp

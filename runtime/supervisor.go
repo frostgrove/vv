@@ -156,7 +156,9 @@ func (this *Supervisor) previousGenerationFinished() bool {
 }
 
 func (this *Supervisor) supervise(ctx context.Context, runner Runner) {
+	startedAt := time.Now()
 	err := invoke(ctx, runner)
+	elapsed := time.Since(startedAt)
 
 	this.mutex.Lock()
 	stopping := this.stopping
@@ -176,8 +178,13 @@ func (this *Supervisor) supervise(ctx context.Context, runner Runner) {
 		state.Phase = PhaseFailed
 		state.Err = err
 	})
+	eventErr := err
+	if expected {
+		eventErr = nil
+	}
+	observingLifecycle(this.observer, ctx, lifecycleEvent(LifecycleOperationRun, state.Declaration, eventErr, elapsed))
 	if state.Phase == PhaseFailed {
-		this.log.Error("a supervised runner stopped on its own",
+		this.log.ErrorContext(ctx, "a supervised runner stopped on its own",
 			slog.String("runner", runner.Name()), slog.String("err", err.Error()))
 	}
 }
@@ -231,16 +238,27 @@ func (this *Supervisor) drain(ctx context.Context) []error {
 		if !drainable {
 			continue
 		}
+		declaration := this.runnerDeclaration(runner.Name())
 		group.Add(1)
 		go func() {
 			defer group.Done()
-			if err := drainer.Drain(ctx); err != nil {
+			startedAt := time.Now()
+			err := drainer.Drain(ctx)
+			elapsed := time.Since(startedAt)
+			if err != nil {
 				problems[position] = fmt.Errorf("runtime: draining %q: %w", runner.Name(), err)
 			}
+			observingLifecycle(this.observer, ctx, lifecycleEvent(LifecycleOperationDrain, declaration, err, elapsed))
 		}()
 	}
 	group.Wait()
 	return slices.DeleteFunc(problems, func(err error) bool { return err == nil })
+}
+
+func (this *Supervisor) runnerDeclaration(name string) Declaration {
+	this.mutex.Lock()
+	defer this.mutex.Unlock()
+	return this.states[name].Declaration
 }
 
 func (this *Supervisor) stillRunning() []string {

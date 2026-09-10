@@ -10,8 +10,9 @@ import (
 )
 
 type workerRuntimeObserver struct {
-	mu     sync.Mutex
-	events []WorkerEvent
+	mu       sync.Mutex
+	events   []WorkerEvent
+	contexts []context.Context
 }
 
 type blockingWorkerClaimDriver struct {
@@ -36,9 +37,10 @@ func (driver *blockingWorkerClaimDriver) Claim(context.Context, ClaimRequest) (C
 	return NewClaimBatch(driver.observedAt, nil)
 }
 
-func (observer *workerRuntimeObserver) Observe(_ context.Context, event WorkerEvent) {
+func (observer *workerRuntimeObserver) Observe(ctx context.Context, event WorkerEvent) {
 	observer.mu.Lock()
 	observer.events = append(observer.events, event)
+	observer.contexts = append(observer.contexts, ctx)
 	observer.mu.Unlock()
 }
 
@@ -46,6 +48,12 @@ func (observer *workerRuntimeObserver) snapshot() []WorkerEvent {
 	observer.mu.Lock()
 	defer observer.mu.Unlock()
 	return append([]WorkerEvent(nil), observer.events...)
+}
+
+func (observer *workerRuntimeObserver) snapshotContexts() []context.Context {
+	observer.mu.Lock()
+	defer observer.mu.Unlock()
+	return append([]context.Context(nil), observer.contexts...)
 }
 
 func TestWorkersRuntimeEmitsLifecycleAndDriverEvents(t *testing.T) {
@@ -329,6 +337,84 @@ func TestWorkerPoolEmitsDriverFailureAndTimeout(t *testing.T) {
 	}
 }
 
+type workerObserverContextKey struct{}
+
+func TestWorkerObservationPreservesEachOperationContextAndEffectiveApplyReason(t *testing.T) {
+	fixture := newWorkerDeliveryFixture(t, PlacementRegular)
+	driver := &workersRunDriver{
+		description: queueTestBackendDescription(1),
+		observedAt:  fixture.invocation.EligibleAt(),
+		finished:    make(chan struct{}),
+	}
+	observer := &workerRuntimeObserver{}
+	workers := newObservedRuntimeWorkers(t, fixture, driver, observer, "worker.context")
+	operationContext := func(name string) context.Context {
+		return context.WithValue(context.Background(), workerObserverContextKey{}, name)
+	}
+	contexts := []context.Context{
+		operationContext("run-start"),
+		operationContext("run-finish"),
+		operationContext("claim"),
+		operationContext("recover"),
+		operationContext("saturation"),
+		operationContext("renew"),
+		operationContext("finish-apply"),
+		operationContext("command-apply"),
+	}
+
+	workers.observeWorkerStart(contexts[0], WorkerOperationRun, 0)
+	workers.observeWorkerFinish(contexts[1], WorkerOperationRun, WorkerOutcomeComplete, WorkerFailureNone, 0, time.Time{})
+	workers.observeClaim(contexts[2], ClaimBatch{}, workerDriverCall{outcome: WorkerOutcomeComplete}, 0)
+	workers.observeRecover(contexts[3], RecoverResult{}, workerDriverCall{outcome: WorkerOutcomeComplete}, 0)
+	workers.observeSaturation(contexts[4], WorkerOperationClaim, 1, 1)
+	renewRequest, err := NewRenewRequest([]LeaseRef{fixture.lease}, DefaultLeaseTTL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	workers.observeRenew(contexts[5], renewRequest, RenewResult{}, workerDriverCall{outcome: WorkerOutcomeCancelled})
+
+	retry, err := RetryDisposition(ReasonHandlerFailure, PublicFailure{}, 0, RetryCostCharged)
+	if err != nil {
+		t.Fatal(err)
+	}
+	finish, err := FinishAttemptCommand(fixture.lease, retry, MinRetryDelay, MinRetryDelay)
+	if err != nil {
+		t.Fatal(err)
+	}
+	finishRequest, err := NewApplyRequest(finish)
+	if err != nil {
+		t.Fatal(err)
+	}
+	workers.observeApply(contexts[6], fixture.definition.Name(), mustWorkerBinding(t, "worker.context"), finishRequest, ApplyResult{}, workerDriverCall{outcome: WorkerOutcomeFailed, failure: WorkerFailureDriver})
+
+	deferCommand, err := DeferDeliveryCommand(fixture.lease, ReasonDependency, PublicFailure{}, MinRetryDelay)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deferRequest, err := NewApplyRequest(deferCommand)
+	if err != nil {
+		t.Fatal(err)
+	}
+	workers.observeApply(contexts[7], fixture.definition.Name(), mustWorkerBinding(t, "worker.context"), deferRequest, ApplyResult{}, workerDriverCall{outcome: WorkerOutcomeFailed, failure: WorkerFailureDriver})
+
+	gotContexts := observer.snapshotContexts()
+	if len(gotContexts) != len(contexts) {
+		t.Fatalf("observer contexts = %d, want %d", len(gotContexts), len(contexts))
+	}
+	for index := range contexts {
+		if gotContexts[index] != contexts[index] {
+			t.Fatalf("observer context %d was replaced", index)
+		}
+	}
+	events := observer.snapshot()
+	if events[6].Disposition() != DispositionRetry || events[6].Reason() != ReasonHandlerFailure {
+		t.Fatalf("finish apply disposition/reason = %s/%s, want retry/handler_failure", events[6].Disposition(), events[6].Reason())
+	}
+	if events[7].Disposition() != 0 || events[7].Reason() != ReasonDependency {
+		t.Fatalf("zero-disposition apply disposition/reason = %s/%s, want zero/dependency", events[7].Disposition(), events[7].Reason())
+	}
+}
+
 func newObservedRuntimeWorkers(t *testing.T, fixture workerDeliveryFixture, driver DeliveryDriver, observer WorkerObserver, binding string) *Workers {
 	t.Helper()
 	consumer := On(fixture.definition, Handler[string](func(context.Context, string) error { return nil }), Binding(binding), Concurrency(1))
@@ -405,7 +491,7 @@ func TestAnApplyEventSaysHowTheDeliveryEnded(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	workers.observeApply(fixture.definition.Name(), mustWorkerBinding(t, "worker.primary"), request, ApplyResult{},
+	workers.observeApply(t.Context(), fixture.definition.Name(), mustWorkerBinding(t, "worker.primary"), request, ApplyResult{},
 		workerDriverCall{outcome: WorkerOutcomeFailed, failure: WorkerFailureDriver, err: ErrDriver, started: true})
 
 	if len(observed) != 1 {

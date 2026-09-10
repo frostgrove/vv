@@ -830,6 +830,10 @@ func (this *gate[M, ID]) Update(ctx context.Context, id ID, dataTransferObject a
 	if err := this.authorize(ctx, Update); err != nil {
 		return zero, err
 	}
+	caller, err := crud.MutationOptions.Build(this.Meta().Name, options...)
+	if err != nil {
+		return zero, err
+	}
 
 	scope, rel, err := this.writeScopes(ctx)
 	if err != nil {
@@ -862,7 +866,8 @@ func (this *gate[M, ID]) Update(ctx context.Context, id ID, dataTransferObject a
 		}
 	}
 
-	return this.Core.Update(ctx, id, dataTransferObject, append([]crud.Option{crud.Where(scope), relationNarrowing(rel), crud.Where(inspected)}, options...)...)
+	return this.Core.Update(ctx, id, dataTransferObject,
+		crud.With(caller), crud.Where(scope), relationNarrowing(rel), crud.Where(inspected))
 }
 
 func (this *gate[M, ID]) UpdateAll(ctx context.Context, dataTransferObject any, options ...crud.Option) (int64, error) {
@@ -977,11 +982,11 @@ func (this *gate[M, ID]) Delete(ctx context.Context, ids ...ID) (int64, error) {
 }
 
 func (this *gate[M, ID]) Restore(ctx context.Context, ids ...ID) (int64, error) {
-	if len(ids) == 0 {
-		return 0, nil
-	}
 	if err := this.authorize(ctx, Restore); err != nil {
 		return 0, err
+	}
+	if len(ids) == 0 {
+		return 0, nil
 	}
 	scope, rel, err := this.writeScopes(ctx)
 	if err != nil {

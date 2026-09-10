@@ -94,7 +94,9 @@ selects native COPY or portable SQL ([[D-083]]).
 ## Update — the scope in both halves
 
 1. **`gate.Update`** — `crud/decorators/security/security.go:Update`
-   `authorize(Update)`, then the frozen-field check via `crud.DefinedFields`
+   `authorize(Update)`, then `crud.MutationOptions.Build` materialises and
+   validates the caller's option functions exactly once, before an inspection
+   read. The frozen-field check then uses `crud.DefinedFields`
    (`crud/update.go:DefinedFields`), which builds and caches an `UpdatePlan` for this DTO
    type from the `Meta` alone. It refuses a field the DTO **defines**, even when
    the value is unchanged — the PATCH said "set this", and the answer is no.
@@ -103,9 +105,12 @@ selects native COPY or portable SQL ([[D-083]]).
    when the policy has an `Inspect`; with a scope alone there is nothing to judge
    and the narrowing is already in the statement below.
 3. `inspect(Update, &cur)` on the stored row.
-4. `Core.Update(ctx, id, dto, Where(scope), rel, opts…)` — **the scope is passed
-   as an option, not just checked here.** `repository.Update` puts options into
-   the load *and* into the UPDATE's own `WHERE`
+4. `Core.Update(ctx, id, dto, With(caller), Where(scope), rel,
+   Where(snapshot))` — **the security constraints are appended after the
+   materialised caller options, not just checked here.** An assigning caller
+   option therefore cannot erase the scope, relation scope or inspected-row
+   snapshot. `repository.Update` puts the resulting options into the load and
+   into the UPDATE's own `WHERE`
    (`crud/sqlrepo/repository.go:Update`). Checking here and writing unscoped
    was check-then-act: a row that left the scope in between was updated anyway,
    and a fresh copy of somebody else's record was handed back with `err == nil`.
@@ -161,6 +166,16 @@ options, so there is nowhere to put the policy's predicate;
 `DeleteAll` takes options and puts them in the statement. Rows outside the
 scope are simply not matched, so the reported count is honest.
 
+## Restore — an empty set still crosses authorization
+
+**`gate.Restore`** — `crud/decorators/security/security.go:Restore` authorises
+`Restore` before checking whether the id set is empty. A denied caller receives
+the same refusal without storage I/O; an allowed empty set is a zero result
+without storage I/O. Non-empty restores continue through the tombstone scope,
+optional inspection snapshot and exact scoped restore path.
+`port.DefaultService.RestoreMany` forwards an empty set to this repository
+boundary, so the service layer cannot answer above the gate ([[FL-015]]).
+
 ## Where the decisions bite
 
 - **Every write puts the policy in the statement, not only in a check.** `Save`
@@ -179,6 +194,9 @@ scope are simply not matched, so the reported count is honest.
   above `authorize` — in the gate or in the service layer that calls it — is an
   unauthenticated success, because the gate is a decorator on the repository and
   a service that answers above it authorizes nothing.
+- **Caller mutation options are frozen before security constraints are added.**
+  Replaying the original option functions can duplicate side effects; placing
+  them after the constraints lets an assigning option erase the policy.
 - **Delete is re-expressed as DeleteAll.** Anything that "simplifies" it back to
   `Core.Delete(ids…)` drops the policy scope from the statement while keeping the
   check in front of it — a row hidden from reads becomes deletable by id.
@@ -206,12 +224,14 @@ scope are simply not matched, so the reported count is honest.
 | a scope-only policy reaches `Save` or `Update` | `gate.save`, `gate.Update` | 403 naming the missing `Inspect` |
 | PATCH naming a frozen field | `gate.Update` | 403, before any SQL |
 | PATCH on an out-of-scope id | `gate.loadScopedWith` | 404 |
+| PATCH carries an unsupported mutation option | `MutationOptions.Build` before inspection I/O | `SchemaError` naming the option |
 | row leaves the scope between load and write | the scope in the UPDATE's `WHERE` → `missedRow` | 404 |
 | `UpdateAll`/`DeleteAll` with nothing narrowing them | `gate.UpdateAll`, `gate.DeleteAll` | 403 with the flag named |
 | `Inspect` refuses one victim | the scan loops in `gate.UpdateAll`, `gate.Delete`, `gate.DeleteAll` | 403, and no statement is issued |
 | policy is `ReadOnly` | `Authorize` (`crud/decorators/security/policies.go:ReadOnly`) | 403 |
 | `nil` model to `Save` | `gate.Save` | 403 |
 | one `InsertBatch` row fails `Inspect` | `gate.InsertBatch` preflight | 403, no row written |
+| empty Restore is denied | `gate.Restore` authorization | 403, no tombstone read or write |
 | a scope-only policy cannot validate an inserted row | `gate.InsertBatch` | 403 naming the missing Inspect |
 | an inner decorator did not preserve the optional verb | exact capability check | `ErrNoBatchInsertSupport`, no I/O |
 | an inner decorator did not preserve the unscoped probe | exact capability check ([[D-115]]) | `ErrNoUnscopedExists` inside the gate, **404** to the caller, no I/O |
@@ -227,7 +247,7 @@ scope are simply not matched, so the reported count is honest.
 | `crud/sqlrepo/repository.go` | `Update` (options in both halves), `saveScopedUpdate`, `saveScopedCreate`, `Delete`, `DeleteAll`, `UpdateAll` |
 | `crud/executor.go` | `ScopedSave`, `SaveScopedOf`, `UnscopedExister`, `ExistsUnscopedOf` — the optional verbs the gate needs and refuses without, each taken from the exact outer core |
 | `crud/errors.go` | `ErrNoUnscopedExists` — what a core that never decided about the probe answers |
-| `crud/options.go` | `Where` accumulating, which is what makes a prepended scope unremovable |
+| `crud/options.go` | `With` copying the materialised caller options first and `Where` appending the later security constraints |
 | `crud/optiongroup.go` | `MutationOptions` — what a filtered write reads, and what it refuses |
 | `crud/batch.go` | exact optional-verb dispatch and fail-closed error |
 
@@ -252,9 +272,15 @@ scope are simply not matched, so the reported count is honest.
 - `TestTheGateScopeIsInTheUpdatesOwnWhereClause` — `crud/decorators/security/gate_edge_test.go`.
 - `TestAnUpdateOfARowThatLeftTheScopeIsNotFound` — `crud/decorators/security/gate_edge_test.go`.
 - `TestUpdateIsScopedAndFreezesTheScopeField` — `crud/decorators/security/security_test.go`.
+- `TestUpdateMaterializesCallerOptionsOnceBeforeAppendingSecurityConstraints`
+  and `TestUpdateRefusesUnsupportedCallerOptionsBeforeInspectionIO` —
+  `crud/decorators/security/alpha_boundary_test.go`.
 - `TestAGatedFilteredWriteRefusesPagingRatherThanWritingEveryRowItShowedTheRule` — `crud/decorators/security/updateall_test.go` — the caller's `Limit` on a gated `UpdateAll` and `DeleteAll`, with a control that the same write without it goes through and `Inspect` saw both rows.
 - `TestDeleteIsScoped` — `crud/decorators/security/security_test.go` — Delete re-expressed as DeleteAll.
 - `TestDeletingNoIDsIsStillAuthorized` — `crud/decorators/security/gate_edge_test.go` — the empty set is refused for the caller who may not delete, with a control that the caller who may gets an empty success costing no statement.
+- `TestRestoreAuthorizesAnEmptyIDSet` —
+  `crud/decorators/security/alpha_boundary_test.go` — denied and allowed
+  neighbors both call authorization once and neither reaches storage.
 - `TestDeleteChunksAfterChargingScopeAndSoftDeleteBinds` —
   `crud/sqlrepo/bind_budget_test.go` — declaration scope, tombstone and ids all
   share the budget, and every chunk keeps them.

@@ -1,17 +1,34 @@
 # D-062 — The library logs through the caller's logger, and instruments through the Source
 
-**Status:** accepted
-**Invariant:** This library never writes to a process-wide logger. Every line it emits goes through `port.Logger(ctx)`, which answers the context's `*slog.Logger` or `slog.Default()`. There is no logging option on any binding and no statement hook anywhere. A Source wrapper observes direct calls on that Source; an all-statements tracer belongs below transaction handles. It opts into a native storage effect only by implementing that exact unsafe capability itself.
+**Status:** accepted; logging narrowing implemented
+**Narrowed by:** [[D-128]] (logging only; in force)
+**Invariant:** This library never writes directly to a process-wide logger.
+Request-scoped code obtains the caller's logger through `port.Logger(ctx)`;
+long-lived runtime components that already receive an application-owned
+`*slog.Logger` keep that field. There is no new logger option on any binding,
+and every framework log call uses a context-bearing slog method whenever its
+operation has a context. There is no statement hook anywhere. A Source wrapper
+observes direct calls on that Source; an all-statements tracer belongs below
+transaction handles. It opts into a native storage effect only by implementing
+that exact unsafe capability itself.
 
 ## The decision
 
 Two seams, for two different questions.
 
 **"Tell me about the failures nobody can be returned an error for."** `port.Logger`
-and `port.WithLogger`. Nine call sites across four transports and the shared
-auth half: a handler panicked and the connection has to be closed, a response
-would not marshal, a status could not carry its details, a refusal could not be
-encoded or written.
+and `port.WithLogger`. The original change covered nine call sites across four
+transports and the shared auth half: a handler panicked and the connection had
+to be closed, a response would not marshal, a status could not carry its
+details, or a refusal could not be encoded or written. That history and its
+rationale remain binding.
+
+[[D-128]] narrows only how the logger is invoked. The jobs failure site uses
+`port.Logger(ctx)`. Supervisor remains a long-lived component with its existing
+application-owned logger field and passes the runner context to that logger.
+Together with the original nine, the structural inventory is eleven framework
+call sites. Any site that has a context uses `ErrorContext`, `WarnContext` or
+`LogAttrs`; this adds neither a logger owner nor a per-binding option.
 
 **"Show me direct calls on this Source."** Wrap `crud.Source`. `crud.Executor`
 is two methods, and a wrapper that also implements `crud.SourceUnwrapper`
@@ -63,13 +80,18 @@ preserves native bulk implements `UnsafeBulkInsert` itself and records/guards
 that call before forwarding the supplied target executor unchanged. `ReadWrite`
 does so only to route the effect to its primary.
 
-**Because "no logger" must not be a nil check at nine call sites.**
+**Because "no logger" must not be a nil check at the original nine call sites.**
 `port.Logger` never returns nil and `port.WithLogger(ctx, nil)` stores nothing.
 
 ## What it forbids
 
 - Do not call `log.Printf`, `fmt.Println` or `os.Stderr` from library code.
 - Do not add a `WithLogger` option to a binding. The context is the seam.
+- Do not replace an existing application-owned logger field on a long-lived
+  runtime component with `port.Logger`; pass the operation context to that
+  logger instead.
+- Do not use a context-free slog method when the framework call site has the
+  operation context.
 - Do not log anything a client is not allowed to see and then also render it.
   These lines exist precisely because the response may not carry the cause
   ([[D-044]]).
@@ -92,6 +114,9 @@ does so only to route the effect to its primary.
   the other two.
 - `crud/rpc/crudgrpc/status.go` — the details that would not attach.
 - `auth/http/authhttp/authhttp.go` — the refusal that would not encode or write.
+- `jobs/classifier.go` — the handler panic that has no returned error channel.
+- `runtime/supervisor.go` — the existing injected logger, invoked with the
+  runner context rather than a background or absent context.
 - `crud/executor.go:SourceUnwrapper`, `UnsafeBulkInserterOf` — the statement
   seam and its explicit effect boundary.
 
@@ -112,7 +137,11 @@ does so only to route the effect to its primary.
 - `TestUnknownSourceWrapperSeesSingleStatementPortableSQL` in
   `crud/sqlrepo/insert_batch_test.go` — a direct one-statement InsertBatch uses
   the wrapper's `Exec` unless it explicitly publishes the native effect.
+- `TestEveryContextBearingFrameworkLogPassesItsContext` — the
+  structural inventory pins all eleven framework call sites and specifically
+  rejects a Supervisor log that substitutes a background context for the runner
+  context.
 
 ## See also
 
-[[D-021]] [[D-042]] [[D-044]] [[D-045]] [[D-048]] [[D-061]]
+[[D-021]] [[D-042]] [[D-044]] [[D-045]] [[D-048]] [[D-061]] [[D-128]]

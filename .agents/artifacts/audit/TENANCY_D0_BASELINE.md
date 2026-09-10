@@ -1,7 +1,7 @@
 # TENANCY — D0 baseline (verified by the lead, not by a subagent)
 
 Every line below was produced by a command run in
-`/home/user/ws/gd/lease/frostgrove/vv/framework` on this tree.
+`/home/user/ws/gd/lease/frostgrove/framework` on this tree.
 
 ## Suites
 

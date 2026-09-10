@@ -1,8 +1,10 @@
 package errs
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"sync"
 )
 
 var ErrCodeRedeclared = errors.New("errs: the code is already declared with a different kind")
@@ -13,6 +15,7 @@ type CodeDef struct {
 }
 
 type Codes struct {
+	mu   sync.RWMutex
 	defs map[Code]CodeDef
 }
 
@@ -69,6 +72,21 @@ func StandardCodes() *Codes {
 }
 
 func (this *Codes) Add(code Code, kind Kind, message string) error {
+	if this == nil {
+		return errors.New("errs: adding a code to a nil Codes")
+	}
+	if err := validateMessageKey(string(code)); err != nil {
+		return fmt.Errorf("errs: invalid code %q: %w", code, err)
+	}
+	if kind > KindMethodNotAllowed {
+		return fmt.Errorf("errs: %q has invalid kind %d", code, kind)
+	}
+	if err := validateMessageTemplate(message); err != nil {
+		return fmt.Errorf("errs: invalid default message for %q: %w", code, err)
+	}
+
+	this.mu.Lock()
+	defer this.mu.Unlock()
 	if this.defs == nil {
 		this.defs = map[Code]CodeDef{}
 	}
@@ -86,6 +104,8 @@ func (this *Codes) KindOf(code Code) (Kind, bool) {
 	if this == nil {
 		return KindInternal, false
 	}
+	this.mu.RLock()
+	defer this.mu.RUnlock()
 	d, ok := this.defs[code]
 	return d.Kind, ok
 }
@@ -94,9 +114,32 @@ func (this *Codes) MessageFor(code Code) (string, bool) {
 	if this == nil {
 		return "", false
 	}
+	this.mu.RLock()
+	defer this.mu.RUnlock()
 	d, ok := this.defs[code]
 	if !ok || d.Message == "" {
 		return "", false
 	}
 	return d.Message, true
+}
+
+func (this *Codes) Message(_ context.Context, violation Violation, _ string) (string, bool) {
+	template, ok := this.MessageFor(violation.Code)
+	if !ok {
+		return "", false
+	}
+	return expand(template, violation.Params)
+}
+
+func (this *Codes) all() []Code {
+	if this == nil {
+		return nil
+	}
+	this.mu.RLock()
+	defer this.mu.RUnlock()
+	out := make([]Code, 0, len(this.defs))
+	for code := range this.defs {
+		out = append(out, code)
+	}
+	return out
 }

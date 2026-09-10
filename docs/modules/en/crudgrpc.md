@@ -104,6 +104,21 @@ take their framework's context.
 | `MaxBulk(n)` | cap `BulkDelete` — the default is `port.DefaultMaxBulk` (1024); there is no "unlimited" |
 | `WithRenderer(r)` | replace the status renderer |
 
+For the standard status details, compose resource-specific policy without
+replacing the process interceptor:
+
+```go
+articles := crudgrpc.New(repo).Rendering(
+    crudgrpc.WithMessages(articleMessages),
+)
+```
+
+`Rendering` extends an outer `Errors(...)` or `StreamErrors(...)` renderer;
+later resource options win when both set the same field. Without an outer
+interceptor it extends the defaults. `WithRenderer` remains a wholesale
+resource replacement. Configure the resource before registration; `Rendering`
+is construction-time API.
+
 Every option below takes the resource's three type parameters explicitly —
 `WithQuery[Article, int64, ArticleUpdate](cfg)`. `New` infers them from the
 repository it is given; an option is a value built before `New` is called, and Go
@@ -142,6 +157,11 @@ srv := grpc.NewServer(grpc.UnaryInterceptor(crudgrpc.Errors(
 | `KindTooLarge` | `ResourceExhausted` |
 | anything else | `Internal` |
 
+Wrapped `context.Canceled` and `context.DeadlineExceeded` keep the native gRPC
+codes `Canceled` and `DeadlineExceeded` and carry no details. They are transport
+termination, not a retryable business kind, so this exception sits at the gRPC
+boundary rather than changing HTTP classification.
+
 A failure arrives as a status code plus **`BadRequest` / `ErrorInfo` /
 `RetryInfo` details** rather than the JSON envelope. The machine codes in those
 details are spelled identically to the HTTP `error_code`, so a client needs one
@@ -163,6 +183,16 @@ carries no details at all.
 
 The locale comes from metadata: `grpc-accept-language`, `accept-language` or
 `x-locale`. `crudgrpc.WithLocale(ctx, l)` sets it directly.
+An existing non-empty context locale wins; metadata is consulted only when it
+is absent, and the built-in path takes the first language tag rather than doing
+weighted negotiation. Use the optional [i18n resolver](i18n.md) before the
+interceptor and bind its canonical supported result when weights, exclusions or
+wildcards matter. `snapshot.ErrorMessages(errorSpec)` can be passed directly to
+`crudgrpc.WithMessages`.
+When the installed source implements `errs.LocalizedMessageSource`, each
+`LocalizedMessage.Locale` names the template locale it actually used. A
+request for `fr-CA` that falls back to `fr` therefore reports `fr`; a legacy
+source emits no `LocalizedMessage` rather than presenting the request as proof.
 
 Installing `Errors` twice renders once — the marker is the error already carrying
 a status, so the interceptor never overrides a method that answered for itself.

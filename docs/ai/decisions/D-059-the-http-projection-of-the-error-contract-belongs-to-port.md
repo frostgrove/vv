@@ -109,7 +109,8 @@ for the gap is not.
 ## Where it lives
 
 - `port/porthttp/render.go` — `Renderer`, `EnvelopeRenderer`, `RenderOption`,
-  `NewRenderer`, `MaxViolations`, `DefaultRetryAfter`, and the five options.
+  `NewRenderer`, `MaxViolations`, `DefaultRetryAfter`, and the six options,
+  including panic-isolated observation of redacted internal failures.
 - `port/porthttp/envelope.go` — `Envelope`, `Groups`, `Internal`.
 - `port/porthttp/errors.go` — `Status`, `StatusFor`, `KindOf`, `AcceptLanguage`,
   `ErrBadRequest` and its three builders.

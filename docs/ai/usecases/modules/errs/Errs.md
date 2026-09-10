@@ -2,7 +2,7 @@
 
 **Covers:** `github.com/frostgrove/vv/errs`, `github.com/frostgrove/vv/errs/sqlerr`
 **Sweep:** happy paths · edge cases · release readiness
-**Verdict:** not ready — the value types, the corpus behind the four dialect tables and the message ladder are the strongest part of this repository, and five things the tag makes **irreversible** are not: the retryable `error_code` is three different words on four engines with no decision covering it, `CodeExclusion` is advertised and produced by nothing so closing it later changes bytes a shipped client already parses, an SPI interface is frozen into the contract with no caller anywhere, the corpus JSON shape joins the compatibility surface with it, and nothing in the library ever writes down what a client is supposed to do with a code it has never seen. The edge pass adds configuration mistakes that the public values let through as legitimate responses: an empty code, an unknown kind and a negative array position all render instead of failing at wiring; `Fault` keeps nested parameter values live despite promising a deep copy; and reload atomicity and locale-case behaviour remain unverified where the code has no focused control. Wrapped driver errors are deliberately absent from `Fault.Error()`, JSON and the standard 500 envelope, but remain reachable through `errors.As` for caller-controlled, redacted diagnostics. `sqlerr` is conservative about a malformed tuple, but the public corpus tools accept internally inconsistent records and `Save` can leave the requested directory. Most are additive repairs, but the silent wrong answers should be closed before a tag.
+**Verdict:** not ready — the value types, the corpus behind the four dialect tables and the message ladder are the strongest part of this repository, and five things the tag makes **irreversible** are not: the retryable `error_code` is three different words on four engines with no decision covering it, `CodeExclusion` is advertised and produced by nothing so closing it later changes bytes a shipped client already parses, an SPI interface is frozen into the contract with no caller anywhere, the corpus JSON shape joins the compatibility surface with it, and nothing in the library ever writes down what a client is supposed to do with a code it has never seen. The edge pass still finds invalid array positions and caller-owned nested parameter values; empty codes and unknown kinds are now refused, catalogue reload is atomic and race-safe, and locale casing is an explicit case-sensitive contract. Wrapped driver errors are deliberately absent from `Fault.Error()`, JSON and the standard 500 envelope, but remain reachable through `errors.As` for caller-controlled, redacted diagnostics. `sqlerr` is conservative about a malformed tuple, but the public corpus tools accept internally inconsistent records and `Save` can leave the requested directory. Most remaining repairs are additive, but the silent wrong answers should be closed before a tag.
 
 ## What a consumer is actually trying to do
 
@@ -211,8 +211,7 @@ classes and default texts, and hand it to whatever needs it.
    the routes this library generated, not only on hand-written ones.
 4. A second declaration of a code that **agrees** about the class is visible
    somewhere, because the two declarations disagree about the sentence.
-**Today:** 🟡 partial — 1 and 2 are exemplary, 3 costs one option and one trap,
-4 is silent by design
+**Today:** 🟡 partial — 1, 2 and 3 hold; 4 is silent by design
 **Evidence:** 1: `errs/codes.go:120` returns `ErrCodeRedeclared` on a disagreeing
 kind and leaves the existing declaration alone
 (`TestRedeclaringACodeWithADifferentKindIsRefused`, `errs/codes_test.go:24`).
@@ -221,48 +220,37 @@ kind and leaves the existing declaration alone
 `errs/doc.go:22-27` records why.
 3 holds for a renderer a consumer builds themselves —
 `TestAConsumersVocabularyDecidesTheStatusAndTheDefaultMessage` in
-`port/porthttp/render_options_test.go` — and, contrary to round 1, it also
-reaches `POST /users` with **one option**:
+`port/porthttp/render_options_test.go` — and for every generated CRUD route.
+The declarative resource form composes wording with the service and generated
+DTO path hops:
 
 ```go
-crudfiber.New(repo, crudfiber.WithRenderer[User, int64, UserUpdate](
-    crudhttp.NewRenderer(crudhttp.WithCodes(codes), crudhttp.WithMessages(cat))))
+crudfiber.ServingFor(service, UserMapper{}).
+    Rendering(crudhttp.WithCodes(codes), crudhttp.WithMessages(cat))
 ```
 
-Nothing is lost there, and the round-1 claim that this is *"a rewrite, not an
-option"* was wrong. `New(repo)` contributes **no** path hop to lose:
-`port.Hops` reads `svc.Paths()` (`port/path.go:53-64`), which is nil unless
-`port.WithPaths` was passed, and `Rules.Service()` emits only `WithQuery` and
-`AllowClientID` (`port/rules.go:70-79`); `port.Identity[M]` implements `Model`
-alone (`port/mapper.go:21-25`) and is not an `errs.Resolver`. The raw-body index
-and the request locale are not `RenderOption`s at all — the binding installs them
-per request for whichever renderer produced the failure
-(`crud/http/crudfiber/options.go:192-204`, `port/porthttp/render.go:135`).
-The real trap is narrower and sharper: on `NewFor(repo, mapper)` with a generated
-`<Model>Mapper`, and on `Serving(svc)` where the service declared `WithPaths`,
-`WithRenderer` **discards that hop silently** —
-`crud/http/crudfiber/handler.go:118-124` calls `rendererFor(port.Hops(svc, mapper))`
-only when no renderer was supplied, and `rendererFor` passes `WithResolvers` and
-nothing else (`crud/http/crudfiber/options.go:150-155`, and the identical lines
-in `crudnet`, `crudgin` and `crudgrpc`). The consumer gets their vocabulary and
-loses their field names, with no error and nothing to grep for.
-The other loud wrong turn is `crudfiber.Errors(crudhttp.WithCodes(codes))`. It
-compiles (`crud/http/crudfiber/middleware.go:21` takes `...crudhttp.RenderOption`),
-it is the obvious thing to write, and it is documented as being *"for handlers
-this library did not write"* (`:10-11`) — so it applies to no route this library
-mounted.
+`Rendering` keeps the default envelope and adds resource-specific render
+options. A process-level `crudfiber.Errors`, and its net/http, Gin and gRPC
+counterparts, owns the final failure render for generated and hand-written
+routes; the resource contributes its options and installs `port.Hops` in the
+operation context first. `TestEveryGeneratedRouteBubblesToTheProcessRendererWithItsHops`
+walks list, query, count, get, create, update, replace, delete and bulk-delete in
+all three HTTP bindings; the equivalent gRPC test walks every method. The
+binding tests also pin manually registered handlers, Fiber's process
+`ErrorHandler`, unary/stream interceptors and nested error boundaries.
+
+`WithRenderer` remains the explicit wholesale replacement for status, headers
+and body shape. It no longer loses generated path hops: a custom renderer that
+uses `port.Violations` reads them from the request context. It must still wire
+its own vocabulary/message behaviour because replacing the renderer means
+exactly that.
 4 is `errs/codes.go:114-115` in as many words: *"Declaring the same code twice
 with the same kind is allowed and the first message wins."* Two libraries — or a
 preset plus the application — both declaring `too_long` means whichever ran first
 decides the sentence every client reads, with no error and nothing to grep for.
-**If not ready:** Three separate seams have to be handed the same value — the
-renderer, the classifier (`sqlfault.WithCodes`) and the catalogue — and nothing
-detects a process that wired three different vocabularies into the three. For a
-resource with a declared hop the honest answer today is to rebuild the hop by
-hand: `crudhttp.WithResolvers(mapper)` beside the vocabulary, using the value
-already typed on the same line. That works, and nothing tells the consumer they
-had to. See the DX section for the two-part ask: an option that extends the
-computed hops, and a wiring-time panic where a supplied renderer would drop one.
+**If not ready:** The classifier (`sqlfault.WithCodes`) and renderer still have
+to receive the same vocabulary explicitly; nothing detects a process that wired
+two different values. Item 4 also remains a declaration-policy decision.
 
 ### H-ERRS-05 — The same failure, in Russian, with one field overridden
 **Who:** an engineer localising an existing API
@@ -282,8 +270,8 @@ there.
    stays silent.
 6. If reloading is start-up-only, every place that documents `Load` says so.
 7. A language whose plurals differ by count can express them.
-**Today:** 🟡 partial — 1, 2 and 3 are the best-designed thing in the module; 4
-holds in one of the two places it has to; 5, 6 and 7 do not
+**Today:** 🟡 partial — 1–6 hold; the flat `errs.Messages` intentionally does
+not implement plural grammar in 7
 **Evidence:** 1: `errs/catalogue.go:36` loads a directory of flat JSON files.
 2 and 3: `errs/message.go:116-150` walks `user.email.unique → user.unique →
 email.unique → unique` then the code's own default, pinned by
@@ -291,44 +279,28 @@ email.unique → unique` then the code's own default, pinned by
 `TestTwoLocalesThroughTheSameFaultGiveTwoMessages` (`:140`); the locale reaches
 the ladder from the context, so the fault never carries the request's language.
 4 is `TestATemplateWithAMissingParamFallsBackRatherThanEmittingThePlaceholder`
-(`errs/message_test.go:67`), and `expand` is called from `errs/message.go:98,104`
-**and nowhere else**. The rung below it, `port/violations.go:126`, calls
-`errs/codes.go:145` `MessageFor`, which returns the declared template raw. The
-round-1 draft scoped this to *"a process that wired no catalogue"* and that is
-too narrow, which matters because it makes the leak look like something wiring a
-catalogue avoids. `Messages.Message` expands the vocabulary default **itself**
-and answers `("", false)` when it cannot (`errs/message.go:103-107`), so
-`port.message` then falls past the catalogue rung, past the violation's own text,
-to `defaultMessage` — which hands back `{max}` unexpanded. A fully catalogued
-process ships the placeholder for any key its catalogue does not cover. That is
-the exact shape `docs/modules/en/errs.md:394` teaches
-(`"too_long": "at most {max} characters"`), and no library-produced violation
-ever supplies `{max}`: the only things that set `Params` are the bridge
-(`errs/bridge.go:62,68` — `param` and `value`) and the probe's opt-in
-`WithValues` (`crud/probe/full.go:261`, `value`).
-5: `errs.Messages` and `errs.Codes` hold plain maps and `grep -n "sync\." errs/*.go`
-is empty. `Message`, `KindOf` and `MessageFor` are read from every request
-goroutine through `port.Violations`. 6: `docs/modules/en/errs.md:421` says
-*"`Messages.Load(fsys, dir)` adds a locale at run time"*. A consumer who follows
-that sentence behind a running server has a data race in the one package every
-request touches, and no test can see it because no test loads while rendering.
+in `errs/message_test.go` for the catalogue path and the default-vocabulary
+controls in `port/violations_test.go`. `errs.Codes` implements
+`MessageSource`; its `Message` expands only when every placeholder exists.
+`port` accepts only a non-empty successful message and otherwise falls through
+to the violation text or the stable code. A template token is therefore never
+sent merely because a more specific catalogue entry was absent.
+5 and 6: `Codes` and `Messages` synchronise their maps, and `Messages.Load`
+stages every file before one locked commit. Concurrent `Add`, `Load`, `Message`,
+`Locales`, `Missing`, `KindOf` and `MessageFor` run together in
+`TestCodesAndMessagesSupportConcurrentRuntimeUpdates`; the suite is run under
+`-race`. `TestLoadMergesAnAddThatWinsWhileFilesAreStaged` and
+`TestAConflictingAddWinsWhileFilesAreStaged` pin both outcomes for an update
+that arrives after `Load` took its starting snapshot. Both module pages now
+state the runtime and atomicity contract.
 7: `expand` is `{name}` substitution and nothing else (`errs/message.go:178+`),
 and a locale file is one flat key→string map (`errs/catalogue.go:109-130`).
 Russian needs three forms for *"{max} characters"* and there is no plural
 mechanism and no per-key escape.
-**If not ready:** For 4, declare defaults without placeholders and put every
-templated sentence in the catalogue, where `expand` runs — or move the guard down
-into `port.defaultMessage`, which is three lines and is the fix that also covers
-the catalogued process. For 5 and 6, either the sentence at `errs.md:421` says
-start-up only, or `Messages` grows an `RWMutex`. Nothing else in this module is
-one sentence of documentation away from the failure `-race` exists to catch.
-For 7 the answer is good and unwritten: `MessageSource` is one of the five frozen
-SPI interfaces (`errs/spi.go:38-40`), so a consumer replaces `errs.Messages`
-wholesale with go-i18n or ICU and keeps everything above it. That reframes
-must-hold 1 as the trap it is — *adding a locale is a file* is true until the
-second language needs plurals, at which point the whole catalogue is thrown away
-and the loader that read it was never the point. Neither `errs/doc.go` nor
-`docs/modules/en/errs.md` says so.
+**If not ready:** For plural/select, `MessageSource` is the stable replacement
+boundary. The optional `github.com/frostgrove/vv/i18n` module adapts its typed
+MessageFormat catalogue through that interface while `errs.Messages` remains a
+small stdlib-only catalogue for simple wording.
 
 ### H-ERRS-06 — A half-translated catalogue fails the build
 **Who:** whoever owns CI
@@ -340,29 +312,15 @@ and the loader that read it was never the point. Neither `errs/doc.go` nor
    refusal.
 2. A code that `en-GB` inherits from `en` does not count as missing.
 3. A code that has English text and no Russian is reported for `ru`.
-**Today:** 🟡 partial — 1 and 2 hold, 3 does not
-**Evidence:** `errs/catalogue.go:160-180` returns a sorted `[]Code`, and walks
-the locale ladder before deciding — `TestMissingNamesTheCodesWithNoTemplate`
-(`errs/catalogue_test.go:157`). The ladder is `locales(locale)`
-(`errs/message.go:159-170`), whose last rung is `""`, the **default** file. So a
-code whose only template lives in `default.json` — the setup H-ERRS-05 describes
-one case earlier — is reported as covered for `ru`. What `Missing` catches is a
-code with no template in any file at all. No **`Missing`** fixture pairs a
-`default.json` with a second locale: the two ladder subtests at
-`errs/catalogue_test.go:157-198` use `default.json` alone and then
-`en.json`/`en-GB`/`fr`. (Other fixtures in the same file do pair them —
-`:205-207`, `:219-221` — which is why the round-1 wording *"no fixture pairs
-`default.json` with a second locale"* was wrong and would have cost a reader ten
-seconds and the paragraph's credibility.)
-**If not ready:** The test a consumer actually needs — which keys does `ru`
-declare, against the vocabulary — cannot be computed: `m.templates`
-(`errs/message.go:47`) is unexported and `Locales()` returns names only. Either
-`Missing` takes a flag that stops before the default rung, or `Messages` exports
-a reader for one locale's declared keys. Separately, it reports the
-**vocabulary's** codes, so every bridged validator tag (H-ERRS-03 must-hold 4) is
-invisible to the check — a different defect with the same fix, since a tag that
-is not declared cannot be reported missing. `errs.ValidatorCodes` in the DX
-section closes that half; the default rung needs its own change.
+**Today:** ✅ ready for declared vocabulary codes
+**Evidence:** `Messages.Missing` returns a sorted `[]Code`. For a non-default
+locale it checks the exact locale and the base locale, then stops before the
+default rung. `TestMissingMeasuresTranslationsWithoutChangingMessageFallback`
+pairs `default.json` with `ru`, proves the default does not hide missing Russian
+text, and separately proves that `en` covers `en-GB`. The same test keeps the
+ordinary `Message` fallback through base and default catalogues as its control.
+Codes not declared in the vocabulary remain outside the report; bridged
+validator tags therefore still need the preset described in H-ERRS-03.
 
 ### H-ERRS-07 — Everything in the log, nothing on the wire
 **Who:** the on-call engineer at 03:00
@@ -1095,11 +1053,11 @@ freezes a signature, and cannot ship in a point release.
 | A bridged validator tag that renders as a sentence | Declare every tag by hand in `Codes`, or ship `{"error_code":"gte","message":"gte"}` — status is correct either way | all | small | reversible |
 | Rename a code for the client | Nothing. Rebuild the fault by hand and lose the wrapped sentinels doing it — the frozen interface for it is called from no line in the repository | all (keyed on code/path); constraint-keyed: pg only | large | **irreversible** — the signature freezes |
 | Refuse to confirm an address exists, on one route | Nothing. Same rebuild, or accept the disclosure | all | large | reversible once the mapper is wired |
-| Declare product codes and get statuses on a generated route | `Add` per code, then one `WithRenderer` with a shared renderer — undocumented; a replacement renderer on `NewFor`/`ServingFor` must receive `WithResolvers(port.Hops(svc, mapper)...)` explicitly | all | small | reversible |
-| Locale files and a narrow override on a generated route | `LoadMessages` plus the same explicit renderer composition when the resource has path hops | all | small | reversible |
-| A vocabulary default with a placeholder in it | Do not write one. Below `errs.Messages` the template goes to the client raw, with or without a catalogue | all | small | reversible |
-| Plurals in a second language | Replace `errs.Messages` wholesale. The SPI is there and nothing says the flat catalogue stops at one language | all | large | reversible |
-| Fail CI on a half-translated locale | `cat.Missing("ru")` in a test — which reports nothing while a `default.json` covers the code | all | large | reversible |
+| Declare product codes and get statuses on a generated route | `Add` per code, then resource `.Rendering(crudhttp.WithCodes(codes))` or the process error middleware; generated hops compose through context | all | none | — |
+| Locale files and a narrow override on a generated route | `LoadMessages`, then resource `.Rendering(crudhttp.WithMessages(messages))`; all full-CRUD routes keep their generated hops | all | none | — |
+| A vocabulary default with a placeholder in it | `Codes.Message` expands allowed parameters; an unresolved template falls through and never reaches the response verbatim | all | none | — |
+| Plurals in a second language | Supply the optional typed `i18n` catalogue as the same `MessageSource`; the root package stays stdlib-only | all | small | reversible |
+| Fail CI on a half-translated locale | `cat.Missing("ru")` in a test reports the code even when `default.json` can render it; a base-language entry still counts | all | none | — |
 | One call for a structured diagnostic log line | ~8 lines, 5 field names, and `slog.Any("detail", f.Detail)` spills | all | small | reversible |
 | A 500 you can trace to a customer's ticket | Nothing in the body, nothing in a log. The consumer replaces `Internal()`, which means their own renderer | all | large | reversible |
 | A retryable/not-retryable branch | `errs.AsFault` then compare the kind, or `port.KindOf` | all | none | — |
@@ -1117,13 +1075,13 @@ value receivers on every marshaller, the corpus behind the dialect tables, the
 sentinel living inside the fault, `KindOfWith` refusing to read an unknown code
 as internal, and `Missing`'s refusal to be a start-up check are all better than
 what I would have designed blind. Round 1 said the vocabulary and the catalogue
-were unreachable from a generated route and that was wrong: they are one
-undocumented option away. What is actually wrong is quieter and worse. The short
-path and the customised path both work, but a replacement renderer needs an
-explicit declaration of its path hops; `Missing` walks past the default rung, a
-catalogue silently overrides a violation's own text, and a second `Add` silently
-keeps the first sentence. None of those is wordiness. Each is a contract choice
-the library must state plainly before the tag freezes it.
+were unreachable from a generated route and that was wrong. Resource
+`.Rendering` and process error middleware now compose them across every
+generated operation without losing path hops, and the default vocabulary no
+longer leaks unresolved placeholders. What remains here is policy rather than
+transport plumbing: a catalogue deliberately outranks a violation's own text,
+and a second same-kind `Add` silently keeps the first sentence. Those choices
+must stay explicit before the tag freezes them.
 
 ## Release blockers found here
 
@@ -1138,15 +1096,13 @@ bindings and the docs, and the `port` sweep reports several of the same rows.
 | 3 | `errs.CodeExclusion` is declared, kind-mapped, given a default sentence and produced by no engine; `23P01` has no arm and `sqlfault`'s class-23 gate turns it into a bare 409 `conflict` | blocker · **irreversible** | `errs/sqlerr` + roadmap | Closing it is wire-visible: a client handling `conflict` starts receiving `exclusion`. `docs/roadmaps/Roadmap.md:102-115` records it as a deliberate hole, which is fine — what is not fine is shipping the code in the vocabulary with no contract (row 2) saying a client must tolerate it |
 | 4 | `errs.CodeMapper` is frozen into the contract (`errs/doc.go:51`) and no line in any module calls `CodeFor` | blocker · **irreversible** | `errs` (freeze) + `port/porthttp` + `crud/rpc/crudgrpc` + `port.Violations` | The tag freezes an SPI signature wired to nothing, and it is the only answer H-ERRS-16 has. Half (a) — the option plus the call in `port.Violations` — is usable on day one via `WithRenderer` and ships before the tag; if it cannot, `errs/doc.go` and `errs.md:437` must say the interface is declared and not consumed |
 | 5 | `errs/sqlerr` exports `Path`, `Save`, `Load`, `Corpus` and `Case` (`docs/api/surface.md:538-547`) and is in the contract manifest | blocker · **irreversible** | `errs/sqlerr` | The tag freezes the testdata JSON shape as a compatibility surface. Either that is deliberate and said so, or the capture tooling moves to an internal package. Free before the tag, permanent after |
-| 6 | `errs.Messages` and `errs.Codes` have no synchronisation, and `docs/modules/en/errs.md:421` says `Messages.Load` *"adds a locale at run time"* | blocker | `errs` | A documented invitation to a data race in the one package every request goroutine reads through `port.Violations`. No test can see it because no test loads while rendering. Either the sentence says start-up only, or `Messages` gets an `RWMutex` |
-| 7 | A custom renderer on `NewFor`/`ServingFor` needs the existing `port.Hops(svc, mapper)` composition documented | serious | `crud/http/{crudnet,crudfiber,crudgin}` + `crud/rpc/crudgrpc` docs | `WithRenderer` replaces the renderer by contract; its resolver list cannot be inferred from the interface. The documented composition is service hop, then generated mapper hop, ahead of fallback. Also the `port` sweep, *The client hears the message in its own language* |
-| 8 | Below `errs.Messages`, a vocabulary default is handed to the body unexpanded — `port/violations.go:126` → `Codes.MessageFor` — so a declared `"at most {max} characters"` ships `{max}` | serious | `port` (3 lines in `defaultMessage`) + `errs` docs | It is the exact template `docs/modules/en/errs.md:394` teaches, and it fires **with** a catalogue wired for any key that catalogue does not cover — so wiring one is not the mitigation round 1 implied. `Messages.Message` returns `("", false)` and the rung below has no guard. It also falsifies [[UC-017]] guarantee 4 — *"falling back rather than emitting a template"* — whose status in `docs/ai/usecases/Index.md:88` is **covered**: either that row moves to partially covered or the guarantee is narrowed to `errs.Messages`, and only this sweep is placed to say which |
+| 7 | ~~A custom renderer on `NewFor`/`ServingFor` loses `port.Hops(svc, mapper)`.~~ **Closed.** | closed | `crud/http/{crudnet,crudfiber,crudgin}` + `crud/rpc/crudgrpc` | Every generated method installs immutable hops in the operation context before it can fail. Resource `.Rendering` composes them with process options; wholesale `WithRenderer` still reads them through `port.Violations`. HTTP triplets and gRPC tests cover all operations and manual registration. |
+| 8 | ~~A vocabulary default can be handed to the body with an unresolved placeholder.~~ **Closed.** | closed | `errs` + `port` | `errs.Codes.Message` uses the same checked expansion as the catalogue, and `port` accepts only a successful non-empty result. Missing parameters fall through to safe violation text/code; tests pin direct and catalogue-backed paths. |
 | 9 | Bridged validator tags (`gte`, `email`, `oneof`) are undeclared codes, so the rendered message is the tag: `{"error_code":"gte","message":"gte"}` | serious | `errs` | The bridge's promise is a code *and* a sentence. Nothing in the docs says the tags must be declared, and `Missing` cannot see them because they are not in the vocabulary. `errs.ValidatorCodes` closes both. The **status is correct** — `port.KindOfWith` refuses to read an unknown code as internal (`port/kind.go:28-46`) — and round 1 said otherwise, which oversized it |
 | 10 | On PostgreSQL alone, every statement after a failure in the same transaction is `25P02` → `transaction_aborted` → `KindRetryable` → **503** | serious · **irreversible** | `errs/sqlerr` + [[D-019]] + `docs/modules/en/sqlerr.md` | A well-behaved client retries a permanently poisoned transaction, forever. It is the one dialect difference that moves the **status** rather than the word, it is on no list, and a consumer who develops on SQLite never sees it |
 | 11 | `docs/modules/en/errs.md:71-99` shows a two-line set-up and a 409 carrying `"field":["email"]`; that wiring produces no field on any engine | serious | docs | The module's first-five-minutes example promises the thing the module is for and cannot deliver it. `TestOnlyPostgreSQLFillsInASource` proves the premise; the usage guides get it right and the front page does not |
 | 12 | Nothing in the library logs a fault, and a 500 body carries `error_code` and nothing else — no id, no handle | serious | `port/porthttp` + `errs` (`LogValue`) + docs | The most common failure a consumer ships is invisible on both ends. `port.Logger` exists and no renderer calls it; `errs.Fault` has no field for a correlation id. Either the library logs it or the documentation says plainly that it is the consumer's, and neither is true today |
 | 13 | `unique` at `email` on an unauthenticated form is account enumeration, and the only seam for changing it is row 4 | serious | `errs` (via row 4) + [[D-044]] + docs | [[D-044]] weighed the echoed value and never the code-and-path pair, which is sufficient on its own. The flagship example teaches the disclosure. It raises row 4 from an unused interface to a compliance requirement with no answer |
-| 14 | `Messages.Missing(locale)` walks to the default rung, so a code with English text in `default.json` is reported as covered for `ru` | serious | `errs` | The one CI check the module offers is green on exactly the case it was added for, and no `Missing` fixture pairs a `default.json` with a second locale. What a consumer needs — a locale's declared keys — is not exposed |
 | 15 | No builder step takes `[]Violation`, so `FromFieldViolations` has no one-expression way into a fault; `docs/modules/en/errs.md:452` shows a snippet that does not compile | serious | `errs` | The documented headline of the validation bridge cannot be written as documented. The three-line workaround writes through a value `Builder.Fault` deep-copies on purpose, and `port.FaultFrom` — which looks like the missing step and is exported — silently drops `Params` and `Source` |
 | 16 | Nothing exists for testing a consumer's own faults: `reflect.DeepEqual` never matches, and every consumer writes the same ~15 lines | serious | `errs` (or a new `errs/errstest`) | `Detail.Driver` is an `error` and `wrapped` is unexported, so a table test degrades to hand comparison and a loop over `errs.Path`. It is the test every consumer writes on day two and the library ships nothing for it |
 | 17 | `Violation.Approximate` never reaches the wire, and no document says what a `field` is worth | serious | `errs` godoc | A form receiving `"field":["Email"]` from a declined hop is byte-indistinguishable from a correct one, so the UI marks the wrong input or nothing. Dropping it may well be right ([[D-044]]); the defect is that nobody weighed it or wrote the guarantee down |
@@ -1157,14 +1113,13 @@ bindings and the docs, and the `port` sweep reports several of the same rows.
 
 ## Contested
 
-- **The renderer replacement boundary is retained, not called a dropped hop.**
-  `crudfiber.New(repo, WithRenderer(NewRenderer(WithCodes, WithMessages)))` needs
-  no hop because `New` uses `port.Identity`; `NewFor` and `ServingFor` do. The
-  binding uses a supplied renderer directly and constructs `rendererFor(Hops)`
-  only when none was supplied (`crud/http/crudfiber/handler.go:115-124`). Since
-  `crudhttp.Renderer` is only `Render(ctx, err)`, it has no resolver list a
-  binding can merge. The truthful DX is the explicit `WithResolvers(port.Hops(svc,
-  mapper)...)` composition, not a non-existent `WithRenderOptions` or a panic.
+- **The renderer replacement boundary is retained, while hops are operation
+  context.** `WithRenderer` still owns status, headers, body and message policy.
+  The binding does not inspect or mutate that renderer; it installs generated
+  resolvers with `port.WithHops` before invoking it. A custom renderer using
+  `port.Violations` therefore gets the same path mapping without exposing a
+  renderer-specific resolver API. Resource `.Rendering` is the additive path
+  for callers who want the standard renderer with extra options.
 - **`Builder.Violations` leaves `open` at the last appended violation.** A
   reviewer asked for `-1`. With `-1`, a following `.Message(...)` lands on
   `Fault.Message` — row 19's trap, reached through the new method — and a
@@ -1198,18 +1153,24 @@ bindings and the docs, and the `port` sweep reports several of the same rows.
 **Setup:** A service reads its product codes from configuration and registers a zero-value `errs.Code` by mistake.
 **What the consumer does:** It returns a field violation carrying that code and expects bad start-up configuration to fail before any route serves traffic.
 **What must happen:** A code that is empty must be refused at declaration time; an omitted machine word must not become a distinct, empty `error_code` that a client has to interpret.
-**Today:** ❌ wrong or unhandled
-**Evidence:** `errs/codes.go:120-131` accepts every `Code` value; `errs/violation.go:83-110` always emits the value as `error_code`; and `errs/message.go:116-149` has no lookup keys for an empty code. No test found for declaring or rendering `Code("")`.
-**Blast radius:** silent wrong answer
+**Today:** ✅ handled
+**Evidence:** `Codes.Add` validates the open code string before mutation and
+refuses an empty, invalid UTF-8 or oversized value while retaining namespaced
+custom codes. `TestCodeDeclarationsRejectInvalidValuesWithoutPanicking` covers
+both refusals and a dotted-code compatibility control.
+**Blast radius:** none
 
 ### E-ERRS-02 — A typoed kind becomes an internal response
 **Shape:** degenerate declaration
 **Setup:** A product vocabulary passes a value such as `errs.Kind(99)` to `Codes.Add` after decoding an application setting.
 **What the consumer does:** It expects the declaration to fail at start-up, because the code is about to become part of a response contract.
 **What must happen:** Only the nine declared kinds may be accepted; an unrecognised kind must not be retained as known and then spell itself `internal` on the wire.
-**Today:** ❌ wrong or unhandled
-**Evidence:** `errs/codes.go:120-140` stores and reports an arbitrary `Kind`; `errs/code.go:75-115` makes every unrecognised value render as `internal`. `TestTheZeroKindIsInternalAndSoIsAnUnknownOne` (`errs/codes_test.go:124`) pins the latter fallback, but no test passes an invalid kind to `Codes.Add`.
-**Blast radius:** silent wrong answer
+**Today:** ✅ handled
+**Evidence:** `Codes.Add` refuses every value above the last declared kind
+before it acquires or mutates the vocabulary. The zero `KindInternal` remains a
+valid deliberate declaration. `TestCodeDeclarationsRejectInvalidValuesWithoutPanicking`
+covers the refusal and verifies that the code was not installed.
+**Blast radius:** none
 
 ### E-ERRS-03 — A downstream body names row minus one
 **Shape:** adversarial input
@@ -1270,44 +1231,57 @@ warning.
 **Setup:** An operator calls `Messages.Load` with a directory whose first file is valid and whose later file has a non-string value.
 **What the consumer does:** It receives an error and expects the catalogue it was already serving either to be unchanged or to have an explicit transactional reload contract.
 **What must happen:** One `Load` must be all-or-nothing, or its partial mutation must be documented so a caller can discard the receiver rather than serve a mixture of old and new wording.
-**Today:** ❓ unverified
-**Evidence:** `errs/catalogue.go:86-93` adds files directly to the receiver as it
-walks them, and `errs/catalogue.go:109-129` adds keys before a later key can
-fail. That implementation makes partial mutation plausible, but
-`TestTwoFilesDisagreeingOnOneKeyAreRefused` (`errs/catalogue_test.go:103`) checks
-only the returned error, not the receiver after a failed load; no focused reload
-atomicity control was found.
-**Blast radius:** silent wrong answer
+**Today:** ✅ handled
+**Evidence:** `Messages.Load` stages and validates the directory against a
+snapshot, then rechecks and merges it under the receiver lock before swapping
+the complete catalogue. `TestAFailedLateCatalogueFileLeavesTheReceiverUnchanged`
+covers a bad later value, a later conflict and late read and close failures.
+`TestLoadMergesAnAddThatWinsWhileFilesAreStaged` and
+`TestAConflictingAddWinsWhileFilesAreStaged` prove the final recheck does not
+overwrite a concurrent runtime declaration.
+**Blast radius:** none
 
 ### E-ERRS-09 — `pt-br` misses a `pt-BR` catalogue
 **Shape:** boundary
 **Setup:** The catalogue is named `pt-BR.json`, while a transport passes the lower-case language tag it received from a client.
 **What the consumer does:** It expects the same language to select the same wording independent of the tag's casing.
 **What must happen:** Locale matching must canonicalise case, or the file-name convention must say it is case-sensitive before an API silently falls to its default language.
-**Today:** ❓ unverified
-**Evidence:** `errs/message.go:159-170` preserves the supplied locale and only
-splits it on `-` or `_`; `errs/catalogue.go:98-105` preserves the file-name
-spelling too. `TestAPOSIXLocaleFallsBackTheSameWayAHyphenatedOneDoes`
-(`errs/message_test.go:233`) covers separator choice, not case; there is no
-focused case-normalisation control.
-**Blast radius:** confusing error
+**Today:** ✅ handled by an explicit case-sensitive contract
+**Evidence:** Locale names remain opaque and case-sensitive; the English and
+Russian module pages state that rather than claiming incomplete BCP 47
+canonicalisation. `TestLocaleMatchingIsDeliberatelyCaseSensitive` pins the
+`pt-BR`/`pt-br` distinction, while
+`TestAPOSIXLocaleFallsBackTheSameWayAHyphenatedOneDoes` keeps both supported
+base-locale separators.
+**Blast radius:** none
 
 ### E-ERRS-10 — A translator leaves an unmatched brace
 **Shape:** adversarial input
 **Setup:** A release contains `"at most {max characters"` or `"{}"` in a locale file.
 **What the consumer does:** It expects a catalogue typo to stop start-up, or at least to fall through rather than show template syntax to a client.
 **What must happen:** Malformed placeholders must be rejected when the catalogue is loaded or be treated as unresolved; literal brace syntax must not look like a successful message.
-**Today:** ❌ wrong or unhandled
-**Evidence:** `errs/message.go:178-209` copies an unmatched `{` and an empty `{}` into a successful result; `errs/catalogue.go:109-129` validates only JSON shape and string values. `TestATemplateWithAMissingParamFallsBackRatherThanEmittingThePlaceholder` (`errs/message_test.go:67`) covers a valid placeholder with a missing value, not malformed syntax.
-**Blast radius:** confusing error
+**Today:** ✅ handled
+**Evidence:** Both `Messages.Add` and `Messages.Load` validate templates before
+mutation. `TestMessageDeclarationsRejectInvalidNamesAndTemplates` covers
+unmatched braces, empty and nested placeholders, whitespace and the byte cap;
+`TestATemplateWithAMissingParamFallsBackRatherThanEmittingThePlaceholder` keeps
+the distinct valid-placeholder/missing-value fallback.
+**Blast radius:** none
 
 ### E-ERRS-11 — A flat key can still be impossible to reach
 **Shape:** misuse
 **Setup:** A translator writes the flat key `order.items.email.unique`, believing the whole request path is supported.
 **What the consumer does:** It expects the start-up validation that catches a nested object to catch a flat override the lookup ladder can never use.
 **What must happen:** An impossible catalogue key must be refused or reported; a valid JSON file must not silently discard a product's more specific wording.
-**Today:** ❌ wrong or unhandled
-**Evidence:** `errs/message.go:111-149` consults only the first and last named steps, while `errs/message.go:56-74` accepts any key. `errs/catalogue.go:52-63` documents this exact dead key; `TestANestedCatalogueFileIsRefused` (`errs/catalogue_test.go:136`) tests nested JSON but accepts the flat spelling at `:148-152`.
+**Today:** 🟡 partial, with the ambiguity explicit
+**Evidence:** The flat ladder cannot decide from bytes alone whether
+`order.items.email.unique` mistakenly names three path members or correctly
+names a first member literally called `order.items`. `Messages.Add` therefore
+retains the open key rather than rejecting a reachable declaration.
+`TestOnlyTheFirstAndLastNamedStepsReachTheLadder` proves both interpretations,
+and the English and Russian module pages warn authors to use the declared public
+path mapping. A typed manifest with the real path declarations is still needed
+to report the mistaken interpretation automatically.
 **Blast radius:** confusing error
 
 ### E-ERRS-12 — A driver extractor joins the wrong MySQL tuple
@@ -1369,10 +1343,11 @@ framework could have rejected at start-up: a blank code, an unknown kind, an
 empty field and a negative index all have valid JSON spellings but no valid
 consumer action. Snapshotting is only shallow for `Params`, and a shared builder
 has no concurrency boundary, so an error can change between producer and
-renderer. The catalogue refuses several structural mistakes and admits broken
-placeholder syntax and unreachable flat keys; failed-reload atomicity and
-locale-case matching are still unverified, rather than established release
-claims. Wrapped causes are safely absent from Fault text, JSON and the standard
+renderer. The catalogue now refuses malformed placeholders, ambiguous JSON and
+inputs beyond its published bounds; dotted-key reachability remains dependent
+on the real public path declaration. Failed reloads are
+atomic, and locale-case matching is explicitly case-sensitive. Wrapped causes
+are safely absent from Fault text, JSON and the standard
 internal HTTP envelope, but their deliberately reachable `Unwrap` path makes
 caller-side redaction non-optional. `sqlerr` itself stays conservative on a key
 it does not recognise, but the exported corpus utilities do not validate their
@@ -1382,9 +1357,6 @@ own records or write boundary.
 
 | # | What | Severity | Why it blocks |
 |---|---|---|---|
-| 1 | `Codes.Add` accepts an empty `Code` and every out-of-range `Kind`, so a typed configuration mistake can reach a client as an empty code or `internal` | serious | The response remains syntactically valid while no client branch can mean what the service author declared. A start-up error is the only honest outcome. |
 | 2 | `Path` admits an empty field and a negative index through public construction and JSON decode | serious | A form can be told to mark a field or array element that cannot exist, with no signal that the error body is invalid. |
 | 3 | `Fault()` copies only the outer `Params` map and a reusable `Builder` has no concurrency contract | serious | A response can acquire another request's mutable parameter value or race while it is assembled; the result is a plausible but wrong sentence. |
 | 4 | `Corpus.Save` lets `Corpus.Engine` escape the requested directory | serious | Capture automation supplied a malformed engine can overwrite a neighbouring JSON file instead of failing in its scratch directory. |
-| 5 | Failed `Messages.Load` atomicity and locale-case matching have no focused controls | sharp edge | The implementation invites concern, but a release verdict must not turn unmeasured reload or locale behaviour into a certainty. Add isolated receiver-state and case-normalisation controls before choosing a contract. |
-| 6 | Malformed templates and unreachable flat keys load successfully and then fall through or render syntax | sharp edge | Product wording silently differs from the reviewed catalogue, which makes localisation failures hard to diagnose. |

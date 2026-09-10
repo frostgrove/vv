@@ -5,11 +5,11 @@
 // It requires the MinIO backend and fx, and nothing else.
 module github.com/frostgrove/vv/storage/storageminio/storageminiofx
 
-go 1.26
+go 1.26.5
 
 require (
-	github.com/frostgrove/vv v0.0.0-20260829132449-bc1e4c0b1038
-	github.com/frostgrove/vv/storage/storageminio v0.0.0-20260829110223-5aeeda71815f
+	github.com/frostgrove/vv v0.0.0-20260829170205-3b943f2e18f1
+	github.com/frostgrove/vv/storage/storageminio v0.0.0-00010101000000-000000000000
 	github.com/minio/minio-go/v7 v7.3.0
 	go.uber.org/fx v1.24.0
 )
@@ -28,7 +28,7 @@ require (
 	github.com/tinylib/msgp v1.6.4 // indirect
 	github.com/zeebo/xxh3 v1.1.0 // indirect
 	go.uber.org/dig v1.19.0 // indirect
-	go.uber.org/multierr v1.10.0 // indirect
+	go.uber.org/multierr v1.11.0 // indirect
 	go.uber.org/zap v1.27.0 // indirect
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
 	golang.org/x/crypto v0.55.0 // indirect

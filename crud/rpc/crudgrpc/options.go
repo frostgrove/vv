@@ -5,7 +5,6 @@ import (
 
 	"github.com/frostgrove/vv/crud"
 	"github.com/frostgrove/vv/crud/query"
-	"github.com/frostgrove/vv/errs"
 	"github.com/frostgrove/vv/port"
 )
 
@@ -77,10 +76,3 @@ func MaxBulk[M any, ID comparable, U any](n int) Option[M, ID, U] {
 }
 
 var defaultRenderer = NewRenderer()
-
-func rendererFor(hops []errs.Resolver) Renderer {
-	if len(hops) == 0 {
-		return defaultRenderer
-	}
-	return NewRenderer(WithResolvers(hops...))
-}

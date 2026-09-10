@@ -120,6 +120,12 @@ the exception ([[D-048]], [[D-055]]).
 | [projection](projection.md) | `vv/event/projection` | A log becomes a read model: a supervised checkpointed consumer, two advance modes, a typed router, envelope-granular quarantine, and a fence that makes two live instances take turns |
 | [eventtest](eventtest.md) | `vv/event/eventtest` | The store contract as a conformance suite, plus three proxies an application runs over its own declaration |
 
+## Internationalization — typed presentation at an explicit locale
+
+| Module | Import | What it is |
+|---|---|---|
+| [i18n](i18n.md) | `github.com/frostgrove/vv/i18n` | **Module** — immutable checked MF2 catalogues, exact typed values, locale and formatting policy, rich/bidi output, error wording, conservative type-aware offline authoring and bounded atomic publication |
+
 ## Observability — tracing and metrics
 
 | Module | Import | What it is |

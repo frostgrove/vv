@@ -31,6 +31,159 @@ TRIPLETS=(
 	'auth/access/http/accessnet,auth/access/http/accessgin,auth/access/http/accessfiber'
 )
 
+dependency_modules() {
+	satellites | awk -F/ '
+		$2 == "test" || $2 == "_examples" { next }
+		{
+			for (part = 2; part <= NF; part++) {
+				if ($part == "testdata" || $part == "vendor" || substr($part, 1, 1) == ".") next
+			}
+			print
+		}
+	'
+}
+
+dependency_require_directives() {
+	awk '
+		{
+			line = $0
+			sub(/\/\/.*/, "", line)
+			gsub(/^[ \t]+|[ \t]+$/, "", line)
+			words = split(line, word, /[ \t]+/)
+		}
+		words == 0 { next }
+		word[1] == "require" && word[2] == "(" { block = 1; next }
+		block && word[1] == ")" { block = 0; next }
+		word[1] == "require" && words >= 3 { print word[2], word[3]; next }
+		block && words >= 2 { print word[1], word[2] }
+	' "$1"
+}
+
+dependency_replace_directives() {
+	awk '
+		{
+			line = $0
+			sub(/\/\/.*/, "", line)
+			gsub(/^[ \t]+|[ \t]+$/, "", line)
+			words = split(line, word, /[ \t]+/)
+		}
+		words == 0 { next }
+		word[1] == "replace" && word[2] == "(" { block = 1; next }
+		block && word[1] == ")" { block = 0; next }
+		{
+			first = word[1] == "replace" ? 2 : 1
+			if (first == 1 && !block) next
+			arrow = 0
+			for (position = first; position <= words; position++) {
+				if (word[position] == "=>") {
+					arrow = position
+					break
+				}
+			}
+			if (arrow == 0 || arrow == words) next
+			version = arrow == first + 2 ? word[first + 1] : "-"
+			print word[first], version, word[arrow + 1]
+		}
+	' "$1"
+}
+
+local_dependency_sentinel() {
+	[[ $1 == v0.0.0 || $1 == v0.0.0-00010101000000-000000000000 ]]
+}
+
+# Exact local-development sentinel requirements resolve from the checkout; a
+# released requirement remains on its selected MVS version. Every effective
+# local replace is rebased into the temporary modfile before the final listing.
+isolated_module_list() (
+	local module=$1 temporary modfile replacements local_module local_path current required version target old old_version old_versioned key replacement
+	local -a edits=()
+	local -a pending=()
+	local -A local_modules=()
+	local -A explicit_replacements=()
+	local -A injected=()
+	local -A traversed=()
+	shift
+	temporary=$(mktemp -d)
+	trap 'rm -rf -- "$temporary"' EXIT
+	modfile="$temporary/check.mod"
+	cp -- "$module/go.mod" "$modfile"
+	if [[ -f $module/go.sum ]]; then
+		cp -- "$module/go.sum" "$temporary/check.sum"
+	fi
+	while IFS= read -r local_module; do
+		local_path=$(module_path "$local_module")
+		local_modules["$local_path"]=$local_module
+	done < <({ printf '.\n'; dependency_modules; })
+	while read -r old old_version target; do
+		key=$old
+		[[ $old_version == - ]] || key+="@$old_version"
+		explicit_replacements["$key"]=$target
+	done < <(dependency_replace_directives "$module/go.mod")
+	pending+=("$module")
+	while (( ${#pending[@]} != 0 )); do
+		current=${pending[0]}
+		pending=("${pending[@]:1}")
+		[[ -z ${traversed["$current"]+set} ]] || continue
+		traversed["$current"]=1
+		while read -r required version; do
+			local_dependency_sentinel "$version" || continue
+			local_module=${local_modules["$required"]-}
+			[[ -n $local_module && $local_module != "$module" ]] || continue
+			replacement=${explicit_replacements["$required@$version"]-${explicit_replacements["$required"]-}}
+			if [[ -n $replacement ]]; then
+				target=
+				if [[ $replacement == /* ]]; then
+					target=$replacement
+				elif [[ $replacement == . || $replacement == ./* || $replacement == .. || $replacement == ../* ]]; then
+					target="$module/$replacement"
+				fi
+				if [[ -n $target && -f $target/go.mod ]]; then
+					target=$(cd "$target" && pwd)
+					pending+=("$target")
+				fi
+				continue
+			fi
+			key="$required@$version"
+			if [[ -z ${injected["$key"]+set} ]]; then
+				target=$(cd "$local_module" && pwd)
+				edits+=("-replace=$key=$target")
+				injected["$key"]=1
+			fi
+			pending+=("$local_module")
+		done < <(dependency_require_directives "$current/go.mod")
+	done
+	if (( ${#edits[@]} != 0 )); then
+		(
+			cd "$module"
+			GOWORK=off "$GO" mod edit -modfile="$modfile" "${edits[@]}"
+		)
+	fi
+	replacements=$(
+		cd "$module"
+		GOWORK=off "$GO" list -e -mod=mod -modfile="$modfile" -m \
+			-f '{{if .Replace}}{{if not .Replace.Version}}{{printf "%s\n%s\n%s" .Path .Version .Replace.Dir}}{{end}}{{end}}' all
+	)
+	edits=()
+	if [[ -n $replacements ]]; then
+		while IFS= read -r old && IFS= read -r version && IFS= read -r target; do
+			[[ -n $target ]] || continue
+			old_versioned=$old
+			[[ -z $version ]] || old_versioned+="@$version"
+			edits+=("-replace=$old_versioned=$target")
+		done <<< "$replacements"
+	fi
+	if (( ${#edits[@]} != 0 )); then
+		(
+			cd "$module"
+			GOWORK=off "$GO" mod edit -modfile="$modfile" "${edits[@]}"
+		)
+	fi
+	(
+		cd "$module"
+		GOWORK=off "$GO" list -mod=mod -modfile="$modfile" "$@"
+	)
+)
+
 # `go mod tidy` reads every build configuration, so a third-party import inside a
 # _test.go is a requirement of the published module and the tag it hides behind
 # exempts nothing — hence -test and the tag this repository puts fixtures behind.
@@ -38,7 +191,7 @@ TRIPLETS=(
 # a package the module does not require fails in exactly that way.
 root_third_party() {
 	local listing status=0
-	listing=$("$GO" list -deps -test -tags=integration -f '{{if not .Standard}}{{.ImportPath}}{{end}}' ./... 2>&1) || status=$?
+	listing=$(isolated_module_list . -deps -test -tags=integration -f '{{if not .Standard}}{{.ImportPath}}{{end}}' ./... 2>&1) || status=$?
 	if (( status != 0 )); then
 		printf '%s\n' "$listing"
 		return "$status"
@@ -47,7 +200,7 @@ root_third_party() {
 }
 
 check_deps() {
-	local dependencies module count status=0
+	local dependencies module count otel_dependencies status=0 failed=0
 	dependencies=$(root_third_party) || status=$?
 	if (( status != 0 )); then
 		echo 'the root module cannot be listed with its tests — a test importing a package'
@@ -62,10 +215,30 @@ check_deps() {
 		return 1
 	fi
 	while IFS= read -r module; do
-		dependencies=$(cd "$module" && "$GO" list -deps -f '{{if not .Standard}}{{.ImportPath}}{{end}}' ./... 2>/dev/null | grep -v "^$VV_MODULE" || true)
+		status=0
+		dependencies=$(isolated_module_list "$module" -deps -f '{{if not .Standard}}{{.ImportPath}}{{end}}' ./... 2>&1) || status=$?
+		if (( status != 0 )); then
+			echo "cannot list production dependencies for $module:"
+			echo "$dependencies" | sed 's/^/  /'
+			failed=1
+			continue
+		fi
+		dependencies=$(grep -v "^$VV_MODULE" <<<"$dependencies" || true)
 		count=$(awk 'NF { count++ } END { print count + 0 }' <<<"$dependencies")
 		echo "$module: $count external packages"
-	done < <(satellites)
+		if [[ $module != ./otel ]]; then
+			otel_dependencies=$(grep '^go\.opentelemetry\.io/' <<<"$dependencies" | LC_ALL=C sort -u || true)
+			if [[ -n $otel_dependencies ]]; then
+				echo "$module reaches OpenTelemetry outside the isolated ./otel module:"
+				echo "$otel_dependencies" | sed 's/^/  /'
+				failed=1
+			fi
+		fi
+	done < <(dependency_modules)
+	(( failed == 0 )) || return 1
+	if [[ -f scripts/otel_dependency_test.go ]]; then
+		GOWORK=off "$GO" test -mod=readonly -count=1 ./scripts -run '^(TestPublishedModulesOutsideOTelRemainOTelFree|TestVVOTelProduction.*)$'
+	fi
 	echo 'check-deps: ok'
 }
 
@@ -302,14 +475,32 @@ check_tidy() {
 }
 
 check_otel_schema() {
-	(cd "$REPO_ROOT" && "$GO" run ./cmd/vv-otel-gen -check -registry internal/otelreg/registry.json -out otel/schema_gen.go)
+	(cd "$REPO_ROOT" && "$GO" run ./cmd/vv-otel-gen -check -registry internal/otelreg/registry.json -out otel/schema_gen.go -manifest otel/wire_manifest.json)
 	echo 'check-otel-schema: ok'
 }
 
-check_otel_module() {
-	(cd "$REPO_ROOT/otel" && GOWORK=off "$GO" test ./...)
+check_otel_module() (
+	local temporary modfile consumer
+	temporary=$(mktemp -d)
+	trap 'rm -rf -- "$temporary"' EXIT
+	modfile="$temporary/otel.mod"
+	cp "$REPO_ROOT/otel/go.mod" "$modfile"
+	[[ ! -f $REPO_ROOT/otel/go.sum ]] || cp "$REPO_ROOT/otel/go.sum" "$temporary/otel.sum"
+	GOWORK=off "$GO" mod edit -modfile="$modfile" -replace="$VV_MODULE=$REPO_ROOT"
+	(cd "$REPO_ROOT/otel" && GOWORK=off "$GO" test -count=1 -modfile="$modfile" ./...)
+	consumer="$temporary/consumer"
+	mkdir "$consumer"
+	cp "$SCRIPT_DIR/otel-consumer-fixture/main.go.txt" "$consumer/main.go"
+	(
+		cd "$consumer"
+		GOWORK=off "$GO" mod init example.com/vv-otel-local-consumer >/dev/null
+		GOWORK=off "$GO" mod edit -require="$VV_MODULE/otel@v0.0.0"
+		GOWORK=off "$GO" mod edit -replace="$VV_MODULE/otel=$REPO_ROOT/otel"
+		GOWORK=off "$GO" mod edit -replace="$VV_MODULE=$REPO_ROOT"
+		GOWORK=off GOPROXY=off "$GO" test -mod=mod -count=1 ./...
+	)
 	echo 'check-otel-module: ok'
-}
+)
 
 check_workspace() {
 	local expected actual
@@ -468,6 +659,7 @@ case ${1:-} in
 		check_replaces
 		check_tidy
 		check_otel_schema
+		check_otel_module
 		check_workspace
 		check_event_kernel
 		;;

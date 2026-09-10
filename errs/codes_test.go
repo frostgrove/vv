@@ -158,6 +158,21 @@ func TestANilCodesReadsAsEmptyInsteadOfPanicking(t *testing.T) {
 	}
 }
 
+func TestCodesCanServeTheirParameterizedDefaultsAsMessages(t *testing.T) {
+	codes := errs.NewCodes()
+	if err := codes.Add("quota", errs.KindValidation, "only {remaining} remain"); err != nil {
+		t.Fatalf("declaring a parameterized default: %v", err)
+	}
+	v := errs.Violation{Code: "quota", Params: map[string]any{"remaining": 2}}
+	if got, ok := codes.Message(context.Background(), v, "fr"); !ok || got != "only 2 remain" {
+		t.Fatalf("the code table rendered (%q, %v), want its expanded locale-independent default", got, ok)
+	}
+	v.Params = nil
+	if got, ok := codes.Message(context.Background(), v, "fr"); ok || got != "" {
+		t.Fatalf("a default missing its parameter rendered (%q, %v)", got, ok)
+	}
+}
+
 func TestEveryStandardCodeHasTheKindTheStatusTableGivesIt(t *testing.T) {
 	want := []struct {
 		code errs.Code

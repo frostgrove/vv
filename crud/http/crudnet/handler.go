@@ -29,6 +29,10 @@ type ResourceFor[M any, ID comparable, U any, In any, P any, R any] struct {
 	patcher   PatchMapper[P, U]
 	presenter Presenter[M, R]
 	opt       options[M, ID, U]
+	hops      []errs.Resolver
+	renderer  crudhttp.Renderer
+	rendering bool
+	renderOps []crudhttp.RenderOption
 }
 
 type HandlerFor[M any, ID comparable, U any, In any] = ResourceFor[M, ID, U, In, U, M]
@@ -70,15 +74,31 @@ func ServingWire[In, P, R, M any, ID comparable, U any](service Service[M, ID, U
 
 func build[M any, ID comparable, U any, In any, P any, R any](service Service[M, ID, U], mapper Mapper[In, M], patcher PatchMapper[P, U], presenter Presenter[M, R], o options[M, ID, U]) *ResourceFor[M, ID, U, In, P, R] {
 	o.RefuseContradictions("crudnet")
-	h := &ResourceFor[M, ID, U, In, P, R]{service: service, mapper: mapper, patcher: patcher, presenter: presenter, opt: o}
+	h := &ResourceFor[M, ID, U, In, P, R]{
+		service: service, mapper: mapper, patcher: patcher, presenter: presenter, opt: o,
+		hops: port.Hops(service, mapper), renderer: o.renderer,
+	}
 	if h.opt.errorHandler == nil {
 		rd := h.opt.renderer
 		if rd == nil {
-			rd = rendererFor(port.Hops(service, mapper))
+			rd = defaultRenderer
 		}
 		h.opt.errorHandler = func(w http.ResponseWriter, r *http.Request, err error) { render(rd, w, r, err) }
 	}
 	return h
+}
+
+func (this *ResourceFor[M, ID, U, In, P, R]) Rendering(options ...crudhttp.RenderOption) *ResourceFor[M, ID, U, In, P, R] {
+	this.renderOps = append([]crudhttp.RenderOption(nil), options...)
+	this.rendering = true
+	this.renderer = nil
+	rd := crudhttp.Renderer(defaultRenderer)
+	if len(options) > 0 {
+		rd = crudhttp.NewRenderer(options...)
+	}
+	this.opt.errorHandler = func(w http.ResponseWriter, r *http.Request, err error) { render(rd, w, r, err) }
+	this.opt.customErrorHandler = false
+	return this
 }
 
 func (this *ResourceFor[M, ID, U, In, P, R]) Mount(mux *http.ServeMux, prefix string) {
@@ -130,6 +150,7 @@ func (this *ResourceFor[M, ID, U, In, P, R]) Mount(mux *http.ServeMux, prefix st
 }
 
 func (this *ResourceFor[M, ID, U, In, P, R]) List(w http.ResponseWriter, r *http.Request) {
+	r = this.request(r)
 	request, err := this.parseQueryString(r)
 	if err != nil {
 		this.fail(w, r, err)
@@ -139,6 +160,7 @@ func (this *ResourceFor[M, ID, U, In, P, R]) List(w http.ResponseWriter, r *http
 }
 
 func (this *ResourceFor[M, ID, U, In, P, R]) Query(w http.ResponseWriter, r *http.Request) {
+	r = this.request(r)
 	request, err := this.parseBody(r)
 	if err != nil {
 		this.fail(w, r, err)
@@ -168,6 +190,7 @@ func (this *ResourceFor[M, ID, U, In, P, R]) list(w http.ResponseWriter, r *http
 }
 
 func (this *ResourceFor[M, ID, U, In, P, R]) CountGet(w http.ResponseWriter, r *http.Request) {
+	r = this.request(r)
 	request, err := this.parseQueryString(r)
 	if err != nil {
 		this.fail(w, r, err)
@@ -177,6 +200,7 @@ func (this *ResourceFor[M, ID, U, In, P, R]) CountGet(w http.ResponseWriter, r *
 }
 
 func (this *ResourceFor[M, ID, U, In, P, R]) CountPost(w http.ResponseWriter, r *http.Request) {
+	r = this.request(r)
 	request, err := this.parseBody(r)
 	if err != nil {
 		this.fail(w, r, err)
@@ -200,6 +224,7 @@ func (this *ResourceFor[M, ID, U, In, P, R]) count(w http.ResponseWriter, r *htt
 }
 
 func (this *ResourceFor[M, ID, U, In, P, R]) GetByID(w http.ResponseWriter, r *http.Request) {
+	r = this.request(r)
 	id, err := this.id(r)
 	if err != nil {
 		this.fail(w, r, err)
@@ -224,6 +249,7 @@ func (this *ResourceFor[M, ID, U, In, P, R]) GetByID(w http.ResponseWriter, r *h
 }
 
 func (this *ResourceFor[M, ID, U, In, P, R]) Create(w http.ResponseWriter, r *http.Request) {
+	r = this.request(r)
 	var in In
 	raw, err := this.decode(r.Body, &in)
 	r = keep(r, raw)
@@ -245,6 +271,7 @@ func (this *ResourceFor[M, ID, U, In, P, R]) Create(w http.ResponseWriter, r *ht
 }
 
 func (this *ResourceFor[M, ID, U, In, P, R]) Update(w http.ResponseWriter, r *http.Request) {
+	r = this.request(r)
 	id, err := this.id(r)
 	if err != nil {
 		this.fail(w, r, err)
@@ -266,6 +293,7 @@ func (this *ResourceFor[M, ID, U, In, P, R]) Update(w http.ResponseWriter, r *ht
 }
 
 func (this *ResourceFor[M, ID, U, In, P, R]) Replace(w http.ResponseWriter, r *http.Request) {
+	r = this.request(r)
 	id, err := this.id(r)
 	if err != nil {
 		this.fail(w, r, err)
@@ -292,6 +320,7 @@ func (this *ResourceFor[M, ID, U, In, P, R]) Replace(w http.ResponseWriter, r *h
 }
 
 func (this *ResourceFor[M, ID, U, In, P, R]) Delete(w http.ResponseWriter, r *http.Request) {
+	r = this.request(r)
 	id, err := this.id(r)
 	if err != nil {
 		this.fail(w, r, err)
@@ -308,6 +337,7 @@ func (this *ResourceFor[M, ID, U, In, P, R]) Delete(w http.ResponseWriter, r *ht
 type BulkDeleteRequest[ID comparable] = crudhttp.BulkDeleteRequest[ID]
 
 func (this *ResourceFor[M, ID, U, In, P, R]) BulkDelete(w http.ResponseWriter, r *http.Request) {
+	r = this.request(r)
 	var request BulkDeleteRequest[ID]
 	if err := this.decodeOnly(r.Body, &request); err != nil {
 		this.fail(w, r, err)
@@ -380,7 +410,26 @@ func (this *ResourceFor[M, ID, U, In, P, R]) entity(w http.ResponseWriter, r *ht
 }
 
 func (this *ResourceFor[M, ID, U, In, P, R]) fail(w http.ResponseWriter, r *http.Request, err error) {
+	if this.opt.customErrorHandler {
+		this.opt.errorHandler(w, r, err)
+		return
+	}
+	if rec, ok := w.(*recorder); ok {
+		rec.capture(r.Context(), err, resourceRendering{
+			renderer: this.renderer,
+			standard: this.rendering,
+			options:  this.renderOps,
+		})
+		return
+	}
 	this.opt.errorHandler(w, r, err)
+}
+
+func (this *ResourceFor[M, ID, U, In, P, R]) request(r *http.Request) *http.Request {
+	if r == nil || len(this.hops) == 0 {
+		return r
+	}
+	return r.WithContext(port.WithHops(r.Context(), this.hops))
 }
 
 func keep(r *http.Request, raw []byte) *http.Request {

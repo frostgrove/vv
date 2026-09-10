@@ -596,7 +596,7 @@ package doc.
 
 ### GAP-11 [low][deferred] `.golangci.yml` configures a linter no build target runs
 
-- **Where:** `/home/user/ws/gd/lease/frostgrove/vv/framework/.golangci.yml` (5 lines).
+- **Where:** `/home/user/ws/gd/lease/frostgrove/framework/.golangci.yml` (5 lines).
 - **Scale:** local.
 - **Confidence:** CONFIRMED.
 

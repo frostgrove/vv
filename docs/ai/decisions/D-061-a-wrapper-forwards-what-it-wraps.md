@@ -16,20 +16,38 @@ had that `Core` does not name — silently, at compile time, with nothing to see
 The same is true one level down: a `Source` wrapper erases `Beginner`,
 `ReadSourcer` and `Identified`.
 
-Two one-method interfaces make discovery chains walkable, and four helpers walk
-them. Effect capabilities use a deliberately different rule:
+Three one-method interfaces make the repository, source and executor chains
+independently walkable. Effect capabilities use a deliberately different rule:
 
 | Interface | Implemented by | Walked by |
 |---|---|---|
 | `crud.Nexter` — `Next() Core[M, ID]` | `crud.Base`, `security.gate`, `faults.enricher` | `crud.SourceOf` |
 | `crud.SourceUnwrapper` — `UnwrapSource() Source` | any consumer wrapper | `crud.BeginnerOf`, `crud.ReadSourceOf`, `crud.KeyOf` |
+| `crud.ExecutorUnwrapper` — `UnwrapExecutor() Executor` | an executor-transparent wrapper | `crud.ExecutorAs`, `crud.FindExecutor`, `crud.IsTransaction`, and adapter raw-handle helpers |
 | `crud.BatchInserter` — `InsertBatch(...)` | `sqlrepo`, and each transparent repository decorator | exact outer `Core` only through `crud.InsertBatchOf` |
 | `crud.UnsafeBulkInserter` — `UnsafeBulkInsert(...)` | `crudpgx`, and an explicitly transparent source wrapper | exact Source authority only through `crud.UnsafeBulkInserterOf` |
 | `crud.UnscopedExister` — `ExistsUnscoped(...)` | `sqlrepo`, `security.gate` (inside its own scope) and `faults.enricher` | exact outer `Core` only through `crud.ExistsUnscopedOf` — see [[D-115]] |
 
-Both walks are bounded at 64 steps: a chain is built once at start-up and is a
+All three walks are bounded at 64 steps: a chain is built once at start-up and is a
 handful of layers deep, so a walk that long is following a cycle somebody built
 by accident, and "not found" is a better answer than not returning.
+
+A source wrapper implements `SourceUnwrapper` when it preserves datasource
+identity, routing and transaction construction. It implements
+`ExecutorUnwrapper` separately when raw executor capability discovery may cross
+it. `IsTransaction` uses only the executor chain. Session and transaction-source
+admission alone inspect the bounded graph formed by both seams so alternating
+wrappers cannot launder a transaction; divergent targets, nil targets, cycles
+and an exhausted budget fail closed. This does not widen ordinary discovery or
+effect execution.
+
+A sealed mutation boundary is the narrow exception to repository navigation. It
+may deliberately omit `Nexter` when exposing its inner core would expose an
+executable authority that the boundary exists to contain. `faults.Enrich`
+recognises such a boundary only when its exact direct inner value has the
+structural `MutationBoundarySealed()` method. It checks the method set before
+calling `Meta` or declaring a probe, never calls the marker, and never walks for
+it. This is a declaration-order refusal, not effect discovery through a wrapper.
 
 ## Why
 
@@ -102,7 +120,11 @@ the only behaviour it owns.
 - Do not extend `Nexter` or `SourceUnwrapper` walks to execute storage effects.
   Preserve the exact optional verb explicitly or fail closed/use portable SQL.
 - Do not add a decorator to this repository without a `Next()`. Embedding
-  `crud.Base` gives one.
+  `crud.Base` gives one, unless the decorator is a sealed authority firewall
+  whose contract requires the executable inner boundary to remain unreachable.
+- Do not walk through, invoke, or turn `MutationBoundarySealed` into a public
+  capability. An immediate outer layer may inspect the structural marker only
+  to reject an invalid declaration order.
 - Do not make either walk unbounded.
 - Do not make `SourceOf` answer for a layer that says nothing about what it
   wraps. "I do not know" is a real answer and the start-up refusal depends on it.
@@ -119,6 +141,8 @@ the only behaviour it owns.
 - `crud/repo.go:Base` — the pass-through that supplies `Next()`.
 - `crud/decorators/security/security.go:Next`
 - `crud/decorators/faults/faults.go:Next`
+- `crud/decorators/faults/faults.go:Enrich` — the exact-direct sealed-boundary
+  order check before metadata and probe declaration.
 - `crud/decorators/faults/probe.go:declare` — the caller that used to assert.
 - `crud/sqlrepo/repository.go:newRepository` — the replica lookup.
 
@@ -155,6 +179,11 @@ about what a wrapped source is — which is exactly how they came to disagree.
 - `TestADeclaredProbeWithNoReachableSourceRefusesAtBindTime`, same file, over a
   deliberately opaque decorator: the control that the walk has not become "yes to
   anything".
+- `TestEnrichRejectsADirectSealedMutationBoundaryBeforeInspectingIt` and
+  `TestEnrichChecksOnlyItsExactDirectInner` in
+  `crud/decorators/faults/sealed_boundary_test.go` — the marker is observed but
+  not called, metadata is untouched on refusal, and no wrapper walk broadens the
+  order check.
 - `TestAWrappedSourceKeepsWhatItWrapsWhenItSaysWhatItWraps` in
   `crud/wrapsource_test.go` — all three discovery interfaces through a wrapper,
   while native bulk remains hidden unless explicitly forwarded, with a

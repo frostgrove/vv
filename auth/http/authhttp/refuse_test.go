@@ -187,6 +187,16 @@ func TestTheRendererIsHandedTheLocaleTheRequestAskedFor(t *testing.T) {
 	}
 }
 
+func TestARefusalKeepsALocaleAlreadyBoundByTheApplication(t *testing.T) {
+	stub := &stubRenderer{status: http.StatusUnauthorized}
+	r := request(t, "de-DE,de;q=0.8")
+	r = r.WithContext(port.WithLocale(r.Context(), "fr-CA"))
+	authhttp.Refuse(httptest.NewRecorder(), r, stub, auth.Unauthenticated(badToken))
+	if got := port.LocaleFrom(stub.ctx); got != "fr-CA" {
+		t.Fatalf("the renderer was handed locale %q, want the already-bound fr-CA", got)
+	}
+}
+
 func TestARefusalWithNoRequestStillRenders(t *testing.T) {
 	if got := port.LocaleFrom(authhttp.Locale(nil)); got != "" {
 		t.Fatalf("a refusal with no request carries the locale %q", got)

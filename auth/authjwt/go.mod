@@ -13,6 +13,6 @@ go 1.26
 
 require (
 	filippo.io/edwards25519 v1.2.0
-	github.com/frostgrove/vv v0.0.0-20260829132449-bc1e4c0b1038
+	github.com/frostgrove/vv v0.0.0-00010101000000-000000000000
 	github.com/golang-jwt/jwt/v5 v5.3.1
 )

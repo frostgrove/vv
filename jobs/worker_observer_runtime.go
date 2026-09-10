@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-func (workers *Workers) observeWorker(spec workerEventSpec) {
+func (workers *Workers) observeWorker(ctx context.Context, spec workerEventSpec) {
 	if workers == nil || nilInterface(workers.config.observer) {
 		return
 	}
@@ -13,11 +13,11 @@ func (workers *Workers) observeWorker(spec workerEventSpec) {
 	if err != nil {
 		return
 	}
-	safeObserve(workers.config.observer, context.Background(), event)
+	safeObserve(workers.config.observer, ctx, event)
 }
 
-func (workers *Workers) observeWorkerStart(operation WorkerOperation, active int) time.Time {
-	workers.observeWorker(workerEventSpec{
+func (workers *Workers) observeWorkerStart(ctx context.Context, operation WorkerOperation, active int) time.Time {
+	workers.observeWorker(ctx, workerEventSpec{
 		Operation: operation,
 		Outcome:   WorkerOutcomeStarted,
 		Active:    active,
@@ -30,7 +30,7 @@ func (workers *Workers) observeWorkerStart(operation WorkerOperation, active int
 	return startedAt
 }
 
-func (workers *Workers) observeWorkerFinish(operation WorkerOperation, outcome WorkerOutcome, failure WorkerFailure, active int, startedAt time.Time) {
+func (workers *Workers) observeWorkerFinish(ctx context.Context, operation WorkerOperation, outcome WorkerOutcome, failure WorkerFailure, active int, startedAt time.Time) {
 	elapsed := time.Duration(0)
 	if !startedAt.IsZero() {
 		finishedAt, err := workers.config.clock.Now()
@@ -38,7 +38,7 @@ func (workers *Workers) observeWorkerFinish(operation WorkerOperation, outcome W
 			elapsed = finishedAt.Sub(startedAt)
 		}
 	}
-	workers.observeWorker(workerEventSpec{
+	workers.observeWorker(ctx, workerEventSpec{
 		Operation: operation,
 		Outcome:   outcome,
 		Failure:   failure,
@@ -48,7 +48,7 @@ func (workers *Workers) observeWorkerFinish(operation WorkerOperation, outcome W
 	})
 }
 
-func (workers *Workers) observeClaim(batch ClaimBatch, call workerDriverCall, active int) {
+func (workers *Workers) observeClaim(ctx context.Context, batch ClaimBatch, call workerDriverCall, active int) {
 	spec := workerEventSpec{
 		Operation: WorkerOperationClaim,
 		Outcome:   call.outcome,
@@ -65,10 +65,10 @@ func (workers *Workers) observeClaim(batch ClaimBatch, call workerDriverCall, ac
 			spec.Bytes = claimedDeliveryBytes(batch.items)
 		}
 	}
-	workers.observeWorker(spec)
+	workers.observeWorker(ctx, spec)
 }
 
-func (workers *Workers) observeRecover(result RecoverResult, call workerDriverCall, active int) {
+func (workers *Workers) observeRecover(ctx context.Context, result RecoverResult, call workerDriverCall, active int) {
 	spec := workerEventSpec{
 		Operation: WorkerOperationRecover,
 		Outcome:   call.outcome,
@@ -87,11 +87,11 @@ func (workers *Workers) observeRecover(result RecoverResult, call workerDriverCa
 			spec.Bytes = recoveredDeliveryBytes(result.items)
 		}
 	}
-	workers.observeWorker(spec)
+	workers.observeWorker(ctx, spec)
 }
 
-func (workers *Workers) observeSaturation(operation WorkerOperation, active, limit int) {
-	workers.observeWorker(workerEventSpec{
+func (workers *Workers) observeSaturation(ctx context.Context, operation WorkerOperation, active, limit int) {
+	workers.observeWorker(ctx, workerEventSpec{
 		Operation: operation,
 		Outcome:   WorkerOutcomeSaturated,
 		Active:    active,
@@ -99,7 +99,7 @@ func (workers *Workers) observeSaturation(operation WorkerOperation, active, lim
 	})
 }
 
-func (workers *Workers) observeRenew(request RenewRequest, result RenewResult, call workerDriverCall) {
+func (workers *Workers) observeRenew(ctx context.Context, request RenewRequest, result RenewResult, call workerDriverCall) {
 	spec := workerEventSpec{
 		Operation: WorkerOperationRenew,
 		Outcome:   call.outcome,
@@ -111,10 +111,15 @@ func (workers *Workers) observeRenew(request RenewRequest, result RenewResult, c
 	if call.outcome == WorkerOutcomeComplete {
 		spec.Results = renewalResultCounts(result.items)
 	}
-	workers.observeWorker(spec)
+	workers.observeWorker(ctx, spec)
 }
 
-func (workers *Workers) observeApply(definition Name, binding BindingName, request ApplyRequest, result ApplyResult, call workerDriverCall) {
+func (workers *Workers) observeApply(ctx context.Context, definition Name, binding BindingName, request ApplyRequest, result ApplyResult, call workerDriverCall) {
+	disposition := request.command.disposition
+	reason := request.command.reason
+	if !disposition.IsZero() {
+		reason = disposition.Reason()
+	}
 	spec := workerEventSpec{
 		Operation:   WorkerOperationApply,
 		Outcome:     call.outcome,
@@ -122,8 +127,8 @@ func (workers *Workers) observeApply(definition Name, binding BindingName, reque
 		Definition:  definition,
 		Binding:     binding,
 		CommandKind: request.command.kind,
-		Disposition: request.command.disposition.Kind(),
-		Reason:      request.command.reason,
+		Disposition: disposition.Kind(),
+		Reason:      reason,
 		Items:       1,
 		Elapsed:     call.elapsed,
 	}
@@ -134,7 +139,7 @@ func (workers *Workers) observeApply(definition Name, binding BindingName, reque
 			items:    1,
 		}}
 	}
-	workers.observeWorker(spec)
+	workers.observeWorker(ctx, spec)
 }
 
 func claimedDeliveryBytes(items []ClaimedDelivery) int {

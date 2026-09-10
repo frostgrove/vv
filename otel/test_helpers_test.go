@@ -14,30 +14,39 @@ import (
 )
 
 type recordedSpan struct {
-	name       string
-	kind       trace.SpanKind
-	attributes map[attribute.Key]attribute.Value
-	events     []string
-	status     codes.Code
-	ended      bool
-	startTime  time.Time
-	endTime    time.Time
+	name            string
+	kind            trace.SpanKind
+	newRoot         bool
+	attributes      map[attribute.Key]attribute.Value
+	links           []trace.Link
+	events          []string
+	eventAttributes []map[attribute.Key]attribute.Value
+	status          codes.Code
+	ended           bool
+	startTime       time.Time
+	endTime         time.Time
 }
 
 type testTracerProvider struct {
 	tracenoop.TracerProvider
-	mu              sync.Mutex
-	spans           []*recordedSpan
-	panicTracer     bool
-	panicStart      bool
-	panicAttributes bool
-	panicStatus     bool
-	panicEnd        bool
-	panicAddEvent   bool
-	addEventCalls   int
-	attributeCalls  int
-	statusCalls     int
-	endCalls        int
+	mu               sync.Mutex
+	spans            []*recordedSpan
+	panicTracer      bool
+	panicStart       bool
+	typedNilContext  bool
+	typedNilSpan     bool
+	panicAttributes  bool
+	panicStatus      bool
+	panicEnd         bool
+	panicAddEvent    bool
+	panicIsRecording bool
+	tracerCalls      int
+	startCalls       int
+	isRecordingCalls int
+	addEventCalls    int
+	attributeCalls   int
+	statusCalls      int
+	endCalls         int
 }
 
 func newTestTracerProvider() *testTracerProvider {
@@ -45,6 +54,9 @@ func newTestTracerProvider() *testTracerProvider {
 }
 
 func (p *testTracerProvider) Tracer(name string, options ...trace.TracerOption) trace.Tracer {
+	p.mu.Lock()
+	p.tracerCalls++
+	p.mu.Unlock()
 	if p.panicTracer {
 		panic("tracer creation failed")
 	}
@@ -59,8 +71,15 @@ type testTracer struct {
 type spanKey struct{}
 
 func (t *testTracer) Start(ctx context.Context, spanName string, opts ...trace.SpanStartOption) (context.Context, trace.Span) {
+	t.provider.mu.Lock()
+	t.provider.startCalls++
+	t.provider.mu.Unlock()
 	if t.provider.panicStart {
 		panic("tracer start failed")
+	}
+	if t.provider.typedNilSpan {
+		var span *testSpan
+		return context.WithValue(ctx, spanKey{}, "discarded"), span
 	}
 	cfg := trace.NewSpanStartConfig(opts...)
 	span := &testSpan{
@@ -68,7 +87,9 @@ func (t *testTracer) Start(ctx context.Context, spanName string, opts ...trace.S
 		rec: &recordedSpan{
 			name:       spanName,
 			kind:       cfg.SpanKind(),
+			newRoot:    cfg.NewRoot(),
 			attributes: make(map[attribute.Key]attribute.Value),
+			links:      append([]trace.Link(nil), cfg.Links()...),
 			startTime:  time.Now(),
 		},
 	}
@@ -80,9 +101,23 @@ func (t *testTracer) Start(ctx context.Context, spanName string, opts ...trace.S
 	t.provider.spans = append(t.provider.spans, span.rec)
 	t.provider.mu.Unlock()
 
+	if t.provider.typedNilContext {
+		var next *typedNilContext
+		return next, span
+	}
 	ctx = trace.ContextWithSpan(ctx, span)
 	return context.WithValue(ctx, spanKey{}, span), span
 }
+
+type typedNilContext struct{}
+
+func (*typedNilContext) Deadline() (time.Time, bool) { return time.Time{}, false }
+
+func (*typedNilContext) Done() <-chan struct{} { return nil }
+
+func (*typedNilContext) Err() error { return nil }
+
+func (*typedNilContext) Value(any) any { return nil }
 
 type testSpan struct {
 	tracenoop.Span
@@ -114,9 +149,21 @@ func (s *testSpan) AddEvent(name string, options ...trace.EventOption) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.rec.events = append(s.rec.events, name)
+	config := trace.NewEventConfig(options...)
+	attributes := make(map[attribute.Key]attribute.Value)
+	for _, attr := range config.Attributes() {
+		attributes[attr.Key] = attr.Value
+	}
+	s.rec.eventAttributes = append(s.rec.eventAttributes, attributes)
 }
 
 func (s *testSpan) IsRecording() bool {
+	s.provider.mu.Lock()
+	s.provider.isRecordingCalls++
+	s.provider.mu.Unlock()
+	if s.provider.panicIsRecording {
+		panic("span recording check failed")
+	}
 	return true
 }
 
@@ -165,23 +212,26 @@ func (s *testSpan) TracerProvider() trace.TracerProvider {
 type recordedMetric struct {
 	name       string
 	value      any
+	context    context.Context
 	attributes map[attribute.Key]attribute.Value
 }
 
 type testMeterProvider struct {
 	metricnoop.MeterProvider
-	mu                   sync.Mutex
-	metrics              []*recordedMetric
-	meters               int
-	histogramCreations   int
-	counterCreations     int
-	panicMeter           bool
-	panicHistogramCreate bool
-	panicCounterCreate   bool
-	panicHistogramRecord bool
-	panicCounterAdd      bool
-	counterAddCalls      int
-	histogramRecordCalls int
+	mu                        sync.Mutex
+	metrics                   []*recordedMetric
+	meters                    int
+	histogramCreations        int
+	int64HistogramCreations   int
+	counterCreations          int
+	panicMeter                bool
+	panicHistogramCreate      bool
+	panicCounterCreate        bool
+	panicHistogramRecord      bool
+	panicCounterAdd           bool
+	counterAddCalls           int
+	histogramRecordCalls      int
+	int64HistogramRecordCalls int
 }
 
 func newTestMeterProvider() *testMeterProvider {
@@ -223,6 +273,16 @@ func (m *testMeter) Float64Histogram(name string, options ...metric.Float64Histo
 	return &testHistogram{name: name, provider: m.provider}, nil
 }
 
+func (m *testMeter) Int64Histogram(name string, options ...metric.Int64HistogramOption) (metric.Int64Histogram, error) {
+	if m.provider.panicHistogramCreate {
+		panic("histogram creation failed")
+	}
+	m.provider.mu.Lock()
+	m.provider.int64HistogramCreations++
+	m.provider.mu.Unlock()
+	return &testInt64Histogram{name: name, provider: m.provider}, nil
+}
+
 type testCounter struct {
 	metricnoop.Int64Counter
 	name     string
@@ -246,6 +306,7 @@ func (c *testCounter) Add(ctx context.Context, incr int64, options ...metric.Add
 	c.provider.metrics = append(c.provider.metrics, &recordedMetric{
 		name:       c.name,
 		value:      incr,
+		context:    ctx,
 		attributes: attrs,
 	})
 	c.provider.mu.Unlock()
@@ -286,6 +347,35 @@ type testHistogram struct {
 	provider *testMeterProvider
 }
 
+type testInt64Histogram struct {
+	metricnoop.Int64Histogram
+	name     string
+	provider *testMeterProvider
+}
+
+func (h *testInt64Histogram) Record(ctx context.Context, incr int64, options ...metric.RecordOption) {
+	h.provider.mu.Lock()
+	h.provider.int64HistogramRecordCalls++
+	h.provider.mu.Unlock()
+	if h.provider.panicHistogramRecord {
+		panic("histogram record failed")
+	}
+	cfg := metric.NewRecordConfig(options)
+	attrs := make(map[attribute.Key]attribute.Value)
+	set := cfg.Attributes()
+	for _, kv := range set.ToSlice() {
+		attrs[kv.Key] = kv.Value
+	}
+	h.provider.mu.Lock()
+	h.provider.metrics = append(h.provider.metrics, &recordedMetric{
+		name:       h.name,
+		value:      incr,
+		context:    ctx,
+		attributes: attrs,
+	})
+	h.provider.mu.Unlock()
+}
+
 func (h *testHistogram) Record(ctx context.Context, incr float64, options ...metric.RecordOption) {
 	h.provider.mu.Lock()
 	h.provider.histogramRecordCalls++
@@ -303,6 +393,7 @@ func (h *testHistogram) Record(ctx context.Context, incr float64, options ...met
 	h.provider.metrics = append(h.provider.metrics, &recordedMetric{
 		name:       h.name,
 		value:      incr,
+		context:    ctx,
 		attributes: attrs,
 	})
 	h.provider.mu.Unlock()

@@ -1,0 +1,2345 @@
+{
+  "schema": "audit-trace-semantics/v1",
+  "records": [
+    {
+      "id": "AU-001",
+      "kind": "actor-goal",
+      "text": "Record a business or security event explicitly An application author declares an event kind and records a typed occurrence such as an approval, permission change, break-glass grant, export, or authentication decision. The declaration chooses exactly one sealed target arm: a typed target or explicit target absence. It never fabricates a reference for an occurrence that has no logical target. The event carries a stable action, outcome, actor chain, scope, reason code, source, time, correlation, causation, trace reference, and the declared target presence according to policy. A present target declared in a searchable storage mode is queryable through the same protected, authorized, bounded history contract as an entity subject; knowing the generated operation identity is not a prerequisite for investigation. A protected-only or redacted target remains valid evidence but has no target-history door and never falls back to a broad scan. A generic context map, request dump, raw error, SQL string, or bearer credential has no spelling."
+    },
+    {
+      "id": "AU-002",
+      "kind": "actor-goal",
+      "text": "Record a committed entity revision automatically An application author binds a CRUD repository once through the sealed `auditcrud.Secured` composite. A supported create/save, update, delete, or restore records exactly the declared safe before/after evidence in the same transaction as the mutation. `DefaultService.Replace` is covered through the composite's Save path; the technical evidence still says whether the entity was created or changed rather than guessing the caller verb. A failed, denied, rolled-back, or no-op mutation does not claim a committed change. A hard delete terminally closes that scoped subject chain; recreating the same database key cannot silently start a second audit identity."
+    },
+    {
+      "id": "AU-003",
+      "kind": "actor-goal",
+      "text": "Group related evidence without inventing atomicity An application author may give several events and revisions one operation and revision identity. They form one atomic revision only when every write shares the same proven transaction authority. Grouping values from different transactions is correlation, never an atomicity claim."
+    },
+    {
+      "id": "AU-004",
+      "kind": "actor-goal",
+      "text": "Investigate history safely An authorized investigator asks for bounded history by one permitted scope and entity subject or resource declaration, declared entity index, event type/target/index, operation type or exact operation, attempt type/target/exact operation, actor hop, or declared context coordinate; exact revision/item inspection and an explicit short-lived cross-scope grant are separate doors. Purpose, role, complete scoped-reference identity, field/context projection, signed-observed or explicitly unsigned- recorded time range, direction, changed fields, event codes, and query class are authorized independently. The public API exposes origin-sealed typed equality selectors, including bounded canonical conjunctions, not a generic property or analytics language. A broad attempt investigation returns transition evidence, never an incompletely inferred attempt status; exact operation status is a distinct all-or-nothing door. Every page cursor is encrypted and authenticated, freezes the original request, requester, original and prior-effective grant ceilings, cumulative progress, expiry, store, and admitted catalog lineage, and is reauthorized on every continuation. Current authority may narrow or revoke that grant but can never reintroduce anything removed on an earlier page. No page leaves the kernel until its access evidence is independently committed outside any caller transaction."
+    },
+    {
+      "id": "AU-005",
+      "kind": "actor-goal",
+      "text": "Reconstruct declared state An application author may declare selected fields reconstructable. The reader can rebuild that declared projection and its authenticated present, soft-deleted, or hard-deleted entity lifecycle state at a revision or causally closed integrity-bound observed-time prefix; unsigned store-recorded time is never an authenticated boundary. The request verifies the store-asserted subject head's signed revision and leaf through genesis before it trusts that prefix. Redacted and one-way evidence report their own explicit `Redacted` or `Tokenized` knowledge; missing keys, authenticated destruction, unknown codecs, and fields not yet captured by their record-era catalog likewise remain explicit unknown states. None becomes a guessed zero value. Merely crossing a retention cutoff changes purge eligibility, not readable knowledge. A revert is a new authorized mutation and a new audit revision, never a history rewrite. Retained catalog generations authenticate old records and provide explicit upcast paths; the current catalog alone decides present read authority. Two ordered authenticated boundaries may be compared under one combined budget and one access decision. Their lifecycle states participate in the comparison. A field or lifecycle endpoint whose truth is hidden or unavailable reports an indeterminate difference rather than guessed equality. An exact bounded neighbor query reports predecessor and successor independently as present, proven chain boundary, or unavailable; retention, authorization, or budget loss never becomes false absence."
+    },
+    {
+      "id": "AU-006",
+      "kind": "actor-goal",
+      "text": "Prove what was and was not captured The policy owner reviews a deterministic named/versioned catalog lineage containing resources, actions, fields, manifest-public non-sensitive code inventories, executable-policy versions/golden fingerprints, codec wire fingerprints, classifications, target presence, typed equality indexes, projections, retention, failure consequences, context facts, hold-matter privacy policy, and owners. Each generation binds its predecessor and is retained for verification. Adding a model field changes nothing. Adding audit evidence or changing sampled executable meaning changes the manifest fingerprint and requires an explicit declaration/version."
+    },
+    {
+      "id": "AU-007",
+      "kind": "actor-goal",
+      "text": "Survive failures and retries truthfully The caller can distinguish malformed declarations, bad wiring, refused input, authorization denial, conflict, a certainly failed append, an unconfirmed append, an unreadable historical value, and a backend outage. The framework never automatically retries a mutation or an unconfirmed audit append. Caller-invoked standalone `Retry` may submit only the exact frozen audit append; a transaction-bound token remains lookup-only. An idempotency key can reconcile the same logical revision even when randomized protection produces new ciphertext, but cannot make two different revisions one event. Exact stored envelopes have their own integrity commitment, signed when the catalog requires it, and cannot be moved between fields or revisions."
+    },
+    {
+      "id": "AU-008",
+      "kind": "actor-goal",
+      "text": "Plan retention and operate holds, corrections, and verification An operator can inventory evidence by retention class, produce a bounded and fenced hold-aware purge plan, place or release one identified legal-hold membership without disturbing overlapping matters, append a correction or dispute, and verify integrity. Release 1 does not execute purge, destroy keys, or deliver exports: those need a separately accepted CAS/fence or outbox contract. Destructive work starts nowhere implicitly and never bypasses hold or manifest policy. Each hold transition signs its stable private HoldIdentity plus authenticated expected and resulting membership/count/epoch/ canonical-identity-set state and the store applies it with one exact CAS; projection indexes are never trusted without that transition proof."
+    },
+    {
+      "id": "AU-009",
+      "kind": "actor-goal",
+      "text": "Integrate without an extension mesh Authentication, tenancy, jobs, event sourcing, storage, telemetry, and application modules map into audit-owned bounded values at the composition root. Production packages do not import each other pairwise. OTel is an optional diagnostic mirror, not the authoritative ledger. It may receive only bounded non-identifying work counters such as scanned/verified revisions, pages, store calls, gaps, and budget stops; sampling/export failure never removes required audit evidence."
+    },
+    {
+      "id": "AU-010",
+      "kind": "actor-goal",
+      "text": "Test a store and an application policy without PostgreSQL The root module ships a complete concurrent in-memory store and a public store conformance suite. Applications can check declaration uniqueness, codec round trips and wire fixtures, named subject/event semantic goldens, explicit target absence, subject injectivity over their own samples, redaction canaries, actor/scope mapping, entity-index aliases, lifecycle/neighbor honesty, attempt facet separation, reconstruction, and reader authorization without a database."
+    },
+    {
+      "id": "AU-011",
+      "kind": "actor-goal",
+      "text": "Prove a durable operation attempt from start through settlement An application author declares a typed attempt lifecycle for one sealed operation and chooses a typed target or explicit target absence at declaration time. Its advertised Required `Run` gate independently commits start before it invokes the protected job, authentication, HTTP, or application callback. Bounded checkpoints, an explicit nonterminal OutcomeUnknown state, and one truthful Succeeded, Failed, Cancelled, or explicitly adjudicated Abandoned terminal append immutable signed transitions under one attempt-head CAS. A transactional terminal may commit atomically with the business/entity revision; an uncertain settlement is reconciled rather than relabelled failure. Restart resumes only an exact verified open chain. BestEffort remains visibly non-authoritative and gives no handle when its start is absent or unconfirmed. Attempt results expose a resulting state only when committed or replayed evidence authenticates one; a failed or unconfirmed append never guesses it."
+    },
+    {
+      "id": "AM-ALLOW-001",
+      "kind": "defect",
+      "text": "Capture or return an undeclared/secret/unprojected field or context fact."
+    },
+    {
+      "id": "AM-API-001",
+      "kind": "defect",
+      "text": "Advertise a missing/uncompilable helper, perform constructor I/O, or expose two configuration authorities."
+    },
+    {
+      "id": "AM-APPEND-001",
+      "kind": "defect",
+      "text": "Split one revision across writes, append more than once, or retain a partial failed result."
+    },
+    {
+      "id": "AM-ATTEMPT-BOUND-001",
+      "kind": "defect",
+      "text": "Check attempt value, checkpoint, transition, selector, page, chain, or wire ceilings after work, reset cumulative limits, consume reserved settlement capacity, or synthesize status from a partial page."
+    },
+    {
+      "id": "AM-ATTEMPT-CATALOG-001",
+      "kind": "defect",
+      "text": "Reuse changed attempt meaning under one policy fingerprint, merge per-chain and global-counter authority, trust a malformed Unsettled certificate, activate an incompatible policy while unsettled work exists, or accept a stale catalog/counter proof."
+    },
+    {
+      "id": "AM-ATTEMPT-PRIVACY-001",
+      "kind": "defect",
+      "text": "Capture an undeclared dump, header, credential, raw error, stack, ambient context, or payload map, expose internal aliases, or omit requester Purpose and Role from attempt authority or evidence."
+    },
+    {
+      "id": "AM-ATTEMPT-RESUME-001",
+      "kind": "defect",
+      "text": "Resume, resolve, or abandon through a copied, stale, foreign, partially verified, unauthorized, expired, or intent-substituted handle, grant, Purpose, Role, origin, or chain."
+    },
+    {
+      "id": "AM-ATTEMPT-RETENTION-001",
+      "kind": "defect",
+      "text": "Purge an Open or Uncertain chain, split a terminal cohort or co-revision, use less than the maximum member cutoff, ignore any member hold, or select the current counter head without an authenticated supersession or reset anchor."
+    },
+    {
+      "id": "AM-ATTEMPT-START-001",
+      "kind": "defect",
+      "text": "Enter protected work before a Committed Inserted Started transition, return a handle on replay or failed begin, invoke the callback on replay, or let an uncertain absence authorize another start."
+    },
+    {
+      "id": "AM-ATTEMPT-STATE-001",
+      "kind": "defect",
+      "text": "Skip or weaken the attempt expected-state CAS, admit an illegal phase edge or second terminal, trust a mutable projection, conflate Open and Uncertain, or expose ResultingState for an uncommitted settlement."
+    },
+    {
+      "id": "AM-ATTEMPT-TX-001",
+      "kind": "defect",
+      "text": "Claim a terminal from cancellation, panic, returned error, or unknown commit, split a grouped terminal from its mutation, replace reconcilable transactional uncertainty, or retry through another authority."
+    },
+    {
+      "id": "AM-ATTEMPT-WIRE-001",
+      "kind": "defect",
+      "text": "Omit, reorder, or substitute a transition, prior leaf, sequence, target-presence arm, owner, scope, fingerprint, code, digest input, seal, or containing revision and still accept the chain."
+    },
+    {
+      "id": "AM-BACKING-001",
+      "kind": "defect",
+      "text": "Serialize local Backing, omit/change durable BackingID, or confuse a sibling with a distinct store."
+    },
+    {
+      "id": "AM-BASELINE-001",
+      "kind": "defect",
+      "text": "Let a delta establish genesis, label a legacy first touch as creation, omit one reconstructable after-state field, capture an unchanged nonreconstructable field, accept a partial/racing baseline, guess pre-baseline absence, or append the same baseline twice on retry."
+    },
+    {
+      "id": "AM-BOUNDS-001",
+      "kind": "defect",
+      "text": "Check an observable byte/count/time or reconstruction-work limit after allocation, decode, or store work, or pass a custom-callback result onward before bounding it."
+    },
+    {
+      "id": "AM-BRIDGE-001",
+      "kind": "defect",
+      "text": "Forge, copy, reuse, cross a Recorder, or bypass the one-use internal auditcrud Spec/Guard/Batch."
+    },
+    {
+      "id": "AM-CANCEL-CAUSE-001",
+      "kind": "defect",
+      "text": "Delegate caller-controlled context.Cause, retain a resolver value/error after post-return cancellation, or leak a direct/wrapped/joined cause through CauseOf or a downstream seam."
+    },
+    {
+      "id": "AM-CAT-001",
+      "kind": "defect",
+      "text": "Skip lineage, predecessor, stable-meaning, retention, or activation-CAS validation."
+    },
+    {
+      "id": "AM-CATALOG-ADMIN-001",
+      "kind": "defect",
+      "text": "Install/activate without a persisted external change reference, skip a direct child, acknowledge then omit/alter/fabricate mutation readback, bootstrap in runtime New, or let the runtime concrete type expose CatalogAdmin."
+    },
+    {
+      "id": "AM-CODE-001",
+      "kind": "defect",
+      "text": "Accept an empty/malformed/undeclared code, use the current instead of record-era set, substitute event/control/reason domains, or let code membership grant value visibility; alternatively claim the kernel can infer semantic sensitivity from valid grammar."
+    },
+    {
+      "id": "AM-CODEC-001",
+      "kind": "defect",
+      "text": "Normalize, alias, change during an executed fixture, omit or skip a golden, alter accepted/rejected bytes, accept an unknown/noncanonical form, fail to bound returned bytes before later work, or claim the kernel bounds termination/complexity inside a custom engine."
+    },
+    {
+      "id": "AM-COMPARE-001",
+      "kind": "defect",
+      "text": "Authorize two independent walks, reverse or cross subject chains, reset the shared budget, guess equality for an unknown endpoint, or omit a boundary/contributor/status from result evidence."
+    },
+    {
+      "id": "AM-CONCURRENCY-001",
+      "kind": "defect",
+      "text": "Assume injected serialization, race on returned buffers, or publish mutable store identity."
+    },
+    {
+      "id": "AM-CONFORM-001",
+      "kind": "defect",
+      "text": "Certify without a usable store, required hook, section verdict, or killed defect."
+    },
+    {
+      "id": "AM-CONSEQUENCE-001",
+      "kind": "defect",
+      "text": "Treat BestEffort as authoritative, swallow its visible error, or admit it for entity/control evidence."
+    },
+    {
+      "id": "AM-CONTEXT-001",
+      "kind": "defect",
+      "text": "Order provenance enums, resolve twice, union member policies, or leak caller context downstream."
+    },
+    {
+      "id": "AM-CONTINUITY-001",
+      "kind": "defect",
+      "text": "Derive entity identity/head from time/randomness, skip predecessor CAS, or advance on replay."
+    },
+    {
+      "id": "AM-CORRECT-001",
+      "kind": "defect",
+      "text": "Use an unkeyed/wrong proposal domain, omit or reorder any exhaustive proposal preimage member, include the digest in its own cycle, evaluate the digester twice, retain mutable input, admit a current redacted proposal or redacted exact original record-era target, skip record-era target reveal/token comparison, or substitute draft/original after authorization."
+    },
+    {
+      "id": "AM-CRUD-001",
+      "kind": "defect",
+      "text": "Infer victims from counts/stale input, drop narrowing, misclassify Save/delete, or advance a no-op."
+    },
+    {
+      "id": "AM-CRUD-BOUNDARY-001",
+      "kind": "defect",
+      "text": "Expose the Gate/private receiver, permit an unsecured sibling entry or outer-faults order, let unsupported verbs reach callbacks/I/O, or substitute the frozen mutation payload."
+    },
+    {
+      "id": "AM-CURSOR-001",
+      "kind": "defect",
+      "text": "Omit requester/query/grant/expiry/catalog/backing binding, conflate cursor/fence protocols, or widen on continuation."
+    },
+    {
+      "id": "AM-DENIAL-001",
+      "kind": "defect",
+      "text": "Amplify denial, collapse states, recover panic, or expose cause/receipt/retry data."
+    },
+    {
+      "id": "AM-ENTITY-DRAFT-001",
+      "kind": "defect",
+      "text": "Make EntityDraft assignable to manual Draft, add a standalone entity append/head door, or accept caller-authored entity state outside Guard.Run."
+    },
+    {
+      "id": "AM-ERROR-001",
+      "kind": "defect",
+      "text": "Leak a collaborator cause through rendering/traversal or recover a non-observer panic."
+    },
+    {
+      "id": "AM-EVIDENCE-001",
+      "kind": "defect",
+      "text": "Release prepared data before independently committed audit-of-audit evidence."
+    },
+    {
+      "id": "AM-EVIDENCE-DIGEST-001",
+      "kind": "defect",
+      "text": "Use raw SHA-256/wrong domain, omit any typed field including role/query class, incoming/emitted continuation or origin, leave selection/fence unexplained, conflate request/grant/result/hold/denial inputs, introduce a fence/result cycle, or claim finite tests prove a custom digester stays keyed."
+    },
+    {
+      "id": "AM-EXACT-READ-001",
+      "kind": "defect",
+      "text": "Let unknown row contents supply their own access scope, omit requested exact ceilings, authorize any-item/partial-revision content, skip containing-envelope verification, or release a foreign ordinal/catalog/log."
+    },
+    {
+      "id": "AM-EXEC-001",
+      "kind": "defect",
+      "text": "Use an executor registry, expose/swap execution, accept foreign authority, or cross simultaneous transactions."
+    },
+    {
+      "id": "AM-GROUP-001",
+      "kind": "defect",
+      "text": "Let scheduling define order, clear poison, ignore reservation, or append after a swallowed failure."
+    },
+    {
+      "id": "AM-HISTORY-001",
+      "kind": "defect",
+      "text": "Use current meaning for an old row, skip chain/integrity validation, turn a later-added never-captured field into Absent, or guess any unknown projection state."
+    },
+    {
+      "id": "AM-HMAC-001",
+      "kind": "defect",
+      "text": "Accept short/duplicate keys, caller-authored profile, wrong domain, missing retained token, or aliased key bytes."
+    },
+    {
+      "id": "AM-HOLD-001",
+      "kind": "defect",
+      "text": "Model hold as a boolean, resurrect membership, or advance epoch on replay/no-op."
+    },
+    {
+      "id": "AM-HOLD-MATTER-001",
+      "kind": "defect",
+      "text": "Omit matter policy/fingerprint/AAD/summary, admit an unsafe mode, or expose raw matter."
+    },
+    {
+      "id": "AM-HOLD-PROJECTION-001",
+      "kind": "defect",
+      "text": "Trust unsigned projection, use a generic/missing/wrong-command or cross-HoldID typed wire arm, omit/reorder proof, accept stale CAS, substitute prior/result state, or accept a zero/foreign HoldRequestDigest."
+    },
+    {
+      "id": "AM-HOLD-SET-001",
+      "kind": "defect",
+      "text": "Derive hold-set identity from raw or rotating commitments, preserve caller order or aliases, use a wrong domain, or admit zero or duplicate stable identities."
+    },
+    {
+      "id": "AM-IDEMP-001",
+      "kind": "defect",
+      "text": "Compare randomized envelopes or CAS-derived AppendIntentDigest for keyed logical replay, skip the atomic post-lookup recheck, or ignore semantic/same-revision-content disagreement."
+    },
+    {
+      "id": "AM-IDENTITY-001",
+      "kind": "defect",
+      "text": "Persist raw private identity, use the wrong domain, omit aliases, or split one rotated identity."
+    },
+    {
+      "id": "AM-LIFE-001",
+      "kind": "defect",
+      "text": "Authorize any item/first label, omit summary dimensions, turn an empty/exact/cross-declaration selector into a wildcard, or trust an uninspected candidate/fence."
+    },
+    {
+      "id": "AM-NAME-001",
+      "kind": "defect",
+      "text": "Accept malformed, overlong, duplicate, or confusable semantic identity."
+    },
+    {
+      "id": "AM-OBS-001",
+      "kind": "defect",
+      "text": "Let telemetry affect authority/result, emit protected dimensions, report arbitrary/estimated work, repeat cumulative counts as deltas, count rejected work, leave inapplicable fields nonzero, or wrap a work counter."
+    },
+    {
+      "id": "AM-OUTCOME-001",
+      "kind": "defect",
+      "text": "Collapse not-written/unconfirmed/cancelled/backend states or retry transaction-bound evidence."
+    },
+    {
+      "id": "AM-OWNER-001",
+      "kind": "defect",
+      "text": "Retain/alias caller buffers, discover through Next, or close a caller-owned resource."
+    },
+    {
+      "id": "AM-POSTGRES-001",
+      "kind": "defect",
+      "text": "Mutate immutable rows, skip readiness/schema fingerprint, retry pool statements, or accept wrong transaction."
+    },
+    {
+      "id": "AM-PROTECT-001",
+      "kind": "defect",
+      "text": "Protect after store visibility, omit one envelope/AAD coordinate, reuse a crypto protocol, or mishandle AES key/nonce rotation."
+    },
+    {
+      "id": "AM-QUERY-001",
+      "kind": "defect",
+      "text": "Default to broad disclosure, accept a class-illegal filter, drop or rewrite projection/time/direction/change/code/typed-selector meaning between request, grant, store, cursor, and evidence, accept a foreign event index, or expose a generic property predicate."
+    },
+    {
+      "id": "AM-READ-001",
+      "kind": "defect",
+      "text": "Replay a decision, widen a grant, trust a hostile row, or disclose a forbidden projection."
+    },
+    {
+      "id": "AM-RETENTION-001",
+      "kind": "defect",
+      "text": "Use a wrong/raw retention-basis domain or divergent adapter fold, omit CatalogRef/ObservedAt/rule input, apply current policy to old evidence, ignore a hold, let caller/store select or alter AsOf, read Control clock more than once, or drift time across continuation/purge."
+    },
+    {
+      "id": "AM-SAVEPOINT-001",
+      "kind": "defect",
+      "text": "Admit caller savepoint, stage inside faults savepoint, ignore cleanup failure, or wrap audit from outside."
+    },
+    {
+      "id": "AM-SCOPE-001",
+      "kind": "defect",
+      "text": "Drop namespace, concatenate ambiguously, compare/tokenize only the local reference, or admit protected/redacted scope into history or lifecycle authorization."
+    },
+    {
+      "id": "AM-SCOPED-CONTINUITY-001",
+      "kind": "defect",
+      "text": "Omit scope presence/namespace/local reference from subject commitment, reservation, alias, genesis, head, or predecessor validation."
+    },
+    {
+      "id": "AM-SEMANTICS-001",
+      "kind": "defect",
+      "text": "Omit policy/codec fingerprints, trust engine self-report, use function identity, reuse a version after golden drift, or claim finite calls prove an arbitrary future custom collaborator."
+    },
+    {
+      "id": "AM-SIGN-001",
+      "kind": "defect",
+      "text": "Sign semantic data only, omit envelope/description, accept malformed key/seal, or conflate backend with invalidity."
+    },
+    {
+      "id": "AM-SINGLE-001",
+      "kind": "defect",
+      "text": "Evaluate an extractor/option/predicate twice or retain its mutable input."
+    },
+    {
+      "id": "AM-SNAPSHOT-001",
+      "kind": "defect",
+      "text": "Page a live result, omit cohort identity/expiry/sort/progress/ceilings, admit a backdated concurrent append, recreate or mutate a snapshot, or reset cumulative limits per page."
+    },
+    {
+      "id": "AM-TARGET-001",
+      "kind": "defect",
+      "text": "Drop event Resource/Action, expose store token to authority, omit retained token, or scan an unsearchable target."
+    },
+    {
+      "id": "AM-TERMINAL-001",
+      "kind": "defect",
+      "text": "Treat a hard-deleted subject as genesis, drop terminal state from head CAS, rebind a retained alias, reject soft-delete restore, or advance terminal replay twice."
+    },
+    {
+      "id": "AM-TIME-001",
+      "kind": "defect",
+      "text": "Treat occurred/observed/recorded/position as interchangeable or break chain order on equal/regressing time."
+    },
+    {
+      "id": "AM-TIME-METADATA-001",
+      "kind": "defect",
+      "text": "Let unsigned RecordedAt/position select AtObservedTime, select a descendant through an excluded later predecessor, trust a mismatched/unverified asserted head, omit a suffix relative to it, reorder equal observations, or claim old-valid-head rollback detection without an external anchor."
+    },
+    {
+      "id": "AM-TOPO-001",
+      "kind": "defect",
+      "text": "Import optional extensions into the kernel, tunnel exact effects, or start lifecycle in construction."
+    },
+    {
+      "id": "AM-TRACE-001",
+      "kind": "defect",
+      "text": "Omit, duplicate, range-collapse, orphan, mistype, or disconnect an AU, requirement, AT, section, mutant, positive neighbor, reservation, package, or symbol; delete or change any AU/AH/AE/AI/AT/AM/PN semantic body, a closed subgraph, or highest ID; accept zero/skipped/wrong-package/duplicate pass events; or leave an active coverage/mutant/positive test unexecuted."
+    },
+    {
+      "id": "AE-001",
+      "kind": "edge",
+      "text": "Semantic names outside the lowercase ASCII dot-segment grammar, including empty, overlong, duplicate, or confusable Unicode spellings, are refused. Identity references are bounded, valid UTF-8, NUL/control-free opaque bytes; the kernel never normalizes or interprets them."
+    },
+    {
+      "id": "AE-002",
+      "kind": "edge",
+      "text": "A resource with no owner, purpose, retention class, subject mapper, action, or field policy is refused."
+    },
+    {
+      "id": "AE-003",
+      "kind": "edge",
+      "text": "A field name that does not resolve to the model or resolves ambiguously is refused."
+    },
+    {
+      "id": "AE-004",
+      "kind": "edge",
+      "text": "An exact CRUD model field tagged secret cannot be declared for reversible or plaintext capture, even under another evidence name. Entity extraction uses the resolved metadata field, never a caller getter."
+    },
+    {
+      "id": "AE-005",
+      "kind": "edge",
+      "text": "A personal field cannot use plaintext storage unless deployment admission names a stable reviewer-visible reason; metadata-secret entity fields and explicitly Secret event fields are never retained reversibly."
+    },
+    {
+      "id": "AE-006",
+      "kind": "edge",
+      "text": "No generic door accepts a whole-model JSON value, metadata map, request body, raw error, header bag, SQL, stack, signed URL, or opaque object bytes. Manual event extractors are trusted policy code: credential semantics cannot be inferred from an ordinary string, so application conformance must exercise token/password canaries and protection policy."
+    },
+    {
+      "id": "AE-007",
+      "kind": "edge",
+      "text": "A CodecEngine that is nondeterministic, aliases mutable scratch memory, drops or changes an accepted/rejected fixture, panics during a constructor-run fixture, self-reports identity, or cannot read an old version is caught by DefineCodec or conformance checks. An unsampled runtime panic is a trusted-engine violation and is re-raised unchanged."
+    },
+    {
+      "id": "AE-008",
+      "kind": "edge",
+      "text": "Mutating a model or payload after capture cannot change the pending record."
+    },
+    {
+      "id": "AE-009",
+      "kind": "edge",
+      "text": "A subject mapper collision is found by the application's sample proxy; one declaration cannot make injectivity universally decidable."
+    },
+    {
+      "id": "AE-010",
+      "kind": "edge",
+      "text": "Missing trusted context never falls back to anonymous, global scope, a previous request, or process state. Fixed system facts still come from an explicitly configured validated StaticContext; only OperationID has a declared kernel-generated mode."
+    },
+    {
+      "id": "AE-011",
+      "kind": "edge",
+      "text": "Raw JWT claims, headers, baggage, and client fields cannot directly mint a verified actor or scope."
+    },
+    {
+      "id": "AE-012",
+      "kind": "edge",
+      "text": "A forwarded identity is never silently upgraded to verified. Provenance labels are an explicit allowed set, not an ordered trust scale; client-supplied never passes merely because its enum value is larger."
+    },
+    {
+      "id": "AE-013",
+      "kind": "edge",
+      "text": "A denied action does not create successful entity evidence. Optional built-in history/control denial evidence has its own catalog action, retention, and consequence and is attempted only after an application-owned DenialLimiter admits the origin-bound, value-free attempt."
+    },
+    {
+      "id": "AE-014",
+      "kind": "edge",
+      "text": "The framework never claims to bound an attempt flood by itself. With no DenialLimiter, limiter refusal, or limiter failure, denial remains non-disclosing and no evidence allocation or append occurs. Its safe public state distinguishes not configured, suppressed, and a returned limiter failure without exposing the cause. A limiter panic performs no append and is re-panicked unchanged rather than converted into a denial state."
+    },
+    {
+      "id": "AE-015",
+      "kind": "edge",
+      "text": "Cancellation before any statement remains cancellation. A lost response after append may be unconfirmed and must not be relabeled cancellation."
+    },
+    {
+      "id": "AE-016",
+      "kind": "edge",
+      "text": "A panic from the wrapped repository rolls back and is re-panicked unchanged."
+    },
+    {
+      "id": "AE-017",
+      "kind": "edge",
+      "text": "A panic from an observer is isolated and counted as diagnostic failure."
+    },
+    {
+      "id": "AE-018",
+      "kind": "edge",
+      "text": "A panic from a store is not recovered into a guessed outcome."
+    },
+    {
+      "id": "AE-019",
+      "kind": "edge",
+      "text": "A mismatched datasource, non-transaction executor, hidden transaction, or incomparable source identity refuses before mutation I/O. Caller-visible database/sql savepoints, nested transaction executors, and raw transaction wrappers with unstated scope provenance are explicitly refused in release 1. The only exception is a framework-owned faults savepoint created and finalized wholly inside an already admitted root mutation guard; it never carries audit staging or settlement. Out-of-band raw SQL savepoints are not detectable and are outside the atomic claim; presenting their parent context is a caller contract violation, never something the framework claims to prove."
+    },
+    {
+      "id": "AE-020",
+      "kind": "edge",
+      "text": "A decorator between audit and the repository that hides an executable effect is not walked through."
+    },
+    {
+      "id": "AE-021",
+      "kind": "edge",
+      "text": "Options, predicates, callbacks, readers, and payload getters execute exactly once. Update appends the Gate's scope, relation, and snapshot constraints after the materialized caller options, so a hostile assigning option cannot erase security narrowing. Gate authorizes Restore before an empty-ID shortcut, and `port.DefaultService.RestoreMany` forwards even an empty set to the sealed repository boundary; neither entry can bypass policy, transaction, or evidence work."
+    },
+    {
+      "id": "AE-022",
+      "kind": "edge",
+      "text": "No-ID Save, assigned-ID Save, Update, Delete, and Restore reaching the private receiver through its hidden Gate preserve the copied security fence and exact victim set; audit never reloads a row outside that closed path to learn more."
+    },
+    {
+      "id": "AE-023",
+      "kind": "edge",
+      "text": "`SaveOnly`, `SaveAll`, `UpdateAll`, `DeleteAll`, and unsupported upsert-like or scoped effects are refused by the sealed terminal before a Gate callback, pre-read, root transaction, mutation, or append. Assigned-ID `Save` remains supported only through the terminal's hidden scoped fence and must prove create versus truthful change or first-touch baseline."
+    },
+    {
+      "id": "AE-024",
+      "kind": "edge",
+      "text": "No-op update records no entity revision and does not advance a reconstructable state."
+    },
+    {
+      "id": "AE-025",
+      "kind": "edge",
+      "text": "Bulk, raw SQL, ORM hooks, update-column shortcuts, M2M changes, database cascades, triggers, and CDC each have an explicit coverage verdict. Unsupported paths fail closed when policy claims they are covered."
+    },
+    {
+      "id": "AE-026",
+      "kind": "edge",
+      "text": "A count alone never becomes fabricated per-row evidence."
+    },
+    {
+      "id": "AE-027",
+      "kind": "edge",
+      "text": "An auto-generated primary key is captured from the committed returned row, not from the input model before insertion."
+    },
+    {
+      "id": "AE-028",
+      "kind": "edge",
+      "text": "A soft delete and hard delete are distinct declared actions."
+    },
+    {
+      "id": "AE-029",
+      "kind": "edge",
+      "text": "A query with an unauthorized scope, subject, field, role, purpose, time range, action, target, or actor returns no partial data. Replacing only the namespace component of a ScopedReference is a different unauthorized scope."
+    },
+    {
+      "id": "AE-030",
+      "kind": "edge",
+      "text": "A cursor from another store, requester, query, purpose, grant ceiling, catalog lineage, or expired key is refused rather than treated as the beginning. A current decision cannot widen its encrypted original or prior-effective ceiling, reset cumulative progress, extend its hard expiry, ignore revocation, or reuse it for another principal. A narrow-then-rewiden sequence remains narrowed. Zero, negative, over-hard, overflowing, or already-expired cursor lifetimes refuse; a shorter grant expiry wins."
+    },
+    {
+      "id": "AE-031",
+      "kind": "edge",
+      "text": "Query limits, time ranges, subjects, actions, result bytes, cursor bytes, inventory candidates, fence bytes, and catalog generations have hard ceilings."
+    },
+    {
+      "id": "AE-032",
+      "kind": "edge",
+      "text": "A malicious store returning foreign-scope, foreign-subject, duplicate, misordered, oversized, malformed, or digest-invalid rows is rejected by the kernel."
+    },
+    {
+      "id": "AE-033",
+      "kind": "edge",
+      "text": "Unknown codec versions or record-era codec-fingerprint mismatches expose neither raw bytes nor a zero value."
+    },
+    {
+      "id": "AE-034",
+      "kind": "edge",
+      "text": "Missing decryption, signing, cursor, and fence keys are distinct from corrupt evidence. A historical semantic-digest key is deliberately not required: readers do not recompute the write-time idempotency commitment."
+    },
+    {
+      "id": "AE-035",
+      "kind": "edge",
+      "text": "An authenticated future destruction assertion reports a distinct Destroyed state; merely crossing the age cutoff does not hide retained or held evidence."
+    },
+    {
+      "id": "AE-036",
+      "kind": "edge",
+      "text": "Hold placement/release, correction, dispute, integrity verification, inventory, and purge planning are authorized and audited themselves. Two active HoldIDs on one revision remain independent, and a released membership cannot be resurrected. Correction authorization binds the proposed assertion; changing its action, target, resource, fields, modes, classifications, or digest after the decision refuses before append."
+    },
+    {
+      "id": "AE-037",
+      "kind": "edge",
+      "text": "Retention never rewrites a surviving revision into a different semantic record."
+    },
+    {
+      "id": "AE-038",
+      "kind": "edge",
+      "text": "Restored backups re-run schema, catalog-lineage, durable-log identity, hold, key, and integrity checks before reads."
+    },
+    {
+      "id": "AE-039",
+      "kind": "edge",
+      "text": "Trace/log/metric attributes contain no actor, scope, subject, reason narrative, before/after value, filter, cursor, SQL, or raw error."
+    },
+    {
+      "id": "AE-040",
+      "kind": "edge",
+      "text": "Telemetry disabled, sampled out, overflowing, timing out, or crashing changes no authoritative audit result."
+    },
+    {
+      "id": "AE-041",
+      "kind": "edge",
+      "text": "Different databases never claim one atomic revision; asynchronous links state at-least-once and unknown-outcome semantics."
+    },
+    {
+      "id": "AE-042",
+      "kind": "edge",
+      "text": "Constructors, declarations, schema descriptors, and module descriptors start no goroutine, migration, exporter, purge, relay, or ticker."
+    },
+    {
+      "id": "AE-043",
+      "kind": "edge",
+      "text": "A reconstruction request has explicit revision, page, and byte budgets. If they are exhausted before a field is proven, that field is `BudgetExceeded`; it is never returned as known from a partial scan."
+    },
+    {
+      "id": "AE-044",
+      "kind": "edge",
+      "text": "Generic Record, Stage, and Capture accept only the manual-event Draft type. Resource capture returns a distinct opaque EntityDraft with no public append or standalone head door; entity evidence runs only inside a recorder-supervised one-use mutation guard, while access/control/lifecycle evidence is admitted only through its authorized owner service and committed-evidence barrier."
+    },
+    {
+      "id": "AE-045",
+      "kind": "edge",
+      "text": "One revision cannot contain two entity items for the same resource and subject. Known subjects are reserved before mutation; a generated-subject collision or any other post-mutation capture failure poisons the outer group."
+    },
+    {
+      "id": "AE-046",
+      "kind": "edge",
+      "text": "Randomized ciphertext for identical logical evidence can differ without changing keyed idempotent equality. Moving or changing any envelope byte, algorithm, key, field, item, or revision coordinate breaks integrity."
+    },
+    {
+      "id": "AE-047",
+      "kind": "edge",
+      "text": "A keyed retry returns the original stored envelope and receipt; an exact retry invokes no context resolver, semantic digester, protector, signer, or clock."
+    },
+    {
+      "id": "AE-048",
+      "kind": "edge",
+      "text": "Catalog activation refuses gaps, forks, parent mismatch, stale writers, generation reuse, incompatible wire meaning, and undeclared privacy weakening."
+    },
+    {
+      "id": "AE-049",
+      "kind": "edge",
+      "text": "Historical reads never use an old policy as present authorization. Removed fields are unavailable unless the current catalog explicitly admits a stable historical identity and upcast. A reconstructable field introduced after a baseline remains Unobserved across unrelated deltas until a full anchor or its first actual assignment; removal plus HistoricalReconstruct preserves that state instead of fabricating absence."
+    },
+    {
+      "id": "AE-050",
+      "kind": "edge",
+      "text": "A page, inventory, verification report, or purge plan is never returned with rollback-capable access evidence. Not-written, unconfirmed, or malicious caller-transaction settlement discards the prepared result."
+    },
+    {
+      "id": "AE-051",
+      "kind": "edge",
+      "text": "A fence bit flip, wrong key, durable log, backing, lineage, query, cohort, hold epoch, expiry, or oversized encoding refuses before lifecycle I/O. The serialized identity is durable BackingID, never a pointer-derived local Backing."
+    },
+    {
+      "id": "AE-052",
+      "kind": "edge",
+      "text": "Equal or regressing signed observed times retain predecessor order. For `10 -> 30 -> 20` at `25`, the descendant cannot cross its excluded predecessor: reconstruction returns the declared temporal-ambiguity outcome and no projection, never future-observed state. Unsigned store times never select the entity chain."
+    },
+    {
+      "id": "AE-053",
+      "kind": "edge",
+      "text": "A committed duplicate found while a different live caller transaction is expected refuses and poisons that unit. It never lets a second business mutation borrow the first transaction's audit evidence."
+    },
+    {
+      "id": "AE-054",
+      "kind": "edge",
+      "text": "Retention rule reuse with another meaning, zero/negative or overflowing periods, caller- or store-selected future AsOf time, changed result echo, and cutoff races refuse. The one kernel-clock instant and one store snapshot identifier remain distinct and produce no partial eligibility."
+    },
+    {
+      "id": "AE-055",
+      "kind": "edge",
+      "text": "An access or control decision constructed for request A is rejected when returned for request B, even if its visible constraints are byte-identical. Resolver and authority each run once; stores and private evidence receive no caller context values."
+    },
+    {
+      "id": "AE-056",
+      "kind": "edge",
+      "text": "Every equality-filtered tokenized scope, subject, client, or target requires a query token for every admitted retained generation/profile. One missing key rejects the whole query before Log I/O; protected-only and redacted identities are not searchable, while indexed-protected mode uses a token index plus a separately protected display value."
+    },
+    {
+      "id": "AE-057",
+      "kind": "edge",
+      "text": "`auditcrud.Secured` rejects zero or typed-nil factory arguments and invalid metadata, catalog, source, Writer, or inner capabilities before callbacks or I/O. Its terminal exposes no `Next`, Gate, private receiver, or unsecured audit entry; `faults -> Secured` fails at bind time, while the sole supported order remains `Secured -> faults -> repository`."
+    },
+    {
+      "id": "AE-058",
+      "kind": "edge",
+      "text": "Entity, idempotency, requester, and hold-matter alias sets are copied, domain-separated, description-complete, and atomically resolve to at most one stable object. Split aliases, duplicate descriptions, and concurrent first-use races fail closed rather than create parallel histories or hold identities."
+    },
+    {
+      "id": "AE-059",
+      "kind": "edge",
+      "text": "A denied read never causes automatic evidence amplification. With no application limiter admission it returns the original non-disclosing denial and performs zero append calls; an admitted neighboring request may append bounded denial evidence but still cannot become permission."
+    },
+    {
+      "id": "AE-060",
+      "kind": "edge",
+      "text": "An exact control store that omits, duplicates, reorders, substitutes, or over-sizes a requested revision/item—or returns a row outside the sealed resource, class, scope, subject, or catalog constraint—releases no target or report."
+    },
+    {
+      "id": "AE-061",
+      "kind": "edge",
+      "text": "A hold store that accepts a stale or mismatched full-state CAS, substitutes expected/result membership, count, epoch, active set, or transition head, appends on conflict/not-found, advances a no-op/replay, skips an atomic keyed recheck, or returns a candidate other than the authenticated original keyed replay or exact inserted/revision replay is a contract failure and releases no success."
+    },
+    {
+      "id": "AE-062",
+      "kind": "edge",
+      "text": "Lookup answers with caller-transaction visibility, a nonzero authority, staged data, a missing Found header, or a present AbsentNow header are rejected without a receipt."
+    },
+    {
+      "id": "AE-063",
+      "kind": "edge",
+      "text": "A zero, copied, replayed, cross-recorder, wrong-kind, or substituted private bridge carrier, guard, specification, or batch refuses before transaction or model I/O. Application code has no public constructor, token, binder, or nameable receiver path for those values; deliberately binding a repository without `Secured` remains an explicit outside-policy application choice rather than falsely audited work."
+    },
+    {
+      "id": "AE-064",
+      "kind": "edge",
+      "text": "A RetryToken has no serialization or parsing door and never survives as an unauthenticated execution capability. Restart recovery uses ReconcileKey and a rebuilt idempotent logical operation."
+    },
+    {
+      "id": "AE-065",
+      "kind": "edge",
+      "text": "After the sole context-resolver call, a context-value canary at any store, authority, limiter, codec, crypto, retry, or evidence seam finds no caller value or caller-provided cancellation cause; only Deadline, Done, and normalized Err/Cause state remains."
+    },
+    {
+      "id": "AE-066",
+      "kind": "edge",
+      "text": "Integrity invalidity, missing key, missing seal, unsupported profile, malformed evidence, incomplete evidence, unknown catalog, and verifier backend failure never collapse into one result or leak raw stored bytes."
+    },
+    {
+      "id": "AE-067",
+      "kind": "edge",
+      "text": "A Writer that would need an authority-to-executor map, retains an executor or execution outside the object returned to the active frame, exposes its executor, swaps authority, or returns a nil/foreign execution fails conformance. Callback abort and pre-append failure leave no store-side registry or cleanup obligation."
+    },
+    {
+      "id": "AE-068",
+      "kind": "edge",
+      "text": "`{scope: tenant, reference: acme}` never authorizes, resumes, or revokes `{scope: region, reference: acme}`; every intersection compares both bounded components byte-exactly. A protected-only or redacted ScopeFact in any generation needed by history or lifecycle refuses at catalog/lineage construction rather than becoming an unverifiable summary coordinate."
+    },
+    {
+      "id": "AE-069",
+      "kind": "edge",
+      "text": "A mixed-resource revision cannot be inventoried, held, verified, or included in a purge plan under a grant that covers only one item. Omitting, duplicating, or relabeling any resource, item action, classification, scope, subject, or searchable target in a store candidate rejects the whole result. A grant for the same resource and action but another event target, or an implicit empty-list wildcard, also fails."
+    },
+    {
+      "id": "AE-070",
+      "kind": "edge",
+      "text": "A correction decision for one immutable proposal cannot be replayed after substituting its event declaration, action, target, field set, mode, classification, protected commitment, or logical draft digest. A current redacted-target proposal refuses before authority and lookup; a redacted record-era original refuses after authenticated exact lookup without a distinct existence signal or append."
+    },
+    {
+      "id": "AE-071",
+      "kind": "edge",
+      "text": "Restarting with a new pool pointer and the same durable BackingID succeeds; reusing cursor/fence bytes with another BackingID fails before store I/O, and neither errors nor tokens contain a rendered process identity."
+    },
+    {
+      "id": "AE-072",
+      "kind": "edge",
+      "text": "Missing, short, duplicate, inactive, or description-mismatched HMAC keys refuse at construction. Built-in codecs and helpers copy keys and bytes and expose no secret through formatting or errors."
+    },
+    {
+      "id": "AE-073",
+      "kind": "edge",
+      "text": "A conformance factory that claims a capability without its required hook, constructs no usable store, returns no verdict, or certifies no section fails rather than reporting green; unsupported remains NotCertified."
+    },
+    {
+      "id": "AE-074",
+      "kind": "edge",
+      "text": "An event target whose storage policy is not equality-searchable cannot promise target history. Cross-event, cross-action, cross-resource, raw-versus-token, and retained-token target substitutions return no page."
+    },
+    {
+      "id": "AE-075",
+      "kind": "edge",
+      "text": "A caller-supplied or escaped savepoint remains refused even when faults is in the chain. Removing, widening, or failing to finalize the single internal faults savepoint causes the root mutation/audit unit to fail and roll back."
+    },
+    {
+      "id": "AE-076",
+      "kind": "edge",
+      "text": "Empty, malformed, duplicate, undeclared, or cross-action outcome/reason codes refuse before protection or Writer I/O. A historical row is checked against its authenticated record-era code set, never today's set. A syntactically valid sensitive-looking code demonstrates the honest trusted-author boundary and fails an application policy canary rather than an impossible semantic kernel inference."
+    },
+    {
+      "id": "AE-077",
+      "kind": "edge",
+      "text": "A codec engine cannot self-report its fingerprint or omit an accepted/rejected fixture. Reusing a policy or codec version after golden drift is a lineage conflict. Function addresses, source paths, closure state, reflection, and binary hashes never enter identity; an unsampled behavior change is explicitly the trusted engine author's obligation to version and fixture, not a false runtime guarantee inferred from finite construction calls."
+    },
+    {
+      "id": "AE-078",
+      "kind": "edge",
+      "text": "A hostile Log may monotonically alter every unsigned RecordedAt and backend position or omit a valid signed suffix while preserving returned bytes. AtObservedTime verifies the store-asserted head's signed revision and leaf through genesis and still resolves the same causally closed boundary or returns bounded unknown/ temporal ambiguity; a missing head/history is likewise ambiguity, never a successful empty projection. It never accepts the forged time axis or truncated prefix."
+    },
+    {
+      "id": "AE-079",
+      "kind": "edge",
+      "text": "Hold actions with a missing matter policy, plaintext/token-only/redacted matter, an incompatible codec, or a changed record-era matter fingerprint refuse before authority or store I/O. Protected matter never appears in a manifest, summary, error, or result as raw bytes."
+    },
+    {
+      "id": "AE-080",
+      "kind": "edge",
+      "text": "False AlreadyActive/AlreadyReleased, false release, modified count/epoch/set/head, stale CAS, omitted transition, cross-target/HoldID/command or stable-HoldIdentity substitution, zero/duplicate identity in the set, rotation-dependent set digest, missing typed hold arm, generic-value substitution, or matter/request change after authorization releases no HoldResult. A legal authenticated neighbor returns the exact signed projection and a full RevisionRef for each transition."
+    },
+    {
+      "id": "AE-081",
+      "kind": "edge",
+      "text": "A context canceled with a distinct secret-bearing cause exposes only context.Canceled or context.DeadlineExceeded at every downstream seam. Direct, wrapped, or joined resolver returns of that cause are discarded after resolution; the raw cause object/text is absent from CauseOf, values, errors, observations, and evidence."
+    },
+    {
+      "id": "AE-082",
+      "kind": "edge",
+      "text": "The same resource and local subject under absent, tenant, and region scope identities cannot collide in a reservation, genesis, alias, head, group, rotation, or reconstruction. A store returning another scope's predecessor is rejected before mutation commit."
+    },
+    {
+      "id": "AE-083",
+      "kind": "edge",
+      "text": "Calling no-ID Save on the advertised terminal can reach the private receiver only through its hidden Gate and remains one atomic create after authorization. The terminal exposes no `Next` or unsecured sibling entry; `SaveOnly` and bulk alternatives refuse before Gate callbacks or I/O."
+    },
+    {
+      "id": "AE-084",
+      "kind": "edge",
+      "text": "A trace checkpoint with a missing or renamed executable/registry/test, zero matching or skipped structural/active behavioral test, unmapped AU or requirement, ill-typed/one-way edge, missing/duplicate obligation activation, fabricated AT×section pair, wrong section/package, or pending test treated as active fails. Go's successful `-run` with no matching test cannot satisfy it. Missing or changed AU/AH/AE/AI/AT/AM/PN semantic text fails its digest/anchor check. Semantic correctness of a structurally valid edge assignment remains a reviewer obligation because no duplicated reverse map exists."
+    },
+    {
+      "id": "AE-085",
+      "kind": "edge",
+      "text": "A custom CodecEngine, SemanticDigester, IdentityKeyring, Tokenizer, Protector, Revealer, Signer, Verifier, CursorKeys, or FenceKeys implementation that changes only after construction, retains inputs, violates its cryptographic property, or consumes unbounded work demonstrates the documented trusted- collaborator boundary; finite fixtures are never reported as proof of arbitrary future behavior, PRF/AEAD/unforgeability, nonce uniqueness, or termination. A change exhibited during a fixture/application golden run still fails, and every observable returned byte is bounded and copied before downstream work."
+    },
+    {
+      "id": "AE-086",
+      "kind": "edge",
+      "text": "An unkeyed or wrong-domain access, result, continuation, or denial digest and mutation of any one exhaustive input member, including role, query class, requested reconstruction/comparison boundary/budget, control reason/limit/hold request, incoming or emitted continuation token/key/expiry, normalized control selection, inventory-fence envelope/decoded claim, returned hold projection, or origin request/grant commitment, fails a low-entropy dictionary/cross-domain canary; the keyed legal neighbor stays stable under its exact catalog profile."
+    },
+    {
+      "id": "AE-087",
+      "kind": "edge",
+      "text": "Catalog install or activation with a zero, malformed, missing, discarded, or falsely reported external deployment-ledger reference refuses. A stale expected parent, a mutation that would make complete readback exceed its hard bound, skipped direct-child activation, mutation-log mismatch after reopen, or a runtime concrete value whose dynamic type exposes CatalogAdmin also fails its deployment fixture."
+    },
+    {
+      "id": "AE-088",
+      "kind": "edge",
+      "text": "A zero or malformed non-default projection, mixed time axis/bounds, reversed or overflowing window, invalid direction, duplicate/unknown changed field or event code, class-incompatible predicate, or grant that rewrites a predicate refuses before authority or Log I/O; safe zero defaults normalize identically in request, grant, store query, cursor, and evidence. A resource- wide or operation-type query cannot omit scope/limit, inject a foreign resource/action/member, or spell all resources/scopes."
+    },
+    {
+      "id": "AE-089",
+      "kind": "edge",
+      "text": "Actor, event-index, client, service, deployment, operation, correlation, causation, trace, source, target, subject, and scope equality searches require every exact active/retained token profile for their declared mode. A missing profile, foreign typed index, protected-only/redacted coordinate, raw token, or attempted broad-scan fallback releases nothing."
+    },
+    {
+      "id": "AE-090",
+      "kind": "edge",
+      "text": "A missing, expired, recreated, mutable, foreign, oversized, or reordered search snapshot, changed sort key, progress regression/jump, or cumulative grant overflow rejects the whole page. Histories beyond the declared cohort count/byte ceilings fail at origin instead of degrading to an unstable cursor."
+    },
+    {
+      "id": "AE-091",
+      "kind": "edge",
+      "text": "Comparison with reversed, forked, foreign, or ambiguous boundaries, or an independently widened second walk returns neither endpoint nor evidence. Shared-budget exhaustion cannot reset at the second walk: it returns only the bounded BudgetExceeded endpoint knowledge and Indeterminate differences after its own evidence commits. Redacted-versus-absent and every other unknowable pair never become a false equal/different boolean."
+    },
+    {
+      "id": "AE-092",
+      "kind": "edge",
+      "text": "Recreating a hard-deleted local ID under the same absent or exact scope, racing recreation with deletion, or resolving a retained alias of that terminal identity rolls back the business mutation and advances no audit head. Exact replay of the accepted terminal revision remains idempotent."
+    },
+    {
+      "id": "AE-093",
+      "kind": "edge",
+      "text": "Exact revision/item access with a foreign catalog/log/ordinal, partial containing revision, omitted authorization-summary member, changed post-preparation RecordedAt, or mismatched envelope/integrity digest releases no object and commits no successful result claim; the originally prepared RecordedAt remains explicitly unsigned."
+    },
+    {
+      "id": "AE-094",
+      "kind": "edge",
+      "text": "A delta-shaped changed revision cannot establish a missing entity head. If the adapter cannot capture every current reconstructable after-state, if its row/head lock or genesis CAS races, or if any baseline field fails encoding/protection, the business mutation rolls back and no partial anchor appears. Retry/crash recovery is idempotent; concurrent first touches serialize to one full baseline followed by ordinary deltas. `AtObservedTime` before that baseline returns `TemporalAmbiguity` with no projection or result evidence, never fabricated absence; `Compare` applies the same boundary rule. Exact vectors cover baseline minus one nanosecond, baseline itself, and equal-time descendants in predecessor order."
+    },
+    {
+      "id": "AE-095",
+      "kind": "edge",
+      "text": "Required Run whose Begin is NotWritten, Unconfirmed, canceled, denied, or invalid invokes its protected callback zero times and returns no run handle. Lower-level Begin likewise returns no handle. Lookup.AbsentNow after an uncertain begin is observation, not permission to execute or start a second attempt."
+    },
+    {
+      "id": "AE-096",
+      "kind": "edge",
+      "text": "A BestEffort begin failure remains visible. The caller may explicitly proceed outside authoritative lifecycle coverage, but receives no handle and the framework never reports a complete attempt."
+    },
+    {
+      "id": "AE-097",
+      "kind": "edge",
+      "text": "Reusing an OperationID or idempotency key with changed start-target presence or value, values, stable owner, scope, policy/replay fingerprint, operation, semantic provider description, or consequence conflicts before protected work and advances no attempt head. A changed trace/correlation/causation/client/source fact does not rerun work or defeat start replay; the stored first-call context remains immutable evidence."
+    },
+    {
+      "id": "AE-098",
+      "kind": "edge",
+      "text": "Checkpoint or finish before Started, checkpoint after OutcomeUnknown or any terminal, an undeclared checkpoint/reason, a regressing/duplicate sequence, and a second distinct terminal all refuse without append. A distinct authorized ResolveUnknown is the only non-abandon transition from Uncertain and may append exactly one truthful Succeeded, Failed, or Cancelled terminal."
+    },
+    {
+      "id": "AE-099",
+      "kind": "edge",
+      "text": "Concurrent genuine terminal transitions serialize through one exact expected-state CAS: one signed terminal wins and every incompatible loser is a conflict; exact idempotent replay of the winner is inert."
+    },
+    {
+      "id": "AE-100",
+      "kind": "edge",
+      "text": "Checkpoint count/bytes have policy, hard, and store ceilings. Exhausting checkpoint capacity cannot consume separately reserved capacity for the largest direct terminal or for OutcomeUnknown followed by its largest legal resolving terminal, and cannot make the terminal proof unbounded."
+    },
+    {
+      "id": "AE-101",
+      "kind": "edge",
+      "text": "Caller cancellation, deadline, returned error, or panic never by itself asserts Failed or Cancelled. A panic is re-raised identically and leaves the committed attempt Open unless explicit later evidence closes it."
+    },
+    {
+      "id": "AE-102",
+      "kind": "edge",
+      "text": "Known rollback may produce Failed and known acknowledged success may produce Succeeded. Unknown commit produces neither; a potentially committed transactional terminal remains reconcilable and cannot race a standalone replacement."
+    },
+    {
+      "id": "AE-103",
+      "kind": "edge",
+      "text": "A copied, forged, stale, or foreign run handle, another Recorder, process-local Backing, durable BackingID/LogID, scope, OperationType, AttemptType, catalog, or requester cannot checkpoint, finish, resume, or abandon the attempt."
+    },
+    {
+      "id": "AE-104",
+      "kind": "edge",
+      "text": "A hostile attempt projection with an omitted/reordered transition, wrong state/sequence/start/head/leaf/expiry/checkpoint count, or a valid-looking sibling chain is rejected after exact chain recomputation and releases no handle or state."
+    },
+    {
+      "id": "AE-105",
+      "kind": "edge",
+      "text": "Passing ExpiresAt never mutates state implicitly. Abandon requires an exact authorized attempt, one trusted normalized clock sample at or after the signed deadline, a verified Open/Uncertain chain, and one winning CAS against concurrent completion."
+    },
+    {
+      "id": "AE-106",
+      "kind": "edge",
+      "text": "Signed transition time may regress without changing chain sequence. In that case derived duration is explicitly unknown rather than negative or reordered; process-monotonic duration remains diagnostic Observer data only."
+    },
+    {
+      "id": "AE-107",
+      "kind": "edge",
+      "text": "Catalog activation cannot remove or incompatibly change an AttemptPolicy while its exact authenticated Unsettled count, Open plus Uncertain, is nonzero. A malformed/head-mismatched projection cannot block or permit activation; a stale prepared proof loses the atomic catalog/counter CAS. A store that consistently replays an old valid counter and its matching signed head remains an explicit rollback threat requiring an external freshness anchor."
+    },
+    {
+      "id": "AE-108",
+      "kind": "edge",
+      "text": "Retention inventory never selects only part of an attempt chain. Open/Uncertain chains are ineligible; a closed cohort uses the maximum record-era retention cutoff across every member regardless of sequence or regressing signed time, and a hold on any member blocks every transition and every co-revision that cannot be split. PurgePlan excludes the current type- counter head until atomic supersession or an authenticated activation-reset anchor and declares the future executor's operation/start-key non-reuse coordination prerequisites. It makes no claim that deletion ran or that a tombstone already survived it."
+    },
+    {
+      "id": "AE-109",
+      "kind": "edge",
+      "text": "A composition root for authentication or another attacker-driven operation must place its application-owned admission/rate limiter before Begin. Suppressed floods therefore never enter the audit lifecycle; limiter failure grants nothing. This is an explicit integration prerequisite, not a claim that the audit kernel can identify abusive callers."
+    },
+    {
+      "id": "AE-110",
+      "kind": "edge",
+      "text": "Calling a target-history door on an explicitly targetless EventType or AttemptType, constructing `AttemptTargetIs` for a targetless AttemptType, or calling a target door on a present target whose record mode is not equality- searchable, returns the same non-disclosing closed-query refusal before ContextResolver, authority, keyring, Log, ExactLog, AttemptLog, observer, or denial-evidence I/O. Substituting present for absent target semantics, or replaying a targetless record with a fabricated empty/sentinel target, conflicts and advances no head."
+    },
+    {
+      "id": "AE-111",
+      "kind": "edge",
+      "text": "An EntityIndex over an unknown, foreign, redacted, secret-forbidden, protected-only, noncanonical, or mismatched entity field/codec, a duplicate stable index name, or a non-equality storage mode fails declaration compilation. A store row with a missing/extra index, changed Before/After presence, side, codec, classification, mode, logical commitment, retained token alias, or containing item is rejected before release. Create has no Before match, hard delete has no After match, and `EitherEquals` never turns absence into equality."
+    },
+    {
+      "id": "AE-112",
+      "kind": "edge",
+      "text": "Empty, duplicate, above-`MaxSelectorAlternatives`, over-byte, malformed, or unencodable `AnyOf` values and empty, duplicate-coordinate, incompatible-origin, above-`MaxQuerySelectors`, or over-byte `AllOf` selectors refuse before authority or store I/O. Input reorder yields the same canonical query and cursor. Two sibling items that separately satisfy halves of an `AllOf` conjunction do not match, and backend OR/AND or alias-expansion mistakes are caught by authenticated post-validation."
+    },
+    {
+      "id": "AE-113",
+      "kind": "edge",
+      "text": "A projection or comparison whose lifecycle state disagrees with its verified action chain, skips SoftDeleted before Restore, advances after HardDeleted, derives EntityPresent from an ineligible pre-baseline boundary, or changes only the lifecycle result/evidence commitment is rejected. Missing, destroyed, unauthorized, or budget-incomplete endpoint proof yields Indeterminate rather than EntityPresent, Equal, or Changed by guess."
+    },
+    {
+      "id": "AE-114",
+      "kind": "edge",
+      "text": "A forged predecessor pointer, sibling-chain neighbor, omitted middle revision, rolled-back asserted head, successor chosen by timestamp, or store `not found` response cannot prove a neighbor or NeighborChainBoundary. A missing retained predecessor, incomplete head-to-target successor walk, narrowed grant, or cumulative budget stop returns NeighborUnavailable for the affected side and discloses no inaccessible reference; it never falls through to a different subject or a reset second-side budget."
+    },
+    {
+      "id": "AE-115",
+      "kind": "edge",
+      "text": "AttemptType-wide and attempt-target pages reject a transition from a foreign type/target/chain, an omitted selector alias, a mutable snapshot, or a target presence/mode mismatch. No page, cursor, projection row, or partial exact inspection may be converted into a final AttemptState. If exact operation history cannot authenticate every transition through its asserted head or fit all disclosed matches, it returns no AttemptStatus, duration, evidence, or continuation cursor."
+    },
+    {
+      "id": "AE-116",
+      "kind": "edge",
+      "text": "Supplying one object as both `AttemptLog` and `AttemptTypeState` does not merge their authority: each request must arrive through its own interface method and typed query. A process/durable origin, catalog-set, policy/replay fingerprint, anchor, head, or counter mismatch fails construction or the exact operation. A NotWritten or Unconfirmed AttemptResult with a nonzero or present ResultingState, or a committed transition without one, is invalid and releases no handle."
+    },
+    {
+      "id": "AE-117",
+      "kind": "edge",
+      "text": "A zero, changed, or substituted Purpose/Role in Resume, ResolveUnknown, or Abandon, a disclosure grant replayed as attempt authority, or an attempt grant replayed for another intent refuses before chain state is disclosed or mutated. NewHistory with active attempt declarations and nil or foreign AttemptLog fails construction; an ordinary non-attempt history request carrying a nonzero attempt branch is malformed."
+    },
+    {
+      "id": "AH-001",
+      "kind": "happy",
+      "text": "A valid resource declaration seals on first use and is safe for concurrent use."
+    },
+    {
+      "id": "AH-002",
+      "kind": "happy",
+      "text": "`Define` panics on an invalid declaration; `TryDefine` returns the same error."
+    },
+    {
+      "id": "AH-003",
+      "kind": "happy",
+      "text": "A valid event declaration with versioned semantic goldens and closed outcome/reason sets behaves the same way through `Declare` and `TryDeclare`."
+    },
+    {
+      "id": "AH-004",
+      "kind": "happy",
+      "text": "A named catalog manifest built from declarations, policy fingerprints, code inventories, and codec fingerprints is stable across process and map order; a retained lineage rejects gaps, forks, parent mismatch, and generation reuse."
+    },
+    {
+      "id": "AH-005",
+      "kind": "happy",
+      "text": "Built-in `Text`, `Bool`, `Int64`, `Uint64`, `DecimalText`, `Bytes`, `ReferenceText`, `UUIDReference`, `Duration`, and UTC `Time` codecs are canonical and have the exact public signatures frozen by the implementation contract."
+    },
+    {
+      "id": "AH-006",
+      "kind": "happy",
+      "text": "A custom CodecEngine wrapped by DefineCodec can retain readers and accepted/rejected fixtures for older versions and upcast into the current typed value across a restart and catalog-generation change. The engine is an explicit trusted collaborator for termination, complexity, determinism, concurrency, and unsampled behavior; the kernel bounds its returned bytes before any later crypto or store work."
+    },
+    {
+      "id": "AH-007",
+      "kind": "happy",
+      "text": "A create records absent-to-value states for declared fields."
+    },
+    {
+      "id": "AH-008",
+      "kind": "happy",
+      "text": "An existing-head update records only fields whose canonical states changed. A first audited update of a pre-existing row additionally records a marked full after-state for every reconstructable field while keeping Changes limited to the fields that actually changed."
+    },
+    {
+      "id": "AH-009",
+      "kind": "happy",
+      "text": "A delete records value-to-absent states before the row becomes unreachable."
+    },
+    {
+      "id": "AH-010",
+      "kind": "happy",
+      "text": "A restore records absent-to-value states from the restored committed row."
+    },
+    {
+      "id": "AH-011",
+      "kind": "happy",
+      "text": "A redacted field records only whether its state changed."
+    },
+    {
+      "id": "AH-012",
+      "kind": "happy",
+      "text": "A protected field reaches the store only as a bounded randomized envelope with algorithm/key identity and kernel-authenticated coordinates. Stable keyed logical commitment and exact stored-envelope commitment are distinct."
+    },
+    {
+      "id": "AH-013",
+      "kind": "happy",
+      "text": "A tokenized field reaches the store only as a keyed one-way token."
+    },
+    {
+      "id": "AH-014",
+      "kind": "happy",
+      "text": "A reconstructable field round-trips through every retained accepted codec fixture and rejects every declared malformed fixture."
+    },
+    {
+      "id": "AH-015",
+      "kind": "happy",
+      "text": "One actor may be a human, workload, service, system, or external principal."
+    },
+    {
+      "id": "AH-016",
+      "kind": "happy",
+      "text": "Delegation records initiator, effective actor, and on-behalf-of hops in order."
+    },
+    {
+      "id": "AH-017",
+      "kind": "happy",
+      "text": "Every identity-bearing context field carries its provenance: server-derived, verified, forwarded, or client-supplied."
+    },
+    {
+      "id": "AH-018",
+      "kind": "happy",
+      "text": "Policy names the exact accepted provenance set per action and refuses every other label; no implicit strength order exists."
+    },
+    {
+      "id": "AH-019",
+      "kind": "happy",
+      "text": "Service, deployment, scope, operation, correlation, causation, and trace references are bounded and independently optional according to policy."
+    },
+    {
+      "id": "AH-020",
+      "kind": "happy",
+      "text": "An outcome or reason is a stable action-scoped code from the exact manifest declaration. Optional narrative, when enabled, is a separately classified protected field rather than free metadata."
+    },
+    {
+      "id": "AH-021",
+      "kind": "happy",
+      "text": "Every retained actor, scope, service, deployment, client, operation, correlation, causation, trace, and source fact is individually declared with requiredness, allowed provenance set, classification, and storage mode."
+    },
+    {
+      "id": "AH-022",
+      "kind": "happy",
+      "text": "Undeclared optional context facts are discarded before semantic commitment or protection; a required missing fact or disallowed provenance refuses before Writer I/O. Provenance labels are never ordered by enum value."
+    },
+    {
+      "id": "AH-023",
+      "kind": "happy",
+      "text": "A standalone manual event is one atomic store append."
+    },
+    {
+      "id": "AH-024",
+      "kind": "happy",
+      "text": "An audited CRUD mutation and its evidence commit together on one proven source. A transaction-bound Writer returns one execution object that privately captures the exact frozen executor and exposes only the bound audit operations; it needs no authority registry or cleanup callback to find the caller transaction."
+    },
+    {
+      "id": "AH-025",
+      "kind": "happy",
+      "text": "A caller-owned transaction can group several items under one revision."
+    },
+    {
+      "id": "AH-026",
+      "kind": "happy",
+      "text": "A rollback removes both entity writes and audit writes."
+    },
+    {
+      "id": "AH-027",
+      "kind": "happy",
+      "text": "The same idempotency key and stable keyed logical digest returns the original stored receipt even when a fresh randomized envelope differs, provided the call is standalone or the original is staged in the same exact authority. A legal-hold replay returns its original signed disposition and projection even after later transitions changed current state; state-derived CAS intent is not keyed logical identity."
+    },
+    {
+      "id": "AH-028",
+      "kind": "happy",
+      "text": "The same idempotency key with different semantics, or the same revision ID with different full content, is a conflict."
+    },
+    {
+      "id": "AH-029",
+      "kind": "happy",
+      "text": "Store failure classification determines whether the caller knows the append was not written or must reconcile an unknown outcome."
+    },
+    {
+      "id": "AH-030",
+      "kind": "happy",
+      "text": "A certainly-not-written or unconfirmed result carries an opaque exact retry token; retry executes only the frozen append and reruns no application code. A token without a caller idempotency key replays by the same revision identity and full integrity content. A token tied to a caller transaction is reconciliation-only: it can look up visibility but can never retry an audit append separately from the business mutation."
+    },
+    {
+      "id": "AH-031",
+      "kind": "happy",
+      "text": "Required evidence failure fails the unit of work; diagnostic observer failure never does."
+    },
+    {
+      "id": "AH-032",
+      "kind": "happy",
+      "text": "A declared best-effort event is visibly marked non-authoritative and cannot be used for a policy that requires durable evidence."
+    },
+    {
+      "id": "AH-033",
+      "kind": "happy",
+      "text": "Concurrent staging produces the same canonical item order for the same item multiset regardless of goroutine scheduling."
+    },
+    {
+      "id": "AH-034",
+      "kind": "happy",
+      "text": "Consecutive entity revisions bind a per-subject predecessor digest. The store validates and advances each head in the same transaction; replay advances it zero additional times. Genesis derives one stable pseudorandom chain identity from the resource, exact evidence-scope commitment, and active keyed subject commitment; concurrent creators therefore race on the same identity, and retained aliases preserve it across key rotation."
+    },
+    {
+      "id": "AH-035",
+      "kind": "happy",
+      "text": "Known entity subjects are reserved before grouped mutation I/O. Any failure after a required mutation starts permanently poisons the outer group; a swallowed adapter error cannot permit sealing or append."
+    },
+    {
+      "id": "AH-036",
+      "kind": "happy",
+      "text": "Audited CRUD in a caller-owned transaction requires this Recorder's active group. Its pending GroupResult exposes a ReconcileKey before the transaction owner commits; before commit Lookup sees no staged row, and after an uncertain commit the caller can check committed visibility without retrying either write."
+    },
+    {
+      "id": "AH-037",
+      "kind": "happy",
+      "text": "A subject, declared searchable event target, or operation query returns revisions in the normalized requested time-axis/direction order with the canonical revision tie-breaker. The typed event history shell binds the declared resource, action, target policy, and protected lookup aliases automatically."
+    },
+    {
+      "id": "AH-038",
+      "kind": "happy",
+      "text": "A cursor resumes its frozen origin cohort without omission or duplication even while normal or backdated revisions commit concurrently. Every continuation reauthorizes the same frozen requester and query, intersects current authority with both the encrypted original and prior-effective grant ceilings, freezes the new effective intersection, honors revocation, and never outlives the minimum of its configured hard-bounded lifetime, original grant expiry, narrowed current grant expiry, and prior continuation expiry."
+    },
+    {
+      "id": "AH-039",
+      "kind": "happy",
+      "text": "Authorization narrows values before they are handed to the caller. A decision is valid only for the exact origin request and requester-context commitment from which its constructor was called."
+    },
+    {
+      "id": "AH-040",
+      "kind": "happy",
+      "text": "Reader projections expose public/internal/personal fields only as the grant permits."
+    },
+    {
+      "id": "AH-041",
+      "kind": "happy",
+      "text": "A reconstructable projection is correct at create, after updates, before delete, after restore, at the authenticated current head, and at a historical boundary. A field introduced after the chain's last full anchor is explicitly Unobserved until its first authenticated assignment; an unrelated update cannot invent it."
+    },
+    {
+      "id": "AH-042",
+      "kind": "happy",
+      "text": "A correction links to the original item and appends a new assertion. Its authorization request binds a value-free digest plus the complete proposed resource, action, target identity, field set, modes, and classifications; the sealed decision cannot authorize a substituted draft. After authenticated lookup, a protected original target is decoded or revealed under its record-era description and must equal the proposed logical target. An event correction uses the same stable resource/action declaration across retained generations. A current redacted proposal refuses before authority or store I/O; an exact original whose record-era target is redacted refuses after its authenticated lookup with the same non-disclosing mismatch result. A redacted value is never guessed or inherited from the original."
+    },
+    {
+      "id": "AH-043",
+      "kind": "happy",
+      "text": "Audit-history access and lifecycle operations create their own bounded evidence. Separate exhaustive typed request/grant/result digest trios bind history and control outcomes, including reconstruction boundaries, verification statuses, retention AsOf, continuation and fence presence. Successful pages and reports are withheld until that evidence is independently committed; caller transactions and groups are not joined."
+    },
+    {
+      "id": "AH-044",
+      "kind": "happy",
+      "text": "Historical verification uses the exact retained manifest while current access policy decides what may be returned. Missing catalog history is explicit and never becomes partial data. The keyed SemanticDigest is a write-time equality commitment and is not recomputed by History; historical semantic keys are not reader requirements. Exact-envelope verification and a required record-era signature authenticate stored content."
+    },
+    {
+      "id": "AH-045",
+      "kind": "happy",
+      "text": "Every revision has distinct keyed logical, exact stored-envelope, and integrity digests over their declared inputs. The integrity digest binds the first two."
+    },
+    {
+      "id": "AH-046",
+      "kind": "happy",
+      "text": "A configured signer adds an algorithm and key identifier and verification can report valid, invalid, missing-key, and unsupported-algorithm separately."
+    },
+    {
+      "id": "AH-047",
+      "kind": "happy",
+      "text": "Database privileges and triggers make ordinary application roles insert/read only according to their role, with UPDATE/TRUNCATE denied."
+    },
+    {
+      "id": "AH-048",
+      "kind": "happy",
+      "text": "Repeating a purge plan against the same exact inventory fence returns the same eligible revision set and fence token. Every candidate carries the canonical complete resource set of its whole revision."
+    },
+    {
+      "id": "AH-049",
+      "kind": "happy",
+      "text": "Every legal-hold membership has a stable HoldID and matter. A revision remains ineligible while any membership is active; releasing one never clears another. Active and retained HoldID commitments resolve to one private stable HoldIdentity, so key rotation cannot change the authenticated set."
+    },
+    {
+      "id": "AH-050",
+      "kind": "happy",
+      "text": "Inventory fences are private authenticated bounded tokens tied to durable log, durable BackingID, catalog lineage, query, cohort, eligibility facts, complete resource sets, and active-hold epochs. Process-local Backing identity is never serialized."
+    },
+    {
+      "id": "AH-051",
+      "kind": "happy",
+      "text": "Inventory and verification distinguish incomplete evidence, missing keys, unsupported algorithms, invalid seals, and backend failure."
+    },
+    {
+      "id": "AH-052",
+      "kind": "happy",
+      "text": "Retention is a catalog-declared record-era rule anchored to integrity-bound observed capture time. Control reads its trusted clock exactly once, binds that normalized AsOf into authorization, selection, query, and fence, and accepts only a byte-exact store echo. Calendar anniversaries, leap days, month-end clamping, the inclusive cutoff instant, Forever, and hold precedence are deterministic across restart."
+    },
+    {
+      "id": "AH-053",
+      "kind": "happy",
+      "text": "Exact hold, correction, dispute, and explicit verification targets are read through a least-privilege exact seam already narrowed by the sealed grant; a store can implement it outside package audit without a broad scan."
+    },
+    {
+      "id": "AH-054",
+      "kind": "happy",
+      "text": "Each hold command is authorized for the exact revision, keyed HoldID commitment, command kind, and keyed matter commitment or explicit release absence. It derives one signed candidate from the complete authenticated prior transition chain. A dedicated persisted hold-transition wire arm binds command, HoldID, stable private HoldIdentity, revision, matter presence/representation, and complete expected/result state. The active-set digest is the fixed-domain digest of the canonical unique active HoldIdentity set for that exact log and revision. The store serializes membership state with append and CASes every expected projection component, so the returned disposition and epoch projection never come from a racy pre-read or an unsigned guess."
+    },
+    {
+      "id": "AH-055",
+      "kind": "happy",
+      "text": "Reconciliation lookup uses a value-free committed snapshot and returns the original persisted header after restart. It cannot see a staged row through the caller's transaction context."
+    },
+    {
+      "id": "AH-056",
+      "kind": "happy",
+      "text": "The hidden Gate evaluates each Save or Update payload and caller option exactly once, then gives only its private receiver the copied narrowing fence. The receiver revalidates the exact ID, scope, relation, snapshot, and victim coordinates in the proven root transaction before the business effect, so no public wrapper can replace or replay them between security and audit."
+    },
+    {
+      "id": "AH-057",
+      "kind": "happy",
+      "text": "The advertised root composition compiles from an external package using every built-in codec, custom CodecEngine/DefineCodec contract, semantic/code-set helper, HMAC helper, and AES-256-GCM protection/history-cursor/control-token keyring without an implementation-specific constructor."
+    },
+    {
+      "id": "AH-058",
+      "kind": "happy",
+      "text": "A public memory-store constructor, transaction fixture, conformance factory, report, and application-policy proxy can exercise a complete setup without a database; the same Recorder-facing code can use the PostgreSQL constructor and explicit schema lifecycle without changing audit policy."
+    },
+    {
+      "id": "AH-059",
+      "kind": "happy",
+      "text": "Aborting, panicking, or failing before Append leaves no transaction capability registered in a Writer. Only the active Recorder frame retains the store-owned execution object; dropping that frame drops the sole capability reference."
+    },
+    {
+      "id": "AH-060",
+      "kind": "happy",
+      "text": "Two scoped references with the same value and different scope namespaces remain different through authorization, grants, tokens, cursors, fences, and revocation. When history or lifecycle is declared, its requester scope is required and every present active or retained evidence scope is stored in an equality-searchable mode; an absent optional scope never becomes a wildcard."
+    },
+    {
+      "id": "AH-061",
+      "kind": "happy",
+      "text": "A lifecycle operation over a mixed-resource revision succeeds only when the sealed grant contains every canonical resource, item action, and classification, contains every present exact ScopedReference, and covers every subject or searchable- target coordinate through an exact logical selector or an explicit same- declaration `all` selector. An empty selector set matches only a summary that itself has zero such coordinates and is never a wildcard. Reports and private fences preserve one authenticated canonical summary."
+    },
+    {
+      "id": "AH-062",
+      "kind": "happy",
+      "text": "Rebuilding a store over a new process handle but the same persisted BackingID, LogID, catalog set, and retained token key resumes a cursor or fence correctly."
+    },
+    {
+      "id": "AH-063",
+      "kind": "happy",
+      "text": "A returned denied history/control error exposes one safe denial-evidence state: not configured, suppressed, limiter failed, not written, unconfirmed, or committed, without exposing the request, limiter error, receipt, retry token, or stored identifiers. A limiter panic returns no denial error or state: cleanup runs, no append or grant occurs, and the identical panic is re-raised."
+    },
+    {
+      "id": "AH-064",
+      "kind": "happy",
+      "text": "A faults probe may use one framework-owned savepoint wholly inside the already admitted root mutation guard. It releases or rolls back before capture and staging, while the outer root remains the sole atomic settlement authority."
+    },
+    {
+      "id": "AH-065",
+      "kind": "happy",
+      "text": "Manual-event outcomes and reasons and application-authored control reasons come only from immutable action-scoped declared code sets in the record-era manifest. Narrative is a separately classified protected field, and verification/internal outcomes use closed package types."
+    },
+    {
+      "id": "AH-066",
+      "kind": "happy",
+      "text": "Every executable resource/event policy has a nonzero semantic version and committed named logical-output fingerprints; every codec has constructor-run accepted/rejected wire fixtures and a library-computed fingerprint. Application golden checks exercise typed samples without retaining them in production declarations."
+    },
+    {
+      "id": "AH-067",
+      "kind": "happy",
+      "text": "Time reconstruction first verifies a store-asserted subject head's signed revision and leaf through genesis, then selects only a causally closed predecessor prefix whose cumulative maximum integrity-bound ObservedAt is at or before the request. A descendant timestamp at or before the request behind an excluded later predecessor returns temporal ambiguity and no projection. Monotone tampering with unsigned RecordedAt or backend positions and omission of a signed suffix relative to the asserted head cannot change the answer. A missing head can never prove authenticated absence and returns temporal ambiguity with no projection."
+    },
+    {
+      "id": "AH-068",
+      "kind": "happy",
+      "text": "A hold-enabled control policy declares the exact matter codec, classification, and protected mode. Every transition binds authenticated prior and resulting membership/count/epoch/set/head state plus the stable private HoldIdentity, and one full-state CAS yields the returned projection."
+    },
+    {
+      "id": "AH-069",
+      "kind": "happy",
+      "text": "Catalog installation and activation are a separate deployment workflow over a concrete deployment handle. Each mutation carries an independently authorized deployment-ledger reference; a bounded immutable mutation query proves the persisted install/activation kind, catalog, expected parent, and exact reference after reopen. A mutation that would make the complete log exceed its count or byte ceiling refuses atomically before persistence, so successful state is always queryable. Ordered direct-child activation completes before verification. The separate concrete runtime handle does not implement CatalogAdmin, including through its dynamic method set."
+    },
+    {
+      "id": "AH-070",
+      "kind": "happy",
+      "text": "The sole `auditcrud.Secured` terminal supports no-ID Save, assigned-ID Save, Update, Delete, and Restore through its hidden Gate and private audited receiver. No-ID Save records an atomic create; assigned-ID Save truthfully records create, change, or first-touch baseline from the fenced previous state. The terminal advertises no `Next`, unsecured audit entry, write-only mutation, bulk mutation, or public scoped effect."
+    },
+    {
+      "id": "AH-071",
+      "kind": "happy",
+      "text": "Access and control request/grant/result plus hold- and denial-request digests are typed, keyed, domain-separated commitments to exhaustive frozen input views. Requests include the keyed commitment to the complete admitted requester context, target kind/presence and every present target coordinate, purpose, role, scope, query class, action/field/context projections, time axis, bounds, direction, change/code predicates, the complete logical equality- selector conjunction, and limits, reconstruction or ordered comparison boundaries/work budgets, action-scoped control reason, hold request, continuation presence and exact typed cursor commitment, and the origin request/ grant commitments. Five disjoint access-result arms bind page, reconstruction, comparison, exact revision, or exact item identity, including authenticated envelope/integrity contributors and the explicitly unsigned returned RecordedAt. Results also bind reconstruction head/leaf, difference status, control statuses, retention AsOf, fences, and the complete returned hold projection. Results and denials likewise enumerate every member. Low-entropy subjects and targets do not become public dictionary oracles. The injected SemanticDigester is an explicit trusted keyed-PRF, stable-output, termination, and complexity collaborator. Control selection and the exact encrypted inventory-fence envelope/decoded claim have their own acyclic keyed domains rather than unexplained hashes. Store-query and result commitments separately bind the exact bounded internal storage-alias expansion derived only after authorization."
+    },
+    {
+      "id": "AH-072",
+      "kind": "happy",
+      "text": "A value-free downstream context preserves deadline, Done, and Err but normalizes context.Cause to the public cancellation sentinel. After the sole resolver returns, cancellation wins over its error and discards its diagnostic cause before CauseOf can retain it. A caller-supplied secret cause object never reaches any later audit-injected collaborator or public diagnostic door; ContextResolver is the one explicit injected trusted consumer of the original context and can observe it. Application callbacks deliberately retain their caller context and transaction bindings and remain application trust boundaries."
+    },
+    {
+      "id": "AH-073",
+      "kind": "happy",
+      "text": "Outcome and reason codes are manifest-public protocol labels, returned only with an authorized containing item. Grammar and record-era membership are kernel-enforced; semantic non-sensitivity and narrative-free wording are explicit declaration-author and deployment-review obligations exercised by application canaries. Sensitive narrative or identifiers require separately classified fields."
+    },
+    {
+      "id": "AH-074",
+      "kind": "happy",
+      "text": "One tracked normalized trace registry is the source of every AU-to- requirement, requirement-to-obligation, mutant, section, package, and reserved-test edge. Every obligation has one independent activation section; requirement tests and implementation sections are never falsely multiplied. The section-aware executable parses `go test -json` and requires a non-skipped passing event for every active reserved test as well as its structural test. Exact semantic records cover every AU/AH/AE/AI/AT/AM/PN body. Deleting or renaming the executable, registry, semantic body, test, or either edge is a failing checkpoint; no duplicated reverse table can drift."
+    },
+    {
+      "id": "AH-075",
+      "kind": "happy",
+      "text": "Entity continuity commits exact scope presence and both ScopedReference components before subject aliases are derived. Reservations, head lookup, genesis, rotation, grouping, and reconstruction keep equal local IDs in different scope namespaces on different chains."
+    },
+    {
+      "id": "AH-076",
+      "kind": "happy",
+      "text": "Resource-wide entity history, event-type history, a typed declared event index, initiating/effective/ any actor-hop history, each declared context-coordinate history, and exact operation or operation-type history, plus revision/item inspection are separate sealed query classes. They reuse one authorization, retained-catalog authenticity, privacy, and committed access- evidence protocol without exposing a generic property language or store token. Exact inspection supplies nonempty requested resource/action/classification ceilings before authority and lookup; unknown row contents cannot mint scope."
+    },
+    {
+      "id": "AH-077",
+      "kind": "happy",
+      "text": "A query has deterministic least-privilege zero defaults, explicit None/All/Only field and context projections, exact open/closed time windows, stable forward/reverse order, typed any/all/not changed-field predicates over authenticated field names, and record-era event outcome/reason matching. Occurred time is event-item-only; recorded time is explicitly unsigned operational metadata."
+    },
+    {
+      "id": "AH-078",
+      "kind": "happy",
+      "text": "The first page freezes a bounded immutable store-side cohort. Every continuation reuses its exact snapshot, sort, expiry, position, and cumulative page/revision/byte progress, so concurrent normal or backdated appends never appear mid-walk and grant ceilings cannot reset per page."
+    },
+    {
+      "id": "AH-079",
+      "kind": "happy",
+      "text": "One typed comparison resolves two ordered boundaries on one verified entity chain under one combined budget and one authorization/evidence unit. Known values and absence compare exactly; hidden, destroyed, undecodable, incomplete, or unprojected endpoints yield an indeterminate status."
+    },
+    {
+      "id": "AH-080",
+      "kind": "happy",
+      "text": "A hard-delete entity revision terminally closes the stable scoped- subject chain. A later database row with the same active or retained identity cannot become another genesis; soft delete remains restorable and nonterminal."
+    },
+    {
+      "id": "AH-081",
+      "kind": "happy",
+      "text": "When audit is enabled over a row with no prior entity head, its first admitted changed mutation creates a signed full-state genesis anchor whose action remains entity.changed, whose observed time is only that mutation's capture time, and whose complete reconstructable after-state is protected by the current catalog. It never fabricates creation, prior history, or unchanged field changes."
+    },
+    {
+      "id": "AH-082",
+      "kind": "happy",
+      "text": "A valid typed AttemptPolicy freezes its sealed OperationType, start/ checkpoint/finish schemas, code inventories, lifetime, checkpoint/state ceilings, continuity owner facts, consequence, context, and semantic goldens into the catalog manifest. Its context requires one non-generated stable OperationFact so restart resolves the same OperationID without a free override."
+    },
+    {
+      "id": "AH-083",
+      "kind": "happy",
+      "text": "A Required Begin returns an active typed run only after one immutable Started transition is independently Committed with Inserted disposition. The higher-level Required Run gate invokes its protected callback only after that settlement. A Replayed start returns its original receipt, no handle, and zero callback invocations; bypassing the gate is explicit outside-policy application composition."
+    },
+    {
+      "id": "AH-084",
+      "kind": "happy",
+      "text": "Each declared checkpoint appends one signed transition, advances the authenticated sequence/head and bounded checkpoint count exactly once, and leaves the attempt Open."
+    },
+    {
+      "id": "AH-085",
+      "kind": "happy",
+      "text": "A truthful standalone Succeeded, Failed, Cancelled, or OutcomeUnknown transition closes or marks an open attempt exactly once under CAS and returns its signed projection after commit."
+    },
+    {
+      "id": "AH-086",
+      "kind": "happy",
+      "text": "A terminal staged through an attempt-bound group and its admitted business/entity mutation share one exact transaction authority, append once, and commit or roll back together."
+    },
+    {
+      "id": "AH-087",
+      "kind": "happy",
+      "text": "Retrying an identical begin or transition replays its complete original envelope/projection while that evidence is retained; the same key or revision with different phase semantics conflicts and advances no head. A compatible catalog generation with the same CatalogID, AttemptPolicyFingerprint, and derived AttemptReplayFingerprint preserves that replay even though its active CatalogRef, lineage, deployment, or ephemeral request context differs; the original record-era catalog remains authenticated."
+    },
+    {
+      "id": "AH-088",
+      "kind": "happy",
+      "text": "Known external settlement uncertainty may append OutcomeUnknown. Potentially committed transactional terminal evidence instead returns its ReconcileKey and cannot be replaced by Failed or another standalone terminal. A later exact authorized resolution may move Uncertain to one truthful Succeeded, Failed, or Cancelled terminal under the same CAS."
+    },
+    {
+      "id": "AH-089",
+      "kind": "happy",
+      "text": "After restart, exact OperationID, AttemptType, scope, durable store, and current authorization resume a run only after the complete signed start-to-head transition chain is exact-inspected and recomputed."
+    },
+    {
+      "id": "AH-090",
+      "kind": "happy",
+      "text": "Once the declared deadline is reached, an explicitly authorized Abandon command may close an Open or Uncertain attempt; a concurrent genuine terminal and abandonment race through one CAS so exactly one wins."
+    },
+    {
+      "id": "AH-091",
+      "kind": "happy",
+      "text": "Exact operation history exposes authorized Started, checkpoints, and terminal/uncertain transitions under record-era verification, including a derived duration only when signed start and terminal times make it knowable."
+    },
+    {
+      "id": "AH-092",
+      "kind": "happy",
+      "text": "Every EventPolicy and AttemptPolicy seals exactly one declaration-level target arm: a typed target with its codec/classification/storage description, or explicit target absence. That presence bit participates in the manifest, semantic and replay fingerprints, stored item, per-chain projection, integrity inputs, access request/grant/result evidence, and idempotent replay. A targetless event or attempt records and reads normally by its other typed doors without inventing an empty, resource-derived, operation-derived, or sentinel Reference. A present attempt target is always equality-searchable; a present non-searchable event target remains recordable but contributes no target-history capability."
+    },
+    {
+      "id": "AH-093",
+      "kind": "happy",
+      "text": "A declared typed EntityIndex seals one exact entity schema field, stable index name, codec, classification, and equality-searchable plaintext, tokenized, or indexed-protected storage mode. Capture authenticates its optional canonical Before and After values on every applicable entity item. Typed `BeforeEquals`, `AfterEquals`, and `EitherEquals` queries apply to that single item; an absent side does not equal any value. History derives active and retained storage aliases without exposing them to the authority or caller and post-validates the authenticated values before release."
+    },
+    {
+      "id": "AH-094",
+      "kind": "happy",
+      "text": "`AnyOf` accepts one canonical duplicate-free value set of 1 through `MaxSelectorAlternatives` values for one origin-sealed equality selector. `AllOf` accepts 1 through `MaxQuerySelectors` as one bounded canonical duplicate-free set of origin-sealed actor, context, event-index, entity-index, or attempt-target selectors compatible with the bound typed history door. A returned item's item-level predicates cannot be distributed across siblings in a grouped revision. The normalized selector identities, sides, logical values, count/byte work ceilings, and conjunction participate unchanged or narrower in authorization. Only after allow does History derive bounded storage aliases; those remain internal and bind the StoreQuery, snapshot/cursor, post-validation, and committed access evidence."
+    },
+    {
+      "id": "AH-095",
+      "kind": "happy",
+      "text": "Every successful entity projection exposes one authenticated `EntityLifecycleState`: EntityPresent, EntitySoftDeletedState, or terminal EntityHardDeletedState. Create, first-touch baseline, and ordinary change establish or preserve EntityPresent; soft-delete, restore, and hard-delete advance only through their declared legal transitions. Ordered comparison returns both endpoint lifecycle states and an Equal, Changed, or Indeterminate lifecycle difference under the same boundary, chain, budget, authorization, and evidence unit as field comparison."
+    },
+    {
+      "id": "AH-096",
+      "kind": "happy",
+      "text": "An exact typed entity-neighbor query reports predecessor and successor independently as NeighborPresent with an authenticated adjacent revision, NeighborChainBoundary only when genesis or the verified current head proves no neighbor, or NeighborUnavailable when retained evidence, authorization, integrity, or the combined count/byte budget cannot prove either answer. Predecessor verification follows the signed direct link; successor verification closes the path from the asserted authenticated head to the requested revision. The pair has one sealed query class and one committed access-evidence result."
+    },
+    {
+      "id": "AH-097",
+      "kind": "happy",
+      "text": "An AttemptType-wide query and, only for an equality-searchable present target, a typed attempt-target query return bounded immutable pages of verified transition items across matching chains. They expose no `AttemptStatus`, final state, or complete-chain assertion. Exact `AttemptHistory.Operation` remains a separate door that reads one per-attempt projection and returns a status only after every transition through its authenticated head fits and verifies under one bounded request."
+    },
+    {
+      "id": "AH-098",
+      "kind": "happy",
+      "text": "Per-chain `AttemptLog` and global `AttemptTypeState` are distinct least-privilege store facets with distinct typed queries and results. Attempt orchestration receives both from the same Recorder origin; catalog activation reads only the authenticated global Unsettled counter certificate, while resume/status/retention inspect per-chain state and exact evidence. An `AttemptResult` exposes `ResultingState` only as `(AttemptState, true)` for an authenticated Committed settlement with Inserted or Replayed disposition; every not-written, unconfirmed, canceled, or pre-append refusal returns `(zero, false)`."
+    },
+    {
+      "id": "AH-099",
+      "kind": "happy",
+      "text": "A History built for a catalog set containing an AttemptType requires an explicit same-origin `AttemptLog` dependency before it can expose attempt status or investigation. Resume, ResolveUnknown, and Abandon access requests carry nonzero Purpose and Role in their strict attempt branch; the sealed grant, keyed request/result commitments, and AttemptContinuationAuthorized or AttemptAccessDenied evidence bind that exact intent. Ordinary history branches keep the attempt branch zero."
+    },
+    {
+      "id": "AI-001",
+      "kind": "invariant",
+      "text": "Allowlist: a field, equality index, relation, event attribute, context fact, and export column is absent unless explicitly declared."
+    },
+    {
+      "id": "AI-002",
+      "kind": "invariant",
+      "text": "Earliest protection: redaction, tokenization, and encryption happen before the store or observer receives evidence."
+    },
+    {
+      "id": "AI-003",
+      "kind": "invariant",
+      "text": "Secret denial: exact metadata-secret entity fields and explicitly Secret manual-event fields cannot be retained reversibly. Arbitrary manual extractors are trusted policy and must pass application credential canaries."
+    },
+    {
+      "id": "AI-004",
+      "kind": "invariant",
+      "text": "Stable meaning: every wire identifier, declared code, executable-policy version, and codec version has one reviewed semantic meaning for the lifetime of stored evidence, backed by golden fingerprints rather than function identity. Grammar and manifest membership are mechanically enforced; semantic privacy of a syntactically valid public code is an explicit declaration-author and reviewer obligation."
+    },
+    {
+      "id": "AI-005",
+      "kind": "invariant",
+      "text": "Manifest lineage: semantically relevant policy compiles to a deterministic generation whose digest binds its exact predecessor. Writes use only the active generation; retained generations authenticate history but never grant present access. Policy/code-set/codec fixture fingerprints are immutable record-era meaning. Every RetentionClass has one immutable record-era rule; the same identifier can never acquire another cutoff meaning."
+    },
+    {
+      "id": "AI-006",
+      "kind": "invariant",
+      "text": "Boundedness: all observable text, bytes, collections, batches, actor chains, selector alternatives/conjunctions, neighbor walks, pages, time ranges, catalog generations, cursors, inventory cohorts, fences, and retries are bounded before attributable work begins. Termination and complexity inside an opaque custom callback are an explicit trusted-collaborator obligation; every returned value is bounded before any later cryptographic, observer, or store work."
+    },
+    {
+      "id": "AI-007",
+      "kind": "invariant",
+      "text": "Immutable truth: committed revisions, items, and values are append-only; corrections and disputes are linked new assertions, while a business reversal is an ordinary newly authorized entity revision rather than an unreachable special wire arm."
+    },
+    {
+      "id": "AI-008",
+      "kind": "invariant",
+      "text": "Exact claim: `atomic` means one exact transaction authority over one backing. Correlation and grouping never imply it. An unsafe source-less executor is never acceptable proof. One store-owned execution object privately captures the exact executor and offers only transaction-bound audit calls; no hidden registry, ambient context lookup, or root-store retention participates in the claim."
+    },
+    {
+      "id": "AI-009",
+      "kind": "invariant",
+      "text": "Committed semantics: entity evidence describes the successfully mutated victim and returned persisted state, never caller intent masquerading as result."
+    },
+    {
+      "id": "AI-010",
+      "kind": "invariant",
+      "text": "Outcome partition: denial, not-written, conflict, unconfirmed, canceled, backend failure, and unreadable history remain distinguishable."
+    },
+    {
+      "id": "AI-011",
+      "kind": "invariant",
+      "text": "Idempotency: replay equality is a stable keyed logical commitment under catalog, operation, and idempotency identity. A separate exact envelope digest commits every stored byte and coordinate; the signed integrity digest binds both plus generated/observed immutable facts. Exact unkeyed retry uses the same revision identity and byte-identical stored integrity content. Disagreement is never deduplicated. A conditional hold request binds one authenticated expected state, one signed result state, and the complete candidate in its exact AppendIntentDigest, while keyed replay compares only the stable logical command SemanticDigest. Same-revision/different-intent has no exception; same-key/equal- semantic replay returns the original candidate even when current state would derive another intent."
+    },
+    {
+      "id": "AI-012",
+      "kind": "invariant",
+      "text": "No hidden recovery: the framework retries, reconciles, reverts, or compensates nothing implicitly. A retry token bound to a caller transaction cannot be replayed under any authority; it is visibility-reconciliation only. RetryToken is process-local and non-serializable; ReconcileKey plus an explicit rebuilt idempotent operation is the restart boundary."
+    },
+    {
+      "id": "AI-013",
+      "kind": "invariant",
+      "text": "Microkernel: root packages and unrelated extensions never import audit."
+    },
+    {
+      "id": "AI-014",
+      "kind": "invariant",
+      "text": "Cost topology: dependency-light vocabulary, memory implementation, conformance, and seam adapters remain in the root module; a backend with a third-party dependency is a nested module."
+    },
+    {
+      "id": "AI-015",
+      "kind": "invariant",
+      "text": "No combinations: no audit×tenancy, audit×event, audit×OTel, audit×broker, audit×ORM, or audit×storage-backend production package exists."
+    },
+    {
+      "id": "AI-016",
+      "kind": "invariant",
+      "text": "Owner seam: adapters return or implement the ordinary seam they adapt; audit owns no competing repository/service/storage chain or service locator."
+    },
+    {
+      "id": "AI-017",
+      "kind": "invariant",
+      "text": "Exact effects: optional executable effects are asserted only where their owner exposes them and are never discovered through an opaque wrapper. `auditcrud.Secured` is one deliberately ordered authority firewall: its Gate alone reaches the private audited receiver, while the returned terminal omits `Next` and every unsupported optional mutation capability."
+    },
+    {
+      "id": "AI-018",
+      "kind": "invariant",
+      "text": "No lifecycle by construction: constructors perform validation and allocation only."
+    },
+    {
+      "id": "AI-019",
+      "kind": "invariant",
+      "text": "Independent read authority: ordinary access to a resource grants no audit-history access."
+    },
+    {
+      "id": "AI-020",
+      "kind": "invariant",
+      "text": "Sealed grants: only the configured access authority can mint a reader grant; public values are insufficient."
+    },
+    {
+      "id": "AI-021",
+      "kind": "invariant",
+      "text": "Store defense: authorization narrows the store query, and the kernel validates every returned row against the sealed grant. Exact control targets use a separate bounded target-set seam that cannot express a broad scan. Whole-revision lifecycle requires direct grant ceilings to contain every resource, record action, classification, and present exact ScopedReference. Each subject and searchable-target coordinate requires an exact or explicit declaration-bound wildcard EvidenceSelector; candidates preserve one complete canonical summary. Every present scope coordinate in such a summary has an equality-searchable record-era representation."
+    },
+    {
+      "id": "AI-022",
+      "kind": "invariant",
+      "text": "Cursor binding: a cursor is opaque and bound to durable log identity, durable BackingID, normalized query, complete ScopedReference, grant, catalog-set digest, and cursor-key generation. Process-local Backing is checked only while assembling store facets and is never serialized."
+    },
+    {
+      "id": "AI-023",
+      "kind": "invariant",
+      "text": "Hold precedence: a revision with any active HoldID membership is absent from every purge plan. An inventory fence freezes one bounded exact candidate cohort, each immutable eligibility digest, hold epoch and active-set digest, durable LogID/BackingID, lineage, query, and as-of time. Recording the inventory action itself or a late unrelated commit cannot invalidate it; any candidate or canonical stable-HoldIdentity-set change does."
+    },
+    {
+      "id": "AI-024",
+      "kind": "invariant",
+      "text": "Audit the auditor: reads, grants, corrections, verification, inventory, holds, and purge planning produce bounded evidence without recursive loops. Prepared sensitive results remain hidden until this evidence is independently committed outside every caller transaction."
+    },
+    {
+      "id": "AI-025",
+      "kind": "invariant",
+      "text": "Canonical bytes: logical equality and exact stored-envelope integrity use distinct versioned canonical representations. Protection AAD binds catalog, revision, item, field/context fact, codec, classification, and mode. Neither representation depends on database physical layout or map iteration order."
+    },
+    {
+      "id": "AI-026",
+      "kind": "invariant",
+      "text": "Honest tamper claim: a digest/signature is tamper-evident under its key and append-only controls; no universal tamper-proof claim is made."
+    },
+    {
+      "id": "AI-027",
+      "kind": "invariant",
+      "text": "Observer isolation: observer failure cannot change an audit transaction; observer data is bounded enums, timings, and non-identifying saturated work counters, never evidence values, selectors, identifiers, or authority."
+    },
+    {
+      "id": "AI-028",
+      "kind": "invariant",
+      "text": "Authoritative ledger: logs, traces, metrics, event streams, ORM hooks, and CDC are sources or mirrors only when policy says so; none becomes authoritative by implication."
+    },
+    {
+      "id": "AI-029",
+      "kind": "invariant",
+      "text": "Frozen input: bytes and records retained after a call are copied before ownership crosses; returned pages and payloads belong fully to the caller."
+    },
+    {
+      "id": "AI-030",
+      "kind": "invariant",
+      "text": "Concurrent safety: declarations, catalog administration, recorder, reader/control services, every store seam, codecs, semantic and identity digesters, tokenizers, protectors, signers, reveal/verify/cursor/fence keyrings, clocks, ID sources, context resolvers, access/control authorities, denial limiters, and observers are either documented concurrently safe or serialized by the kernel, with race tests for both contracts."
+    },
+    {
+      "id": "AI-031",
+      "kind": "invariant",
+      "text": "Single evaluation: application callbacks and base options execute once."
+    },
+    {
+      "id": "AI-032",
+      "kind": "invariant",
+      "text": "Dense item order: item ordinal is dense canonical order within a revision and carries no timing claim; database/global positions need only be stable and strictly increasing after commit, with gaps allowed."
+    },
+    {
+      "id": "AI-033",
+      "kind": "invariant",
+      "text": "Time honesty: occurred, observed, recorded, and committed/settled time are different facts. No sequence allocation is labelled commit order."
+    },
+    {
+      "id": "AI-034",
+      "kind": "invariant",
+      "text": "Entity continuity: every entity item binds the exact prior per-scoped-subject leaf digest, and reconstruction follows that verified chain rather than guessing from timestamps, global positions, or item ordinals."
+    },
+    {
+      "id": "AI-035",
+      "kind": "invariant",
+      "text": "Context authority: every stored context fact is selected by one sealed action/operation policy with explicit allowed provenance. Provenance labels are incomparable; policy never orders their enum values or unions member policies. The resolver is the only reader of caller context values; all later Recorder collaborators receive explicit copied facts and deadline/cancellation only. If cancellation is observable after resolution, resolver output and diagnostic cause are discarded before any public error, evidence, rendering, or observation."
+    },
+    {
+      "id": "AI-036",
+      "kind": "invariant",
+      "text": "Mutation supervision: a required entity mutation executes only inside a one-use reserved recorder callback. Its first post-start failure or panic permanently poisons the outer group and cannot be cleared by nesting or error suppression."
+    },
+    {
+      "id": "AI-037",
+      "kind": "invariant",
+      "text": "Historical authenticity: each historical record is verified against its exact retained catalog generation and current policy is the sole present authorization overlay. Missing lineage returns no partial result. A field absent from a record-era manifest is Unobserved, not value-absent, until authenticated later evidence first establishes its state."
+    },
+    {
+      "id": "AI-038",
+      "kind": "invariant",
+      "text": "Committed disclosure: history and lifecycle data crosses the public boundary only after independently committed access/control evidence; an uncertain or rollback-capable settlement releases nothing."
+    },
+    {
+      "id": "AI-039",
+      "kind": "invariant",
+      "text": "Hold set: legal hold is immutable set membership keyed by HoldID, not a boolean. Effective transitions advance a per-revision epoch; replay does not and a released `(HoldID, RevisionRef)` membership cannot be resurrected. The store full-state CASes one kernel-signed candidate while serializing that membership and projection. A dedicated signed wire arm binds command, HoldID, stable private HoldIdentity, target, matter presence and representation, exact expected and result projections, and disposition; no generic field encoding, pre-read, or unsigned guess decides success."
+    },
+    {
+      "id": "AI-040",
+      "kind": "invariant",
+      "text": "Honest transaction scope: only root transaction provenance the adapter can actually preserve qualifies for atomic capture. Caller-visible nested/ savepoint and unstated raw wrappers refuse; a faults-owned savepoint is allowed only wholly inside the supervised root mutation and is finalized before capture or staging. Invisible out-of-band savepoints are an explicit caller-contract exclusion, never a detected guarantee."
+    },
+    {
+      "id": "AI-041",
+      "kind": "invariant",
+      "text": "Origin-bound authority: access and control decisions bind the exact normalized request and keyed requester-context commitment. Resolver output is frozen once; authority receives it explicitly, while all later calls use a value-free deadline/cancellation context."
+    },
+    {
+      "id": "AI-042",
+      "kind": "invariant",
+      "text": "Monotone continuation: an encrypted authenticated cursor freezes its original request, requester, original and prior-effective grant ceilings, cumulative progress, expiry, log, backing, and catalog set. Every page reauthorizes and intersects with both ceilings, then freezes the next effective result; continuation can only stay equal or narrow. The declarative lifetime is positive and hard-bounded, while grant and prior-token expiry may only shorten it."
+    },
+    {
+      "id": "AI-043",
+      "kind": "invariant",
+      "text": "Searchable protection: equality search is available only for plaintext, tokenized, or indexed-protected coordinates. Every admitted retained token profile participates or the whole query refuses; random protection and redaction alone never trigger a broad fallback scan."
+    },
+    {
+      "id": "AI-044",
+      "kind": "invariant",
+      "text": "Stable private identity: raw idempotency keys, requester facts, and hold matter cross no persistence or diagnostic boundary; a subject is retained only in its explicitly declared plaintext, tokenized, or indexed-protected form. Domain-separated active/retained operational aliases resolve atomically to one stable identity across key rotation and concurrent genesis. Hold aliases reuse one private HoldIdentity, and its canonical active-set digest is independent of commitment generation and transition order."
+    },
+    {
+      "id": "AI-045",
+      "kind": "invariant",
+      "text": "Sealed mutation boundary: audited CRUD has one closed public composition, `auditcrud.Secured(recorder, resource, policy)`, whose terminal cannot navigate to its Gate or private receiver. Gate authorization precedes root-transaction creation; the receiver accepts only its copied fence, exact source resolution (unbound owned root or source-bound executor), and direct framework root transaction (or this Recorder's exact active `Within` frame), then revalidates state before one business effect. Unsafe fallback, foreign source/frame, raw transaction wrapper, savepoint, caller transaction without the frame, or private-bridge replay fails before mutation I/O. There is no public mutation-admission protocol or unsecured `auditcrud` entry."
+    },
+    {
+      "id": "AI-046",
+      "kind": "invariant",
+      "text": "Bounded denial admission: access denial never becomes permission and never persists evidence without an application-owned limiter admitting that bounded origin-bound attempt. Limiter refusal or failure preserves the denial and performs no append. A safe state accessor exposes only whether evidence was not configured, suppressed, limiter-failed, not-written, unconfirmed, or committed. A limiter panic has no returned state and follows the subsystem-wide identical-repanic rule."
+    },
+    {
+      "id": "AI-047",
+      "kind": "invariant",
+      "text": "Executable traceability: one tracked normalized registry maps every happy path, edge case, invariant, actor goal, test obligation, implementation section, package, reserved test symbol, and stable defect mutant, while one canonical manifest commits every AU/AH/AE/AI/AT/AM/PN semantic body. Reciprocal machine checks reject missing, duplicate, ranged, orphaned, ill-typed goal, wrong-section, wrong-package, duplicate/missing AT activation, fabricated Cartesian coverage, or checkpoint-unreachable identifiers. A section can claim coverage only after every active reserved behavioral test emits a non-skipped pass event from its declared package."
+    },
+    {
+      "id": "AI-048",
+      "kind": "invariant",
+      "text": "Closed codes: every persisted free-form application outcome or reason is a member of the exact action-scoped record-era manifest set; deployment waiver reasons and closed kernel statuses cannot cross into that namespace."
+    },
+    {
+      "id": "AI-049",
+      "kind": "invariant",
+      "text": "Honest executable identity: policy and codec fingerprints bind declarative versions and complete reviewed fixture transcripts, never unstable Go implementation identity. Samples remain test-owned; unsampled behavior is an explicit author-versioning responsibility."
+    },
+    {
+      "id": "AI-050",
+      "kind": "invariant",
+      "text": "Authenticated time boundary: public time reconstruction verifies a store-asserted subject head's signed revision and leaf through genesis, then uses only the causally closed signed ObservedAt prefix. A descendant at or before the requested instant behind an excluded later-than-request predecessor is temporal ambiguity, never a selectable state. RecordedAt, backend position, suffix omission relative to the asserted head, and a regressing descendant cannot change the result. A hostile store rolling back both history and its previously valid asserted head or erasing both head and history remains detectable only with an independently retained external anchor and is outside the store-present completeness claim."
+    },
+    {
+      "id": "AI-051",
+      "kind": "invariant",
+      "text": "Authenticated hold state: each hold transition signs exact prior and resulting membership/count/epoch/set/head state together with its dedicated typed command, HoldID, stable private HoldIdentity, target, matter representation, disposition, and exact authorization-request commitment. Writer success requires a full-state CAS, and lifecycle projections become usable only after the kernel recomputes them from authenticated transition references."
+    },
+    {
+      "id": "AI-052",
+      "kind": "invariant",
+      "text": "Normalized cancellation: audit-injected downstream value-free contexts preserve Deadline, Done, and Err while discarding Value and caller-controlled Cause. After ContextResolver returns, observable cancellation wins over its value or error; the resolver cause is discarded and public CauseOf/context.Cause can expose only the normalized cancellation sentinel or no diagnostic cause. Application callbacks retain the caller context by design and are outside this injected-collaborator claim."
+    },
+    {
+      "id": "AI-053",
+      "kind": "invariant",
+      "text": "Scoped entity continuity: entity identity, aliases, reservations, genesis, heads, and predecessors bind explicit scope absence or the complete ScopedReference pair before subject commitment. No chain crosses a scope namespace accidentally."
+    },
+    {
+      "id": "AI-054",
+      "kind": "invariant",
+      "text": "Catalog administration boundary: install and every direct-child activation are deployment-only mutations carrying a persisted external change-ledger reference. Their immutable bounded mutation records are queryable and fully verifiable after reopen; no successful mutation may make complete readback exceed its hard count or byte ceiling. Deployment and runtime are distinct concrete handle types; the runtime dynamic type exposes no CatalogAdmin. Administration never runs in construction or appears in the serving dependency graph, and the framework does not pretend to self-audit its bootstrap."
+    },
+    {
+      "id": "AI-055",
+      "kind": "invariant",
+      "text": "Public code vocabulary: persisted outcome/reason codes are manifest-public labels and reveal no value authority. The kernel enforces code grammar and exact record-era membership; semantic non-sensitivity and narrative-free meaning are reviewed declaration-author obligations. Anything sensitive or narrative is a separately classified declared field."
+    },
+    {
+      "id": "AI-056",
+      "kind": "invariant",
+      "text": "Finite executable conformance: construction fixtures and application goldens prove only the calls they execute. Arbitrary custom policy, codec, SemanticDigester, identity, tokenization, protection, reveal, signing, verification, cursor, and fence implementations remain explicit trusted collaborators with versioning, determinism, concurrency, termination, complexity, non-retention, and the required PRF/AEAD/unforgeability/nonce/key- continuity properties. Only audit-owned helpers make those cryptographic properties an inspectable framework guarantee; custom providers carry explicit deployment and application-canary obligations."
+    },
+    {
+      "id": "AI-057",
+      "kind": "invariant",
+      "text": "Non-vacuous goal trace: one normalized edge registry covers every actor goal and every requirement reciprocally without a duplicated reverse table. Structural validation and the active section's complete behavioral pass-event set must both run and agree before a checkpoint succeeds."
+    },
+    {
+      "id": "AI-058",
+      "kind": "invariant",
+      "text": "Keyed operational commitments: access and control request/grant/result, access/control continuation, hold-request, and denial-request digests use distinct keyed domains over exhaustive typed normalized inputs, including the complete admitted requester commitment, role, query class, reconstruction request boundary/budgets, control reason/limit/hold request, result boundary/head leaf/status/hold projection, retention AsOf, exact cursor protocol/key/expiry, and continuation-origin request/grant coordinates. A custom SemanticDigester is explicitly trusted to be a stable keyed PRF for these domains. No low-entropy private identity is exposed through an unkeyed digest."
+    },
+    {
+      "id": "AI-059",
+      "kind": "invariant",
+      "text": "Closed investigation algebra: public history composes only declared typed resource/subject, entity/event index, event, actor, context, operation type/instance, attempt type/target/instance, revision, and item selectors with finite bounded equality conjunctions plus change/code/time predicates. Neither an arbitrary metadata path nor an adapter query object crosses the kernel."
+    },
+    {
+      "id": "AI-060",
+      "kind": "invariant",
+      "text": "Snapshot monotonicity: every paged history is one immutable bounded cohort with a non-resetting cumulative page/revision/byte budget. History, inventory, and selection verification continuations can only advance within that cohort under the same or narrower current grant; concurrent and backdated commits cannot enter it."
+    },
+    {
+      "id": "AI-061",
+      "kind": "invariant",
+      "text": "Honest comparison: comparison shares one authenticated entity chain, ordered pair of boundaries, authorization, combined budget, and committed result. Equality is claimed only from two known canonical values or two known absences; every epistemically incomplete pair remains indeterminate."
+    },
+    {
+      "id": "AI-062",
+      "kind": "invariant",
+      "text": "Terminal entity identity: stable scoped-subject identity survives hard deletion as a terminal head. No active/retained alias can be rebound to a new incarnation, while exact retry advances nothing."
+    },
+    {
+      "id": "AI-063",
+      "kind": "invariant",
+      "text": "Query closure: normalized projection, time axis/bounds, direction, positive and excluded changed fields, event codes, selector identity, catalog set, grant ceilings, bounded selector conjunction and post-allow storage-alias expansion, snapshot, and progress remain identical or monotonically narrower through authorization, store query, post-validation, cursor, and access evidence."
+    },
+    {
+      "id": "AI-064",
+      "kind": "invariant",
+      "text": "Honest entity baseline: every nonterminal entity chain begins with a signed full-state anchor. entity.created is reserved for an actual insert; a legacy first-touch anchor is a full entity.changed state at its real ObservedAt, and no API infers state or nonexistence before that boundary."
+    },
+    {
+      "id": "AI-065",
+      "kind": "invariant",
+      "text": "Durable attempt start: the advertised Required Run gate begins protected work only after its exact Started transition is independently Committed with Inserted disposition and a bound active handle exists. Replayed starts invoke no callback and expose no handle. Direct application bypass is explicit outside policy, never an invisible kernel guarantee."
+    },
+    {
+      "id": "AI-066",
+      "kind": "invariant",
+      "text": "Immutable attempt lifecycle: Started, checkpoints, uncertainty, and terminal outcomes are append-only signed transitions; no update, replace, discard, or projection rewrite alters prior evidence."
+    },
+    {
+      "id": "AI-067",
+      "kind": "invariant",
+      "text": "Single attempt terminal: one attempt has at most one terminal state under exact expected-state CAS; exact replay advances nothing and every different terminal conflicts."
+    },
+    {
+      "id": "AI-068",
+      "kind": "invariant",
+      "text": "Settlement honesty: Succeeded, Failed, Cancelled, OutcomeUnknown, and Abandoned describe explicit known evidence. Context errors, deadline passage, panic, or AbsentNow never infer them."
+    },
+    {
+      "id": "AI-069",
+      "kind": "invariant",
+      "text": "Attempt continuity: AttemptType, OperationType/ID, target presence and every present target coordinate/alias, scope identity, start anchor, policy and replay fingerprints, sequence, expected/result projection, and prior leaf remain bound across every transition and resume."
+    },
+    {
+      "id": "AI-070",
+      "kind": "invariant",
+      "text": "Attempt projection distrust: mutable per-attempt head and per-policy Unsettled rows are coordination indexes. The bounded per-attempt chain is fully exact-inspected and recomputed before a handle or retention decision. A policy counter uses its current exact-verified signed head certificate plus inductive append-time CAS; it is never falsely described as a bounded full history scan."
+    },
+    {
+      "id": "AI-071",
+      "kind": "invariant",
+      "text": "Bounded attempt lifecycle: phase values, target presence/value, codes, lifetime, checkpoint count, transition proof, references, and bytes each obey policy, request, hard, and store ceilings; capacity for the largest direct terminal and for OutcomeUnknown plus its largest resolving terminal is always reserved."
+    },
+    {
+      "id": "AI-072",
+      "kind": "invariant",
+      "text": "Attempt privacy: request/response dumps, headers, credentials, raw errors/exceptions, stack traces, ambient context, and arbitrary payload maps have no lifecycle spelling; only declared typed protected values cross."
+    },
+    {
+      "id": "AI-073",
+      "kind": "invariant",
+      "text": "Attempt retention cohort: Open/Uncertain chains never enter a purge plan. Closed transitions are selected all-or-none using the maximum record-era cutoff of every member, and a hold on any member blocks the indivisible cohort and its co-revisions. PurgePlan keeps the current type-counter head outside the evidence cohort and declares the future executor's non-reuse coordination prerequisites; release 1 asserts neither deletion nor post-deletion survival."
+    },
+    {
+      "id": "AI-074",
+      "kind": "invariant",
+      "text": "Attempt lifecycle has no implicit runtime: NewAttempts validates and allocates only; deadline passage, reconciliation, and abandonment start no worker, timer, reaper, goroutine, scan, or callback registration."
+    },
+    {
+      "id": "AI-075",
+      "kind": "invariant",
+      "text": "Attempt microkernel boundary: auth, HTTP, jobs, OTel, and application modules translate their facts at the composition root. Audit imports none of them and owns no framework-specific interceptor or handler."
+    },
+    {
+      "id": "AI-076",
+      "kind": "invariant",
+      "text": "Explicit target presence: event and attempt targets are declaration- level sealed unions. Explicit absence has no encoded reference, aliases, classification, or target query door, but its presence bit remains authenticated semantic and evidence meaning. No kernel or adapter fabricates a target from resource, operation, subject, scope, or an empty/sentinel value."
+    },
+    {
+      "id": "AI-077",
+      "kind": "invariant",
+      "text": "Closed entity index: an EntityIndex is a typed manifest member over one declared schema field with one canonical codec/classification and plaintext, tokenized, or indexed-protected equality representation. Before/After presence and value are immutable signed item evidence; retained privacy aliases are derived only inside History. There is no public property name, generic comparison, range, ordering, regex, JSON-path, or backend-expression escape hatch."
+    },
+    {
+      "id": "AI-078",
+      "kind": "invariant",
+      "text": "Canonical selector conjunction: AnyOf is a bounded canonical disjunction of typed values for one origin-sealed equality selector; AllOf is a bounded canonical conjunction of mutually compatible origin-sealed selectors, with every item-level predicate satisfied by one item. Logical selectors remain closed and exact through authorization. Their bounded alias expansion occurs only after allow, remains internal, and is exact through storage, snapshot/cursor, post-validation, and evidence."
+    },
+    {
+      "id": "AI-079",
+      "kind": "invariant",
+      "text": "Authenticated entity lifecycle: projection lifecycle comes only from a complete verified legal entity-action prefix and is EntityPresent, EntitySoftDeletedState, or terminal EntityHardDeletedState. Comparison applies the same epistemic tri-state as field comparison and never infers a lifecycle state across an unknown boundary."
+    },
+    {
+      "id": "AI-080",
+      "kind": "invariant",
+      "text": "Honest entity neighbors: NeighborPresent and NeighborChainBoundary are positive authenticated claims over one stable scoped-subject chain. Any missing proof is NeighborUnavailable, not absence. Both sides share one origin-bound authorization, integrity closure, cumulative budget, and independently committed result."
+    },
+    {
+      "id": "AI-081",
+      "kind": "invariant",
+      "text": "Attempt investigation is not status: type-wide and searchable-target attempt queries disclose bounded verified transition items only. A final state, duration, or complete status exists only behind exact OperationID lookup and a verified complete start-to-head chain; no page aggregation may synthesize it."
+    },
+    {
+      "id": "AI-082",
+      "kind": "invariant",
+      "text": "Separate attempt coordination facets: AttemptLog owns bounded per-chain state lookup; AttemptTypeState owns only the authenticated global Unsettled counter certificate used by append coordination and catalog activation. They have disjoint request/result types even when one store implements both. Public ResultingState presence exactly follows an authenticated Committed settlement with Inserted or Replayed transition evidence."
+    },
+    {
+      "id": "AI-083",
+      "kind": "invariant",
+      "text": "Attempt access closure: History explicitly depends on same-origin AttemptLog before offering attempt doors. Resume, resolution, and abandonment authorization binds nonzero Purpose, Role, intent, type, operation, target presence, scope, owner, fingerprints, and budgets in a strict attempt-only branch; its success and denial evidence preserve the same coordinates."
+    },
+    {
+      "id": "AT-001",
+      "kind": "obligation",
+      "text": "Catalog membership, identity/generation changes, duplicate meanings, declaration sealing, stable ordering, no registry/import side effect, and concurrent reads. Lineage fixtures cover genesis, gaps, forks, wrong parents, generation reuse, same-version policy/codec golden drift, incompatible codec reuse, privacy weakening, identical manifests rebuilt from different declaration pointers, missing or tampered historical manifests, concurrent activation CAS, and stale writers after rotation. Catalog-admin cases require persisted external \tchange-ledger references, direct-child install/activation order, complete exact \tCatalogMutationLog readback after reopen, atomic refusal at the prospective \tcomplete-log count/byte boundary, exact replay after a lost response and restart \tbetween every install/activation, stale concurrent activation, and distinct deployment/runtime concrete dynamic method sets. Distinct function values with identical declared versions and golden transcripts are the stable positive neighbor; a state-switching custom engine pins the honest finite-fixture/explicit-TCB boundary rather than a false future-behavior claim."
+    },
+    {
+      "id": "AT-002",
+      "kind": "obligation",
+      "text": "Every semantic name/reference bound, every codec version/round trip/upcast, every outcome/reason code grammar, membership, and domain, plus a syntactically valid sensitive-looking label that demonstrates the reviewed author boundary rather than an impossible kernel semantic filter; exact metadata/type binding, event-extractor single evaluation and undeclared-result refusal, mutable-byte ownership, panic behavior, secret canaries, absence of a model-getter capture door, and privacy-admission fingerprint changes. The complete context-fact and provenance matrix includes required and optional absence, every incomparable provenance pair, per-actor-hop provenance, undeclared canaries at every output, every storage mode, and grouped context-policy mismatch. Race doubles overlap every injected collaborator named by AI-030. After the sole resolver call, context-value canaries cover identity, semantic, tokenizer, protector, signer, Writer, Log, ExactLog, LifecycleLog, authorities, limiter, cursor/fence, verifier/revealer, and private evidence paths. Each canary includes a distinct secret-bearing cancel cause and requires normalized context.Cause. Direct, wrapped, and joined resolver returns of that cause are discarded at the immediate post-return cancellation check and CauseOf is nil; an uncanceled resolver error is the legal diagnostic neighbor. Hold matter cases cover codec/classification, protected-mode admission, manifest/AAD/ summary binding, and raw-value nonleakage. Named subject/event semantic goldens cover every committed fixture and declared code without function addresses, paths, reflection, closure state, or binary identity. Built-in and custom codec descriptions and accepted/rejected golden bytes cover text, both integer signs, canonical decimal refusal, byte ownership, exact Reference text, lowercase UUID, duration extremes, and UTC seconds/nanos with monotonic/location data removed; external generic inference compiles. A required tokenized ScopeFact is the passing operational neighbor; Compile and Lineage reject active or retained protected-only/redacted scope while an absent optional scope remains absent."
+    },
+    {
+      "id": "AT-003",
+      "kind": "obligation",
+      "text": "Independently mutate every keyed semantic-digest input and prove a low-entropy value is not exposed as its raw SHA-256. Independently mutate every protected envelope byte and every AAD coordinate. Leaf vectors mutate every preimage member and prove Leaf itself is excluded; envelope vectors mutate every header preimage/actor/context/finalized-item member and prove Envelope, Integrity, Seal, AppendIntent, RecordedAt, and backend position are excluded. Integrity vectors bind only the explicit revision/domain/ObservedAt/Semantic/Envelope input, the signature binds only Integrity, and AppendIntent binds the finalized signed wire without including itself. Reordering the mandatory derivation or reintroducing any self-field fails. HMAC vectors cover synthesized algorithm/profile, short/duplicate/inactive keys, exact 32-byte outputs, key-copy ownership, every-bit flips, constant-time verification behavior, and cross-domain/AAD/protocol substitution. Access-request, \t   access-grant, access-result, access/control continuation, control request/grant/ \t   result, selection, exact inventory-fence envelope/decoded claim, hold-request, \t   and denial-request digests cover low-entropy dictionaries, every exhaustive typed field including role/query \t   class, incoming/emitted continuation commitments and origins, distinct domains, \t   acyclic fence construction, and profile rotation. Each \t   RetentionBasisDigest vector fixes the exact domain and varies CatalogRef, \t   normalized ObservedAt, and every RetentionRuleView arm; kernel, memory, \t   PostgreSQL, inventory, and fence paths must call the one helper. Every \t   CorrectionProposalDigestInput member is independently varied, value order is \t   permuted, caller buffers mutate after return, link arms/cycles refuse, the \t   proposal digest is absent from its own preimage, and the SemanticDigester is \t   invoked exactly once under its distinct domain. admitted requester context fact and provenance is independently changed while identity aliases are held constant and must change RequesterCommitment plus the access/control/hold/denial request digest. A raw- SHA and post-construction state-switching SemanticDigester fixture demonstrate \t   the explicit custom keyed-PRF trust boundary without claiming finite proof. \t   Custom identity/token/protection/reveal/sign/verify/cursor/fence state-switch, \t   retention, collision, nonce, and unbounded-work fakes pin the same honest TCB \t   limitation. AES-256-GCM vectors cover minimum input-key size, HKDF profile separation, one active key, nonce entropy failure, retained- key rotation, tag/nonce/ciphertext/description/AAD mutation, copied plaintext, and cross-protocol substitution for protection and both continuation keyrings."
+    },
+    {
+      "id": "AT-004",
+      "kind": "obligation",
+      "text": "Idempotent same-key/same-logical-semantic replay returns the complete original receipt even when a randomized Protector would produce a different envelope; exact same-revision/full-content replay does too. Each operation, catalog set, semantic profile, key, or content disagreement and each same-revision/ different-integrity disagreement conflicts. Protection swaps across fields, items, revisions, catalogs, and deployments fail. Retry reuses the frozen envelope with zero resolver, digester, protector, signer, or callback calls. A committed duplicate under a different expected live authority conflicts and rolls back a deliberately non-idempotent second business mutation; same- authority replay and authority-less committed replay are passing neighbors. Conditional hold appends accept exactly one signed authenticated-prior/CAS-result candidate, reject every prior/result/outcome substitution, and replay the original candidate even after membership state changes. That case proves authorization precedes a committed-only keyed lookup, Found performs no HoldState call, AbsentNow followed by a winning concurrent append is caught by Append's atomic recheck, equal SemanticDigest permits a different fresh intent, and same-RevisionID replay still rejects any AppendIntentDigest difference. First-touch EntityFullState replay returns the original truthful EntityChanged anchor without a second baseline/head advance; a changed catalog, field inventory, or full-state byte conflicts."
+    },
+    {
+      "id": "AT-005",
+      "kind": "obligation",
+      "text": "Standalone committed versus caller-transaction receipt, outer rollback, commit then visibility, direct Record and standalone Capture NotWritten and Unconfirmed tokens, keyed and unkeyed lost-response replay, every transaction-bound Retry refusal with zero Writer calls, commit-error ReconcileKey recovery, repeated uncertainty, process-rebuilt exact semantics, identical token recovery from returned errors, and no collaborator replay by Retry. RetryToken has no serialization interface and its size is bounded in memory. Lookup strips all context values, sees no staged row, requires explicit Committed visibility with zero authority, and rejects a malicious alternative."
+    },
+    {
+      "id": "AT-006",
+      "kind": "obligation",
+      "text": "Exact nested join, mismatch-before-callback, frame-scoped error/panic cleanup, undeclared-operation and nonmember-item refusal, identical repanic, concurrent canonical staging, duplicate items, hard bounds, late Stage refusal, and exactly one outer Append. Known subjects reserve before business I/O; generated collisions and every swallowed post-mutation failure poison the root group, roll back, and make zero Append calls; no-ops release reservations."
+    },
+    {
+      "id": "AT-007",
+      "kind": "obligation",
+      "text": "Writer-only, Log-only, ExactLog-only, LifecycleLog-only, and CatalogAdmin-only compile fakes; both Unstated and Unsupported required-capability refusal; NewHistory StableSearch/ExactInspection and NewControl ExactInspection/StableSearch plus action-driven Holds/PurgePlanning matrices; no seam discovery or Close call; memory cross-system refusal before CRUD I/O; exact database/sql source/transaction match; unsafe DB-B fallback against DB-A refusal; source-bound control; and authority-less, mismatched, and correct grouped CRUD preflights. Transaction tests distinguish framework roots from direct framework savepoints, exercise the savepoint-to-raw-transaction-to-wrapper laundering sequence, and document an invisible raw SQL savepoint as outside the guarantee. External `_test` \t   packages implement every public store/query/row/catalog SPI using only exported \t   validating constructors and copied accessors, including persisted commitment \t   sets that cannot masquerade as live keyring results. A public external Writer returns a private concrete Execution without unsafe/reflection or an executor accessor; typed-nil/changing/foreign authority, result-authority substitution, cross- recorder use, and simultaneous transaction swapping fail. Abort, panic, codec/ signer failure, and swallowed errors leave no Writer registry or later executable capability. Restarted keyed replay rebuilds the original persisted header rather than the fresh randomized candidate. External compilation also proves that manual Draft and EntityDraft are not assignable and that no Writer, Recorder, or Execution method accepts EntityDraft outside the internal bridge. Entity head/alias/reservation cases vary scope absence, both ScopedReference components, rotation, grouping, genesis race, and a foreign-scope predecessor."
+    },
+    {
+      "id": "AT-008",
+      "kind": "obligation",
+      "text": "All catalog, store, write, read, settlement, protection, and fence outcomes; unknown enums; cancellation precedence; cyclic, joined, panicking, and lying foreign error chains; hidden causes; safe rendering; every collaborator's raw-error nonleakage; identical repanic; and an unrecovered store panic."
+    },
+    {
+      "id": "AT-009",
+      "kind": "obligation",
+      "text": "Cursor binding with each component varied independently, origin, expiry, byte flips, backend-position substitution, oversized positions, catalog-set rotation, complete-page tiling, and hostile foreign, duplicate, misordered, oversized, or digest-invalid rows. Token and decoded bounds fail before large \t   allocation or store I/O. Continuations re-resolve the same requester, \t   reauthorize, intersect every original and prior-effective ceiling, honor \t   revocation, and fail both direct widening and narrow-then-rewiden attempts \t   for every dimension. Exact emitted cursor \t   commitments vary protocol, key generation, nonce/ciphertext, decoded position, \t   issue/expiry, and origin request/grant independently. Subject and event-target shells bind exact declaration identity; zero/negative/over-hard CursorLifetime, time overflow, already-expired grants, expiry beyond the configured window, and continuation expiry extension all refuse. A grant expiring before the configured lifetime produces the exact shorter cursor and is the passing neighbor. Query-algebra cases cover each exact and one-over resource/action/ classification/coordinate ceiling, the safe zero defaults, and every explicit field/ context projection kind, time axis and endpoint shape, both directions, \t   changed-field match kinds, negative-only and positive-plus-excluded sets, overlap/duplicate/one-over refusal, honest create/baseline/delete/restore Changes semantics, event outcome/reason filters, event-type and typed- \t   index lookup, resource-wide and operation-type-wide discovery beside exact \t   subject/operation lookup, every actor position, every declared context selector, and invalid cross-class combinations. Each normalized member is varied across request, grant, StoreQuery, cursor, and result evidence; grants may narrow allowlists/time but cannot rewrite direction or predicates. Origin pagination freezes one bounded cohort. Normal and backdated concurrent appends, changed sort keys, snapshot deletion/recreation/mutation/expiry, cohort overflow, and page/revision/byte progress regression, jump, reset, or overflow cannot alter it; the quiescent, concurrent, and reverse-direction legal neighbors tile the exact same cohort once. History derives every retained target token, rejects non-searchable modes without store I/O, and kills resource, action, raw/token, and retained-profile substitutions. NewHistory repeats the operational-scope searchability check before authority or store I/O and never turns an absent optional scope into a wildcard."
+    },
+    {
+      "id": "AT-010",
+      "kind": "obligation",
+      "text": "Access allow/deny, projection before return, non-recursion, cross-scope grant expiry/cohort limits, current authorization over old generations, historical codec/upcast paths: removed or renamed live fields use explicit HistoricalReconstruct identity, an old wire type uses its declared upcast, an unknown or missing historical codec remains unknown, and a later authenticated full Known anchor supersedes an older undecodable delta. A field added after a baseline stays Unobserved through an unrelated delta, changes on its first assignment, remains addressable after removal through HistoricalReconstruct, and compares Unobserved-to-Known as Indeterminate. Record-era outcome/reason membership and policy/codec fingerprint validation, missing/tampered catalogs, equal-time/random-ID ordering, clock rollback, causally closed `10 -> 30 -> 20` boundaries, regressing- \t    descendant ambiguity, store-asserted head authentication, missing-head/history \t    ambiguity, suffix omission relative to that head, the explicit old-valid-head \t    and full-erasure external-anchor limitation, resolved-boundary repeatability, monotone hostile RecordedAt/position rewriting with unchanged signed ObservedAt, reveal failures, signed evidence, backing immutability, every inclusive/tied/missing/foreign boundary and unknown reason, all budgets, and cross-policy handles. No unknown value or whole model is exposed as known. Reconstruction evidence independently mutates \t   requested boundary kind/revision/time and each work budget before authority, \t   result boundary presence, selected revision, ObservedAt, ObservedThrough, \t   asserted head/ref/leaf, and every resource/field/knowledge triple in its strict result arm. Returned payloads carry independently Committed evidence; ambient audit authority, rollback, NotWritten, Unconfirmed, and malicious InCallerTransaction settlement return no payload. Cross-request/cross-principal decision replay, retained-token omission or duplication, protected-only broad-scan fallback, and every denial-limiter false/nil/returned-error/admitted outcome and keyed request/result/denial digest have dedicated kill controls. Each returned denial state is exact and cause-elided; a limiter panic performs zero append/grant work and is re-panicked identically with no returned state. Exact revision and item cases authenticate the complete containing revision, enforce all-of authorization for a revision and named-only disclosure for an item, and reject wrong LogID/catalog/ordinal, omitted items/summary members, envelope/integrity substitution, or mutation between preparation and evidence. Access-result vectors exercise all five strict one-of arms, zero every unused arm, and independently vary normalized unsigned RecordedAt and every ordered contributor. Comparison cases cover equal/different Known values, both-Absent, Known-versus-Absent, and every Indeterminate endpoint state; reverse, fork, foreign subject, temporal ambiguity, and second-walk widening return neither projection nor evidence. Combined-budget exhaustion cannot reset for the second walk and returns only BudgetExceeded endpoint knowledge plus Indeterminate differences after its bounded result evidence commits. Reconstruction from a legacy first-touch changed anchor knows every admitted reconstructable field at and after that boundary, exposes no before-baseline state, and never labels the anchor as created. Time vectors cover baseline minus one nanosecond, the exact baseline, and equal-time descendants in predecessor order; the earlier boundary is TemporalAmbiguity with no projection/evidence."
+    },
+    {
+      "id": "AT-011",
+      "kind": "obligation",
+      "text": "Correction/dispute links, exact mixed-local-Backing or durable-BackingID refusal, target post-validation, foreign-scope and target-substitution denial, and current authorization over old-generation targets. Hold tests cover independent H1/H2 membership, releasing H1 while H2 remains active, no membership resurrection, idempotent replay without epoch movement, ABA invalidation, missing matter keys, and catalog/key rotation. Every place/release table row and concurrent serial order verifies the unique typed signed arm, HoldID, stable HoldIdentity, command, target, protected matter presence, exact HoldRequestDigest, and expected/result membership, count, epoch, set, and transition head. Fixed-domain identity/set golden vectors, input-copy/ sort invariance, zero/duplicate refusal, the target-specific empty-set golden, and retained-alias rotation prove the same logical holds retain one set digest; false AlreadyActive/AlreadyReleased, stale CAS, missing/generic/cross-HoldID/cross-command arms, authorization-request substitution, omitted/reordered/cross-target transition proofs, and unsigned projection changes fail; Correction tests vary the keyed proposal domain, declaration, logical target, current and record-era redacted modes, field/mode/class set, original ItemRef, reason, and post-decision draft; an exact protected target is the passing reveal neighbor. Whole- revision tests recompute every resource, nested classification, scope, subject, and searchable target. Exact and explicit same-declaration wildcard selectors are passing twins; implicit-empty, exact-to-wildcard, cross-declaration, first-label, any-item, omitted-coordinate, and partial-grant stores fail before output or mutation. Defect stores that trust an unauthenticated pre-read, accept stale expected state, substitute the result candidate, double-advance, or append on conflict are killed. Inventory proves limit-plus-one truncation and a real Inventory-to-PlanPurge path. It varies the record-action ceiling before the store limit, rejects an omitted/foreign/reordered action in inventory and purge views, admits empty coordinates only for a truly coordinate-free summary, and rejects the same empty set for any coordinate-bearing summary. Inventory and selection-verification continuations reject cumulative progress reset, jump, double-count, overflow, per-page budget reset, and changed cohort ceilings. Access and control continuations include a narrow-then-rewiden authority sequence for resources, coordinates, classifications, time, limits, and expiry; no removed member returns. Fence restart cases vary every frozen requester/origin/selection/original-grant/ prior-effective-grant member and reject a narrow-then-rewiden purge. Inventory reads Control.Clock once, binds exact normalized AsOf through request/grant/query/result/cursor/fence, rejects a hostile changed or future store echo, and preserves origin AsOf on continuation and purge. Strict control evidence separately varies request/grant/result kind, \t    control reason/requested limit/hold request, mutation ref/disposition/full hold \t    projection, inventory refs/AsOf/truncation/exact cursor/fence, verification refs/ \t    status/completeness/exact cursor, and purge refs/AsOf/fence. Fence tests vary bits, key, LogID, BackingID, catalog set, query, cohort, retention basis, hold epoch/set, as-of, expiry, ordering, duplication, bounds, rotation, retirement, and restart. Every report also covers zero/negative/over-hard Control CursorLifetime, overflow, an already-expired grant, a shorter grant-derived expiry, and refusal to extend the original expiry on continuation. Every report or plan is withheld unless its bounded evidence receipt is Committed. A required tokenized scope is the passing neighbor; Compile, Lineage, NewHistory, and NewControl reject active or retained protected-only/redacted operational ScopeFacts before authority or store I/O, while an absent optional scope remains absent."
+    },
+    {
+      "id": "AT-012",
+      "kind": "obligation",
+      "text": "DefaultService POST/PUT physical outcomes through the sole sealed `auditcrud.Secured` terminal; Save races; option-once Update; exact scoped delete/restore victim/result sets; generated after-state; empty DefaultService RestoreMany authorization; no-op/missing/duplicate/oversized IDs; denial; opaque wrappers; audit failure, rollback uncertainty, commit uncertainty, and panic; exact metadata field/ codec binding; same-model/different-table and descriptor drift; secret alias, primary-key, tokenized-subject, and extractor canaries; tombstone-selected soft versus hard delete; complete core/optional inventory; predecessor mismatch; replay without double head advance; canonical multi-subject head locking; and refusal of two entity items for one subject in a revision. The sealed-boundary suite covers absence of `Next` and unsecured sibling entry, outer-faults bind refusal, private bridge zero/copy/replay/cross-recorder cases, fail-closed write-only/bulk verbs before callbacks or I/O, and substitution of Save candidate, Update payload/options, IDs, scopes, relations, and snapshots. Hard-delete cases prove the accepted revision atomically marks its scoped subject head terminal, recreation through the sealed terminal and every retained alias rolls back, delete/recreate races serialize, soft delete and restore remain nonterminal, and exact terminal replay advances nothing. Legacy-row cases cover first changed assigned Save/Update, first delete and restore, a no-op that creates no baseline, complete reconstructable full-state versus actual Changes, missing/duplicate/secret field failures, one extractor path, concurrent first touches, key rotation, rollback, and exact replay."
+    },
+    {
+      "id": "AT-013",
+      "kind": "obligation",
+      "text": "PostgreSQL fail-not-skip TestMain and unset-DSN subprocess control; begin, statement, and commit kill points; no pool retry; concurrent equal and conflicting keys; transaction mismatch; active-catalog CAS and stale append; append-only manifests, exact persisted mutation-log readback, distinct deployment/runtime handles, and holds; least-privilege roles; immutable triggers; schema drift; old codec/catalog fixtures; query plans; immutable materialized search snapshots under concurrent/backdated commits, cumulative continuation ceilings, terminal entity heads, legacy first-touch full anchors and recreation races; pagination; rollback; cancellation; fence restart/rotation; and full conformance twice under race."
+    },
+    {
+      "id": "AT-014",
+      "kind": "obligation",
+      "text": "Integration fixtures for auth/security provenance, tenancy scope, event commit, job invocation, logical storage references, lossy OTel observation, module profile activation, disabled components, every declared bypass verdict, and release-1 denied-attempt events admitted only after an application limiter; nil, false, failure, panic, admitted, concurrent, and requester/request-digest substitution controls prove the limiter cannot grant access or amplify itself. Observer vectors assert exact per-phase zero/applicability and deltas for store calls, snapshot reads, accepted pages/revisions/wire bytes, terminal verified revisions, unknown/gap fields, and budget stop; checked one-over saturation never wraps or changes the authoritative result, and a lying external adapter cannot construct or feed work counters back into the kernel."
+    },
+    {
+      "id": "AT-015",
+      "kind": "obligation",
+      "text": "Required versus BestEffort admission, authoritative marker, error visibility, forbidden entity/control use, grouping mismatch, and protected bounded reason narrative with plaintext canaries at Writer, Observer, semantic input, protection, evidence, and error doors."
+    },
+    {
+      "id": "AT-016",
+      "kind": "obligation",
+      "text": "External consumer packages compile the advertised root composition, every built-in codec/HMAC helper, a custom CodecEngine through DefineCodec, named subject/event golden checks, auditmemory Log/Deployment/Store/Tx, audittest Factory/Report/proxies, and separate auditpg DeploymentSpec/ Deployment and Spec/Store lifecycle. Memory siblings preserve state and distinct logs do not; constructors perform zero I/O/lifecycle; Close preserves caller ownership. The identical non-vacuous conformance Factory runs against memory and PostgreSQL, and missing hooks, nil stores, unreported or zero certified sections, false capability claims, and unusable stores fail. A separate deployment consumer prepares schema, obtains CatalogChangeRefs, installs and activates every direct child, closes/reopens, verifies manifests and exact CatalogMutationLog records, then opens a distinct runtime value. Compile-time graph and dynamic assertions prove neither runtime concrete type exposes CatalogAdmin and neither deployment type implements audit.Store. The same external fixture compiles None/All/Only query projections, all time/ direction/change/code selectors, event-type/index, actor/context, exact revision/item history, shared-budget State/Compare, and tri-state Compared access without reflection, raw store predicates, or private constructors. A multi-action entity policy compiles subject history with empty-as-all and an explicit proper action subset, while a foreign action and duplicate subset refuse before store I/O. The same fixture compiles `AnyChanged(status).Excluding(owner)` and a negative-only `UnfilteredChanges().Excluding(owner)` without exposing value predicates. It also compiles declaration-bound resource and operation-type Revisions doors; missing scope/limit and foreign declaration members refuse before store I/O."
+    },
+    {
+      "id": "AT-017",
+      "kind": "obligation",
+      "text": "A stdlib-only `scripts/audit-trace.sh S<N>` checkpoint parses the tracked normalized registry, exact semantic manifest, independent completeness anchor, and every AH, AE, AI, AT, AM, PN, RT, PKG, and S declaration. It rejects ranges/lists in fact rows, missing/duplicate/orphan or ill-typed endpoints, missing/duplicate AT activation, fabricated AT×section cross-product, node-kind/prefix mismatches, one-way or missing edges, missing or digest-changed AU/AH/AE/AI/AT/AM/PN semantic bodies, missing AT/AM/PN reservations, closed-subgraph/highest-ID deletion, noncanonical bytes, invalid activation sections, package/profile/cwd/pattern/ import mismatches, and every unmapped AU or requirement. Semantic correctness of a structurally valid edge reassignment remains a review obligation, not a false duplicate golden map. The runner first executes from repository root the exact argv `[\"go\",\"test\",\"-json\",\"-count=1\",\"-run\",\"^TestAuditTraceRegistry$\",\"./scripts\"]` and requires exactly one non-skipped pass event for the sole unreserved bootstrap TestAuditTraceRegistry from `github.com/frostgrove/vv/scripts`. Default-build inventory excludes the tagged design importer. It then groups every reservation active through the requested section by its fixed package execution tuple, invokes anchored exact test regexes without eval, and requires exactly one matching pass event for every declared `(Package, Test, Role)` tuple, including independent coverage, mutant-kill, and positive-neighbor executions. Skip, fail, zero/duplicate passes, wrong package, dropped integration tag/DSN, command failure, deletion, rename, or an unregistered in-scope `TestAT...`/`TestAuditTrace...` other than that exact bootstrap is failure rather than Go's successful no-test exit."
+    },
+    {
+      "id": "AT-018",
+      "kind": "obligation",
+      "text": "Attempt lifecycle conformance exercises the complete typed declaration, start, state, transaction, wire, bound, privacy, retention, catalog, and resume contract. It proves Required Run enters protected work only after a Committed Inserted Started transition; replay invokes no callback and exposes no handle. Checkpoint, direct terminal, OutcomeUnknown resolution, grouped transactional terminal, reconciliation, and abandonment each advance one authenticated expected-state CAS or return the exact inert replay/conflict/uncertainty result. Tests restart from persisted state, recompute every transition through the asserted head, keep per-chain and global-counter facets distinct, bind target presence, stable owner/scope and policy/replay fingerprints, and authorize Resume, ResolveUnknown, and Abandon with their exact nonzero Purpose and Role. Independent vectors mutate every transition/state/digest field, reserve terminal capacity, reject hostile projections and foreign handles, enforce all-or-none retention cohorts and current-counter-head pins, gate incompatible catalog activation on the authenticated Unsettled certificate, and keep raw payloads, errors, headers, credentials, and ambient context outside evidence. Exact operation history alone may return status after complete bounded verification; type-wide and searchable-target pages remain transition-only. Each of the nine attempt mutant families has a passing legal neighbor, a primary AT-018 kill, and independent mutant and positive reservations. Fuzz targets cover name/reference parsing, canonical decoding, foreign error graphs, cursor and fence parsing/authentication, catalog-lineage validation, protected-envelope validation, store-row validation, and reconstruction. Benchmarks record allocation and latency envelopes for declaration capture, single-item append, 256-item grouping, page validation, and reconstruction; they are reports rather than unstable wall-clock gates."
+    },
+    {
+      "id": "PN-ALLOW-001",
+      "kind": "positive",
+      "text": "A declared admitted field survives with its exact policy."
+    },
+    {
+      "id": "PN-API-001",
+      "kind": "positive",
+      "text": "An external package compiles and constructs the exact documented no-I/O surface."
+    },
+    {
+      "id": "PN-APPEND-001",
+      "kind": "positive",
+      "text": "One valid standalone or grouped request appends its complete immutable revision exactly once."
+    },
+    {
+      "id": "PN-ATTEMPT-BOUND-001",
+      "kind": "positive",
+      "text": "The largest legal bounded chain settles and verifies while one-over stops before downstream work and transition pages never become status."
+    },
+    {
+      "id": "PN-ATTEMPT-CATALOG-001",
+      "kind": "positive",
+      "text": "One compatible policy and replay fingerprint preserves retained replay while an exact zero authenticated Unsettled certificate permits its direct-child activation."
+    },
+    {
+      "id": "PN-ATTEMPT-PRIVACY-001",
+      "kind": "positive",
+      "text": "One declared typed protected attempt value and one exact nonzero Purpose and Role survive authorization without exposing raw operational secrets or storage aliases."
+    },
+    {
+      "id": "PN-ATTEMPT-RESUME-001",
+      "kind": "positive",
+      "text": "One restarted same-origin caller with the exact Purpose and Role verifies the complete chain and performs its one authorized continuation under CAS."
+    },
+    {
+      "id": "PN-ATTEMPT-RETENTION-001",
+      "kind": "positive",
+      "text": "One closed unheld unpinned cohort becomes eligible all-or-none at its maximum record-era cutoff while an otherwise equal held cohort remains excluded."
+    },
+    {
+      "id": "PN-ATTEMPT-START-001",
+      "kind": "positive",
+      "text": "One Required Run commits and inserts Started before one callback while an identical retained replay invokes zero callbacks and returns no handle."
+    },
+    {
+      "id": "PN-ATTEMPT-STATE-001",
+      "kind": "positive",
+      "text": "One legal transition advances the verified projection exactly once and only a Committed Inserted or Replayed result exposes that authenticated resulting state."
+    },
+    {
+      "id": "PN-ATTEMPT-TX-001",
+      "kind": "positive",
+      "text": "One proven transaction commits its admitted mutation and terminal together while a lost commit remains unresolved under its exact ReconcileKey."
+    },
+    {
+      "id": "PN-ATTEMPT-WIRE-001",
+      "kind": "positive",
+      "text": "One complete signed start-to-head chain recomputes byte-exactly with its target presence and every continuity coordinate intact."
+    },
+    {
+      "id": "PN-BACKING-001",
+      "kind": "positive",
+      "text": "Restart under the same BackingID and LogID resumes; a different ID refuses."
+    },
+    {
+      "id": "PN-BASELINE-001",
+      "kind": "positive",
+      "text": "One changed first touch of a preexisting row creates exactly one truthful full-state anchor; its exact time boundary is known, earlier time is ambiguous, and subsequent mutations are deltas."
+    },
+    {
+      "id": "PN-BOUNDS-001",
+      "kind": "positive",
+      "text": "The maximum legal neighbor succeeds and one-over refuses before attributable downstream work or becomes an explicit bounded-unknown projection; opaque callback-internal work is the declared trusted exception."
+    },
+    {
+      "id": "PN-BRIDGE-001",
+      "kind": "positive",
+      "text": "The sealed Gate-to-receiver path consumes one exact guard while an ordinary application package cannot import or name the internal bridge authority."
+    },
+    {
+      "id": "PN-CANCEL-CAUSE-001",
+      "kind": "positive",
+      "text": "Cancellation immediately after resolution discards resolver output and exposes only the normalized sentinel with no diagnostic cause while deadline/Done/Err still work."
+    },
+    {
+      "id": "PN-CAT-001",
+      "kind": "positive",
+      "text": "A direct valid child manifest installs and activates once."
+    },
+    {
+      "id": "PN-CATALOG-ADMIN-001",
+      "kind": "positive",
+      "text": "An independently authorized deployment installs and CAS-activates each child, verifies exact manifests/mutations after reopen, then hands serving code a distinct runtime concrete handle."
+    },
+    {
+      "id": "PN-CODE-001",
+      "kind": "positive",
+      "text": "One declared action-scoped label passes grammar/membership while narrative stays in a classified field; a sensitive-looking valid canary remains an explicit author-review violation, not a fabricated kernel rejection."
+    },
+    {
+      "id": "PN-CODEC-001",
+      "kind": "positive",
+      "text": "Every built-in and retained custom codec reproduces its complete executed fixture transcript; a post-construction switch or unbounded callback remains an explicit trusted-engine violation and a legal returned value is bounded before later work."
+    },
+    {
+      "id": "PN-COMPARE-001",
+      "kind": "positive",
+      "text": "Two ordered boundaries on one authenticated chain yield exact Known/Absent comparison or an explicit Indeterminate under one combined budget."
+    },
+    {
+      "id": "PN-CONCURRENCY-001",
+      "kind": "positive",
+      "text": "Overlapped calls preserve copied stable results under race detection."
+    },
+    {
+      "id": "PN-CONFORM-001",
+      "kind": "positive",
+      "text": "A real factory reports at least one certified section and every executed verdict."
+    },
+    {
+      "id": "PN-CONSEQUENCE-001",
+      "kind": "positive",
+      "text": "A declared manual BestEffort event remains visibly non-authoritative."
+    },
+    {
+      "id": "PN-CONTEXT-001",
+      "kind": "positive",
+      "text": "One allowed provenance and declared fact is frozen once and copied."
+    },
+    {
+      "id": "PN-CONTINUITY-001",
+      "kind": "positive",
+      "text": "One stable chain advances once from its exact previous leaf."
+    },
+    {
+      "id": "PN-CORRECT-001",
+      "kind": "positive",
+      "text": "One correction-eligible declaration, canonical one-call exact proposal digest, and authenticated matching original target append a linked assertion."
+    },
+    {
+      "id": "PN-CRUD-001",
+      "kind": "positive",
+      "text": "One authorized locked mutation records the exact persisted before/after state."
+    },
+    {
+      "id": "PN-CRUD-BOUNDARY-001",
+      "kind": "positive",
+      "text": "The sealed terminal reaches its receiver only through Gate and executes one exact authorized payload."
+    },
+    {
+      "id": "PN-CURSOR-001",
+      "kind": "positive",
+      "text": "A same-request continuation tiles a quiescent result exactly."
+    },
+    {
+      "id": "PN-DENIAL-001",
+      "kind": "positive",
+      "text": "A bounded admitted attempt remains denied and reports its exact safe state."
+    },
+    {
+      "id": "PN-ENTITY-DRAFT-001",
+      "kind": "positive",
+      "text": "A manual event records while an EntityDraft can cross only the internal supervised bridge."
+    },
+    {
+      "id": "PN-ERROR-001",
+      "kind": "positive",
+      "text": "A classified safe wrapper retains only the explicit diagnostic door."
+    },
+    {
+      "id": "PN-EVIDENCE-001",
+      "kind": "positive",
+      "text": "A committed standalone evidence receipt releases the prepared result."
+    },
+    {
+      "id": "PN-EVIDENCE-DIGEST-001",
+      "kind": "positive",
+      "text": "One exhaustive acyclic domain-separated keyed digest stays stable without exposing a low-entropy subject, while raw-SHA/state-switch fakes are explicit trusted-boundary violations."
+    },
+    {
+      "id": "PN-EXACT-READ-001",
+      "kind": "positive",
+      "text": "One exact target is authenticated wholly and returned only inside the caller-requested and sealed resource/action/classification ceilings."
+    },
+    {
+      "id": "PN-EXEC-001",
+      "kind": "positive",
+      "text": "One frame-bound execution uses its captured source transaction only."
+    },
+    {
+      "id": "PN-GROUP-001",
+      "kind": "positive",
+      "text": "A valid bounded group appends once in canonical order."
+    },
+    {
+      "id": "PN-HISTORY-001",
+      "kind": "positive",
+      "text": "An authenticated retained manifest and chain reconstruct a declared known value while a not-yet-captured historical field remains Unobserved until its first assignment."
+    },
+    {
+      "id": "PN-HMAC-001",
+      "kind": "positive",
+      "text": "One copied active key emits the specified 32-byte vector in its own domain."
+    },
+    {
+      "id": "PN-HOLD-001",
+      "kind": "positive",
+      "text": "One serialized effective transition updates exactly one membership and projection."
+    },
+    {
+      "id": "PN-HOLD-MATTER-001",
+      "kind": "positive",
+      "text": "One protected declared matter round-trips only under authorized record-era reveal."
+    },
+    {
+      "id": "PN-HOLD-PROJECTION-001",
+      "kind": "positive",
+      "text": "One origin-authorized request, authenticated chain, unique signed hold arm, and byte-identical conditional append produce one full-state CAS and exact returned projection."
+    },
+    {
+      "id": "PN-HOLD-SET-001",
+      "kind": "positive",
+      "text": "Stable HoldIdentity values are copied, byte-sorted, deduplicated, and hashed once in the fixed hold-set domain; alias rotation and input permutation preserve the same nonempty set identity."
+    },
+    {
+      "id": "PN-IDEMP-001",
+      "kind": "positive",
+      "text": "Equal stable logical retry replays the original envelope and persisted hold result across changed state; unequal semantics or same-revision intent conflict."
+    },
+    {
+      "id": "PN-IDENTITY-001",
+      "kind": "positive",
+      "text": "Complete domain-separated aliases resolve atomically to one stable object."
+    },
+    {
+      "id": "PN-LIFE-001",
+      "kind": "positive",
+      "text": "A full-summary grant with exact or explicit same-declaration wildcard coordinates yields the same bounded fenced cohort."
+    },
+    {
+      "id": "PN-NAME-001",
+      "kind": "positive",
+      "text": "A bounded lowercase dot-segment identity remains byte-exact."
+    },
+    {
+      "id": "PN-OBS-001",
+      "kind": "positive",
+      "text": "Exact bounded per-phase work deltas remain non-identifying, and a disabled, lying, or failing observer leaves evidence unchanged."
+    },
+    {
+      "id": "PN-OUTCOME-001",
+      "kind": "positive",
+      "text": "A classified definite failure and committed visibility remain distinct."
+    },
+    {
+      "id": "PN-OWNER-001",
+      "kind": "positive",
+      "text": "Copied exact-outer values remain unchanged and caller lifecycle remains owned."
+    },
+    {
+      "id": "PN-POSTGRES-001",
+      "kind": "positive",
+      "text": "A verified schema performs one append through the proven executor."
+    },
+    {
+      "id": "PN-PROTECT-001",
+      "kind": "positive",
+      "text": "A valid randomized envelope verifies at its original coordinate."
+    },
+    {
+      "id": "PN-QUERY-001",
+      "kind": "positive",
+      "text": "One sealed typed query normalizes its safe defaults and preserves every legal member exactly or monotonically narrower through the complete read path."
+    },
+    {
+      "id": "PN-READ-001",
+      "kind": "positive",
+      "text": "A current origin-bound grant returns only its exact admitted projection."
+    },
+    {
+      "id": "PN-RETENTION-001",
+      "kind": "positive",
+      "text": "The one canonical RetentionBasisDigest helper, record-era observed-time rule, one normalized Control-selected AsOf echoed exactly end to end, and active holds determine eligibility."
+    },
+    {
+      "id": "PN-SAVEPOINT-001",
+      "kind": "positive",
+      "text": "One inner faults statement savepoint finalizes before root audit capture."
+    },
+    {
+      "id": "PN-SCOPE-001",
+      "kind": "positive",
+      "text": "Two equal local values in distinct namespaces remain distinct end to end, and every present operational scope is equality-searchable."
+    },
+    {
+      "id": "PN-SCOPED-CONTINUITY-001",
+      "kind": "positive",
+      "text": "Equal local IDs under absent, tenant, and region scopes advance distinct stable chains."
+    },
+    {
+      "id": "PN-SEMANTICS-001",
+      "kind": "positive",
+      "text": "Rebuilt declarations with distinct function values and identical declared golden meaning have the same fingerprint while custom state-switch behavior remains an explicit trusted-boundary violation."
+    },
+    {
+      "id": "PN-SIGN-001",
+      "kind": "positive",
+      "text": "A record-era seal authenticates the exact integrity digest under its description."
+    },
+    {
+      "id": "PN-SINGLE-001",
+      "kind": "positive",
+      "text": "One invocation is copied and reused throughout the operation."
+    },
+    {
+      "id": "PN-SNAPSHOT-001",
+      "kind": "positive",
+      "text": "One bounded origin cohort tiles exactly once in either direction while concurrent commits remain outside it."
+    },
+    {
+      "id": "PN-TARGET-001",
+      "kind": "positive",
+      "text": "A typed searchable target derives exact retained coordinates and returns only its event."
+    },
+    {
+      "id": "PN-TERMINAL-001",
+      "kind": "positive",
+      "text": "One hard delete closes its scoped chain permanently while soft delete remains restorable and exact replay is inert."
+    },
+    {
+      "id": "PN-TIME-001",
+      "kind": "positive",
+      "text": "One verified predecessor chain resolves an unambiguous boundary."
+    },
+    {
+      "id": "PN-TIME-METADATA-001",
+      "kind": "positive",
+      "text": "Rewriting unsigned metadata leaves one authenticated head-to-genesis causally closed boundary unchanged, while a straddling regression is explicit ambiguity."
+    },
+    {
+      "id": "PN-TOPO-001",
+      "kind": "positive",
+      "text": "An explicit composition root wires dependency-light packages without side effects."
+    },
+    {
+      "id": "PN-TRACE-001",
+      "kind": "positive",
+      "text": "The independent anchor matches the normalized graph and every canonical semantic record, while the section-aware executable observes the structural pass plus exactly one non-skipped pass for every active declared package/test/role tuple."
+    }
+  ]
+}

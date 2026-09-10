@@ -155,10 +155,12 @@ store := storage.Chain(
     vvotel.Store(telemetry),
 )
 
-renderer := porthttp.NewRenderer(
-    porthttp.WithMessages(i18n.Messages(catalogue)),
-)
+localizedErrors, err := snapshot.ErrorMessages(errorSpec)
+renderer := porthttp.NewRenderer(porthttp.WithMessages(localizedErrors))
 ```
+
+The `ErrorMessages`/`WithMessages` lines are the current i18n seam; the other
+extension names in this illustrative block remain governed by their own status.
 
 No package above imports the next package in the list. Reordering is an explicit
 application decision and conformance tests cover both orders where order affects
@@ -292,8 +294,9 @@ not to mirror each base seam.
 1. **The graphs differ.** A subpackage is added when the seams an extension
    adapts do not cost the same graph, because folding them into one package
    charges every consumer for the heaviest of them. That is a measurement, not a
-   preference. In `vvotel` every seam costs the same OpenTelemetry SDK, so files
-   are right and [[D-114]] stands unchanged. In tenancy the row policy reaches
+   preference. In `vvotel` every admitted seam costs the same stable
+   OpenTelemetry API module, so files are right and [[D-128]] retains the
+   one-package rule while superseding [[D-114]]. In tenancy the row policy reaches
    `crud/decorators/security`, and through it `auth` and `errs`, while the cache
    partition reaches `cache` — one package would make a deployment that wanted a
    tenant-partitioned cache compile the authorization subsystem to get it.

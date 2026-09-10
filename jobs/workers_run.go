@@ -98,11 +98,11 @@ func (workers *Workers) Run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	startedAt := workers.observeWorkerStart(WorkerOperationRun, 0)
+	startedAt := workers.observeWorkerStart(ctx, WorkerOperationRun, 0)
 	session.incarnation, err = newWorkerIncarnation(workers.config.entropy)
 	if err != nil {
 		workers.runtime.finish(err)
-		workers.observeWorkerFinish(WorkerOperationRun, WorkerOutcomeFailed, WorkerFailureRuntime, 0, startedAt)
+		workers.observeWorkerFinish(ctx, WorkerOperationRun, WorkerOutcomeFailed, WorkerFailureRuntime, 0, startedAt)
 		return err
 	}
 	err, parentCancelled := workers.run(session)
@@ -115,7 +115,7 @@ func (workers *Workers) Run(ctx context.Context) error {
 		outcome = WorkerOutcomeFailed
 		failure = WorkerFailureRuntime
 	}
-	workers.observeWorkerFinish(WorkerOperationRun, outcome, failure, 0, startedAt)
+	workers.observeWorkerFinish(ctx, WorkerOperationRun, outcome, failure, 0, startedAt)
 	return err
 }
 
@@ -134,7 +134,7 @@ func (workers *Workers) Drain(ctx context.Context) error {
 	if session != nil {
 		active = int(session.active.Load())
 	}
-	startedAt := workers.observeWorkerStart(WorkerOperationDrain, active)
+	startedAt := workers.observeWorkerStart(ctx, WorkerOperationDrain, active)
 	finish := func() error {
 		result := workers.runtime.result()
 		outcome := WorkerOutcomeComplete
@@ -143,7 +143,7 @@ func (workers *Workers) Drain(ctx context.Context) error {
 			outcome = WorkerOutcomeFailed
 			failure = WorkerFailureRuntime
 		}
-		workers.observeWorkerFinish(WorkerOperationDrain, outcome, failure, 0, startedAt)
+		workers.observeWorkerFinish(ctx, WorkerOperationDrain, outcome, failure, 0, startedAt)
 		return result
 	}
 	select {
@@ -164,7 +164,7 @@ func (workers *Workers) Drain(ctx context.Context) error {
 			active = int(session.active.Load())
 			session.requestForce()
 		}
-		workers.observeWorkerFinish(WorkerOperationDrain, WorkerOutcomeForced, WorkerFailureNone, active, startedAt)
+		workers.observeWorkerFinish(ctx, WorkerOperationDrain, WorkerOutcomeForced, WorkerFailureNone, active, startedAt)
 		return ctx.Err()
 	}
 }
@@ -442,13 +442,13 @@ func (pool *workerPool) claim() bool {
 	if !ok {
 		active, limit, saturated := pool.observationCapacity()
 		if saturated {
-			pool.workers.observeSaturation(WorkerOperationClaim, active, limit)
+			pool.workers.observeSaturation(pool.session.pollContext, WorkerOperationClaim, active, limit)
 		}
 		return true
 	}
 	batch, call := pool.workers.callClaim(pool.session.pollContext, request)
 	active, _, _ := pool.observationCapacity()
-	pool.workers.observeClaim(batch, call, active)
+	pool.workers.observeClaim(pool.session.pollContext, batch, call, active)
 	if call.err != nil {
 		if call.fatal() {
 			pool.fail(call.err)
@@ -744,7 +744,7 @@ func (pool *workerPool) observeAdmission(observations []workerEventSpec) {
 	for _, observation := range observations {
 		event, err := newWorkerEvent(pool.workers.plan, observation)
 		if err == nil {
-			safeObserve(pool.workers.config.observer, context.Background(), event)
+			safeObserve(pool.workers.config.observer, pool.session.pollContext, event)
 		}
 	}
 }
@@ -827,7 +827,7 @@ func (pool *workerPool) releaseClaimedWith(delivery ClaimedDelivery, delay time.
 		return
 	}
 	result, call := pool.workers.callApply(pool.session.controlContext, request)
-	pool.workers.observeApply(delivery.target.definition, delivery.target.binding, request, result, call)
+	pool.workers.observeApply(pool.session.controlContext, delivery.target.definition, delivery.target.binding, request, result, call)
 	if call.fatal() {
 		pool.fail(call.err)
 	}
@@ -843,13 +843,13 @@ func (pool *workerPool) recover() bool {
 		if !ok {
 			active, limit, saturated := pool.observationCapacity()
 			if saturated {
-				pool.workers.observeSaturation(WorkerOperationRecover, active, limit)
+				pool.workers.observeSaturation(pool.session.pollContext, WorkerOperationRecover, active, limit)
 			}
 			return true
 		}
 		result, call := pool.workers.callRecover(pool.session.pollContext, request)
 		active, _, _ := pool.observationCapacity()
-		pool.workers.observeRecover(result, call, active)
+		pool.workers.observeRecover(pool.session.pollContext, result, call, active)
 		if call.err != nil {
 			if call.fatal() {
 				pool.fail(call.err)
@@ -970,7 +970,7 @@ func (pool *workerPool) applyRecovered(lease LeaseRef, build func(LeaseRef) (Del
 		return false
 	}
 	result, call := pool.workers.callApply(pool.session.controlContext, request)
-	pool.workers.observeApply(Name{}, BindingName{}, request, result, call)
+	pool.workers.observeApply(pool.session.controlContext, Name{}, BindingName{}, request, result, call)
 	if call.fatal() {
 		pool.fail(call.err)
 		return false
@@ -1237,7 +1237,7 @@ func (delivery *activeWorkerDelivery) apply(ctx context.Context, build func(Leas
 		}
 		delivery.closeLost(call.err)
 		delivery.mu.Unlock()
-		delivery.pool.workers.observeApply(definition, binding, request, result, call)
+		delivery.pool.workers.observeApply(ctx, definition, binding, request, result, call)
 		if call.fatal() {
 			delivery.pool.fail(call.err)
 		}
@@ -1253,7 +1253,7 @@ func (delivery *activeWorkerDelivery) apply(ctx context.Context, build func(Leas
 		delivery.closed = true
 	}
 	delivery.mu.Unlock()
-	delivery.pool.workers.observeApply(definition, binding, request, result, call)
+	delivery.pool.workers.observeApply(ctx, definition, binding, request, result, call)
 	return result, call
 }
 
@@ -1335,7 +1335,7 @@ func (pool *workerPool) renewActiveBatch(ctx context.Context, batch []*activeWor
 	result, call := pool.workers.callRenew(ctx, request)
 	if call.err != nil || result.Len() != len(pending) {
 		pool.expireUnrenewed(pending, call.err)
-		pool.workers.observeRenew(request, result, call)
+		pool.workers.observeRenew(ctx, request, result, call)
 		if call.fatal() {
 			pool.fail(call.err)
 			return false
@@ -1366,7 +1366,7 @@ func (pool *workerPool) renewActiveBatch(ctx context.Context, batch []*activeWor
 		}
 		delivery.mu.Unlock()
 	}
-	pool.workers.observeRenew(request, result, call)
+	pool.workers.observeRenew(ctx, request, result, call)
 	return true
 }
 

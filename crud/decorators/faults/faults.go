@@ -14,6 +14,9 @@ func Enrich[M any, ID comparable](options ...Option) crud.Middleware[M, ID] {
 		o(&s)
 	}
 	return func(next crud.Core[M, ID]) crud.Core[M, ID] {
+		if _, sealed := next.(interface{ MutationBoundarySealed() }); sealed {
+			panic("faults: Enrich cannot wrap a sealed mutation boundary; place it inside that boundary")
+		}
 		e := &enricher[M, ID]{Core: next, meta: next.Meta(), onProbeErr: s.onErr}
 		e.declare(next, s)
 		return e

@@ -1,0 +1,10 @@
+package fixture
+
+type Outcome string
+
+const (
+	OutcomeReady Outcome = "ready"
+	OutcomeAlias = OutcomeReady
+	OutcomeWrapped = Outcome("wrapped")
+	OutcomeUntyped = "untyped"
+)

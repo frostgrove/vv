@@ -39,7 +39,7 @@ type cacheMemoryObserver struct {
 }
 
 func (o *cacheMemoryObserver) Observe(ctx context.Context, event cachememory.Event) {
-	if o.tel == nil || o.tel.config.Disabled {
+	if o.tel == nil {
 		return
 	}
 
@@ -52,25 +52,17 @@ func (o *cacheMemoryObserver) Observe(ctx context.Context, event cachememory.Eve
 		return
 	}
 
-	if o.emitSpanEvents {
+	if o.emitSpanEvents && o.tel.signalEnabled(SignalCacheBackendEvent) {
 		span := safeSpanFromContext(ctx)
-		if span != nil && safeIsRecording(span) {
-			safeAddEvent(span, "cache_backend.event", trace.WithAttributes(
-				AttrComponent.String(ComponentCacheBackend),
-				AttrCacheLayer.String("memory_backend"),
-				AttrOperationName.String(op),
-				AttrOperationOutcome.String(outcome),
-			))
+		attributes, admitted := cacheBackendAttributes(SignalCacheBackendEvent, op, outcome)
+		if !nilInterface(span) && safeIsRecording(span) && admitted {
+			safeAddEvent(span, EventCacheBackend, trace.WithAttributes(attributes...))
 		}
 	}
 
-	counter := o.tel.cacheOperationsInstrument()
-	if counter != nil {
-		safeAdd(counter, ctx, 1, metric.WithAttributes(
-			AttrComponent.String(ComponentCacheBackend),
-			AttrCacheLayer.String("memory_backend"),
-			AttrOperationName.String(op),
-			AttrOperationOutcome.String(outcome),
-		))
+	counter := o.tel.int64Counter(SignalCacheOperations)
+	attributes, admitted := cacheBackendAttributes(SignalCacheOperations, op, outcome)
+	if !nilInterface(counter) && admitted {
+		safeAdd(counter, ctx, 1, metric.WithAttributes(attributes...))
 	}
 }

@@ -118,8 +118,18 @@ type Renderer interface {
 | `WithCodes(*errs.Codes)` | the vocabulary. Decides kinds and default messages |
 | `WithMessages(errs.MessageSource)` | the catalogue rung of the message ladder |
 | `WithResolvers(rs...)` | declared path hops, wired **ahead** of the body fallback |
+| `WithObserver(func(context.Context, error))` | observe the private cause of an internal response; an observer panic is isolated |
 | `WithMaxViolations(n)` | cap the list. Default 100 |
 | `WithRetryAfter(seconds)` | the header on a 503. Default 1 |
+
+The observer runs only for the redacted 500 path, before `Internal()` discards
+the cause. It is an injected callback, not a logger or telemetry dependency, and
+applies the application's own privacy and cardinality policy.
+
+If the message source implements `errs.LocalizedMessageSource`, the renderer
+sets `Content-Language` from the actual template locales. It never copies the
+requested header into that response header when a legacy source cannot prove
+which catalogue rung supplied the text.
 
 Replace it wholesale — with RFC 9457, with a legacy shape, with nothing at all —
 through `WithRenderer` on any binding.
@@ -141,6 +151,8 @@ r.Use(crudgin.Errors(porthttp.WithMessages(cat)))                     // Gin
 It covers hand-rolled routes as well as generated ones. Installing it twice
 renders once — the marker is the response-writer wrapper rather than anything on
 the error, because a `Fault` is a value two goroutines may render at once.
+Generated resources bind their path hops to the request context, so these
+process-level options preserve model-to-wire paths without repeating resolvers.
 
 The auth middlewares take the same options, for the same reason: there is one
 renderer, so a 401 and a 422 come out of the same catalogue in the same shape.

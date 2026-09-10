@@ -56,7 +56,13 @@ type extensionModule struct{ directory, pattern string }
 
 func extensionModules(t *testing.T, tree, root string) []extensionModule {
 	t.Helper()
-	modules := []extensionModule{{directory: ".", pattern: "./" + root + "/..."}}
+	var modules []extensionModule
+	_, err := os.Stat(filepath.Join(tree, root, "go.mod"))
+	if os.IsNotExist(err) {
+		modules = append(modules, extensionModule{directory: ".", pattern: "./" + root + "/..."})
+	} else if err != nil {
+		t.Fatalf("cannot inspect the extension root %s: %v", root, err)
+	}
 	for _, nested := range modulesUnder(t, tree, root) {
 		modules = append(modules, extensionModule{directory: nested, pattern: "./..."})
 	}

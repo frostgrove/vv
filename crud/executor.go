@@ -39,7 +39,7 @@ func IsTransaction(e Executor) bool {
 	if isNilValue(e) {
 		return false
 	}
-	_, ok := unwrapSource(e, func(v any) bool {
+	_, ok := unwrapExecutor(e, func(v any) bool {
 		if _, tx := v.(Tx); tx {
 			return true
 		}
@@ -47,6 +47,90 @@ func IsTransaction(e Executor) bool {
 		return transactional && t.InTransaction()
 	})
 	return ok
+}
+
+func isTransactionSource(e Executor) bool {
+	walk := transactionAdmission{states: make(map[any]transactionAdmissionState)}
+	return walk.inspect(e, 0)
+}
+
+type transactionAdmissionState uint8
+
+const (
+	transactionAdmissionVisiting transactionAdmissionState = iota + 1
+	transactionAdmissionDone
+)
+
+type transactionAdmission struct {
+	states    map[any]transactionAdmissionState
+	inspected int
+}
+
+func (this *transactionAdmission) inspect(v any, depth int) bool {
+	if isNilValue(v) || depth >= maxChainDepth || this.inspected >= maxChainDepth {
+		return true
+	}
+
+	key, comparable := transactionAdmissionKey(v)
+	if comparable {
+		switch this.states[key] {
+		case transactionAdmissionVisiting:
+			return true
+		case transactionAdmissionDone:
+			return false
+		}
+		this.states[key] = transactionAdmissionVisiting
+	}
+	this.inspected++
+
+	if _, transaction := v.(Tx); transaction {
+		return true
+	}
+	if state, transactional := v.(Transactional); transactional && state.InTransaction() {
+		return true
+	}
+	source, hasSource := v.(SourceUnwrapper)
+	executor, hasExecutor := v.(ExecutorUnwrapper)
+	var sourceInner Source
+	var executorInner Executor
+	if hasSource {
+		sourceInner = source.UnwrapSource()
+		if isNilValue(sourceInner) {
+			return true
+		}
+	}
+	if hasExecutor {
+		executorInner = executor.UnwrapExecutor()
+		if isNilValue(executorInner) {
+			return true
+		}
+	}
+	if hasSource && hasExecutor && !sameTransactionAdmissionTarget(sourceInner, executorInner) {
+		return true
+	}
+	if hasSource && this.inspect(sourceInner, depth+1) {
+		return true
+	}
+	if hasExecutor && !hasSource && this.inspect(executorInner, depth+1) {
+		return true
+	}
+	if comparable {
+		this.states[key] = transactionAdmissionDone
+	}
+	return false
+}
+
+func transactionAdmissionKey(v any) (any, bool) {
+	rv := reflect.ValueOf(v)
+	return v, rv.IsValid() && rv.Comparable()
+}
+
+func sameTransactionAdmissionTarget(a, b any) bool {
+	va, vb := reflect.ValueOf(a), reflect.ValueOf(b)
+	if !va.IsValid() || !vb.IsValid() || va.Type() != vb.Type() || !va.Comparable() || !vb.Comparable() {
+		return false
+	}
+	return a == b
 }
 
 type Beginner interface {
@@ -90,6 +174,8 @@ func (this readWrite) UnsafeBulkInsert(ctx context.Context, target Executor, tab
 }
 
 func (this readWrite) UnwrapSource() Source { return this.Source }
+
+func (this readWrite) UnwrapExecutor() Executor { return this.Source }
 
 func (this readWrite) DataSource() any {
 	return identityOf(this.Source)
@@ -207,10 +293,17 @@ type SourceUnwrapper interface {
 	UnwrapSource() Source
 }
 
+type ExecutorUnwrapper interface {
+	UnwrapExecutor() Executor
+}
+
 func unwrapSource(v any, want func(any) bool) (any, bool) {
 	for i := 0; !isNilValue(v) && i < maxChainDepth; i++ {
 		if want(v) {
 			return v, true
+		}
+		if i == maxChainDepth-1 {
+			return nil, false
 		}
 		u, ok := v.(SourceUnwrapper)
 		if !ok {
@@ -225,6 +318,53 @@ func unwrapSource(v any, want func(any) bool) (any, bool) {
 	return nil, false
 }
 
+func unwrapExecutor(v any, want func(any) bool) (any, bool) {
+	for i := 0; !isNilValue(v) && i < maxChainDepth; i++ {
+		if want(v) {
+			return v, true
+		}
+		if i == maxChainDepth-1 {
+			return nil, false
+		}
+		u, ok := v.(ExecutorUnwrapper)
+		if !ok {
+			return nil, false
+		}
+		inner := u.UnwrapExecutor()
+		if isNilValue(inner) {
+			return nil, false
+		}
+		v = inner
+	}
+	return nil, false
+}
+
+func ExecutorAs[T any](v any) (T, bool) {
+	var zero T
+	found, ok := unwrapExecutor(v, func(x any) bool {
+		candidate, matched := x.(T)
+		return matched && !isNilValue(candidate)
+	})
+	if !ok {
+		return zero, false
+	}
+	return found.(T), true
+}
+
+func FindExecutor(v any, matches func(Executor) bool) (Executor, bool) {
+	if matches == nil {
+		return nil, false
+	}
+	found, ok := unwrapExecutor(v, func(x any) bool {
+		executor, is := x.(Executor)
+		return is && !isNilValue(executor) && matches(executor)
+	})
+	if !ok {
+		return nil, false
+	}
+	return found.(Executor), true
+}
+
 func BeginnerOf(v any) (Beginner, bool) {
 	found, ok := unwrapSource(v, func(x any) bool { _, is := x.(Beginner); return is })
 	if !ok {
@@ -234,11 +374,22 @@ func BeginnerOf(v any) (Beginner, bool) {
 }
 
 func ReadSourceOf(v any) (Source, bool) {
-	found, ok := unwrapSource(v, func(x any) bool { _, is := x.(ReadSourcer); return is })
+	found, ok := ReadSourcerOf(v)
 	if !ok {
 		return nil, false
 	}
-	return found.(ReadSourcer).ReadSource(), true
+	return found.ReadSource(), true
+}
+
+func ReadSourcerOf(v any) (ReadSourcer, bool) {
+	found, ok := unwrapSource(v, func(x any) bool {
+		candidate, is := x.(ReadSourcer)
+		return is && !isNilValue(candidate)
+	})
+	if !ok {
+		return nil, false
+	}
+	return found.(ReadSourcer), true
 }
 
 func UnsafeBulkInserterOf(v any) (UnsafeBulkInserter, bool) {
@@ -284,7 +435,7 @@ func NewSession(source Source, e Executor) (Session, error) {
 	if err := validateExecutor(e); err != nil {
 		return Session{}, err
 	}
-	if IsTransaction(source) {
+	if isTransactionSource(source) {
 		return Session{}, scopeError(ExecutorScopeTransactionSource)
 	}
 	ds := identityOf(source)
@@ -370,6 +521,20 @@ func ExecutorFrom(ctx context.Context) (Executor, bool) {
 func ExecutorFor(ctx context.Context, source any) (Executor, bool) {
 	e, found, _ := OwnedExecutorFor(ctx, source)
 	return e, found
+}
+
+func SourceBoundExecutorFor(ctx context.Context, source any) (Executor, bool, error) {
+	b, err := bindingFor(ctx, source)
+	if err != nil {
+		return nil, false, err
+	}
+	if b == nil {
+		return nil, false, nil
+	}
+	if b.ds == nil {
+		return nil, false, scopeError(ExecutorScopeMissingSource)
+	}
+	return b.e, true, nil
 }
 
 func UnsafeExecFor(ctx context.Context, source Source, query string, args ...any) (Result, error) {
@@ -553,10 +718,11 @@ func declaresIdentity(v any) bool {
 }
 
 var (
-	_ Source      = readWrite{}
-	_ ReadSourcer = readWrite{}
-	_ Identified  = readWrite{}
-	_ Beginner    = readWriteTx{}
+	_ Source            = readWrite{}
+	_ ReadSourcer       = readWrite{}
+	_ Identified        = readWrite{}
+	_ Beginner          = readWriteTx{}
+	_ ExecutorUnwrapper = readWrite{}
 )
 
 func SameDataSource(a, b any) bool {
@@ -602,7 +768,7 @@ func inNewTx(ctx context.Context, source Executor, fn func(context.Context) erro
 			return err
 		}
 	}
-	if IsTransaction(source) {
+	if isTransactionSource(source) {
 		return scopeError(ExecutorScopeTransactionSource)
 	}
 	b, ok := BeginnerOf(source)

@@ -260,6 +260,7 @@ type Violation struct {
     Code        Code
     Origin      Origin       // OriginInput or OriginState
     Message     string
+    MessageLocale string      // proven template locale; omitted from JSON
     Params      map[string]any  // feeds a template; stays server-side
     Source      Source          // storage provenance; internal, never rendered
     Approximate bool            // a hop could not be resolved and was not invented
@@ -271,6 +272,11 @@ A constraint the database refused to break and a rule a validator refused are
 entire point: a payload with a malformed email *and* a taken email is two
 violations at one path, and a client making two round trips to learn that is the
 problem this exists to remove.
+
+`MessageLocale` is projection metadata populated only by
+`LocalizedMessageSource`; the custom JSON form intentionally omits it. It lets
+HTTP and gRPC name the language actually rendered without changing the stable
+error envelope.
 
 `Origin` decides three things: the status (an input rule is 422, a collision with
 stored state is 409), whether the offending value may ever be echoed (only
@@ -368,8 +374,14 @@ sqlfault.New("postgres", sqlfault.WithCodes(codes))
 ```
 
 `Add` returns `errs.ErrCodeRedeclared` if the code is already declared with a
-different kind. The zero value and a nil `*Codes` both read as empty rather than
-panicking.
+different kind. It rejects empty, oversized or invalid-UTF-8 codes, unknown
+kinds and malformed or oversized default templates. Codes are otherwise opaque:
+an application is not forced into one naming convention. `Add`, `KindOf`,
+`MessageFor` and the `MessageSource` method `Message` may run concurrently. The
+zero value works; a nil `*Codes` reads as empty and an attempt to add to it
+returns an error rather than panicking. `Message` expands declared placeholders
+from the violation params and declines if one is missing; this makes `*Codes`
+useful as a safe final `MessageSource` on its own.
 
 ---
 
@@ -402,6 +414,23 @@ var messages embed.FS
 cat, err := errs.LoadMessages(errs.StandardCodes(), messages, "messages")
 ```
 
+Every file must be valid UTF-8 and contain one flat JSON object whose values are
+strings. Duplicate object members are an error, including two escaped spellings
+of the same key. Keys, locale names and placeholder names are bounded opaque
+UTF-8 strings. This is intentional: real public path members and application
+codes may contain dots, spaces or other punctuation. Keys and placeholder names
+must be non-empty; placeholder names cannot contain braces. Templates use
+`{name}` placeholders, and unmatched braces are refused when `Add` or `Load`
+sees them.
+
+Catalogue input is bounded by the exported limits
+`MaxCatalogueFileBytes`, `MaxCatalogueBytes`, `MaxCatalogueFiles`,
+`MaxCatalogueDirectoryEntries`, `MaxCatalogueEntries`, `MaxMessageKeyBytes`,
+`MaxMessageTemplateBytes` and `MaxLocaleBytes`. File loading enforces every
+limit, including ignored directory entries, and reports read and close errors.
+Direct `Add` enforces the catalogue entry and in-memory byte totals plus the key,
+template and locale limits.
+
 ### The lookup ladder
 
 For a violation at `["user","email"]` with code `unique`:
@@ -416,24 +445,54 @@ its author needs, with no configuration schema to learn.
 **Only the first and last named steps take part**, so the ladder is four rungs
 deep whatever the path is. A violation at `["order","items","email"]` reads
 `order.email.unique → order.unique → email.unique → unique`, and a key spelling
-the whole path is never consulted.
+the whole path is not consulted. The loader cannot reject those bytes: a path
+whose first member is literally `order.items` does consult that same key. Use
+the declared public path mapping rather than inferring reachability from dots.
 
-`Messages.Load(fsys, dir)` adds a locale at run time. `Locales()` lists them.
-`Missing(locale)` reports which declared codes that locale does not cover — wire
-it into a test and a half-translated catalogue fails the build.
+`Messages.Add` and `Messages.Load` are safe while requests call `Message`,
+`MessageWithLocale`, `Locales` and `Missing`. `Load` reads and validates every JSON file before one
+atomic commit. A read, validation or declaration conflict leaves the existing
+catalogue unchanged; an `Add` that completes while files are being staged is
+merged at commit and is never overwritten. `Locales()` returns a sorted list.
+
+Locale names are bounded opaque strings, not BCP 47 canonicalisation. Matching
+is case-sensitive. Both `en-GB` and `en_GB` fall back to `en`, then message lookup
+falls through to `default.json` and finally the code's default. A missing
+placeholder parameter makes that template decline so the next rung can answer.
+
+`Missing(locale)` is deliberately stricter than message lookup: it counts the
+named locale and its base locale, but `default.json` does not hide a missing
+translation for a non-default locale. Wire it into a test and a half-translated
+catalogue fails the build. `Missing("")` checks `default.json` itself.
+
+`MessageWithLocale` returns the locale rung that actually supplied the
+template. Thus a request for `en-GB` may report `en`, while a template from
+`default.json` and a code default report no locale. `Message` remains the small
+compatibility method and returns the same wording without provenance.
 
 The vocabulary is what the ladder falls through to, so a **partial catalogue is
 the designed case**, not a broken one.
 
+This flat catalogue does not implement plural rules. A product that needs CLDR
+or ICU selection supplies another `MessageSource`; the error pipeline above it
+does not change.
+
+The optional [i18n module](i18n.md) supplies that full path without changing
+`errs`: `Snapshot.ErrorMessages` validates immutable ladder mappings, permitted
+violation params and field-label messages, then implements
+`LocalizedMessageSource`. If mapping, binding or rendering fails, it declines so
+the existing public-message/code fallback and Internal redaction remain intact.
+
 ---
 
-## The SPI — five interfaces a third party implements
+## The SPI — six interfaces a third party implements
 
 | Interface | One method | Implemented by |
 |---|---|---|
 | `Classifier` | `Classify(error) (*Fault, bool)` | [sqlfault](sqlfault.md), or your ORM adapter |
 | `Resolver` | `Resolve(Path) (Path, bool)` | a generated `<Model>Mapper`, `port.Fields`, a body index |
-| `MessageSource` | `Message(ctx, Violation, locale) (string, bool)` | `errs.Messages`, or your i18n library |
+| `MessageSource` | `Message(ctx, Violation, locale) (string, bool)` | `errs.Messages`, `errs.Codes`, or your i18n library |
+| `LocalizedMessageSource` | `MessageWithLocale(ctx, Violation, locale) (text, actualLocale string, ok bool)` plus `MessageSource` | `errs.Messages` or an i18n library that can prove which locale supplied the template |
 | `CodeMapper` | `CodeFor(*Fault, Violation) (Code, bool)` | a service that wants `email_taken` where the classifier said `unique` |
 | `FieldViolation` | `Namespace/Tag/Param/Value` | **go-playground/validator, structurally** |
 

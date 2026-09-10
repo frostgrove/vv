@@ -75,7 +75,13 @@ column -> model field -> command field -> transport field -> wire
 | `PATCH /{id}` | `UpdateCommand` | the hook on the patch, then `Update` |
 | `PUT /{id}` | `ReplaceCommand` | the existence probe ([[D-012]]), `ClearGenerated`, `SetID` from the command's key, then the hook, then `Save` |
 | `DELETE /{id}` | `DeleteCommand` | `n == 0` ⇒ `crud.ErrNotFound` |
-| `POST /bulk-delete` | `BulkDeleteCommand` | an empty set never reaches the repository |
+| `POST /bulk-delete` | `BulkDeleteCommand` | an empty set reaches the repository so a gate still authorises it before the no-op |
+
+The optional `RestorableService` follows the same boundary rule even though no
+transport route is implied by the interface. `DefaultService.Restorable` exposes
+it only when the repository preserves Restore, and `RestoreMany` forwards an
+empty id set once. A security gate can therefore authorise or refuse the request;
+an allowed empty set still costs no storage statement ([[FL-008]]).
 
 What stays in the binding, and why each one is genuinely transport-shaped:
 `MaxBulk` (how large one request may be), `ReadOnly` (which routes exist),
@@ -137,6 +143,9 @@ declines rather than guessing ([[D-043]]).
    `BadRequest_FieldViolation.Field`, dotted. Since phase 9 that sentence is
    present tense — the fourth transport exists and this hop is where it and the
    envelope stop differing.
+   The same shared pass accepts actual template locale only from
+   `errs.LocalizedMessageSource`, stores it outside the JSON projection and
+   lets HTTP/gRPC name the fallback winner without copying raw locale input.
 
 **The fallback** — `port/porthttp/bodyindex.go:BodyResolver` — runs *after* every
 declared hop, and only over a path the declared hops left **unchanged**. It
@@ -147,11 +156,14 @@ violation's last step against the keys the client sent, so over an
 already-translated path it could land on a same-named key elsewhere in the
 payload — a `not_null` violation on a column the client omitted is the case that
 produces it. A guess must not overturn a declaration ([[D-043]]).
-`rendererFor` in each binding's `options.go` builds a per-handler renderer only
-when `port.Hops` returns something; with no hops the shared `defaultRenderer` is
-kept and the zero-config case stays free. `crud/rpc/crudgrpc/options.go` has the same
-function over its own renderer, and passes **no** fallback: that transport has no
-retained request bytes to index, so a path nothing declared is marked
+Each generated binding collects `port.Hops(service, mapper)` once, then binds
+that immutable chain to the operation context with `port.WithHops` before it
+calls the service. `port.Violations` prepends `port.HopsFrom(ctx)` to any
+renderer-owned resolvers. The same chain therefore survives a resource renderer,
+an outer process renderer and a locale selected inside the operation without a
+per-handler renderer closure. With no hops the context is unchanged and the
+zero-config path remains allocation-free. gRPC has no retained request bytes,
+so it still passes **no** raw-body fallback: a path nothing declared is marked
 approximate rather than guessed.
 
 ## Where the decisions bite
@@ -238,7 +250,8 @@ approximate rather than guessed.
 | a client-chosen key on create | `port.Sanitize`, before the hook | the key is zeroed; the request succeeds |
 | a PUT at a key that does not exist, with an auto key | `DefaultService.Replace`'s existence probe | 404, and nothing is written ([[D-012]]) |
 | a delete that removed nothing | `DefaultService.Delete` | 404 |
-| a bulk delete of an empty set | `DefaultService.DeleteMany` | `200 {"deleted":0}`, and the repository is never called |
+| a bulk delete of an empty set | `DefaultService.DeleteMany` | `200 {"deleted":0}` after the repository boundary authorises it; no statement |
+| an empty bulk restore is refused by a repository decorator | `DefaultService.RestoreMany` forwards once | the decorator's refusal; no statement |
 | `WithQuery` handed to `Serving` | `port.Rules.RefuseServiceOptions` | a panic at declaration naming the option |
 | a violation at a field no hop declares | `Fields` passes through, `BodyResolver` resolves | the key the client sent, not marked approximate |
 | a violation at a field nothing can resolve | `BodyResolver` declines | the model's field name, marked approximate ([[D-043]]) |
@@ -253,7 +266,7 @@ approximate rather than guessed.
 | `port/service.go` | `Service`, `DefaultService`, `NewService`, `ServiceOption`, `WithQuery`, `AllowClientID`, `WithPaths` — the whole orchestration |
 | `port/command.go` | the eight commands, and why the write ones carry their hook |
 | `port/mapper.go` | `Mapper`, `Identity` |
-| `port/path.go` | `Fields` — the service hop and its pass-through rule — and `Hops` |
+| `port/path.go`, `port/hops.go` | `Fields` — the service hop and its pass-through rule — plus `Hops`, `WithHops` and `HopsFrom`, which carry the generated chain through the operation context |
 | `port/pathmap.go` | `PathMap` and its decline rule, `At`, and the two start-up checks `NewPathMap`/`MustPathMap` and `CoversUpdate`/`MustCoverUpdate` ([[D-050]]) |
 | `port/paths.go` | `Paths`/`PathBuilder` — the same map derived from the model's wire tags instead of transcribed, and the refusal for every column it cannot read a key for ([[D-071]]) |
 | `port/repository.go` | `Repository` — what a service is built over ([[D-022]]) |
@@ -264,7 +277,7 @@ approximate rather than guessed.
 | `port/violations.go` | `Violations`, `ViolationOptions`, `MaxViolations` — the copy, the chain, the sort, the cap and the message ladder, called by every renderer |
 | `port/locale.go` | `WithLocale`, `LocaleFrom`, `FirstLanguageTag` — one context key and one tag parser for every transport |
 | `crud/http/crudnet/handler.go` | the traced binding: routes, decode, the four constructors, `HandlerFor`/`Handler` |
-| `crud/http/crudnet/options.go` | `collect`, `rendererFor`, `render`, `writeJSON` — the rules and their two methods are `port.Rules` |
+| `crud/http/crudnet/options.go` | `collect`, `render`, `writeJSON` and the transport-shaped options — the rules and their two methods are `port.Rules` |
 | `port/rules.go` | `Rules`, `Service`, `RefuseServiceOptions` — the five settings that say nothing about a transport, held once for all four bindings |
 | `crud/http/crudfiber/handler.go`, `crud/http/crudgin/handler.go` | the same two files each, name for name ([[FL-013]]) |
 | `crud/http/crudhttp/doc.go` | where the lines between the three shared halves are drawn |
@@ -318,6 +331,8 @@ approximate rather than guessed.
   sanitise / hook / save order, the replace probe, and the control that with
   `AllowClientID` the hook does see the client's key.
 - `TestDeletingNothingIsAMissForOneRowAndZeroForASet` — `port/service_test.go`.
+- `TestRestoreManyForwardsAnEmptySetToTheRepository` — `port/service_test.go` —
+  allowed and refusing neighbors prove the empty set crosses the boundary once.
 - `TestTheReadsNarrowTheDocumentAndAppendTheCallersOptions` —
   `port/service_test.go` — including the compiled SQL of a client filter ANDed
   with a caller's option.

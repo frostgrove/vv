@@ -3,12 +3,16 @@ package vvotel_test
 import (
 	"context"
 	"fmt"
+	"sort"
+	"strings"
+	"sync"
 	"testing"
 
 	"github.com/frostgrove/vv/cache"
 	"github.com/frostgrove/vv/cache/cachememory"
 	"github.com/frostgrove/vv/otel"
 	"github.com/frostgrove/vv/port"
+	"github.com/frostgrove/vv/storage"
 )
 
 func TestCardinalityAndPrivacy_CanaryNeverEmitted(t *testing.T) {
@@ -75,8 +79,18 @@ func TestCardinality_CacheMetricSeriesStayWithinRegistryBound(t *testing.T) {
 			backendObserver.Observe(context.Background(), cachememory.Event{Operation: cachememory.Operation(operation), Outcome: cachememory.Outcome(outcome)})
 		}
 	}
-	if got := mp.metricCount(); got != 116 {
-		t.Fatalf("got %d cache metric observations, want the 116-series registry bound", got)
+	series := map[string]bool{}
+	for _, observation := range mp.metrics {
+		parts := make([]string, 0, len(observation.attributes))
+		for key, value := range observation.attributes {
+			parts = append(parts, fmt.Sprintf("%s=%s", key, value.AsString()))
+		}
+		sort.Strings(parts)
+		series[observation.name+strings.Join(parts, ";")] = true
+	}
+	want := vvotel.MetricMetadataByKey["cache_operations"].CardinalityBound
+	if len(series) != want {
+		t.Fatalf("cache produced %d unique attribute sets against the calculated bound %d", len(series), want)
 	}
 }
 
@@ -88,7 +102,7 @@ func TestCardinality_ResourceNamesStayWithinRegistryBound(t *testing.T) {
 	}
 	for i := 0; i < vvotel.MaxResourceNameValues+8; i++ {
 		name := fmt.Sprintf("resource_%d", i)
-		svc := vvotel.Service[dummyModel, string, dummyModel](tel, vvotel.WithServiceResource(name))(&fakePortService{})
+		svc := vvotel.Service[dummyModel, string, dummyModel](tel, vvotel.WithServiceResource(vvotel.ApprovedName(name)))(&fakePortService{})
 		_, _ = svc.Get(context.Background(), port.GetCommand[string]{ID: "id"})
 	}
 	withResource := 0
@@ -99,5 +113,111 @@ func TestCardinality_ResourceNamesStayWithinRegistryBound(t *testing.T) {
 	}
 	if withResource != vvotel.MaxResourceNameValues {
 		t.Fatalf("got %d resource names, want bound %d", withResource, vvotel.MaxResourceNameValues)
+	}
+}
+
+func TestCardinality_ApprovedNamesShareOneConcurrentTelemetryBudget(t *testing.T) {
+	tp := newTestTracerProvider()
+	tel, err := vvotel.New(vvotel.Config{
+		TracerProvider: tp,
+		ResourceName:   "configured_default",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := storage.ParseKey("object")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	service := vvotel.Service[dummyModel, string, dummyModel](tel, vvotel.WithServiceResource("service_first"))(&fakePortService{})
+	_, _ = service.Get(context.Background(), port.GetCommand[string]{ID: "id"})
+	store := vvotel.Store(tel, vvotel.WithStorageResource("storage_first"))(&fakeStorageStore{})
+	_, _ = store.Head(context.Background(), key)
+	sharedService := vvotel.Service[dummyModel, string, dummyModel](tel, vvotel.WithServiceResource("shared_name"))(&fakePortService{})
+	_, _ = sharedService.Get(context.Background(), port.GetCommand[string]{ID: "id"})
+	sharedStore := vvotel.Store(tel, vvotel.WithStorageResource("shared_name"))(&fakeStorageStore{})
+	_, _ = sharedStore.Head(context.Background(), key)
+
+	var group sync.WaitGroup
+	for i := 2; i < vvotel.MaxResourceNameValues+32; i++ {
+		group.Add(1)
+		go func(index int) {
+			defer group.Done()
+			name := vvotel.MustApproveName(fmt.Sprintf("resource_%d", index))
+			if index%2 == 0 {
+				wrapped := vvotel.Service[dummyModel, string, dummyModel](tel, vvotel.WithServiceResource(name))(&fakePortService{})
+				_, _ = wrapped.Get(context.Background(), port.GetCommand[string]{ID: "id"})
+				return
+			}
+			wrapped := vvotel.Store(tel, vvotel.WithStorageResource(name))(&fakeStorageStore{})
+			_, _ = wrapped.Head(context.Background(), key)
+		}(i)
+	}
+	group.Wait()
+
+	defaultService := vvotel.Service[dummyModel, string, dummyModel](tel)(&fakePortService{})
+	_, _ = defaultService.Get(context.Background(), port.GetCommand[string]{ID: "id"})
+
+	seen := make(map[string]struct{})
+	withResource := 0
+	for _, span := range tp.spans {
+		value, ok := span.attributes[vvotel.AttrResourceName]
+		if !ok {
+			continue
+		}
+		withResource++
+		seen[value.AsString()] = struct{}{}
+	}
+	if withResource != vvotel.MaxResourceNameValues+1 || len(seen) != vvotel.MaxResourceNameValues {
+		t.Fatalf("admitted points=%d distinct=%d, want %d/%d", withResource, len(seen), vvotel.MaxResourceNameValues+1, vvotel.MaxResourceNameValues)
+	}
+	if _, ok := seen["service_first"]; !ok {
+		t.Fatal("service declaration did not enter the shared budget")
+	}
+	if _, ok := seen["storage_first"]; !ok {
+		t.Fatal("storage declaration did not enter the shared budget")
+	}
+	if _, ok := seen["shared_name"]; !ok {
+		t.Fatal("duplicate service/storage declaration did not share one budget entry")
+	}
+	last := tp.spans[len(tp.spans)-1]
+	if _, ok := last.attributes[vvotel.AttrResourceName]; ok {
+		t.Fatal("configured default was pre-reserved or escaped the exhausted shared budget")
+	}
+}
+
+func TestCardinality_TelemetryValueCopiesShareOneConcurrentApprovedNameBudget(t *testing.T) {
+	tp := newTestTracerProvider()
+	tel, err := vvotel.New(vvotel.Config{TracerProvider: tp})
+	if err != nil {
+		t.Fatal(err)
+	}
+	copyOfTelemetry := *tel
+
+	var group sync.WaitGroup
+	for i := 0; i < vvotel.MaxResourceNameValues*4; i++ {
+		group.Add(1)
+		go func(index int) {
+			defer group.Done()
+			selected := tel
+			if index%2 != 0 {
+				selected = &copyOfTelemetry
+			}
+			name := vvotel.MustApproveName(fmt.Sprintf("copied_resource_%d", index))
+			wrapped := vvotel.Service[dummyModel, string, dummyModel](selected, vvotel.WithServiceResource(name))(&fakePortService{})
+			_, _ = wrapped.Get(context.Background(), port.GetCommand[string]{ID: "id"})
+		}(i)
+	}
+	group.Wait()
+
+	seen := make(map[string]struct{})
+	for _, span := range tp.spans {
+		if value, ok := span.attributes[vvotel.AttrResourceName]; ok {
+			seen[value.AsString()] = struct{}{}
+		}
+	}
+	if len(seen) != vvotel.MaxResourceNameValues {
+		t.Fatalf("copied telemetry admitted %d distinct names, want shared bound %d", len(seen), vvotel.MaxResourceNameValues)
 	}
 }

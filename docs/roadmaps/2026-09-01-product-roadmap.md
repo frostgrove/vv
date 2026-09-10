@@ -24,7 +24,7 @@ tree, not that snapshot, is the baseline:
 | Cache | Typed facade, memory backend, declarations, bounded policy, observers and conformance helpers exist | Treat delivered contracts as base seams; do not recreate cache inside jobs/tenancy/OTel |
 | Jobs | Typed definitions, queue, delivery/worker contracts, durable context, scheduling, Admin/redrive contracts, PostgreSQL operator controls, memory/PostgreSQL drivers, worker execution, Fx binding and a committed Redis backend module exist | Treat PostgreSQL and Redis backends as building, not release-ready, until clean conformance plus their isolated live-service/crash evidence passes; Admin remains exact optional, and List still lacks an aggregate byte budget |
 | OpenTelemetry | No code/module exists; a current design revision exists, but its common architecture gate is not yet accepted | Implement the single `vvotel` extension only after common base seams are accepted |
-| Full i18n | Root has `errs.MessageSource`, catalogues and a shared locale key; transport precedence and custom-renderer path preservation need explicit care | The [i18n revision](2026-09-01-i18n-roadmap.md) specifies 12 mechanisms and 7 system integration contracts, including a combined errs/tenancy/OTel fixture; no full i18n implementation or new bridge modules |
+| Full i18n | The optional nested i18n module and CLI implement the pinned MF2 profile, immutable catalogues, resolver/view/render, typed/public contracts, error adapter and bounded controller; CRUD transports preserve prebound locale | The [i18n revision](2026-09-01-i18n-roadmap.md) records the delivered core and the application-owned external distribution, durable pin, tenant-policy, cache, runtime/health and formatter-parity limits; no bridge modules |
 | Multitenancy | Root policy/repository scopes and examples exist; no tenancy extension/topology runtime exists | The [tenancy revision](2026-09-01-multitenancy-roadmap.md) reuses security/query/source seams; example tenant fields do not imply a shipped subsystem |
 | Audit and event sourcing | No framework packages exist | The [audit](2026-09-01-audit-log-roadmap.md) and [event-sourcing](2026-09-01-postgres-event-sourcing-roadmap.md) revisions keep them proposed and independent |
 
@@ -41,8 +41,9 @@ not by publishing a package for every stack combination. The product order is:
    demonstrably needs;
 3. ship the first cross-cutting extension (`vvotel`) as proof of linear
    composition;
-4. activate tenancy, audit, event sourcing or full i18n only from a concrete
-   consumer requirement and its feature-specific readiness gate;
+4. activate tenancy, audit or event sourcing only from a concrete consumer
+   requirement; add i18n external-lifecycle integrations only when an application
+   needs them beyond the delivered in-process module;
 5. add external backend/transport/provider adapters only after the base contract
    has conformance evidence.
 
@@ -93,14 +94,16 @@ service := port.ChainService(
     vvotel.Service[Order, OrderID, OrderUpdate](telemetry),
 )
 
+localizedErrors, err := snapshot.ErrorMessages(errorSpec)
 renderer := porthttp.NewRenderer(
-    porthttp.WithMessages(i18n.Messages(catalogue)),
+    porthttp.WithMessages(localizedErrors),
 )
 ```
 
-This is an illustrative shape. It becomes documentation API only after the
-base service chain and each named extension are implemented. The application,
-not a registry, owns ordering and lifecycle.
+Here `localizedErrors` is the implemented result of
+`snapshot.ErrorMessages(errorSpec)`. The remaining extension names are an
+illustrative shape governed by their own current roadmaps. The application, not
+a registry, owns ordering and lifecycle.
 
 ## Delivery horizons
 
@@ -149,7 +152,7 @@ Exit evidence:
 
 ### P2 — prove the extension model with OpenTelemetry
 
-Implement the [current OTel roadmap](2026-08-31-opentelemetry-roadmap.md): one
+Implement the [current OTel roadmap](2026-09-08-opentelemetry-maximal-roadmap.md): one
 optional `vvotel` module, injected providers, typed factories and no SDK/exporter
 or optional-satellite dependency in its first production graph.
 
@@ -166,7 +169,7 @@ The following are independently selectable, not one required stack:
 | [Tenancy](2026-09-01-multitenancy-roadmap.md) | A consumer needs framework-owned topology beyond existing policy scopes | Verified scope plus one row-isolation topology; database-per-tenant remains a separately tested factory in the same extension |
 | [Audit](2026-09-01-audit-log-roadmap.md) | A named resource needs durable, authorized evidence | One exact repository mutation plus the PostgreSQL persistence profile; a service factory waits for the base chain and atomicity gate |
 | [PostgreSQL event sourcing](2026-09-01-postgres-event-sourcing-roadmap.md) | A named aggregate needs append/replay/versioning | One aggregate stream, optimistic append and schema/upcaster registry |
-| [Full i18n](2026-09-01-i18n-roadmap.md) | Error catalogues are insufficient for plural/select application messages | Immutable catalogue plus `errs.MessageSource`; no new transport binding |
+| [I18n application lifecycle](2026-09-01-i18n-roadmap.md) | A consumer needs external catalogue delivery, durable pins, tenant settings or a separate frontend formatter beyond the delivered core | Compose those application-owned facilities around `Load`, `SnapshotRef`, `Controller`, `RenderKey` and the existing error/transport seams; no combination module |
 
 One extension may ship before another when its readiness gate is satisfied.
 Audit does not require event sourcing; event sourcing does not imply audit;

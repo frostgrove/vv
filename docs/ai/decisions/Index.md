@@ -34,7 +34,10 @@ aspirational. The rule still binds: it forbids working around it in the meantime
 and it is what the implementing phase has to satisfy. Such a decision heads its
 evidence section `Proven by (owed)` and names the tests that phase must write —
 so an agent checking that every symbol a doc names still exists knows those are
-deliberate rather than rot. **The set is now empty.** D-038 left it when phase 1
+deliberate rather than rot. **The set currently contains D-128 and D-130**:
+D-128 lists its OTel O1–O3 proof in `Proven by (owed)`, while D-130 has a
+current S0 contract and trace authority and owes its runtime proof from audit
+S1 onward. D-038 left the set when phase 1
 landed `errs`, D-045 when phase 5 landed `port`, D-041 when phase 6 landed
 `catalog`, D-042 when phase 7 landed `probe`, and D-043 when phase 8 landed the
 generated mappers and the start-up refusal it owed; D-045's own named follow-up
@@ -46,8 +49,7 @@ are now bare `accepted`: D-040's owed 503 and `Retry-After` are pinned by
 D-044's owed rendered body by `TestARenderedBodyNamesNothingInternal` in
 `port/porthttp/render_test.go`. An *accepted* decision may still owe evidence: D-039
 did and phase 2 paid it, D-038 did — the tree walk through a multi-error — and
-phase 3 paid that. Nothing in `docs/` heads a section `Proven by (owed)` today,
-and the next decision written before its code does should say so here.
+phase 3 paid that.
 
 ## Index
 
@@ -100,7 +102,7 @@ and the next decision written before its code does should say so here.
 | [D-045](D-045-the-shared-half-is-transport-neutral.md) | The shared half is transport-neutral; a binding is a shell over `port` (supersedes D-034) | accepted | HTTP |
 | [D-046](D-046-the-classifier-is-keyed-on-dialect-sqlstate-native.md) | The classifier is keyed on `(dialect, sqlstate, native)`; SQLSTATE class alone is not a gate | accepted | errors |
 | [D-047](D-047-a-faults-error-text-is-classification-only.md) | A fault's `Error()` names the kind, code, op, entity and count, and nothing a driver said | accepted | errors |
-| [D-048](D-048-the-contract-manifest-is-closed.md) | A package joins the contract manifest only when a second implementation asks, and never when the standard library already contracts it | accepted | process & tooling |
+| [D-048](D-048-the-contract-manifest-is-closed.md) | A package joins the contract manifest only when a second implementation asks, and never when the standard library already contracts it | accepted — i18n example superseded by D-129 | process & tooling |
 | [D-049](D-049-the-kind-decides-the-status.md) | The kind decides the status; the sentinel decides only when there is no fault | accepted | errors |
 | [D-050](D-050-the-generated-adapter-is-total.md) | A generated artefact covers every column its side of the wire carries, and a gap is a start-up refusal; hand-written stays partial | accepted | process & tooling, errors |
 | [D-051](D-051-a-satellite-carries-one-dependency-decision.md) | A satellite isolates one dependency *decision*; several requires are one decision when no consumer can take one without the others | accepted | process & tooling |
@@ -114,7 +116,7 @@ and the next decision written before its code does should say so here.
 | [D-059](D-059-the-http-projection-of-the-error-contract-belongs-to-port.md) | The status table, the envelope, the `Renderer` seam and the body decode are `port/porthttp`'s, so an auth middleware does not import the repository | accepted | transports, errors |
 | [D-060](D-060-a-request-may-not-choose-how-much-comes-back.md) | `query.Config` is open by default about what a request may *name* and closed about how much comes back; `unpaged` is declared per endpoint | accepted | querying, transports |
 | [D-061](D-061-a-wrapper-forwards-what-it-wraps.md) | Discovery follows declared wrapper walks; storage effects require exact explicit forwarding and never tunnel through an unknown layer | accepted | core seam, transactions & datasources |
-| [D-062](D-062-the-library-logs-through-the-callers-logger.md) | Library lines use `port.Logger(ctx)`; Source wrappers see direct calls, while complete transaction tracing belongs below the handles | accepted | process & tooling, transports |
+| [D-062](D-062-the-library-logs-through-the-callers-logger.md) | Request-scoped lines use `port.Logger(ctx)`; existing long-lived runtime logger fields remain application-owned; every site passes its operation context when one exists; Source wrappers still see direct calls only | accepted; logging narrowing in force by D-128 | process & tooling, transports |
 | [D-063](D-063-every-body-a-transport-reads-is-bounded.md) | Every request and response body is read under a byte cap, the same one on every binding, and a body past it is 413 / `ResourceExhausted` | accepted | transports, errors |
 | [D-064](D-064-migration-generation-never-guesses-a-model.md) | Automatic migration generation uses only one uniquely best model; ambiguity is interactive or empty, never guessed | accepted | process & tooling, migrations |
 | [D-065](D-065-structs-have-reference-semantics-unless-they-are-values.md) | A struct crosses an application boundary by pointer unless copying is its documented value semantics | accepted | API design, process & tooling |
@@ -166,7 +168,7 @@ and the next decision written before its code does should say so here.
 | [D-111](D-111-a-resource-declaration-is-contributed-never-inferred.md) | `cachefx` is what makes the eviction-domain rule run in a deployment: it collects `cache.ResourceDeclaration` from an fx group, activates with declared resources required unless the spec writes `cachefx.Accepted`, and infers nothing from a provider — so the durable packages the rule protects never import `cache` to be counted (extends D-104) | accepted | caching, composition, security, operations |
 | [D-112](D-112-a-revocation-list-refuses-a-server-that-evicts-it.md) | The Redis revocation list asks its own server for `maxmemory-policy` at start-up and refuses every evicting one; a server that will not answer is a third verdict that is warned about by default and refused on request, an absent server is refused outright, and the check is a lifecycle method with `revokeredisfx` as its fx form | accepted | auth, security, caching, operations |
 | [D-113](D-113-a-resource-states-its-mounted-operations-as-one-set.md) | Which of a CRUD resource's ten routes are mounted is one bitmask on `port.Rules`, read by every transport and by the declaration `crudhttp.Table` derives; `ReadOnly` becomes its commonest value, and naming both is a start-up panic | accepted | transports, API design, security |
-| [D-114](D-114-one-cross-cutting-opentelemetry-module.md) | Exactly one published module `otel/` (`github.com/frostgrove/vv/otel`, package `vvotel`) adapts base seams (`port`, `storage`, `cache`); non-OTel modules and the root remain OTel-free, and combination packages are forbidden | accepted | process & tooling, composition, operations |
+| [D-114](D-114-one-cross-cutting-opentelemetry-module.md) | Exactly one published module `otel/` (`github.com/frostgrove/vv/otel`, package `vvotel`) adapts base seams (`port`, `storage`, `cache`); non-OTel modules and the root remain OTel-free, and combination packages are forbidden | **superseded by D-128** | process & tooling, composition, operations |
 | [D-115](D-115-unscoped-existence-is-an-exact-outer-effect.md) | `ExistsUnscopedOf` answers from the exact outer `Core` and never walks; `security.gate` answers it inside its own scope, `faults.enricher` forwards it, `crud.Base` does not, and a core that never decided answers `ErrNoUnscopedExists` — the last executable effect that still tunnelled (completes D-061) | accepted | core seam, security |
 | [D-116](D-116-one-tenancy-extension-and-its-core-costs-no-seam.md) | One tenancy extension in the root module: a core that imports no seam, and one package per seam it adapts (`tenancyrow`, `tenancydb`, `tenancyjobs`, `tenancystorage`, `tenancycache`), each costing its own seam and no other; a module boundary here is a third-party dependency boundary, so a stdlib-only extension does not get one until a provider adapter needs it | accepted | composition, security, process & tooling |
 | [D-117](D-117-a-verified-scope-is-minted-never-manufactured.md) | A `tenancy.Scope` exists only where the injected authority minted it — the resolver returns plain data, the scope carries a per-authority HMAC binding, lifecycle admission is a whitelist per operation class, the epoch is checked at each boundary and pinned in between, and a refusal names a kind and never the resolver's text | accepted | security, core seam, operations |
@@ -180,12 +182,18 @@ and the next decision written before its code does should say so here.
 | [D-125](D-125-a-composed-key-is-a-wire-format.md) | `event.Compose` escapes the separator, the escape byte and exactly what the kernel text rule refuses, then joins with `/`, and the rendering is frozen because it is part of every stream ever written under it; a length-prefixed key is refused because a stream key is read, indexed and grepped where `cache`'s namespace prefix is only ever hashed | accepted | event sourcing, core seam |
 | [D-126](D-126-the-event-store-chooses-no-isolation-level.md) | `eventpg` selects no isolation level, opens no transaction outside its migration, reads no stream version into Go, and admits an append through one statement whose zero row count is the only conflict there is; `40001`, `40P01` and `55P03` carry a retryable cause and are never conflicts | accepted | event sourcing, transactions & datasources |
 | [D-127](D-127-an-event-schema-is-migrated-on-the-same-deployment-profile-choice.md) | An event schema migrates only under `ManageSchema`, `Migrate` refuses under `VerifySchema`, there is no zero-configuration `Open`, and a verified start-up compares version, fingerprint and catalog before it serves — D-101's rule, over a subsystem whose data is history | accepted | event sourcing, process & tooling |
+<<<<<<< HEAD
+| [D-128](D-128-one-opentelemetry-module-the-application-owns-the-sdk.md) | One optional `vvotel` module observes explicit neutral seams with borrowed OTel API providers; it narrows D-062 only for context-bearing log calls; the application owns SDK/native instrumentation/export/shutdown and telemetry never changes an operation | **in force from OTel O1–O3; v2 schema current** | process & tooling, composition, operations |
+| [D-129](D-129-one-optional-i18n-module-owns-deterministic-presentation.md) | One optional `i18n` module owns the versioned MessageFormat profile, locale policy, immutable catalogues and offline tooling; the root error seam stays stdlib-only and transports keep protocol projection | accepted | i18n, process & tooling, composition, errors |
+| [D-130](D-130-audit-evidence-is-explicit-protected-and-transaction-honest.md) | Audit records only declared evidence, protects it before any store or observer sees it, and calls a business mutation atomic with its evidence only when both share one exact proven transaction authority. Correlation, telemetry, event history, ORM hooks and matching datasource configuration are not substitutes for that proof. | **in force from audit S1; the S0 contract and trace authority are current, while runtime proof is owed by the sections that implement it** | audit, security, transactions & datasources, composition |
+=======
 | [D-128](D-128-the-log-delivers-in-position-order.md) | `Log.ReadAll` answers ascending positions and one stream's events in that stream's order; both are kernel laws with no capability to deny them, so `Progress.Highest` stays a completeness watermark. The reference implementation's `ORDER BY transaction_id, id` is refused because it presumes the store owns the writing transaction, which [[D-118]] and [[D-126]] forbid — measured live, it reorders one stream against itself | accepted | event sourcing, core seam |
 | [D-129](D-129-a-checkpoint-is-a-store-minted-cursor-never-a-position.md) | The one value a consumer resumes from is the cursor the log minted: `Checkpoint` carries no position, `Progress` resumes nothing, no exported function anywhere under `event/` takes a `Position` and answers a `Cursor`, and a cursor is compared for equality and emptiness but never ordered — because `eventpg`'s cursor carries two settlement numbers no position holds, so the conversion is impossible there and exact-and-wrong everywhere else | accepted | event sourcing, core seam |
 | [D-130](D-130-a-projection-is-a-supervised-runner-over-the-callers-unit-of-work.md) | A projection is a `runtime.Runner` whose constructor starts nothing; the framework opens no transaction, `Spec.Unit` is the caller's and must run the work once and no more, the log is read outside every unit because a walk inside one settles no gap, `InUnit` is refused rather than downgraded and carries its precondition wherever it is stated, a halt is terminal and silent, each attempt is handed its own page, and `jobs`' three retry names are re-spelled rather than imported | accepted | event sourcing, process & tooling, transactions & datasources |
 | [D-131](D-131-a-routers-coverage-is-inferred-and-an-unclaimed-type-is-a-refusal.md) | A router's covered families are the families of the facts registered on it; inside a covered family an unrouted type is `ErrUnrouted` and halts rather than being skipped, outside every covered family an envelope is skipped and counted, `Ignore` is by name so a retired type can be named, and the router seals on its first `Apply` | accepted | event sourcing, API design |
 | [D-132](D-132-a-snapshot-is-added-from-a-measured-need-and-this-package-writes-no-line.md) | No snapshot, memo or cache of a folded state ships: the measured replay is 10 – 18 ms at 10 000 events, the gate is a measured need rather than a measured cost, and what ships instead is `BenchmarkStreamReplay` plus a recorded ~50 ms p99 re-entry trigger a deployment measures for itself. `event/projection` also emits no line, span or metric — `port.Logger` and a `Spec.Logger` are both refused by name, and what the silence costs is stated | accepted | event sourcing, philosophy & docs, observability |
 | [D-133](D-133-a-projection-that-loses-the-fence-takes-turns.md) | A checkpoint save the fence refuses does not halt a projection: it takes the row the winner left, resumes from that row's cursor and backs off, and the streak only a landed save clears is what makes `Ready` report `ErrOvertaken`. Under `InUnit` the advance is claimed before the handler runs, so on a store that evaluates its fenced save against a tuple it is holding — PostgreSQL, measured live at N=2 — the losing instance never applies. What tells a lost fence from this pass's own landed save is the **cursor** the row carries and never the advance alone; an absent row or one behind the fence still halts | accepted | event sourcing, process & tooling |
+>>>>>>> 5fedaae3d4e688198eb0116509c76d075429340e
 
 ## By area
 
@@ -300,7 +308,10 @@ shell over, and the phase-9 measurement that adding it changed nothing shared),
 D-049 (why one `codes.Code` per kind and never per code), D-051 (why three
 requires are one decision).
 
-**Composition** — D-074 (why an fx binding is a satellite and what that does not
+**Composition** — D-129 (one independently removable i18n module over the
+existing error seam, with no transport or extension-intersection packages),
+D-128 (one independently removable OTel adapter per neutral
+seam, with no bootstrap or combination packages), D-074 (why an fx binding is a satellite and what that does not
 license), D-111 (the cache binding, and why the package that lives on a
 resource declares it as data rather than by importing the subsystem that
 checks it), D-037 (the container this library still does not hold, and the three
@@ -310,7 +321,8 @@ one decision), D-021 (the boilerplate a consumer should not be writing).
 **Interop with an ORM** — D-017 (Go-side behaviour does not run), D-009 (how the
 transaction is shared), D-018 (`-types`, `-into`, `-import`).
 
-**Errors** — D-015 (the sentinel list and the HTTP mapping), D-049 (which of the two decides a status), D-046 (how a driver
+**Errors** — D-129 (why localization changes wording but never the machine
+failure contract, public path, status or redaction), D-015 (the sentinel list and the HTTP mapping), D-049 (which of the two decides a status), D-046 (how a driver
 error is classified, and why the class alone is not a gate), D-039 (message text
 is not an interface), D-040 (retryable is not a client error), D-044 (a body
 names nothing internal), D-047 (and neither does a fault's `Error()` text),
@@ -336,7 +348,9 @@ mean), D-083 (difference 12 — explicit native COPY versus portable INSERT).
 D-080 (immutable structured table resolution, qualified refs and independent blueprints),
 D-025 (fail-fast key normalisation).
 
-**Process & tooling** — D-064 (why migration source discovery never executes code or guesses an ambiguous model), D-048 (what joins the contract manifest, why nothing on the roadmap's `?` list does, and why phase 9's catalogues did not make `i18n` one), D-035 (naming), D-036 (first-party requirements), D-051 (why a satellite's unit is a decision rather than a require), D-033 (one module per optional dependency, and how a
+**Process & tooling** — D-129 (why full i18n is an optional nested module while
+`errs.MessageSource` and the contract manifest stay in the root), D-128 (the only allowed OTel production imports and the
+dependency gates that keep every other module clean), D-064 (why migration source discovery never executes code or guesses an ambiguous model), D-048 (what joins the contract manifest and why phase 9's flat error catalogues did not make `i18n` a root contract), D-035 (naming), D-036 (first-party requirements), D-051 (why a satellite's unit is a decision rather than a require), D-033 (one module per optional dependency, and how a
 release is tagged), D-016 (**superseded** in its module half; its stdlib rule
 still binds), D-018 (generated artefacts, and every flag's reason), D-050 (why a
 generated one is held to a standard a hand-written one is not, and what the
@@ -359,7 +373,8 @@ transport-neutral), D-059 (the HTTP projection of the error contract belongs to
 resource carries documents), D-049 (the kind decides the status), D-013
 (binding-level rejection).
 
-**Operations** — D-090 (why liveness asks nothing and why degraded keeps its
+**Operations** — D-128 (the admitted semantic telemetry seams, fail-safe signal
+lifecycle, durable Trace Context boundary and application-owned SDK), D-090 (why liveness asks nothing and why degraded keeps its
 traffic), D-091 (importance as a composition decision, the opt-in public code,
 and why there is no package per checked subsystem), D-101 (why nothing migrates
 a jobs schema by default, and what a production profile refuses), D-118 (why a
@@ -376,6 +391,10 @@ D-108 (why a jobs worker fleet is named rather than inferred from the graph that
 happens to hold a consumer), D-112 (a start-up question asked of Redis, and the
 three answers a deployment can get back), D-037 (why none of this is a
 container).
+
+**Audit** — D-130 (the four distinct evidence products, explicit allowlists and
+protection, exact transaction authority, independently authorized reads,
+root-kernel/nested-PostgreSQL topology and executable S0 trace authority).
 
 **Event sourcing** — D-121 (why the vocabulary is a root package, why the second
 implementation is what earns it, why the surface baseline is a report and never a
@@ -410,4 +429,3 @@ application), D-023 (guides lead with the result), D-020 (what a test is for).
   included, so it deduplicates nothing and says so to nobody. Separately, a paged
   `DISTINCT` cannot have a stable tiebreaker, so page 2 of the same query can
   legitimately differ between calls. Three ways out, all with a cost.
-

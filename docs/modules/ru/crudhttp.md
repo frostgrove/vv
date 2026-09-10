@@ -56,7 +56,7 @@ import "github.com/frostgrove/vv/crud/http/crudhttp"
 `crud/http/crudhttp/porthttp.go` реэкспортирует всё, что перенёс [[D-059]]:
 `Renderer`, `EnvelopeRenderer`, `RenderOption`, `Envelope`, `Groups`,
 `MaxViolations`, `DefaultRetryAfter`, `MaxKeptBody`, `MaxBody`, `ErrBadRequest`,
-`NewRenderer`, пять опций `With…`, `Internal`, `Status`, `StatusFor`,
+`NewRenderer`, шесть опций `With…`, `Internal`, `Status`, `StatusFor`,
 `KindForStatus`, `KindOf`, `ParseEnvelope`, `BadRequest`, `BadRequestf`,
 `BadRequestAs`, `MalformedBody`, `TooLarge`, `BodyResolver`, `DecodeJSON`,
 `DecodeJSONKeep`, `DecodeJSONKeepLimit`,
@@ -69,6 +69,22 @@ import "github.com/frostgrove/vv/crud/http/crudhttp"
 же приёме въехал [[D-034]].
 
 Новый код должен импортировать [porthttp](porthttp.md) напрямую.
+
+## Локализация
+
+Все три CRUD HTTP binding сохраняют непустую локаль, уже связанную с context
+операции. Только если её нет, они копируют первый tag из `Accept-Language`;
+`AcceptLanguage` намеренно не выполняет weighted negotiation. Для weights,
+`q=0`, wildcard и supported-locale matching разрешите header optional-модулем
+[i18n](i18n.md) до handler/error boundary и свяжите его канонический результат
+через `port.WithLocale`.
+
+Передайте `snapshot.ErrorMessages(errorSpec)` через `WithMessages`, чтобы
+локализовать стандартный конверт. Адаптер реализует
+`errs.LocalizedMessageSource`, поэтому успешный fallback задаёт
+`Content-Language` по локали, фактически предоставившей шаблон.
+`Rendering(WithMessages(...))` — additive resource path, сохраняющий generated
+field-path resolvers; `WithRenderer` остаётся полной заменой.
 
 ## См. также
 

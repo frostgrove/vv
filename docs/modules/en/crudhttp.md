@@ -56,7 +56,7 @@ alias for a type that never lived here.
 `crud/http/crudhttp/porthttp.go` re-exports everything [[D-059]] moved:
 `Renderer`, `EnvelopeRenderer`, `RenderOption`, `Envelope`, `Groups`,
 `MaxViolations`, `DefaultRetryAfter`, `MaxKeptBody`, `MaxBody`, `ErrBadRequest`,
-`NewRenderer`, the five `With…` options, `Internal`, `Status`, `StatusFor`,
+`NewRenderer`, the six `With…` options, `Internal`, `Status`, `StatusFor`,
 `KindForStatus`, `KindOf`, `ParseEnvelope`, `BadRequest`, `BadRequestf`,
 `BadRequestAs`, `MalformedBody`, `TooLarge`, `BodyResolver`, `DecodeJSON`,
 `DecodeJSONKeep`, `DecodeJSONKeepLimit`,
@@ -69,6 +69,22 @@ belongs on one side of the split or the other. Re-pointing an alias is not a
 breaking change, which is the same trick [[D-034]] landed on.
 
 New code should import [porthttp](porthttp.md) directly.
+
+## Localization
+
+All three CRUD HTTP bindings preserve a non-empty locale already stored in the
+operation context. Only when it is empty do they copy the first tag from
+`Accept-Language`; `AcceptLanguage` is intentionally not a weighted negotiator.
+For weights, `q=0`, wildcards and supported-locale matching, resolve the header
+with the optional [i18n module](i18n.md) before the handler/error boundary and
+bind its canonical result with `port.WithLocale`.
+
+Pass `snapshot.ErrorMessages(errorSpec)` through `WithMessages` to localize the
+standard envelope. That adapter implements `errs.LocalizedMessageSource`, so a
+successful fallback can set `Content-Language` to the locale that actually
+supplied the template. `Rendering(WithMessages(...))` is the additive resource
+path and preserves generated field-path resolvers; `WithRenderer` remains a
+wholesale replacement.
 
 ## Table — a resource's ten routes, said once
 

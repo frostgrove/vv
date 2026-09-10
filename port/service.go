@@ -303,9 +303,6 @@ func (this defaultRestorableService[ID]) Restore(ctx context.Context, cmd Restor
 }
 
 func (this defaultRestorableService[ID]) RestoreMany(ctx context.Context, cmd BulkRestoreCommand[ID]) (int64, error) {
-	if len(cmd.IDs) == 0 {
-		return 0, nil
-	}
 	return this.repository.Restore(ctx, cmd.IDs...)
 }
 

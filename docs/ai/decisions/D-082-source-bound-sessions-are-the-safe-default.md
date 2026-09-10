@@ -44,6 +44,15 @@ The old unconditional adoption is available only as
 `WithUnsafeExecutor`. Its name is the opt-out: every repository the context
 reaches adopts the executor, including repositories on another database.
 
+`SourceBoundExecutorFor` is the provenance-preserving observation of the same
+private binding stack. An exact datasource association returns its executor; no
+binding or only unrelated safe associations return not found. A source-less
+unsafe fallback returns `ExecutorScopeMissingSource`, and declaration poison or
+a strict mismatch is returned unchanged. A more specific exact association may
+still outrank an otherwise valid unsafe fallback. `ExecutorFor` keeps its legacy
+resolution contract; callers that need proof of an exact association must use
+the new result instead of interpreting its boolean.
+
 Raw work below a repository follows the same association when the caller uses
 `UnsafeExecFor`, `UnsafeQueryFor` or `UnsafeBulkInsertFor`. The helpers select
 the executor bound to the named Source and preserve a declaration failure;
@@ -59,6 +68,16 @@ An executor already known to be transactional is not a canonical source: using
 `crudsql.Source(tx, ...)` or `crudpgx.From(tx)` as the source is refused with the
 `transaction_source` reason. Otherwise the new safe API would reproduce the old
 pool-versus-transaction mismatch under a different name.
+
+The database/sql adapter exposes `TopLevelTransaction` for the narrower root
+proof. It accepts only the direct `*crudsql.Tx` returned by `DB.Begin` and checks
+its unexported self-bound provenance as well as the equality of the private raw
+transaction and embedded executor. A framework savepoint, `From(rawTx)`, an
+executor wrapper, a nil root, a pool, a shallow copy, a same-raw replacement, or
+a value whose embedded executor was replaced is not that provenance and returns
+not found. The older `Transaction` helper continues to normalise declared
+wrappers and savepoints for callers that need a raw handle rather than root
+authority.
 
 ## Why
 
@@ -93,8 +112,10 @@ binding chain before accepting a match: a newer valid session cannot hide an
 older failed declaration or strict mismatch and cannot make a transaction helper
 invoke its callback or `Begin` through a poisoned context.
 
-The transaction-source refusal applies through wrapper walks and through
-adapter receiver helpers. In particular, calling
+The transaction-source refusal alone alternates both declared wrapper seams and
+fails closed on divergent targets, nil targets, cycles and traversal-budget
+exhaustion. Ordinary source/executor discovery remains separate. Adapter receiver
+helpers apply the same refusal. In particular, calling
 `crudpgx.From(tx).BindExecutor(ctx, tx)` fails with the
 `transaction_source` reason before either the transaction or its pool is used.
 
@@ -116,11 +137,12 @@ adapter receiver helpers. In particular, calling
 ## Where it lives
 
 - `crud/executor.go` — `Session`, `NewSession`, `MustSession`, `BindExecutor`,
-  strict resolution, `WithUnsafeExecutor`, context-bound unsafe helpers, and
-  owned transaction validation.
+  strict resolution, `WithUnsafeExecutor`, `SourceBoundExecutorFor`,
+  context-bound unsafe helpers, and owned transaction validation.
 - `crud/errors.go` — `ErrExecutorScope`, `ExecutorScopeError` and its reasons.
 - `crud/adapter/crudsql/crudsql.go` and
-  `crud/adapter/crudpgx/crudpgx.go` — the adapter-level one-line helpers.
+  `crud/adapter/crudpgx/crudpgx.go` — the adapter-level one-line helpers;
+  database/sql also owns the exact `TopLevelTransaction` root proof.
 - `crud/crudtest/recorder.go` — stable identity for the in-memory datasource.
 - [[FL-009]] — the complete resolution and transaction path.
 
@@ -159,6 +181,12 @@ adapter receiver helpers. In particular, calling
   source session and never fall through a poisoned or nil declaration;
   `TestPgxInsertBatchJoinsRepositoryTransaction` proves the native effect on a
   live pgx transaction.
+- `crud/source_bound_executor_test.go` proves exact association, unrelated-safe
+  absence, unsafe/poison/strict refusal, full-chain validation, and unchanged
+  legacy `ExecutorFor` behavior.
+- `crud/adapter/crudsql/top_level_transaction_test.go` proves the direct root,
+  rejects nil, savepoint, raw `From`, wrapper, pool and tampered forms, and keeps
+  `Transaction` as the normalising control.
 
 ## See also
 

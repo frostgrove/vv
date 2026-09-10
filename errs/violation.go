@@ -28,10 +28,11 @@ type Source struct {
 }
 
 type Violation struct {
-	Path    Path
-	Code    Code
-	Origin  Origin
-	Message string
+	Path          Path
+	Code          Code
+	Origin        Origin
+	Message       string
+	MessageLocale string
 
 	Params map[string]any
 

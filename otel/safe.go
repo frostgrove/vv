@@ -19,7 +19,7 @@ func safeStart(tracer trace.Tracer, ctx context.Context, name string, options ..
 		}
 	}()
 	next, span = tracer.Start(ctx, name, options...)
-	if next == nil || nilInterface(span) {
+	if nilInterface(next) || nilInterface(span) {
 		if !nilInterface(span) {
 			safeEnd(span)
 		}
@@ -68,6 +68,11 @@ func safeIsRecording(span trace.Span) (recording bool) {
 }
 
 func safeRecord(histogram metric.Float64Histogram, ctx context.Context, value float64, options ...metric.RecordOption) {
+	defer func() { _ = recover() }()
+	histogram.Record(ctx, value, options...)
+}
+
+func safeRecordInt64(histogram metric.Int64Histogram, ctx context.Context, value int64, options ...metric.RecordOption) {
 	defer func() { _ = recover() }()
 	histogram.Record(ctx, value, options...)
 }

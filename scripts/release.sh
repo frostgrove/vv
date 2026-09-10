@@ -25,6 +25,7 @@ scope_version=$(sed -n 's/^[[:space:]]*ScopeVersion[[:space:]]*=[[:space:]]*"\([
 (cd otel && GOWORK=off "$GO" test ./...)
 "$SCRIPT_DIR/modules.sh" vet
 V="$V" "$SCRIPT_DIR/otel-consumer.sh"
+V="$V" "$SCRIPT_DIR/i18n-consumer.sh"
 
 tags=("$V")
 while IFS= read -r module; do

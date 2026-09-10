@@ -2,23 +2,24 @@ package crudfiber
 
 import (
 	"encoding/json"
+
 	"github.com/gofiber/fiber/v3"
 
 	"github.com/frostgrove/vv/crud"
 	"github.com/frostgrove/vv/crud/http/crudhttp"
 	"github.com/frostgrove/vv/crud/query"
-	"github.com/frostgrove/vv/errs"
 	"github.com/frostgrove/vv/port"
 )
 
 type options[M any, ID comparable, U any] struct {
 	crudhttp.Rules
-	renderer     crudhttp.Renderer
-	errorHandler func(fiber.Ctx, error) error
-	transform    func(fiber.Ctx, M) any
-	scope        func(fiber.Ctx) ([]crud.Option, error)
-	beforeSave   func(fiber.Ctx, *M) error
-	beforeUpdate func(fiber.Ctx, ID, *U) error
+	renderer           crudhttp.Renderer
+	errorHandler       func(fiber.Ctx, error) error
+	customErrorHandler bool
+	transform          func(fiber.Ctx, M) any
+	scope              func(fiber.Ctx) ([]crud.Option, error)
+	beforeSave         func(fiber.Ctx, *M) error
+	beforeUpdate       func(fiber.Ctx, ID, *U) error
 }
 
 type Option[M any, ID comparable, U any] func(*options[M, ID, U])
@@ -44,7 +45,10 @@ func WithQueryFor[M any, ID comparable, U any](defaultConfig *query.Config, vari
 }
 
 func WithErrorHandler[M any, ID comparable, U any](fn func(fiber.Ctx, error) error) Option[M, ID, U] {
-	return func(o *options[M, ID, U]) { o.errorHandler = fn }
+	return func(o *options[M, ID, U]) {
+		o.errorHandler = fn
+		o.customErrorHandler = true
+	}
 }
 
 func WithRenderer[M any, ID comparable, U any](r crudhttp.Renderer) Option[M, ID, U] {
@@ -93,17 +97,10 @@ type Renderer = crudhttp.Renderer
 
 var defaultRenderer = crudhttp.NewRenderer()
 
-func rendererFor(hops []errs.Resolver) crudhttp.Renderer {
-	if len(hops) == 0 {
-		return defaultRenderer
-	}
-	return crudhttp.NewRenderer(crudhttp.WithResolvers(hops...))
-}
-
 func writeJSON(c fiber.Ctx, status int, v any) error {
 	body, err := json.Marshal(v)
 	if err != nil {
-		port.Logger(c.Context()).Error("crudfiber: encoding the response", "err", err)
+		port.Logger(c.Context()).ErrorContext(c.Context(), "crudfiber: encoding the response", "err", err)
 		status = fiber.StatusInternalServerError
 		body, _ = json.Marshal(crudhttp.Internal())
 	}
@@ -120,7 +117,9 @@ func DefaultErrorHandler(c fiber.Ctx, err error) error {
 func render(rd crudhttp.Renderer, c fiber.Ctx, err error) error {
 	ctx := crudhttp.WithBody(c.Context(), fiber.Locals[[]byte](c, bodyKey))
 
-	ctx = crudhttp.WithLocale(ctx, crudhttp.AcceptLanguage(c.Get(fiber.HeaderAcceptLanguage)))
+	if port.LocaleFrom(ctx) == "" {
+		ctx = crudhttp.WithLocale(ctx, crudhttp.AcceptLanguage(c.Get(fiber.HeaderAcceptLanguage)))
+	}
 	status, header, body := rd.Render(ctx, err)
 	for k, vs := range header {
 		for _, v := range vs {
