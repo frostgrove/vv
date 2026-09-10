@@ -68,7 +68,9 @@ go run ./cmd/migrate status
 go run ./cmd/migrate rollback                # one migration
 go run ./cmd/migrate rollback 3
 go run ./cmd/migrate fresh
-go run ./cmd/migrate flush                   # delete every local database object
+go run ./cmd/migrate flush                   # every schema this connection owns
+go run ./cmd/migrate flush --public          # only the default schema
+go run ./cmd/migrate flush --schema=frostgrove_jobs --yes
 ```
 
 `migration <name>` is an editable Goose skeleton; it never guesses tables from
@@ -92,12 +94,33 @@ not drop tables that are not owned by migrations.
 
 `flush` is the development recovery command when Goose history refers to a
 migration file that no longer exists, so `fresh` cannot find its `Down`
-section. It drops all objects in the active schema/database, including the
-Goose history table, and does **not** run migrations afterwards. Run `migrate`
-explicitly when the empty database is the desired state. PostgreSQL recreates
-the current non-system schema; MySQL/MariaDB remove every table, view, routine,
-and event in the selected database; SQLite removes every non-system table, view,
-and trigger.
+section. It drops all objects, including the Goose history table, and does
+**not** run migrations afterwards. Run `migrate` explicitly when the empty
+database is the desired state.
+
+On PostgreSQL it reaches **every schema the connected user owns**, not only the
+one on the search path — a subsystem that keeps its tables in a schema of its
+own is flushed too, which is what makes the command a full reset rather than
+half of one. The connection's default schema is recreated empty; the others are
+left dropped, because whatever creates them creates them again. A schema an
+extension owns is never dropped: PostGIS and TimescaleDB keep catalogues in
+schemas of their own and no migration puts one back. Ownership is read from
+`pg_depend`, not guessed from the name.
+
+| Flag | What it flushes |
+|---|---|
+| *(none)* | every schema the connected user owns |
+| `--public` | only the connection's default schema |
+| `--schema=a,b` | only the named schemas; one this database does not have is skipped, and the command says so |
+| `--yes` | answers the confirmation, for scripts and CI |
+
+Before dropping anything the command prints what it resolved to and asks. A run
+with no terminal refuses unless `--yes` is passed, so a script never drops a
+schema it did not name. `--schema` and `--public` are PostgreSQL-only and are
+refused on other engines rather than ignored: in MySQL a schema is a database,
+and honouring them there would drop databases this project does not own.
+MySQL/MariaDB remove every table, view, routine, and event in the selected
+database; SQLite removes every non-system table, view, and trigger.
 It is destructive and must only point at a local development database.
 
 Generated table migrations use `CREATE TABLE IF NOT EXISTS`. This makes an

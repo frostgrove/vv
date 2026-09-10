@@ -237,50 +237,54 @@ func runFlush(ctx context.Context, raw vvdb.Config, scope flushScope, confirm fl
 	case vvdb.SQLite:
 		return flushConnectedDatabase(ctx, database, confirm, flushSQLite)
 	default:
-		return false, fmt.Errorf("vvgoose: %w: %q", vvdb.ErrEngine, config.Engine)
+		return result, fmt.Errorf("vvgoose: %w: %q", vvdb.ErrEngine, config.Engine)
 	}
 }
 
-func flushConnectedDatabase(ctx context.Context, database *sql.DB, confirm flushConfirmer, flush func(context.Context, *sql.DB) error) (bool, error) {
-	proceed, err := confirm(ctx, []string{"every object in the connected database"})
+func flushConnectedDatabase(ctx context.Context, database *sql.DB, confirm flushConfirmer, flush func(context.Context, *sql.DB) error) (flushResult, error) {
+	result := flushResult{targets: []string{"every object in the connected database"}}
+	proceed, err := confirm(ctx, result.targets)
 	if err != nil || !proceed {
-		return false, err
+		return result, err
 	}
 	if err := flush(ctx, database); err != nil {
-		return false, err
+		return result, err
 	}
-	return true, nil
+	result.flushed = true
+	return result, nil
 }
 
-func flushPostgres(ctx context.Context, database *sql.DB, scope flushScope, confirm flushConfirmer) (bool, error) {
+func flushPostgres(ctx context.Context, database *sql.DB, scope flushScope, confirm flushConfirmer) (flushResult, error) {
+	var result flushResult
 	defaultSchema, err := postgresDefaultSchema(ctx, database)
 	if err != nil {
-		return false, err
+		return result, err
 	}
-	targets, err := postgresFlushTargets(ctx, database, scope, defaultSchema)
+	result.targets, err = postgresFlushTargets(ctx, database, scope, defaultSchema)
 	if err != nil {
-		return false, err
+		return result, err
 	}
-	if len(targets) == 0 {
-		return false, nil
+	if len(result.targets) == 0 {
+		return result, nil
 	}
-	proceed, err := confirm(ctx, targets)
+	proceed, err := confirm(ctx, result.targets)
 	if err != nil || !proceed {
-		return false, err
+		return result, err
 	}
-	for _, schema := range targets {
+	for _, schema := range result.targets {
 		quoted := quoteRuntimeIdentifier(vvdb.Postgres, schema)
 		if _, err := database.ExecContext(ctx, "DROP SCHEMA "+quoted+" CASCADE"); err != nil {
-			return false, fmt.Errorf("vvgoose: drop PostgreSQL schema %q: %w", schema, err)
+			return result, fmt.Errorf("vvgoose: drop PostgreSQL schema %q: %w", schema, err)
 		}
 		if schema != defaultSchema {
 			continue
 		}
 		if _, err := database.ExecContext(ctx, "CREATE SCHEMA "+quoted); err != nil {
-			return false, fmt.Errorf("vvgoose: recreate PostgreSQL schema %q: %w", schema, err)
+			return result, fmt.Errorf("vvgoose: recreate PostgreSQL schema %q: %w", schema, err)
 		}
 	}
-	return true, nil
+	result.flushed = true
+	return result, nil
 }
 
 func postgresDefaultSchema(ctx context.Context, database *sql.DB) (string, error) {

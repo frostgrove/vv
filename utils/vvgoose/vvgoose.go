@@ -204,13 +204,11 @@ func newRootCommand(config vvdb.Config, streams commandIO) *cobra.Command {
 			}
 			scope := flushScope{defaultOnly: flushDefaultOnly, schemas: flushSchemas}
 			interactive := !noInteractive && interactiveTerminal(streams)
-			flushed, err := runFlush(cmd.Context(), config, scope, confirmFlush(streams, interactive, flushAssumeYes))
+			result, err := runFlush(cmd.Context(), config, scope, confirmFlush(streams, interactive, flushAssumeYes))
 			if err != nil {
 				return err
 			}
-			if flushed {
-				fmt.Fprintln(streams.out, "database flushed")
-			}
+			reportFlush(streams, result)
 			return nil
 		},
 	}
@@ -490,14 +488,23 @@ func runInteractiveFlush(ctx context.Context, config vvdb.Config, streams comman
 		fmt.Fprintln(streams.out, "cancelled")
 		return nil
 	}
-	flushed, err := runFlush(ctx, config, flushScope{}, announceFlush(streams))
+	result, err := runFlush(ctx, config, flushScope{}, announceFlush(streams))
 	if err != nil {
 		return err
 	}
-	if flushed {
-		fmt.Fprintln(streams.out, "database flushed")
-	}
+	reportFlush(streams, result)
 	return nil
+}
+
+// A scope that matched nothing is said out loud: a mistyped --schema must not
+// look like a flush that worked.
+func reportFlush(streams commandIO, result flushResult) {
+	switch {
+	case result.flushed:
+		fmt.Fprintln(streams.out, "database flushed")
+	case len(result.targets) == 0:
+		fmt.Fprintln(streams.out, "nothing to flush: no schema matched")
+	}
 }
 
 func announceFlush(streams commandIO) flushConfirmer {

@@ -162,11 +162,11 @@ func TestFlushDropsEverySQLiteObjectAndMigrationHistory(t *testing.T) {
 		t.Fatalf("close sqlite: %v", err)
 	}
 
-	flushed, err := runFlush(ctx, config, flushScope{}, alwaysConfirmFlush)
+	result, err := runFlush(ctx, config, flushScope{}, alwaysConfirmFlush)
 	if err != nil {
 		t.Fatalf("flush: %v", err)
 	}
-	if !flushed {
+	if !result.flushed {
 		t.Fatal("flush reported that it dropped nothing")
 	}
 
@@ -214,11 +214,11 @@ func TestFlushDropsNothingWhenTheConfirmationIsDeclined(t *testing.T) {
 		shown = append(shown, targets...)
 		return false, nil
 	}
-	flushed, err := runFlush(ctx, config, flushScope{}, declined)
+	result, err := runFlush(ctx, config, flushScope{}, declined)
 	if err != nil {
 		t.Fatalf("declined flush: %v", err)
 	}
-	if flushed {
+	if result.flushed {
 		t.Fatal("a declined flush reported that it dropped something")
 	}
 	if len(shown) == 0 {
@@ -246,11 +246,11 @@ func TestFlushRefusesSchemaSelectionOnAnEngineWithoutSchemas(t *testing.T) {
 
 	for _, scope := range []flushScope{{defaultOnly: true}, {schemas: []string{"frostgrove_jobs"}}} {
 		config := sqliteMigrationConfig(t)
-		flushed, err := runFlush(context.Background(), config, scope, alwaysConfirmFlush)
+		result, err := runFlush(context.Background(), config, scope, alwaysConfirmFlush)
 		if err == nil {
 			t.Fatalf("scope %+v was accepted on SQLite", scope)
 		}
-		if flushed {
+		if result.flushed {
 			t.Fatalf("scope %+v flushed something before refusing", scope)
 		}
 		if !strings.Contains(err.Error(), "PostgreSQL") {

@@ -65,11 +65,11 @@ func TestFlushReadsRealSchemasAndDropsOnlyTheOnesNamed(t *testing.T) {
 		}
 	}
 
-	flushed, err := runFlush(ctx, config, flushScope{schemas: []string{named}}, alwaysConfirmFlush)
+	result, err := runFlush(ctx, config, flushScope{schemas: []string{named}}, alwaysConfirmFlush)
 	if err != nil {
 		t.Fatalf("flush schema %q: %v", named, err)
 	}
-	if !flushed {
+	if !result.flushed {
 		t.Fatal("flush reported that it dropped nothing")
 	}
 	if exists := postgresSchemaExists(t, ctx, database, named); exists {
