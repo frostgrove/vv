@@ -21,6 +21,8 @@ func checkpointInventory() []section[*checkpoints] {
 		{name: "concurrency", run: checkpointConcurrencySection},
 		{name: "transactions", needs: needsCheckpointTransactions, run: checkpointTransactionsSection},
 		{name: "durability", needs: needsCheckpointPersistence, run: checkpointDurabilitySection},
+		{name: "topology", run: topologySection},
+		{name: "topology handoff", needs: needsCheckpointTransactions, run: topologyHandoffSection},
 	}
 }
 

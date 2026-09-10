@@ -208,6 +208,27 @@ first, advance last — and it does not move.
 
 ## Proven by
 
+- `TestALostFenceIsSettledOnTheRowOfThisRunnersOwnIdentity` — the same claim for
+  a runner whose `Identity` renders as something other than its `Spec.Name`: a
+  partition and a generation each lose the fence on every page, and each takes
+  turns rather than halting. The settlement re-reads the row keyed by the
+  identity, and a settlement keyed by the name would read another topology's row —
+  absent in the ordinary case, so the lost fence fell to the arm that halts and
+  this decision was inverted for every partitioned deployment. **Control:** the
+  same case at `Ungenerated` over the whole key space, where the two render alike
+  and it passes whichever row is read.
+- `TestAUnitThatRollsBackLeavesTheAdvanceOnThisRunnersOwnRow` — the other
+  settlement the same wrong row corrupts, and permanently: `confirmed`,
+  `rolledBack` and `overtaken` all adopt the tracker they were handed, so one
+  rollback would move every later checkpoint of a partitioned runner onto the
+  coarse row. Every save the store sees carries this runner's own row key.
+  **Control:** the retrying state carries the handler's own failure, so the
+  rolled-back arm was reached rather than skipped.
+- `TestEveryTrackerInTheProjectionPackageIsKeyedByAnIdentity` (`scripts`) — the
+  structural half: every `event.Track` call in `event/projection` is keyed by an
+  expression that mentions an `Identity`, so the next one written from `Spec.Name`
+  is reported at the call rather than discovered as a read model that took the log
+  twice. **Control:** a fixture with one call of each shape reports exactly one.
 - `TestTwoLiveInstancesOfOneNameTakeTurnsAndNeitherHalts` — a second writer takes
   the advance this projection presents on every page: it never halts, it applies
   the whole log through the rows the winner left, and `Ready` answers

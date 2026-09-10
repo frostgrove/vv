@@ -510,6 +510,7 @@ phase 3 landed FL-014 and before phase 5 landed FL-015.
 | `event/eventtest/defects_lifecycle.go` | FL-036 |
 | `event/eventtest/checkpoints.go` | FL-036, FL-038 |
 | `event/eventtest/sections_checkpoints.go` | FL-036, FL-038 |
+| `event/eventtest/sections_topology.go` | FL-036, FL-038 |
 | `event/eventtest/defects_checkpoints.go` | FL-036, FL-038 |
 | `event/eventtest/stores.go` | FL-036 |
 | `event/eventpg/doc.go` | FL-037 |
@@ -529,10 +530,17 @@ phase 3 landed FL-014 and before phase 5 landed FL-015.
 | `event/projection/spec.go` | FL-038 |
 | `event/projection/page.go` | FL-038 |
 | `event/projection/classify.go` | FL-038 |
+| `event/projection/park.go` | FL-038 |
+| `event/projection/redrive.go` | FL-038 |
 | `event/projection/state.go` | FL-038 |
 | `event/projection/router.go` | FL-038 |
 | `event/projection/projection.go` | FL-038 |
 | `event/projection/pass.go` | FL-038 |
+| `event/projection/identity.go` | FL-038 |
+| `event/projection/partition.go` | FL-038 |
+| `event/projection/cover.go` | FL-038 |
+| `event/projection/sequence.go` | FL-038 |
+| `event/projection/topology.go` | FL-038 |
 
 `crud/sqlrepo/repository.go` is in eleven of them. It is the layer everything else
 decorates, and almost no change to it is local.

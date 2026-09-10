@@ -415,7 +415,7 @@ inventory.
 | absence is total inside a unit that staged a removal, not only outside one | `TestALoadInsideAUnitThatStagedAForgetAnswersTheZeroCheckpoint`, `transactions` |
 | a removal committing while a save is in flight leaves no row behind | `forget` (`forgetRacingASave`), `TestASaveAboveAdvanceOneCannotResurrectARowAForgetRemoved` (FL-037) |
 | the suite measures the round trip of the instant and not one backing's precision | `TestACoarserInstantIsCertifiedWhenTheFactoryDeclaresItsGrainAndNotWhenItDoesNot`, `TestACheckpointFactoryClaimingPersistenceWithNoSiblingFailsBeforeASectionRuns` |
-| the checkpoint suite still detects every defect it was built to detect | `TestEveryCheckpointDefectIsReportedByItsOwnSection`, `TestAStoreThatDoesNotPersistDeclinesDurabilityAndCertifiesTheOtherEleven` |
+| the checkpoint suite still detects every defect it was built to detect | `TestEveryCheckpointDefectIsReportedByItsOwnSection`, `TestAStoreThatDoesNotPersistDeclinesDurabilityAndCertifiesTheOtherThirteen` |
 
 ### What the four structural checks reach, and what they do not
 

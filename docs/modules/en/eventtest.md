@@ -28,7 +28,7 @@ each of them in one of three words.
 | `Tx` | `Commit(ctx)` · `Rollback(ctx)` — what the suite requires of the transaction a factory begins |
 | `Keys(t, aggregate, ids…)` | your identity mapper's injectivity, over your own identities |
 | `Families(t, declarations…)` | one family per aggregate, across your own declarations |
-| `RunCheckpoints(t, factory)` | the twelve-section suite for an `event.Checkpoints`, one `t.Run` per section |
+| `RunCheckpoints(t, factory)` | the fourteen-section suite for an `event.Checkpoints`, one `t.Run` per section |
 | `CheckpointFactory` | `New`, `Begin`, `Sibling`, `Cursor`, `Instant`, `Window` |
 | `RoundTrip(t, fact, byRevision…)` | your payload survives its own codec, per retained revision |
 
@@ -85,20 +85,21 @@ then avoid being tested on it.
 network away, or that waits for a competing transaction rather than refusing at
 once, sets its own here rather than being reported failed for the wait.
 
-## The twelve checkpoint sections
+## The fourteen checkpoint sections
 
 A checkpoint store is the second seam this package certifies, and it is certified
 the same way — the same three words, the same anti-vacuity rules, the same
 "a hook that is missing is not a capability that is not claimed".
 
 `binding` · `absence` · `round trip` · `fence` · `forget` · `names` · `bounds` ·
-`refusal classes` · `lifecycle` · `concurrency` · `transactions` · `durability`
+`refusal classes` · `lifecycle` · `concurrency` · `transactions` · `durability` ·
+`topology` · `topology handoff`
 
-`transactions` runs only for a store claiming `Transactions` and `durability`
-only for one claiming `Persistence`; a store claiming either and supplying no
-hook fails the run before a section starts. So `eventmemory.Checkpoints` is
-certified on eleven and reports `durability: not certified`, and live
-`eventpg.Checkpoints` passes twelve.
+`transactions` and `topology handoff` run only for a store claiming
+`Transactions`, and `durability` only for one claiming `Persistence`; a store
+claiming either and supplying no hook fails the run before a section starts. So
+`eventmemory.Checkpoints` is certified on thirteen and reports
+`durability: not certified`, and live `eventpg.Checkpoints` passes fourteen.
 
 | Hook | Required when |
 |---|---|
@@ -108,7 +109,7 @@ certified on eleven and reports `durability: not certified`, and live
 | `Cursor` | always. A cursor **of the log this store records against**, real rather than a literal the suite invented, and two consecutive calls must answer two different cursors: a section that cannot tell a stale answer from a fresh one certifies a store that never wrote |
 | `Instant` | never; it is the grain the store's own instant column keeps, and without it the suite measures at its own |
 
-Two of the twelve are worth naming here because they are obligations a
+Four of the fourteen are worth naming here because they are obligations a
 third-party store might not expect. **`round trip` requires the cursor that went
 in to be the one that comes back, byte for byte, through a second value** — a
 store that re-encodes it is refused there, and a projection's settlement compares
@@ -116,6 +117,16 @@ cursors to tell its own save from a second instance's. And **`bounds` requires
 the empty cursor to be refused and no row to move**: the empty cursor is the
 origin of a log, so a row carrying one at a live advance restarts a consumer at
 the beginning against a live destination.
+
+The two that arrived with partitioned projections are what a split rests on.
+**`topology` is mandatory**: a cursor written under one projection name must read
+back **unchanged under another** — that is the whole of how a parent hands its
+position to its children — and a save at advance 1 over a live row must be
+refused by the store's own fence, not only by the tracker's, because a child row
+written over one that is already recording is a partition silently adopted.
+**`topology handoff`** rides on the `Transactions` claim and asks that a `Load`,
+two `Save`s at advance 1 and a `Forget` inside one caller-opened transaction are
+all or nothing.
 
 ```go
 func TestMyCheckpointsSatisfyTheContract(t *testing.T) {
@@ -146,10 +157,16 @@ one that reuses a position, one that admits every append whatever version it was
 decided at, one that hands back pooled buffers, one that reports it refused after
 it had already written — and a test asserts that **each defect fails the section
 named for it**. Gut a section and that test goes red rather than the suite going
-quiet. The checkpoint runner has its own five: one that ignores the fence, one
-that answers the cursor saved before the last one, one that reports absence for a
-row that exists, one whose `Load` ignores its `projection` argument, and one that
-saves outside the caller's transaction.
+quiet. The checkpoint runner has its own fourteen, one per section but `durability` —
+among them one that ignores the fence, one that answers the cursor saved before
+the last one, one whose `Load` ignores its `projection` argument, one that saves
+outside the caller's transaction, one that forgets outside it, one that creates a
+row at advance 1 over a live one, and one that binds a cursor to the name that
+saved it. A second test asserts the other direction, which is the one that
+matters when a section is gutted rather than a store broken: **every section is
+named by a defect that breaks it**, and the one exemption — `durability`, whose
+defect is a factory rather than a decorator — is written down so the list can
+only shrink.
 
 ## The three proxies
 

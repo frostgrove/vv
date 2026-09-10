@@ -8,18 +8,33 @@ import (
 
 type Phase string
 
+// PhaseDegraded is PhaseFollowing with something parked: the whole log has been
+// read and N sequences are blocked. It deliberately does NOT fail Ready — the
+// whole point of a dead-letter queue is that one broken order does not stop the
+// projector, and a replica reporting unhealthy for a poison order is a projector
+// that stopped by another route. What carries the fact is State.Parked, the live
+// count, beside Progress.Quarantined, the durable cumulative one.
+//
+// PhaseBlocked is the park having no room. It is not a halt: a halt is terminal
+// for the value's life and would need a redeploy to clear a condition one DELETE
+// clears. The pass retries without an attempt budget, and Ready fails once the
+// accumulated backoff outlasts Tolerate.
 const (
 	PhaseStarting  Phase = "starting"
 	PhaseDraining  Phase = "draining"
 	PhaseFollowing Phase = "following"
+	PhaseDegraded  Phase = "degraded"
+	PhaseBlocked   Phase = "blocked"
 	PhaseRetrying  Phase = "retrying"
 	PhaseHalted    Phase = "halted"
 )
 
 type State struct {
 	Projection string
+	Identity   Identity
 	Phase      Phase
 	Progress   event.Progress
+	Parked     uint64
 	Attempt    int
 	Err        error
 	At         time.Time
@@ -72,6 +87,19 @@ func (this *Projection) progressed(progress event.Progress) {
 	this.mutex.Unlock()
 
 	this.publish(state)
+}
+
+// The live count of blocked sequences, published without a transition of its
+// own: what an operator watches for is the phase, and the count travels on it.
+// It is what the park answered, never a number this loop accumulated, except for
+// the one letter this loop just wrote — only the projection parks, so a pass
+// that parked has made the count non-zero and the next pass is what reads how
+// far.
+func (this *Projection) counting(count uint64) {
+	this.parked = count
+	this.mutex.Lock()
+	defer this.mutex.Unlock()
+	this.state.Parked = count
 }
 
 // The progress a resume answered is the projection's own from that moment, and

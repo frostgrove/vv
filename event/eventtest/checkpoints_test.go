@@ -3,8 +3,10 @@ package eventtest_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -272,7 +274,84 @@ func TestEveryCheckpointDefectIsReportedByItsOwnSection(t *testing.T) {
 	}
 }
 
-const checkpointDefects = 5
+const checkpointDefects = 14
+
+// A section no defect names has no control that can fail: every assertion in it
+// can be deleted and every run stays green, which is the one failure a
+// conformance suite cannot see about itself. The store suite has held this rule
+// since it was written; the checkpoint suite ran defect-to-section only, so a
+// section whose body was gutted was reported by nothing. The control is one run
+// of the same assertion per section, over an inventory with that section's rows
+// taken out.
+func TestEveryCheckpointSectionIsNamedByADefectThatBreaksIt(t *testing.T) {
+	names := eventtest.CheckpointSectionNames()
+	defects := eventtest.CheckpointDefects()
+	if err := checkpointGuarded(names, defects); err != nil {
+		t.Fatal(err)
+	}
+	for _, unguarded := range names {
+		if undecorated[unguarded] {
+			continue
+		}
+		kept := []eventtest.CheckpointDefect{}
+		for _, defect := range defects {
+			if defect.Section != unguarded {
+				kept = append(kept, defect)
+			}
+		}
+		if err := checkpointGuarded(names, kept); err == nil {
+			t.Fatalf("an inventory naming no defect of the %s section passed the assertion that every section carries one", unguarded)
+		}
+	}
+
+	for _, exempt := range sortedNames(undecorated) {
+		for _, defect := range defects {
+			if defect.Section == exempt {
+				t.Fatalf("the %s section is exempted from carrying a defect and the defect %q names it, so the exemption is stale and the list only ever shrinks", exempt, defect.Name)
+			}
+		}
+		if !slices.Contains(names, exempt) {
+			t.Fatalf("the %s section is exempted from carrying a defect and this suite has no such section", exempt)
+		}
+	}
+}
+
+// The one section of the fourteen that no decorator over a correct store can
+// falsify, and the reason is the harness rather than the section: a defect here
+// is a func(Checkpoints) Checkpoints wrapped around the value the factory built,
+// and what durability asserts is that a value the factory builds AFTERWARDS
+// reads what the first one wrote. The store suite spells that defect as a
+// factory ("claims persistence and builds a second value over its backing that
+// has none of what the first wrote"), and the checkpoint harness has no shape
+// for one. It is named here rather than passed over, so the list can only
+// shrink: a defect that names durability fails the test above.
+var undecorated = map[string]bool{"durability": true}
+
+func sortedNames(held map[string]bool) []string {
+	names := make([]string, 0, len(held))
+	for name := range held {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	return names
+}
+
+// The store suite's guarded, over the checkpoint suite's two types. It is
+// written twice rather than made generic over both, because one function taking
+// a Defect and a CheckpointDefect would be a type parameter over two inventories
+// that share no interface and never will.
+func checkpointGuarded(names []string, defects []eventtest.CheckpointDefect) error {
+	naming := map[string]int{}
+	for _, defect := range defects {
+		naming[defect.Section]++
+	}
+	for _, name := range names {
+		if naming[name] == 0 && !undecorated[name] {
+			return fmt.Errorf("no defect in this suite's inventory breaks the %s section, so nothing here can tell whether that section still asserts anything", name)
+		}
+	}
+	return nil
+}
 
 func oneCheckpointVerdict(t *testing.T, factory eventtest.CheckpointFactory, section string) string {
 	t.Helper()
@@ -284,11 +363,11 @@ func oneCheckpointVerdict(t *testing.T, factory eventtest.CheckpointFactory, sec
 }
 
 // A store that keeps nothing past its process declines the one section that is
-// about surviving one, and certifies the other eleven — which is the opposite of
-// what an ungated durability section would have reported for it. The control is
-// the same fixture claiming persistence, which certifies twelve: without it this
-// test passes against a suite that refuses everything.
-func TestAStoreThatDoesNotPersistDeclinesDurabilityAndCertifiesTheOtherEleven(t *testing.T) {
+// about surviving one, and certifies the other thirteen — which is the opposite
+// of what an ungated durability section would have reported for it. The control
+// is the same fixture claiming persistence, which certifies fourteen: without it
+// this test passes against a suite that refuses everything.
+func TestAStoreThatDoesNotPersistDeclinesDurabilityAndCertifiesTheOtherThirteen(t *testing.T) {
 	verdicts := eventtest.CertifyCheckpoints(t, checkpointFactory(false, nil))
 	if len(verdicts) != len(eventtest.CheckpointSectionNames()) {
 		t.Fatalf("a whole run reported %d verdicts where the suite has %d sections", len(verdicts), len(eventtest.CheckpointSectionNames()))
@@ -307,38 +386,38 @@ func TestAStoreThatDoesNotPersistDeclinesDurabilityAndCertifiesTheOtherEleven(t 
 			t.Errorf("the durability section was declined with the reason %q, which does not say what was not asked", given.Reason)
 		}
 	}
-	if certified := eventtest.Certified(verdicts); certified != 11 {
-		t.Fatalf("a store that declines one section of twelve certified %d", certified)
+	if certified := eventtest.Certified(verdicts); certified != 13 {
+		t.Fatalf("a store that declines one section of fourteen certified %d", certified)
 	}
-	if certified := eventtest.Certified(eventtest.CertifyCheckpoints(t, checkpointFactory(true, nil))); certified != 12 {
-		t.Fatalf("the same fixture claiming persistence certified %d of twelve, so the count above is not the declined section's", certified)
+	if certified := eventtest.Certified(eventtest.CertifyCheckpoints(t, checkpointFactory(true, nil))); certified != 14 {
+		t.Fatalf("the same fixture claiming persistence certified %d of fourteen, so the count above is not the declined section's", certified)
 	}
 }
 
 // The instant a row keeps is the width of whatever column keeps it, and
 // microsecond is PostgreSQL's timestamptz and nothing else's. A store over a
-// coarser one declares its grain and is measured on the twelve properties it has;
+// coarser one declares its grain and is measured on the fourteen properties it has;
 // the same store declaring nothing is measured against an exactness it never
 // claimed and is reported broken on most of them, which is what the declaration
 // buys. The control is the fixture at the finest grain of all, which certifies
-// twelve with no declaration at all — so the failure below is the column's and
+// fourteen with no declaration at all — so the failure below is the column's and
 // not the suite's.
 func TestACoarserInstantIsCertifiedWhenTheFactoryDeclaresItsGrainAndNotWhenItDoesNot(t *testing.T) {
 	for _, grain := range []time.Duration{time.Millisecond, time.Second} {
 		t.Run(grain.String(), func(t *testing.T) {
 			declared := checkpointFactory(true, roundsTheInstant(grain))
 			declared.Instant = func(minted time.Time) time.Time { return minted.Truncate(grain) }
-			if certified := eventtest.Certified(eventtest.CertifyCheckpoints(t, declared)); certified != 12 {
-				t.Errorf("a store whose instant is a %v and whose factory says so certified %d of twelve, so a backing this framework does not ship is reported broken on properties it does not get wrong", grain, certified)
+			if certified := eventtest.Certified(eventtest.CertifyCheckpoints(t, declared)); certified != 14 {
+				t.Errorf("a store whose instant is a %v and whose factory says so certified %d of fourteen, so a backing this framework does not ship is reported broken on properties it does not get wrong", grain, certified)
 			}
 			undeclared := checkpointFactory(true, roundsTheInstant(grain))
-			if certified := eventtest.Certified(eventtest.CertifyCheckpoints(t, undeclared)); certified == 12 {
-				t.Errorf("the same store declaring no grain certified twelve, so the suite no longer asks whether the instant it handed in is the one it gets back")
+			if certified := eventtest.Certified(eventtest.CertifyCheckpoints(t, undeclared)); certified == 14 {
+				t.Errorf("the same store declaring no grain certified fourteen, so the suite no longer asks whether the instant it handed in is the one it gets back")
 			}
 		})
 	}
-	if certified := eventtest.Certified(eventtest.CertifyCheckpoints(t, checkpointFactory(true, nil))); certified != 12 {
-		t.Fatalf("the fixture that keeps the instant it was handed certified %d of twelve with no grain declared, so the counts above are not the suite's own", certified)
+	if certified := eventtest.Certified(eventtest.CertifyCheckpoints(t, checkpointFactory(true, nil))); certified != 14 {
+		t.Fatalf("the fixture that keeps the instant it was handed certified %d of fourteen with no grain declared, so the counts above are not the suite's own", certified)
 	}
 }
 
@@ -399,9 +478,9 @@ func TestACheckpointFactoryClaimingPersistenceWithNoSiblingFailsBeforeASectionRu
 		})
 	}
 
-	t.Run("the honest factory certifies twelve", func(t *testing.T) {
-		if certified := eventtest.Certified(eventtest.CertifyCheckpoints(t, checkpointFactory(true, nil))); certified != 12 {
-			t.Fatalf("the factory claiming persistence with a Sibling certified %d of twelve, so the refusals above are not the missing hooks'", certified)
+	t.Run("the honest factory certifies fourteen", func(t *testing.T) {
+		if certified := eventtest.Certified(eventtest.CertifyCheckpoints(t, checkpointFactory(true, nil))); certified != 14 {
+			t.Fatalf("the factory claiming persistence with a Sibling certified %d of fourteen, so the refusals above are not the missing hooks'", certified)
 		}
 	})
 }

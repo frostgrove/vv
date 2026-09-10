@@ -138,8 +138,8 @@ func Resumed(held, taken event.Cursor) event.Cursor {
 func TestNoCommentInTheProjectionPackagePromisesExactlyOnce(t *testing.T) {
 	claims, read, files := commentClaims(t, "../event/projection")
 
-	if files < 9 {
-		t.Fatalf("%d source files of event/projection were read, and the package has nine outside its tests", files)
+	if files < 16 {
+		t.Fatalf("%d source files of event/projection were read, and the package has sixteen outside its tests", files)
 	}
 	if read.counted["English"] == 0 {
 		t.Fatal("not one comment of event/projection used either wording for how often a thing is delivered, and the package doc states the weaker one — so this read the wrong files")
@@ -160,6 +160,97 @@ func TestNoCommentInTheProjectionPackagePromisesExactlyOnce(t *testing.T) {
 	if len(reported) != 1 {
 		t.Fatalf("the fixture's package comment promises exactly-once delivery and %v came back, so the arm that would have found one proves nothing", reported)
 	}
+}
+
+// The framework opens no transaction: Spec.Unit is the application's, and a
+// package that reached for one of its own would be opening a second one beside
+// the caller's — the advance riding in a transaction the handler's writes are not
+// in, which is the tier this phase refuses. It is read as a call rather than as a
+// spelling, so the words in a comment are invisible to it and a rename is not.
+func TestNothingInTheProjectionPackageOpensATransaction(t *testing.T) {
+	walked := 0
+	for _, source := range goSourcesIn(t, "../event/projection") {
+		walked++
+		for _, complaint := range opensATransaction(t, source) {
+			t.Error(complaint)
+		}
+	}
+	if walked < 16 {
+		t.Fatalf("%d files of event/projection were read, and the package holds sixteen outside its tests — so this walked the wrong directory", walked)
+	}
+
+	t.Run("the control: every shape is reported when it is there", func(t *testing.T) {
+		fixture := filepath.Join(t.TempDir(), "fixture.go")
+		if err := os.WriteFile(fixture, []byte(transactionShapes), 0o644); err != nil {
+			t.Fatalf("cannot write the fixture: %v", err)
+		}
+		reported := strings.Join(opensATransaction(t, fixture), "\n")
+		for _, shape := range []string{"Begin", "Commit", "Rollback", "crud.InNewTx", "crud.InTx", "crud.InAtomic"} {
+			if !strings.Contains(reported, shape) {
+				t.Fatalf("the fixture's %s was not reported, so the arm that would have found one in the tree proves nothing:\n%s", shape, reported)
+			}
+		}
+	})
+}
+
+const transactionShapes = `package fixture
+
+import "github.com/frostgrove/vv/crud"
+
+type opener interface{ Begin() error }
+
+func opens(held opener, source crud.Source) error {
+	if err := held.Begin(); err != nil {
+		return err
+	}
+	if err := crud.InNewTx(nil, source, nil); err != nil {
+		return err
+	}
+	if err := crud.InTx(nil, source, nil); err != nil {
+		return err
+	}
+	if err := crud.InAtomic(nil, source, nil); err != nil {
+		return err
+	}
+	if err := held.Commit(); err != nil {
+		return err
+	}
+	return held.Rollback()
+}
+`
+
+var (
+	transactionOpeners = map[string]bool{"Begin": true, "Commit": true, "Rollback": true}
+	transactionUnits   = map[string]bool{"InNewTx": true, "InTx": true, "InAtomic": true}
+)
+
+func opensATransaction(t *testing.T, source string) []string {
+	t.Helper()
+	positions, parsed := parsedSource(t, source)
+	var complaints []string
+	ast.Inspect(parsed, func(node ast.Node) bool {
+		call, is := node.(*ast.CallExpr)
+		if !is {
+			return true
+		}
+		selector, named := call.Fun.(*ast.SelectorExpr)
+		if !named {
+			return true
+		}
+		at := positions.Position(selector.Pos()).String()
+		switch {
+		case transactionOpeners[selector.Sel.Name]:
+			complaints = append(complaints, at+" calls "+selector.Sel.Name+
+				", and this package opens, commits and rolls back nothing — the unit of work an advance rides in is the caller's")
+		case transactionUnits[selector.Sel.Name]:
+			if held, isName := selector.X.(*ast.Ident); isName && held.Name == "crud" {
+				complaints = append(complaints, at+" calls crud."+selector.Sel.Name+
+					", and a unit of work this package opened would be a second one beside the caller's")
+			}
+		}
+		return true
+	})
+	return complaints
 }
 
 // Full replay is the only authority: no snapshot, no memo and no cache of a
@@ -540,4 +631,355 @@ func check(t *testing.T, path string, fset *token.FileSet, files []*ast.File) ch
 		pkg:        pkg,
 		signatures: len(exportedSignatures(pkg)),
 	}
+}
+
+// A predicate the surface publishes and no line of the package calls is a promise
+// the tree does not keep: the vocabulary is there, the doc comments describe what
+// it does, `make api` records it, and every runner built from it reads the whole
+// log. Partition.Matches is the one this rule was written for — it is what makes
+// Spec.Partition a share of the log rather than a share of a row key — and the
+// walk is over calls rather than over text, so a comment naming it is invisible.
+func TestEveryPublishedTopologyPredicateHasACaller(t *testing.T) {
+	for _, published := range []struct {
+		named string
+		what  string
+	}{
+		{"Matches", "Partition.Matches decides which envelopes of a page this runner's partition owns"},
+		{"SequenceOf", "Sequencer.SequenceOf is the key Partition.Matches is asked about"},
+	} {
+		if calls := callsTo(t, "../event/projection", published.named); calls == 0 {
+			t.Errorf("no non-test file of event/projection calls %s, and %s", published.named, published.what)
+		}
+	}
+
+	t.Run("the control: the same walk over a package that calls neither", func(t *testing.T) {
+		directory := t.TempDir()
+		if err := os.WriteFile(filepath.Join(directory, "fixture.go"), []byte(uncalledPredicates), 0o644); err != nil {
+			t.Fatalf("cannot write the fixture: %v", err)
+		}
+		for _, named := range []string{"Matches", "SequenceOf"} {
+			if calls := callsTo(t, directory, named); calls != 0 {
+				t.Fatalf("the fixture declares %s and calls nothing, and the walk counted %d calls, so the arms above would pass over a package that calls neither", named, calls)
+			}
+		}
+	})
+}
+
+const uncalledPredicates = `package fixture
+
+type Partition struct{ id, mask uint32 }
+
+func (this Partition) Matches(sequence string) bool { return this.mask == 0 }
+
+type Sequencer interface{ SequenceOf(envelope string) string }
+`
+
+func callsTo(t *testing.T, directory, named string) int {
+	t.Helper()
+	calls := 0
+	for _, source := range goSourcesIn(t, directory) {
+		_, parsed := parsedSource(t, source)
+		ast.Inspect(parsed, func(node ast.Node) bool {
+			call, is := node.(*ast.CallExpr)
+			if !is {
+				return true
+			}
+			if selector, reaches := call.Fun.(*ast.SelectorExpr); reaches && selector.Sel.Name == named {
+				calls++
+			}
+			return true
+		})
+	}
+	return calls
+}
+
+// A checkpoint row is keyed by the name a projection records through, and that
+// name is an Identity's rendering: `Spec.Name` renders the same string only at
+// Ungenerated over the whole key space, so a tracker keyed by it addresses the
+// right row for every projection that exists today and another topology's row for
+// every partitioned or generational one. That is not a difference a test of the
+// happy path can see — the wrong row is usually absent, and absence reads as a
+// fresh start — so it is held here, over the call rather than over the spelling.
+//
+// A name computed from an Identity and then carried in a variable is reported
+// too. It is a true positive at this door: the question is whether the row this
+// call addresses was derived from the identity in view, and an expression that
+// mentions no Identity does not answer it.
+func TestEveryTrackerInTheProjectionPackageIsKeyedByAnIdentity(t *testing.T) {
+	walked := 0
+	for _, checked := range checkedEventPackages(t) {
+		if checked.path != eventExtension+"/projection" {
+			continue
+		}
+		tracked, complaints := trackersKeyedBy(checked, checked.path+".Identity")
+		walked += tracked
+		for _, complaint := range complaints {
+			t.Error(complaint)
+		}
+	}
+	if walked < 4 {
+		t.Fatalf("%d calls to event.Track were found in event/projection, and the resume, the settlement, the coarser probe and the handoff are the least it makes — so this walked the wrong package", walked)
+	}
+
+	t.Run("the control: one call keyed by an identity and one keyed by a name", func(t *testing.T) {
+		fixture := checkedFixture(t, "names", `package names
+
+import "github.com/frostgrove/vv/event"
+
+type Identity struct{ projection string }
+
+func (this Identity) String() string { return this.projection }
+
+func Keyed(store event.Checkpoints, identity Identity, name string) {
+	_, _ = event.Track(store, identity.String())
+	_, _ = event.Track(store, name)
+}
+`)
+		tracked, reported := trackersKeyedBy(fixture, "names.Identity")
+		if tracked != 2 || len(reported) != 1 {
+			t.Fatalf("the fixture makes two calls, one keyed by an identity and one by a name, and %d calls and %v came back — so the arm above proves nothing", tracked, reported)
+		}
+	})
+}
+
+func trackersKeyedBy(checked checkedPackage, identity string) (int, []string) {
+	tracked := 0
+	var complaints []string
+	for _, file := range checked.files {
+		ast.Inspect(file, func(node ast.Node) bool {
+			call, is := node.(*ast.CallExpr)
+			if !is || len(call.Args) != 2 || called(checked, call.Fun) != eventTypeName("Track") {
+				return true
+			}
+			tracked++
+			if mentionsAValueOf(checked, call.Args[1], identity) {
+				return true
+			}
+			complaints = append(complaints, checked.fset.Position(call.Pos()).String()+
+				" keys a tracker by a name no Identity was read for, and a checkpoint row is keyed by an Identity's rendering — Spec.Name renders the same string only at Ungenerated over the whole key space")
+			return true
+		})
+	}
+	return tracked, complaints
+}
+
+func called(checked checkedPackage, fun ast.Expr) string {
+	selector, is := fun.(*ast.SelectorExpr)
+	if !is {
+		return ""
+	}
+	object, found := checked.info.Uses[selector.Sel]
+	if !found || object.Pkg() == nil {
+		return ""
+	}
+	return object.Pkg().Path() + "." + object.Name()
+}
+
+func mentionsAValueOf(checked checkedPackage, expr ast.Expr, named string) bool {
+	found := false
+	ast.Inspect(expr, func(node ast.Node) bool {
+		held, is := node.(ast.Expr)
+		if !is {
+			return true
+		}
+		if reached := checked.info.TypeOf(held); reached != nil && types.TypeString(reached, nil) == named {
+			found = true
+		}
+		return !found
+	})
+	return found
+}
+
+// A Cover and an Identity each carry a proof — a set somebody checked, a name
+// somebody built — and the zero composite literal is the one way to hold one
+// without it. So a door that takes either has to ask, and this is what makes that
+// a rule rather than a habit: a new exported function taking one of the two whose
+// body never reads Count() or Projection() and never compares against the zero
+// value is reported here, in the section that adds it.
+//
+// It reports nothing today, because no exported function of the package takes
+// either as a parameter yet. The control is what says so honestly.
+func TestEveryDoorTakingACoverOrAnIdentityRefusesItsZeroValue(t *testing.T) {
+	for _, complaint := range doorsThatDoNotAsk(t, "../event/projection") {
+		t.Error(complaint)
+	}
+
+	t.Run("the control: a door that asks and one that does not", func(t *testing.T) {
+		directory := t.TempDir()
+		if err := os.WriteFile(filepath.Join(directory, "fixture.go"), []byte(unaskedDoors), 0o644); err != nil {
+			t.Fatalf("cannot write the fixture: %v", err)
+		}
+		reported := strings.Join(doorsThatDoNotAsk(t, directory), "\n")
+		for _, named := range []string{"Observe", "Redrive"} {
+			if !strings.Contains(reported, named) {
+				t.Fatalf("the fixture's %s takes one of the two and asks nothing, and it was not reported, so the arm above proves nothing:\n%s", named, reported)
+			}
+		}
+		for _, named := range []string{"Reached", "Park", "unexported"} {
+			if strings.Contains(reported, named) {
+				t.Fatalf("the fixture's %s was reported and it asks, so the walk refuses every door rather than the ones that do not ask:\n%s", named, reported)
+			}
+		}
+	})
+}
+
+const unaskedDoors = `package fixture
+
+type Cover struct{ partitions []int }
+
+func (this Cover) Count() int { return len(this.partitions) }
+
+type Identity struct{ projection string }
+
+func (this Identity) Projection() string { return this.projection }
+
+func Observe(cover Cover) int { return 1 }
+
+func Redrive(of Identity) error { return nil }
+
+func Reached(cover Cover) error {
+	if cover.Count() == 0 {
+		return nil
+	}
+	return nil
+}
+
+func Park(of Identity) error {
+	if of == (Identity{}) {
+		return nil
+	}
+	return nil
+}
+
+func unexported(cover Cover, of Identity) int { return cover.Count() }
+`
+
+// The two questions a door may ask, and either one is exact: Count() and
+// Projection() answer zero and "" for the value nobody built, and a comparison
+// against the zero composite literal is the same question spelled out.
+var carriedProofs = map[string]string{"Cover": "Count", "Identity": "Projection"}
+
+func doorsThatDoNotAsk(t *testing.T, directory string) []string {
+	t.Helper()
+	var complaints []string
+	for _, source := range goSourcesIn(t, directory) {
+		positions, parsed := parsedSource(t, source)
+		for _, declared := range parsed.Decls {
+			function, is := declared.(*ast.FuncDecl)
+			if !is || !function.Name.IsExported() || function.Body == nil {
+				continue
+			}
+			for _, field := range function.Type.Params.List {
+				named, is := field.Type.(*ast.Ident)
+				if !is || carriedProofs[named.Name] == "" {
+					continue
+				}
+				for _, held := range field.Names {
+					if asksAbout(function.Body, held.Name, named.Name) {
+						continue
+					}
+					complaints = append(complaints, positions.Position(function.Pos()).String()+": "+function.Name.Name+
+						" takes the "+named.Name+" "+held.Name+" and never asks whether it was built — a "+named.Name+
+						"{} literal is legal in any package, and it is the one value the constructor never answers")
+				}
+			}
+		}
+	}
+	return complaints
+}
+
+func asksAbout(body *ast.BlockStmt, held, named string) bool {
+	asked := false
+	ast.Inspect(body, func(node ast.Node) bool {
+		switch found := node.(type) {
+		case *ast.SelectorExpr:
+			if reached, is := found.X.(*ast.Ident); is && reached.Name == held && found.Sel.Name == carriedProofs[named] {
+				asked = true
+			}
+		case *ast.CompositeLit:
+			if reached, is := found.Type.(*ast.Ident); is && reached.Name == named {
+				asked = true
+			}
+		}
+		return !asked
+	})
+	return asked
+}
+
+// A published spec is a form the caller fills in, and a field on one that no
+// line of the package reads is a promise the tree does not keep — worse than an
+// absent field, because a default assigned to it makes it look live to the next
+// reader. RedriveSpec carried a Classifier that way: published, defaulted to
+// Classify, and read by nothing, so a caller who supplied one to make a redrive
+// give up on a letter got the same forever-requeue as one who supplied none.
+//
+// The question is asked of the field object rather than of its name, so a field
+// called Handler is not counted read because some other type's Handler is.
+func TestEveryFieldOfAPublishedSpecIsRead(t *testing.T) {
+	checked := checkedProjection(t)
+	for _, named := range []string{"Spec", "RedriveSpec"} {
+		for _, complaint := range fieldsNothingReads(t, checked, named) {
+			t.Error(complaint)
+		}
+	}
+
+	t.Run("the control: a spec with a field nothing reads", func(t *testing.T) {
+		fixture := checkedFixture(t, "forms", `package forms
+
+type Spec struct {
+	Name       string
+	Classifier func(error) int
+}
+
+func New(spec Spec) string {
+	if spec.Name == "" {
+		return "unnamed"
+	}
+	return spec.Name
+}
+`)
+		reported := strings.Join(fieldsNothingReads(t, fixture, "Spec"), "\n")
+		if !strings.Contains(reported, "Spec.Classifier") {
+			t.Fatalf("the fixture publishes a field nothing reads and %q came back, so the arm above proves nothing", reported)
+		}
+		if strings.Contains(reported, "Spec.Name") {
+			t.Fatalf("the fixture's read field was reported as unread, so the walk reports every field rather than the ones nothing reads: %q", reported)
+		}
+	})
+}
+
+func checkedProjection(t *testing.T) checkedPackage {
+	t.Helper()
+	for _, checked := range checkedEventPackages(t) {
+		if checked.path == eventExtension+"/projection" {
+			return checked
+		}
+	}
+	t.Fatalf("%s lists no projection package, so nothing about its published forms was checked", surfaceBaseline)
+	return checkedPackage{}
+}
+
+func fieldsNothingReads(t *testing.T, checked checkedPackage, named string) []string {
+	t.Helper()
+	declared := checked.pkg.Scope().Lookup(named)
+	if declared == nil {
+		t.Fatalf("%s declares no %s, and the walk asked about a form that is not there", checked.path, named)
+	}
+	structure, is := declared.Type().Underlying().(*types.Struct)
+	if !is {
+		t.Fatalf("%s.%s is not a struct, and the walk asked about a form that is not one", checked.path, named)
+	}
+	read := map[types.Object]bool{}
+	for _, used := range checked.info.Uses {
+		read[used] = true
+	}
+	var complaints []string
+	for index := range structure.NumFields() {
+		field := structure.Field(index)
+		if !field.Exported() || read[field] {
+			continue
+		}
+		complaints = append(complaints, fmt.Sprintf("%s.%s.%s is published and no line of the package reads it, so a caller who fills it in gets nothing", checked.path, named, field.Name()))
+	}
+	return complaints
 }

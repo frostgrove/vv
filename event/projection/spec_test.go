@@ -91,8 +91,24 @@ func TestNewRefusesEverySpecItCannotAssemble(t *testing.T) {
 			spec.OnPermanentFailure = projection.Failure(4)
 			return spec
 		}},
-		{"quarantine with no sink", "Quarantine", func(spec projection.Spec) projection.Spec {
-			spec.OnPermanentFailure = projection.Quarantine
+		{"ParkSequence with no queue", "Park", func(spec projection.Spec) projection.Spec {
+			spec.OnPermanentFailure = projection.ParkSequence
+			spec.Advance = projection.InUnit
+			spec.Unit = runsTheWork
+			spec.Destination = readModel{}
+			return spec
+		}},
+		{"ParkSequence beside AfterApply", "ParkSequence", func(spec projection.Spec) projection.Spec {
+			spec.OnPermanentFailure = projection.ParkSequence
+			spec.Park = newPark()
+			return spec
+		}},
+		{"ParkSequence beside a destination nothing can resolve", "Destination", func(spec projection.Spec) projection.Spec {
+			spec.OnPermanentFailure = projection.ParkSequence
+			spec.Park = newPark()
+			spec.Advance = projection.InUnit
+			spec.Unit = runsTheWork
+			spec.Destination = projection.Unchecked
 			return spec
 		}},
 		{"a backoff that shrinks", "Backoff", func(spec projection.Spec) projection.Spec {
@@ -115,6 +131,28 @@ func TestNewRefusesEverySpecItCannotAssemble(t *testing.T) {
 			spec.Attempts = -1
 			return spec
 		}},
+		{"a name carrying the generation delimiter", "Name", func(spec projection.Spec) projection.Spec {
+			spec.Name = "orders@2"
+			return spec
+		}},
+		{"a name carrying the partition delimiter", "Name", func(spec projection.Spec) projection.Spec {
+			spec.Name = "orders#3.7"
+			return spec
+		}},
+		{"a name its generation and partition push over the bound", "Name", func(spec projection.Spec) projection.Spec {
+			spec.Name = strings.Repeat("o", event.MaxNameBytes-4)
+			spec.Generation = 12
+			spec.Partition = partitionOf(t, 3, 7)
+			return spec
+		}},
+		{"a sequencer that does not name itself", "Sequence", func(spec projection.Spec) projection.Spec {
+			spec.Sequence = projection.SequenceBy("", func(event.Envelope) string { return "one" })
+			return spec
+		}},
+		{"a SequenceBy over a nil function", "Sequence", func(spec projection.Spec) projection.Spec {
+			spec.Sequence = projection.SequenceBy("by-order", nil)
+			return spec
+		}},
 	} {
 		t.Run(refused.what, func(t *testing.T) {
 			built, err := projection.New(refused.build(legal))
@@ -132,6 +170,27 @@ func TestNewRefusesEverySpecItCannotAssemble(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("a spec wrong in three places reports three problems", func(t *testing.T) {
+		wrong := legal
+		wrong.Name = "orders@2"
+		wrong.Log = nil
+		wrong.Sequence = projection.SequenceBy("", func(event.Envelope) string { return "one" })
+
+		_, err := projection.New(wrong)
+		joined, collected := err.(interface{ Unwrap() []error })
+		if !collected {
+			t.Fatalf("a spec wrong in three places was refused with %v, which is one problem rather than the collection a caller fixes in one pass", err)
+		}
+		if held := joined.Unwrap(); len(held) != 3 {
+			t.Fatalf("a spec wrong in three places reported %d problems: %v", len(held), held)
+		}
+		for _, names := range []string{"Name", "Log", "Sequence"} {
+			if !strings.Contains(err.Error(), names) {
+				t.Fatalf("the three problems read %q and do not name %s", err, names)
+			}
+		}
+	})
 
 	t.Run("the control: the same spec with none of them", func(t *testing.T) {
 		if _, err := projection.New(legal); err != nil {

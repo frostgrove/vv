@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/frostgrove/vv/crud"
 	"github.com/frostgrove/vv/event"
 	"github.com/frostgrove/vv/event/eventmemory"
 	"github.com/frostgrove/vv/event/projection"
@@ -155,6 +156,140 @@ func (this *watchedCheckpoints) Forget(ctx context.Context, projection string) e
 	return this.Checkpoints.Forget(ctx, projection)
 }
 
+// A transaction value of the read model's, standing where a *sql.Tx stands in
+// every wiring that has a database: comparable, non-nil, and one per resource.
+type transaction struct{ named string }
+
+// The read model's data source, and what Spec.Destination names. It is not a
+// transaction, which is what crud requires of the value a session is opened
+// against.
+type readModel struct{ pool *stand }
+
+func (this readModel) Exec(context.Context, string, ...any) (crud.Result, error) {
+	return crud.Result{}, nil
+}
+
+func (this readModel) Query(context.Context, string, ...any) (crud.Rows, error) { return nil, nil }
+
+func (this readModel) Dialect() crud.Dialect { return crud.Postgres{} }
+
+func (this readModel) DataSource() any { return this.pool }
+
+// What a unit binds for the read model, and what crud.KeyOf answers a *sql.Tx
+// for in every wiring that has one. InTransaction is the one call the pass's
+// alignment makes of it and nothing else in crud makes of an executor, so
+// recording it is how a case says where in the pass the comparison happened.
+type readModelTx struct {
+	identity any
+	asked    func()
+}
+
+func (this readModelTx) Exec(context.Context, string, ...any) (crud.Result, error) {
+	return crud.Result{}, nil
+}
+
+func (this readModelTx) Query(context.Context, string, ...any) (crud.Rows, error) {
+	return nil, nil
+}
+
+func (this readModelTx) DataSource() any { return this.identity }
+
+func (this readModelTx) InTransaction() bool {
+	if this.asked != nil {
+		this.asked()
+	}
+	return true
+}
+
+// The one seam every InUnit case with a resolvable destination is built on.
+// eventmemory cannot give a test tier A on its own: its checkpoint authority is
+// minted over an unexported identity and no destination's key can ever equal one
+// (crud.SameDataSource refuses two values of different types outright). So the
+// authority is re-minted over a value the test chose and the unit binds an
+// executor naming a value the test chose, and what the pass compares is two
+// halves a case can hand one value to or two.
+type alignedCheckpoints struct {
+	event.Checkpoints
+
+	identity *transaction
+}
+
+func (this alignedCheckpoints) Transaction(ctx context.Context) (event.Authority, error) {
+	held, err := this.Checkpoints.Transaction(ctx)
+	if err != nil || !held.Valid() {
+		return held, err
+	}
+	return event.NewAuthority(this.Checkpoints.Backing(), this.identity)
+}
+
+// One transaction for both resources when store and destination are one value,
+// and two when they are not, which is the whole of the difference between tier A
+// and tier B. Everything else about the two wirings is identical.
+//
+// The park's writes are staged in the same unit as the advance and land only
+// when it commits, which is what a queue in the application's own database is. A
+// stand whose rollback left the letter behind could not tell a park that commits
+// with the read model from one that does not.
+func (this *stand) inUnit(spec projection.Spec, store, destination *transaction, asked func()) projection.Spec {
+	pool := readModel{pool: this}
+	spec.Advance = projection.InUnit
+	spec.Checkpoints = alignedCheckpoints{Checkpoints: this.points, identity: store}
+	spec.Destination = pool
+	spec.Unit = this.opening(pool, destination, asked)
+	return spec
+}
+
+// The unit of work both halves run inside — the loop's pass and the operator's
+// redrive — because both owe the same three resources one transaction.
+func (this *stand) opening(pool readModel, destination *transaction, asked func()) func(context.Context, func(context.Context) error) error {
+	return func(ctx context.Context, work func(context.Context) error) error {
+		tx, err := this.checkpoints.Begin(ctx)
+		if err != nil {
+			return err
+		}
+		opened := this.park.opened()
+		inner := crud.BindExecutor(withUnitOfWork(eventmemory.WithTransaction(ctx, tx), opened), pool, readModelTx{identity: destination, asked: asked})
+		if err := work(inner); err != nil {
+			_ = tx.Rollback(ctx)
+			this.park.discard(opened)
+			return err
+		}
+		if this.interrupted != nil {
+			_ = tx.Rollback(ctx)
+			this.park.discard(opened)
+			return this.interrupted
+		}
+		if err := tx.Commit(ctx); err != nil {
+			this.park.discard(opened)
+			return err
+		}
+		this.park.commit(opened)
+		opened.land()
+		return nil
+	}
+}
+
+// What an operator's redrive runs inside, which is the same unit one pass runs
+// inside and is opened by the operator's own goroutine rather than by the loop's.
+func (this *stand) operating(destination *transaction) func(context.Context, func(context.Context) error) error {
+	return this.opening(readModel{pool: this}, destination, nil)
+}
+
+// A unit of work over the checkpoint store's own transaction, which is what
+// crud.InNewTx is in a wiring with a database and what a split is performed
+// inside. It runs the work once.
+func (this *stand) unit(ctx context.Context, work func(context.Context) error) error {
+	tx, err := this.checkpoints.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	if err := work(eventmemory.WithTransaction(ctx, tx)); err != nil {
+		_ = tx.Rollback(ctx)
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
 type observed struct {
 	mutex  sync.Mutex
 	states []projection.State
@@ -292,7 +427,13 @@ type stand struct {
 	ticks       *ticks
 	observer    *observed
 	model       *model
+	park        *park
 	versions    map[event.Stream]event.Version
+
+	// What a unit of work answers instead of committing, for the cases that have
+	// to see a body that ran and a transaction that did not: the letter, the read
+	// model and the advance go back together, or the queue is not what it says.
+	interrupted error
 }
 
 func newStand(t *testing.T, spec eventmemory.Spec) *stand {
