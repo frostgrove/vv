@@ -1099,34 +1099,59 @@ type Tx interface{ ... }
 
 ## github.com/frostgrove/vv/event/projection
 ```go
+const MaxPartitions = 1024
 var ErrSpec = errors.New("projection: this projection cannot be assembled from this spec") ...
 var Unchecked = unchecked{}
 func Ignore(router *Router, family string, types ...string)
 func On[S, ID, E any](router *Router, fact *event.Fact[S, ID, E], ...)
+func Split(ctx context.Context, spec SplitSpec) (Identity, Identity, error)
 func TryIgnore(router *Router, family string, types ...string) error
 func TryOn[S, ID, E any](router *Router, fact *event.Fact[S, ID, E], ...) error
 type Advance uint8
     const UnsetAdvance Advance = iota ...
 type Backoff struct{ ... }
 type Batch struct{ ... }
+type Claim struct{ ... }
 type Classifier func(err error) Verdict
+type Cover struct{ ... }
+    func NewCover(partitions ...Partition) (Cover, error)
 type Failure uint8
     const Halt Failure = iota ...
 type Foreign uint8
     const SkipForeign Foreign = iota ...
+type Generation uint32
+    const Ungenerated Generation = 0
 type Handler interface{ ... }
 type HandlerFunc func(ctx context.Context, batch Batch) error
+type Identity struct{ ... }
+    func NewIdentity(projection string, generation Generation, partition Partition) (Identity, error)
+    func ParseIdentity(text string) (Identity, error)
+type Letter struct{ ... }
 type Observer interface{ ... }
 type ObserverFunc func(state State)
+type Park interface{ ... }
+type Partition struct{ ... }
+    func NewPartition(id, mask uint32) (Partition, error)
+    func ParsePartition(text string) (Partition, error)
+    func Whole() Partition
 type Phase string
     const PhaseStarting Phase = "starting" ...
 type Projection struct{ ... }
     func New(spec Spec) (*Projection, error)
-type Quarantined struct{ ... }
-type Quarantines interface{ ... }
+type Redrive struct{ ... }
+    func NewRedrive(spec RedriveSpec) (*Redrive, error)
+type RedriveSpec struct{ ... }
+type Redriver interface{ ... }
+type Retried struct{ ... }
 type Router struct{ ... }
     func NewRouter(foreign Foreign) *Router
+type Sequencer interface{ ... }
+    func ByStream() Sequencer
+    func OneSequence() Sequencer
+    func SequenceBy(name string, of func(event.Envelope) string) Sequencer
+    func Unordered() Sequencer
 type Spec struct{ ... }
+type SplitSpec struct{ ... }
 type State struct{ ... }
 type Verdict uint8
     const Retryable Verdict = iota ...

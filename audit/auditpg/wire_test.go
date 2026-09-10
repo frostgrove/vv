@@ -59,9 +59,19 @@ func TestRevisionEvidenceRoundTripsOpaqueCryptographicValues(t *testing.T) {
 	if !reflect.DeepEqual(view, decoded) {
 		t.Fatal("revision evidence did not preserve the complete wire view")
 	}
-	wire[0] = '!'
-	if _, err := decodeEvidence(wire); err == nil {
+	malformed := bytes.Clone(wire)
+	malformed[0] = '!'
+	if _, err := decodeEvidence(malformed); err == nil {
 		t.Fatal("malformed evidence was accepted")
+	}
+	for name, noncanonical := range map[string][]byte{
+		"trailing whitespace": append(bytes.Clone(wire), '\n'),
+		"unknown member":      append([]byte(`{"unknown":true,`), wire[1:]...),
+		"duplicate member":    append([]byte(`{"version":1,`), wire[1:]...),
+	} {
+		if _, err := decodeEvidence(noncanonical); err == nil {
+			t.Fatalf("%s evidence was accepted", name)
+		}
 	}
 }
 

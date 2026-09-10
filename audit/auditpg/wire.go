@@ -1,6 +1,7 @@
 package auditpg
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 
@@ -185,6 +186,10 @@ func decodeEvidence(wire []byte) (audit.RevisionWireView, error) {
 			}
 			alternative.Commitments = set
 		}
+	}
+	canonical, err := encodeEvidence(view)
+	if err != nil || !bytes.Equal(wire, canonical) {
+		return audit.RevisionWireView{}, errorsWire("revision canonical wire")
 	}
 	return view, nil
 }

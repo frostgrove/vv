@@ -199,10 +199,12 @@ func BasicHistory(t *testing.T, factory HistoryStoreFactory) {
 	}
 	ctx := context.Background()
 	policy := audit.ContextFacts(
+		audit.ActorChain(audit.ContextRequired, audit.Provenances(audit.Verified), audit.Public, audit.AsPlaintext),
 		audit.ScopeFact(audit.ContextRequired, audit.Provenances(audit.Verified), audit.Public, audit.AsPlaintext),
 		audit.OperationFact(audit.ContextRequired, audit.Provenances(audit.Verified), audit.Public, audit.AsPlaintext),
 	)
 	unscopedPolicy := audit.ContextFacts(
+		audit.ActorChain(audit.ContextRequired, audit.Provenances(audit.Verified), audit.Public, audit.AsPlaintext),
 		audit.OperationFact(audit.ContextRequired, audit.Provenances(audit.Verified), audit.Public, audit.AsPlaintext),
 	)
 	sent := declareHistoryEvent("invoice.sent", policy)
@@ -293,7 +295,10 @@ func BasicHistory(t *testing.T, factory HistoryStoreFactory) {
 			operationID = audit.OperationID{250}
 		}
 		value, valueErr := audit.NewContextValue(operationID, audit.Verified)
-		return audit.Context{Scope: scope, Operation: value}, valueErr
+		return audit.Context{
+			Actors: []audit.Actor{{Kind: audit.HumanActor, Reference: "user:7", Provenance: audit.Verified}},
+			Scope:  scope, Operation: value,
+		}, valueErr
 	})
 	recorder, err := audit.New(audit.Config{
 		Catalogs: catalogs, Writer: opened.Writer, Context: resolver,
@@ -389,6 +394,9 @@ func BasicHistory(t *testing.T, factory HistoryStoreFactory) {
 		t.Fatal(err)
 	}
 	assertHistoryValues(t, page, []string{"sent-a", "sent-b"})
+	if actors := page.Revisions()[0].Actors; len(actors) != 1 || actors[0].Reference.Knowledge != audit.FieldKnown || string(actors[0].Reference.Canonical) != "user:7" {
+		t.Fatalf("requested actor chain = %#v", actors)
+	}
 	if page.HasMore() {
 		t.Fatal("complete event page reported truncation")
 	}
@@ -399,7 +407,7 @@ func BasicHistory(t *testing.T, factory HistoryStoreFactory) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if values := metadataPage.Revisions()[0].Items[0].Values; len(values) != 1 || values[0].Knowledge != audit.FieldUnprojected || len(values[0].Canonical) != 0 || len(metadataPage.Revisions()[0].Context) != 0 {
+	if values := metadataPage.Revisions()[0].Items[0].Values; len(values) != 1 || values[0].Knowledge != audit.FieldUnprojected || len(values[0].Canonical) != 0 || len(metadataPage.Revisions()[0].Context) != 0 || len(metadataPage.Revisions()[0].Actors) != 0 {
 		t.Fatalf("zero projections disclosed data: %#v", metadataPage.Revisions()[0])
 	}
 	newest := query

@@ -20,10 +20,10 @@ import (
 
 Текущая поддерживаемая граница — **alpha для разработки приложений**. Уже можно
 использовать ручную запись, grouping, idempotency/reconciliation, memory store,
-транзакционный CRUD, PostgreSQL persistence и публичную одностраничную историю.
-Protected history, возобновляемые cursor, attempts, reconstruction, corrections,
-holds и purge planning пока не поставлены; наличие публичного vocabulary не
-означает поддержку capability.
+транзакционный CRUD, PostgreSQL persistence, публичную одностраничную историю и
+точечное чтение revision/item. Protected history, возобновляемые cursor,
+attempts, reconstruction, corrections, holds и purge planning пока не
+поставлены; наличие публичного vocabulary не означает поддержку capability.
 
 ---
 
@@ -41,9 +41,9 @@ holds и purge planning пока не поставлены; наличие пу�
 | `Recorder.Within` · `Stage` | Одна operation revision из нескольких объявленных фактов; join только к точной source-bound root transaction |
 | `auditmemory` | Конкурентный in-process writer/log с явной deployment activation и неизменяемым readback catalog mutations |
 | `auditcrud.Secured` | Закрытый security-first CRUD terminal для create, assigned/unassigned save, update, hard/soft delete и restore |
-| `NewHistory` | Отдельно авторизованная ограниченная публичная история по resource, subject, event type/target и operation type/instance |
-| `audittest.BasicHistory` | Повторно используемый conformance suite истории для реализации store |
-| `auditpg` | Точная schema readiness, catalog activation/readback, durable append/reconciliation, transaction joining и базовая история |
+| `NewHistory` | Отдельно авторизованный ограниченный публичный search и точечное чтение revision/item |
+| `audittest.BasicHistory` · `ExactHistory` | Повторно используемый conformance для search и exact-read реализации store |
+| `auditpg` | Точная schema readiness, catalog activation/readback, durable append/reconciliation, transaction joining, search и exact reads |
 
 ## Сначала декларация
 
@@ -245,6 +245,7 @@ history, err := audit.NewHistory(audit.HistoryConfig{
     Profile:  audit.PublicOnePageDevelopmentAlpha,
     Recorder: recorder,
     Log:      store,
+    Exact:    store,
     Access:   historyAuthority,
 })
 if err != nil {
@@ -261,6 +262,35 @@ page, err := StatusPublishedEvent.History(history).Events(ctx, audit.Query{
     Limit:     100,
 })
 ```
+
+Когда receipt или экспортированная ссылка уже точно задаёт evidence, используйте
+exact read с явными ограничениями resource, action и classification:
+
+```go
+result, err := history.Revision(ctx, audit.RevisionRef{
+    Catalog:  catalog.Ref(),
+    Revision: receipt.RevisionID(),
+}, audit.ExactAccessQuery{
+    Resources:       []audit.Resource{"platform.status"},
+    Classifications: []audit.Classification{audit.Public},
+    Query: audit.Query{
+        Purpose: "incident.review",
+        Role:    "auditor",
+        Scope:   audit.CurrentScope(),
+        Actions: []audit.Action{"status.published"},
+        Fields:  audit.AllFields(),
+        Context: audit.AllContext(),
+    },
+})
+revision := result.Revision()
+```
+
+`History.Item` принимает `audit.ItemRef` и возвращает только выбранный item. При
+этом store предоставляет полный revision envelope: Frostgrove связывает ответ с
+конкретным запросом и до projection проверяет record-era catalog, integrity
+digest и signature. Отсутствующая ссылка превращается в `audit.ErrNotFound`
+только после authorization, поэтому API не является неавторизованным existence
+oracle.
 
 Authority получает origin-bound `AccessRequest` и обязана ответить через
 `AllowAccess(request, grant)` либо `DenyAccess(request, reason)`. Grant может

@@ -618,33 +618,106 @@ func TestAProjectionInAUnitPassesABurntGap(t *testing.T) {
 	}
 }
 
-// The sink writes its record through whatever the pass bound, exactly as the
+// The queue writes its rows through whatever the pass bound, exactly as the
 // handler does. Under InUnit that is the unit's own transaction — [[D-133]]'s
-// neighbour decision D5 — so the record and the advance commit together, and a
-// record that outlived a rolled-back advance would be a row in this table with
+// neighbour decision D5 — so the letter and the advance commit together, and a
+// letter that outlived a rolled-back advance would be a row in this table with
 // no checkpoint behind it.
-type sink struct {
+//
+// It is the whole contract over one table, because the whole contract is what a
+// projection at tier A uses: the count the fast path reads, the existence check
+// the blocking dispatch makes per envelope, the write, and the holes a cutover
+// asks about.
+type queue struct {
 	into   *destination
 	inside atomic.Bool
 	refuse error
 }
 
-func (this *sink) Quarantine(ctx context.Context, quarantined projection.Quarantined) error {
+func (this *projectionCase) queue(t *testing.T, table string) *queue {
+	t.Helper()
+	held := &queue{into: &destination{table: quoteIdentifier(this.schema.Name) + "." + quoteIdentifier(table), pool: this.pool, source: this.source}}
+	if _, err := this.pool.ExecContext(context.WithoutCancel(t.Context()),
+		"CREATE TABLE "+held.into.table+" (id bigserial PRIMARY KEY, of text NOT NULL, sequencer text NOT NULL, sequence text NOT NULL, payload text NOT NULL, cause text NOT NULL, evicted boolean NOT NULL DEFAULT false, applied boolean NOT NULL DEFAULT false)"); err != nil {
+		t.Fatalf("the park %s this case asserts against could not be created: %v", held.into.table, err)
+	}
+	return held
+}
+
+func (this *queue) Sequences(ctx context.Context, of projection.Identity) (uint64, error) {
+	return this.counted(ctx, "SELECT count(DISTINCT sequence) FROM "+this.into.table+" WHERE of = $1 AND NOT evicted", of.String())
+}
+
+func (this *queue) Holds(ctx context.Context, of projection.Identity, sequence string) (bool, error) {
+	held, err := this.counted(ctx, "SELECT count(*) FROM "+this.into.table+" WHERE of = $1 AND sequence = $2 AND NOT evicted", of.String(), sequence)
+	return held > 0, err
+}
+
+func (this *queue) Park(ctx context.Context, letter projection.Letter) error {
 	if this.refuse != nil {
 		return this.refuse
 	}
 	if held, found := crud.ExecutorFor(ctx, this.into.source); found && crud.IsTransaction(held) {
 		this.inside.Store(true)
 	}
-	_, err := this.into.on(ctx).ExecContext(ctx, "INSERT INTO "+this.into.table+" (payload) VALUES ($1)",
-		string(quarantined.Envelope.Payload))
+	cause := ""
+	if letter.Cause != nil {
+		cause = letter.Cause.Error()
+	}
+	_, err := this.into.on(ctx).ExecContext(ctx, "INSERT INTO "+this.into.table+" (of, sequencer, sequence, payload, cause) VALUES ($1, $2, $3, $4, $5)",
+		letter.Identity.String(), letter.Sequencer, letter.Sequence, string(letter.Envelope.Payload), cause)
 	return err
 }
 
-// §10(13): quarantine is envelope-granular, and the number that says so is read
-// out of the checkpoint row rather than off Progress in memory. A page-granular
-// quarantine loses up to MaxRead good events for one corrupt payload and reports
-// the same phase while doing it.
+// The letters queued now plus the letters an operator evicted without applying:
+// two counts over the rows rather than a column, so it cannot drift from what it
+// summarises.
+func (this *queue) Holes(ctx context.Context, of projection.Identity) (uint64, error) {
+	return this.counted(ctx, "SELECT count(*) FROM "+this.into.table+" WHERE of = $1 AND (NOT evicted OR NOT applied)", of.String())
+}
+
+func (this *queue) counted(ctx context.Context, statement string, args ...any) (uint64, error) {
+	rows, err := this.into.on(ctx).QueryContext(ctx, statement, args...)
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = rows.Close() }()
+	held := uint64(0)
+	if rows.Next() {
+		if err := rows.Scan(&held); err != nil {
+			return 0, err
+		}
+	}
+	return held, rows.Err()
+}
+
+func (this *queue) letters(t *testing.T, sequence string) []string {
+	t.Helper()
+	rows, err := this.into.pool.QueryContext(context.WithoutCancel(t.Context()),
+		"SELECT payload FROM "+this.into.table+" WHERE sequence = $1 AND NOT evicted ORDER BY id", sequence)
+	if err != nil {
+		t.Fatalf("reading the park %s answered %v", this.into.table, err)
+	}
+	defer func() { _ = rows.Close() }()
+	var held []string
+	for rows.Next() {
+		var payload string
+		if err := rows.Scan(&payload); err != nil {
+			t.Fatalf("a letter of %s could not be read: %v", this.into.table, err)
+		}
+		held = append(held, payload)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("reading the park %s answered %v", this.into.table, err)
+	}
+	return held
+}
+
+// §10(13): a park is sequence-granular, and the number that says so is read out
+// of the checkpoint row rather than off Progress in memory. A page-granular
+// policy loses up to MaxRead good events for one corrupt payload and reports the
+// same phase while doing it; every payload here is its own aggregate's first
+// fact, so one sequence blocked is one envelope parked.
 //
 // The mode is InUnit deliberately: the whole-page attempt that discovers the
 // permanent failure has already applied the envelopes before it, and under
@@ -652,13 +725,14 @@ func (this *sink) Quarantine(ctx context.Context, quarantined projection.Quarant
 // second time — legal, at least once, and no longer an exact count of anything.
 // Inside a unit they go back with the advance, so what the read model holds
 // afterwards is exactly the isolation pass's own work.
-func TestAQuarantineIsEnvelopeGranular(t *testing.T) {
+func TestAParkIsSequenceGranular(t *testing.T) {
 	const (
-		family  = "eventpg.projection.quarantine"
+		family  = "eventpg.projection.park"
 		wire    = family + ".held"
 		corrupt = "q-corrupt"
 	)
 	payloads := []string{"q-1", "q-2", corrupt, "q-4", "q-5"}
+	corruptSequence := projection.ByStream().SequenceOf(event.Envelope{Stream: aStream(family, family+"/"+corrupt)})
 
 	refusing := func(rows *destination) projection.Handler {
 		return projection.HandlerFunc(func(ctx context.Context, batch projection.Batch) error {
@@ -676,19 +750,19 @@ func TestAQuarantineIsEnvelopeGranular(t *testing.T) {
 
 	held := newProjectionCase(t, 8, 0)
 	rows := held.destination(t, "read_model")
-	quarantine := &sink{into: held.destination(t, "quarantined")}
+	parked := held.queue(t, "parked")
 	held.writeEach(t, family, wire, payloads...)
 
 	spec := inUnit(held.spec(t, "orders", refusing(rows)), held.source, held.source)
-	spec.OnPermanentFailure = projection.Quarantine
-	spec.Quarantine = quarantine
-	held.run(t, spec).following(t, "the projection passed the page the corrupt payload is in")
+	spec.OnPermanentFailure = projection.ParkSequence
+	spec.Park = parked
+	held.run(t, spec).degraded(t, "the projection passed the page the corrupt payload is in")
 
-	if got := quarantine.into.rows(t); !slices.Equal(got, []string{corrupt}) {
-		t.Fatalf("the sink holds %v where one envelope of the page was permanently unapplicable", got)
+	if got := parked.letters(t, corruptSequence); !slices.Equal(got, []string{corrupt}) {
+		t.Fatalf("the park holds %v where one envelope of the page was permanently unapplicable", got)
 	}
-	if !quarantine.inside.Load() {
-		t.Fatal("the sink was called on a context carrying no transaction of the checkpoint store's source, so its record does not commit with the advance it accounts for")
+	if !parked.inside.Load() {
+		t.Fatal("the park was written on a context carrying no transaction of the checkpoint store's source, so its letter does not commit with the advance it accounts for")
 	}
 	if got := rows.rows(t); !slices.Equal(got, []string{"q-1", "q-2", "q-4", "q-5"}) {
 		t.Fatalf("the read model holds %v where every envelope but the corrupt one applies", got)
@@ -744,11 +818,21 @@ type asked struct {
 	entered chan struct{}
 	release chan struct{}
 
+	// The row every arm below is about, and the reason the count is keyed by it
+	// rather than taken over every call: a resume asks the store one question
+	// before it reads its own row — whether a split retired this share — and that
+	// Load is neither the resume's nor the settlement's. What is measured here is
+	// how many times the row itself was read.
+	named string
+
 	mutex     sync.Mutex
 	presented event.Cursor
 }
 
 func (this *asked) Load(ctx context.Context, projection string) (event.Checkpoint, error) {
+	if projection != this.named {
+		return this.Checkpoints.Load(ctx, projection)
+	}
 	if this.loads.Add(1) == 2 && this.release != nil {
 		close(this.entered)
 		<-this.release
@@ -901,6 +985,7 @@ func TestAnUnconfirmedSaveIsResolvedByOneLoadAndNeverBySaving(t *testing.T) {
 				Checkpoints: preparedCheckpoints(t, killable, held.schema, VerifySchema),
 				entered:     make(chan struct{}),
 				release:     make(chan struct{}),
+				named:       "orders",
 			}
 			blocker := blockingCheckpoint(t, held.schema, "orders")
 			pid := backendPID(t, killable)
@@ -958,7 +1043,7 @@ func TestAnUnconfirmedSaveIsResolvedByOneLoadAndNeverBySaving(t *testing.T) {
 		rows := held.destination(t, "read_model")
 		held.writeEach(t, family, wire, payloads...)
 
-		recorder := &asked{Checkpoints: held.checkpoints(t)}
+		recorder := &asked{Checkpoints: held.checkpoints(t), named: "orders"}
 		blocker := blockingCheckpoint(t, held.schema, "orders")
 
 		pids := make(chan int64, 16)
@@ -1058,6 +1143,7 @@ func TestASettlementTakesTheRowsCursorWhenAShorterWinnerLeftIt(t *testing.T) {
 		Checkpoints: newer.checkpoints(t),
 		entered:     make(chan struct{}),
 		release:     make(chan struct{}),
+		named:       "orders",
 	}
 	claimed := &deliveries{}
 	var lost atomic.Bool

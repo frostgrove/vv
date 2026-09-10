@@ -1,7 +1,6 @@
 package projection
 
 import (
-	"context"
 	"errors"
 
 	"github.com/frostgrove/vv/event"
@@ -34,31 +33,13 @@ func Classify(err error) Verdict {
 
 type Failure uint8
 
+// ParkSequence and not Park: what it parks is the SEQUENCE — the failing
+// envelope and every later envelope of the same sequence, which never reach a
+// handler at all — and a package-level const Park could not stand beside the
+// Park interface the letters go to.
 const (
 	Halt Failure = iota
-	Quarantine
+	ParkSequence
 )
 
-func (this Failure) Valid() bool { return this == Halt || this == Quarantine }
-
-// What a sink is handed: the projection whose page could not apply this
-// envelope, the envelope itself, and the failure its classifier called
-// permanent.
-type Quarantined struct {
-	Projection string
-	Envelope   event.Envelope
-	Cause      error
-}
-
-// Where an envelope goes when the classifier calls its failure permanent and the
-// spec asks for it to be passed rather than to stop the projection.
-//
-// It is called INSIDE the unit of work under InUnit, through the context it is
-// given: a sink called outside it is the one write that survives the rollback of
-// the advance, and its record then names an envelope that is redelivered and
-// recorded a second time with no error anywhere. An error from it ends the
-// isolation pass and halts the projection, because a policy with nowhere to
-// record is a skip with extra words.
-type Quarantines interface {
-	Quarantine(ctx context.Context, quarantined Quarantined) error
-}
+func (this Failure) Valid() bool { return this == Halt || this == ParkSequence }

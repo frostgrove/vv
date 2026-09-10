@@ -13,6 +13,7 @@ import (
 // retry applies.
 type Batch struct {
 	Projection string
+	Identity   Identity
 	Envelopes  []event.Envelope
 	Attempt    int
 }

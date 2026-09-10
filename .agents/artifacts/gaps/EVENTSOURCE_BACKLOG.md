@@ -2758,3 +2758,660 @@ vv has **two**: PK `(position)` and `UNIQUE (family, key, version)`, whose leadi
 serve the foreign key's referencing side. Adding `(writer_xid, position)` for §1 makes three.
 **Three is the ceiling** — this is an append-only table that only grows, and every index is a btree
 write on the hottest path in the system.
+
+---
+
+## P4 — partitions, the park, generations and effects
+
+Recorded under the 2026-09-08 policy: `[medium]` and `[low]` are scheduled here and left alone.
+Everything below was raised by the phase-4 use-case audit (Round 1,
+[`EVENTSOURCE_P4_USECASES_GAPS.md`](EVENTSOURCE_P4_USECASES_GAPS.md)) against
+[`EVENTSOURCE_P4_USECASES.md`](../usecases/EVENTSOURCE_P4_USECASES.md). The twenty blocking
+findings are in that file and are **not** repeated here. Two `[medium]` entries from
+`## From the reference` (§4, the durable redelivery count; §5, write-side command idempotency) are
+already tagged **P4** and belong to this section too.
+
+### 1. `Readiness.Behind` is an `event.Position` used as a distance  `[medium]`
+
+§5.2 ES-04: `Readiness{Reached bool, Behind event.Position, Quarantined uint64}`, described as *"how
+far the furthest-behind partition still is"*. A position is an ordinal on a sequence that burns
+values — a rolled-back append and an optimistic-concurrency loser both consume one permanently
+(`## From the reference` §1's own account) — so `barrier − highest` is not a count of undelivered
+events and is not comparable across two logs or two moments. The type invites `Behind` to be
+plotted as lag and divided by a rate. Either it is a distinct type (or a `uint64` named for what it
+is), or the module page says the number is a hint whose unit is "positions, including burnt ones".
+
+### 2. `Observe` takes both an `Identity` and an `over []Partition`, and the `Identity` carries a `Partition`  `[medium]`
+
+`func Observe(ctx, checkpoints, of Identity, over []Partition) (Barrier, error)` — `of.Partition` is
+a field of the value passed as the *first* half of the key, and `over` is the set the `min` is taken
+across. Which one wins for the row lookups is unstated, and `Identity{…, Partition: Whole()}` beside
+`over: []Partition{{0,3},{1,3}}` is a legal call with no obvious meaning. `Reached` has the same
+shape with `arriving Identity` plus `over`. Either the function takes a projection name and a
+generation rather than an `Identity`, or `of.Partition` is documented as ignored and refused when
+non-`Whole`.
+
+### 3. `Batch` and `State` carry both `Projection string` and `Identity Identity`  `[low]`
+
+§5.2's `Batch{Projection, Identity, Envelopes, Attempt}` and `State{Projection, Identity, …}` carry
+the projection name twice, once inside a struct that also holds it. Kept for source compatibility,
+which is a good reason — but nothing says the two can never disagree, and a handler that switched to
+`Batch.Projection` while resolving its table from `Batch.Identity.Generation` (§1.5's mechanism 3)
+reads two halves of one key from two places. Owed: a sentence saying `Projection` is
+`Identity.Projection` and is retained for compatibility, or a deprecation.
+
+### 4. The applied-position refusal rests on one clause that is wrong  `[medium]`
+
+§1.4 refuses a second, lower watermark on the ground that *"the moment an operator evicts a letter
+unapplied, the hole is permanent and below any such watermark, and the number becomes a lie"*. A
+watermark that **stops** at the earliest permanent hole and never moves again is not a lie; it is the
+truthful and useful statement *"everything below this was applied, and above it there is at least one
+hole"* — which is exactly what an ES-05 `Wait` will need and exactly what
+`Progress.Quarantined != 0` cannot answer, because a count says nothing about *where*. The refusal
+may still be the right call (it is a new persisted number, and [[D-129]] constrains what it may be),
+but the reason recorded should be the real one — a new column on a frozen kernel row — rather than
+one that misstates the alternative. ES-03's *«успешная applied-позиция считается отдельно»* is the
+appendix sentence at stake; whichever way it goes, the phase-5 owner reads this paragraph.
+
+### 5. `RedriveSpec.Park` is a `Redriver` while `Spec.Park` is a `Park`  `[low]`
+
+Two fields named `Park`, in two specs, of two unrelated types, in one package. A composition root
+that wires both writes `Spec{Park: q}` and `RedriveSpec{Park: q}` where `q` must implement both
+interfaces or must be two values. Name the redrive's field for what it takes.
+
+### 6. A split committed under a running parent copies a stale cursor, and the re-delivery is unstated  `[medium]`
+
+§1.3 step 2 reads the parent's row and step 3 says *"Both children now stand at the exact point the
+parent reached"*. That is true only for a drained parent. A parent still running can commit an
+advance between the split's `Load` and its `Forget` (READ COMMITTED, one transaction, three
+statements), so the children start behind what the parent applied and re-deliver its last pages —
+legal at least once, invisible in §UC-139, and the one consequence an operator who skipped the drain
+will actually observe (the halt is the other). Under `AfterApply` the parent's page was applied and
+is applied again by a child. Owed: one sentence in §1.3 and an arm in §UC-139.
+
+### 7. `Spec.Pace` has no stated precedence against `Idle`, `Backoff` and `Ticks`  `[medium]`
+
+§UC-167 says `Pace` applies *"while draining"* and *"must not apply while following (where `Idle`
+already governs)"*, driven through the injected `Ticks`. Unstated: what happens when `Pace < Idle`,
+whether a backoff after a failed pass is `max(Pace, Backoff)` or sequential, whether `Pace` is
+measured from the start or the end of a pass (`fixedRate` vs `fixedDelay` — the reference's R27
+distinction, which phase 3 decided deliberately for `Idle`), and which ticker the pacing uses.
+`Pace` is the whole of ES-04's *«Rebuild получает отдельный ресурсный бюджет»*, so its interaction
+with the two throttles that already exist should be written rather than discovered.
+
+### 8. §UC-168 is a measurement, not a falsifiable use case  `[low]`
+
+*"Eight independent walks are issued … the read traffic is eight times a single projection's. This
+is measured and recorded, not merely stated."* There is no threshold, so nothing can fail it; and
+its **Must not** ("no filter may be added to `Log.ReadAll`") is a design constraint already recorded
+as Reject 3 rather than a property of this case. It belongs in the plan's measurement list and in
+§8's tension 5 (which already asks for the number), not in the use-case set where a green run means
+nothing.
+
+### 9. `Partition.Count()` publishes the one arithmetic the phase exists to forbid  `[medium]`
+
+`func (this Partition) Count() int // mask+1, for a reader; never stated` sits in the same package
+as a document explaining at length why `hash % N` is corrupting. The first thing a consumer writes
+with a count is `hash % count`. If it stays, it needs the comment that says what it may not be used
+for; a `String()` on the topology, or `Mask()` alone, carries the same information to a dashboard
+without offering the modulus.
+
+### 10. `Whole()` the constructor and `(Partition).Whole()` the predicate  `[low]`
+
+`projection.Whole()` answers a `Partition`; `p.Whole()` answers a `bool`. Legal Go, and one of them
+should be `IsWhole` or `Everything`. Same document, same table.
+
+### 11. `Progress.Quarantined` now counts envelopes the destination was never offered  `[medium]`
+
+§5.2 keeps the kernel field *"its name and its meaning: envelopes the destination did not take"*,
+and §UC-146 raises it by **two** for a page in which one envelope failed and one was parked behind
+it without ever reaching the handler. "Did not take" and "was never offered" are different facts,
+and phase 3's `Quarantined` counted only the first. The count is still the right *signal* (holes in
+the destination), but `event/checkpoint.go`'s wording and the module page's now describe a narrower
+event than the field records. One sentence, in the kernel comment and both module pages.
+
+### 12. `Split` the package function and `Partition.Split` the method are different operations  `[low]`
+
+`func Split(ctx, SplitSpec) (Identity, Identity, error)` performs the durable handoff;
+`func (this Partition) Split() (Partition, Partition, error)` performs the arithmetic. One name, two
+meanings, one package. `Partition.Children()` or `Partition.Halves()` for the arithmetic would leave
+`Split` meaning the handoff everywhere.
+
+### 13. §INV-084's falsifier includes "no test anywhere asserts the fifth"  `[low]`
+
+*"Falsified by … §UC-134's kill campaign asserting the four and asserting that no test anywhere
+asserts the fifth."* A test asserting the absence of an assertion elsewhere in the tree is either a
+source walk (which is implementable but is not what the sentence describes) or unimplementable.
+Phase 3 has the shape that works — `TestNoDocPromisesExactlyOnceDelivery` and its self-falsifier —
+and this should name it rather than invent a new obligation.
+
+### 14. `Effect.Attempt` has no stated lifecycle  `[medium]`
+
+`Effect{Identity, Envelopes, Attempt int}` — nothing in §1.6 says what increments it, what a
+returned error from `Dispatch` does (retry the pass? fail it? classify it?), or whether an effect
+failure is a handler failure for the purposes of `OnPermanentFailure` and the park. Since `Dispatch`
+runs inside the unit, an error from it presumably rolls the whole pass back, which re-dispatches the
+same envelopes on the retry — the case `Attempt` exists to make visible and the spec never states.
+§4 has no invariant about an effect failure at all.
+
+### 15. `Redriver.Sequence` returns an unbounded `[]Letter`  `[medium]`
+
+`Sequence(ctx, projection, sequence string) ([]Letter, error)` loads a whole parked sequence into
+memory, and a sequence is bounded only by the application's `MaxSequenceLetters` — Axon's default is
+1024, each carrying a full `event.Envelope` with its payload. Everything else on the read path in
+this repository is paged (`Limits.MaxRead`, `Reader.checkPage`, R22's "bounded on every path"). The
+redrive is the operator's path and the bound matters less, but the asymmetry should be a decision
+rather than an oversight: either `Sequence` pages, or the contract says the caller's bound is the
+only one.
+
+### 16. `Sequencer.Name()` has no stated validity or uniqueness rule  `[low]`
+
+The name is written to every parked letter and compared on redrive (§UC-155), so it is a stored
+identifier, and nothing says what it may contain, how long it may be, whether it passes the kernel's
+`checkName`, or what two sequencers sharing a name means. `ByStream()`, `Unordered()`,
+`OneSequence()` presumably carry fixed names that a `SequenceBy` could collide with — at which point
+§UC-155's `ErrTopology` refusal silently stops discriminating.
+
+---
+
+Raised by the phase-4 **plan** audit (Round 1,
+[`EVENTSOURCE_P4_PLAN_GAPS.md`](EVENTSOURCE_P4_PLAN_GAPS.md)) against
+[`EVENTSOURCE_P4_PLAN.md`](../plans/EVENTSOURCE_P4_PLAN.md). The twelve blocking findings are in
+that file and are **not** repeated here.
+
+### 17. `Quarantine` → `ParkSequence` is a behaviour change, not the rename the plan calls it  `[medium]`
+
+The plan's `classify.go` section presents three renames and says *"A consumer meets each as a
+compile error"*, and S3 lists `event/eventpg/projection_integration_test.go` as *"the rename only,
+so the satellite still compiles"*. The satellite really is rename-only —
+`TestAQuarantineIsEnvelopeGranular` writes each payload to its own stream
+(`projectioncase_integration_test.go:206-211`), so under `ByStream` each is its own sequence and its
+assertions survive. `event/projection/retry_test.go` is not. Its three `Quarantine` subtests
+(`:262`, `:311`, `:341`) run under the default `Advance` — `stand.spec` sets none
+(`harness_test.go:318-327`), so `AfterApply` — which the plan's new refusal 3 turns into an
+`ErrSpec` at construction; and the first of them appends `one two three` to the single stream
+`orders/a` and asserts the read model holds `["one","three"]`, which `ParkSequence` now parks. Two
+things follow that the plan should say out loud rather than leave to be discovered at S3's `go test`:
+the shipped `AfterApply` + envelope-skip configuration is **withdrawn**, not renamed, and the
+guarantee `docs/modules/{en,ru}/projection.md:202` teaches (*"Quarantine is envelope-granular and
+costs a re-delivery"*) is replaced by a strictly stronger and strictly narrower one. [SPEC] §1.4
+argues the withdrawal and is right to; the plan is where it becomes a file list and a page edit.
+
+### 18. `event/projection/lifecycle_test.go:235` carries a second stale `walked < 9` guard  `[medium]`
+
+The plan raises `scripts/projection_test.go:139`'s `files < 9` to 18 and argues it well: *"the arm
+exists to prove it read the right tree, and a guard left at 9 while the package holds eighteen files
+would pass over a walk that found half of them."* `TestTheProjectionStartsNothingAndReadsNoEnvironment`
+holds the identical guard over the identical file set (`if walked < 9`,
+`event/projection/lifecycle_test.go:235`) and the plan does not raise it. It will not go red — it
+will silently stop being the control it is for, over exactly the nine new files whose goroutines and
+`init` functions this phase must not have.
+
+### 19. `TestNoModulusIsAppliedToASequenceHash` cannot see the modulus it forbids  `[medium]`
+
+The AST walk is *"for `%` applied to the result of the package's `hash`"*, over `event/`. `hash` is
+unexported (`partition.go`), so the only code that could apply `%` to it is `event/projection`
+itself — where nobody would. The `hash % N` that INV-086 is about lives in the application, which
+computes its own partition assignment; the framework's answer to that is `Partition.Matches` and
+`Cover`, and the walk cannot reach either caller. It has a fixture control and is not vacuous, but
+it proves a much smaller thing than INV-086 states. The shape that would close the gap is the
+`_examples` showing only the `for _, part := range cover.Partitions()` spelling ([SPEC] §8.7, which
+the plan adopts) plus a module-page sentence; the walk should be described as what it is.
+
+### 20. Five invariant rows are proved in part by checks that live in no file and are counted by no arm  `[medium]`
+
+INV-084 (*"a doc check that no page asserts the fifth"*), INV-085 (*"a doc check that no page claims
+the key is validated"*), INV-089 (*"a doc check that no page calls a per-partition `Highest` the
+projection's progress"*), INV-096 (*"a surface walk asserting no exported `Position` is added beside
+`Progress.Highest`"*) and INV-102 (*"a doc check that the honest sentence is present"*) name
+obligations, not tests. None appears in a section's Tests list, none is in a counted `-list`
+pattern, and `scripts/docs_test.go` — where three of them would live — is in no section's file list.
+Each invariant carries other named proofs, so none of them is unproved; but the plan's own rule is
+that a proof nothing counts is a proof nothing runs.
+
+### 21. `_examples/event-generations` does not say which log store it runs on, and `_examples/go.mod` is in no file list  `[medium]`
+
+[SPEC] §5.4 asks for *"a `Generations` and a `Park` implemented over PostgreSQL with `crudsql`, a
+rebuild beside a live generation, the barrier loop, the cutover and the rollback"*. If the log is
+`event/eventpg` — a module — `_examples/go.mod` needs a `require` and a `replace`, and without them
+`check-tidy` reports the module *cannot be read at all* (`scripts/checks.sh:283-291`, which runs
+`GOWORK=off go mod tidy -diff` in `_examples`). The precedent is
+`_examples/event-checkpoints-elsewhere`, which runs an `eventmemory` log against a real PostgreSQL
+checkpoint store through `crudsql` and needs no new module; if the new example follows it, say so,
+because "over PostgreSQL" reads as `eventpg` and the difference is a red `make check` in S6.
+
+### 22. UC-144's "halts" is two different observable outcomes and the plan picks neither  `[medium]`
+
+[SPEC] §UC-144 says a sequencer panic makes the projection *"halt, **naming the sequencer**"* — which
+requires a recover somewhere, since a propagated panic names nothing. The plan says *"A panic out of
+a **sequencer** halts and is not recovered into a page failure: `applyPage`'s recovery does not
+extend there"*, which reads as no recover at all. The two differ where an operator looks: recovered
+into `this.stop(this.haltedBy(...))` gives `PhaseHalted`, `ErrHalted` on `State.Err` and a failing
+`Ready`; unrecovered, it unwinds through the caller's `Unit` (`crud.inNewTx` rolls back and re-panics,
+`crud/executor.go:623-628`) and is caught by `runtime.invoke` as `ErrRunnerPanicked`
+(`runtime/supervisor.go:185-191`) — the runner is gone, `Ready` is never asked, and `Projection.Run`
+has panicked, which nothing in this package does today. `TestASequencerPanicHaltsAndAHandlerPanicDoesNot`
+cannot be written until this is chosen.
+
+### 23. S2's `event-kernel-moved` allowed set admits any `eventmemory` change the plan says must be reported  `[medium]`
+
+S2 says *"If `event/eventmemory/` appears in the moved set, the report says which file and why — a
+store that fails a new obligation is a real finding, not a fix to absorb"*, and then writes an
+allowed ERE ending `|eventmemory/[a-z_]*\.go)$`. The arm prints the moved set, so a reader can see
+it, but the gate cannot fail on it — which is the difference between a check and a convention, and
+this plan's whole kernel-fence argument is that the difference matters. Leaving `eventmemory` out of
+the allowed set and adding it deliberately, in the same change as the finding, is the spelling that
+matches the sentence.
+
+### 24. The alignment refusal cannot distinguish "not aligned" from "not comparable"  `[medium]`
+
+`mine, err := event.NewAuthority(this.tracker.Backing(), crud.KeyOf(executor));
+aligned := err == nil && authority.Same(mine)` collapses three outcomes into one halt: a genuine
+two-database wiring, a `KeyOf` that answered something `reflect.Value.Comparable()` refuses
+(`event/authority.go:30-32`), and a `Backing` the tracker reports invalid. The first is the
+operator's problem and the other two are the framework's. `checkUnit`'s existing four refusals each
+name their own cause in plain words; this one should too, or an operator reading *"two resources"*
+goes looking for a second database that is not there.
+
+### 25. `Redriver.Claim`'s empty-sequence convention is in the spec and not in the plan's contract  `[low]`
+
+[SPEC] §1.4 states it: *"`Claim(ctx, of, "")` takes the least recently tried unclaimed sequence,
+`Claim(ctx, of, "A")` takes that one if it is unclaimed, and both answer `found = false` rather than
+an error when everything is claimed."* The plan's `redrive.go` block carries the signature with a
+bare `sequence string` and no comment, and `Redrive.Any` versus `Redrive.Sequence` is the only place
+a reader would infer it. A `Redriver` implementer working from the contract block will not implement
+the empty case.
+
+### 26. `TestAStoreThatDoesNotPersistDeclinesDurabilityAndCertifiesTheOtherEleven` becomes a lie  `[low]`
+
+The plan moves the constant the test asserts (`event/eventtest/checkpoints_test.go:310`, 11 → 13) and
+leaves the name, which then says "eleven" about thirteen. `scripts/docs_test.go`'s
+`TestEveryTestNameTheDocsCiteExists` makes a rename a doc obligation, so it is worth doing in the
+same change rather than later.
+
+### 27. Three line citations in the plan are a few lines off  `[low]`
+
+`event/eventmemory/checkpoints.go:113` is `tx.live()`; the advance-1 fence the plan describes is at
+`:117`. `startsNothing` is *called* from `scripts/event_test.go:67`, not `:66` (66 is the func
+declaration). `event/eventpg/checkpoints.go:353-364` is the body of `saveStatement`, whose
+declaration is at `:353` and whose `UPDATE` arm ends at `:365`. None of these misleads a reader who
+opens the file; all three are the kind of drift the repository's own consistency-pass rule exists to
+catch.
+
+### 28. The `Effects` contract never names the outbox this repository already ships, and its doc comment blesses the table [[D-118]] warns about  `[medium]`
+
+The audit was asked whether the plan reinvents anything `jobs`, `runtime` or `event/projection`
+already provides. `runtime` and `event/projection` are used correctly: the redrive scanner is the
+host's `runtime.Every`/`runtime.NewPeriodic` (`runtime/periodic.go:45,75`), `Spec.Pace` rides the
+existing `runtime.Ticks` seam, `Projection.Name()`'s duplicate refusal is
+`runtime.Supervisor`'s `ErrDuplicateRunner` (`runtime/supervisor.go:67`), and the park is genuinely
+**not** a `jobs` queue — `jobs` delivery is *"at-least-once and unordered"* by [[D-118]]'s own words,
+and a park is ordered-per-sequence, which nothing in `jobs` models.
+
+`Effects.Stage` is the one that touches it. The plan's doc comment reads *"a staged job ([[D-118]]),
+a row in your own tables"*, giving equal standing to the mechanism [[D-118]] §"The outbox already
+exists; what was missing was the word" spends a paragraph refusing: *"an application that needs 'this
+effect happens if and only if this commit happens' builds a second mechanism — a `pending_effects`
+table and a poller — to get a property it already had. Two outboxes over one database is worse than
+either alone: the second one has no lease, no fence, no retry budget, no retention and no payload
+version."* `EVENTSOURCE_REFERENCE.md` Reject 2 names the shipped symbols — `jobs.Stager`
+(`jobs/queue.go:35-38`), `jobs.EnqueueIn` (`jobs/queue.go:483`), `jobspg.Driver.Stager` — and says
+the ordering, retry and dead-letter questions *"are questions `jobs` must answer for a staged
+integration event, not questions that disappear."* The plan cites [[D-118]] from D-135 and names
+none of them, and §UC-178 (*"an effect sink is a staged job"*) is proved by
+`TestAStagedJobTheReadModelAndTheAdvanceCommitTogether` without saying what a staged job is there.
+
+Nothing here is a violation — `Effects` is an SPI and the framework writes no table — but the type's
+doc comment is the one place a consumer reads for guidance, and it currently points two ways. The
+shape that closes it: `Effects`' comment names `jobs.EnqueueIn` through a `jobspg.Driver.Stager` as
+the intended sink and marks the private table as the case [[D-118]] warns about; the module page and
+D-135 say the same; and §UC-178's test uses whichever it is. If the eventpg live test reaches
+`jobs/jobspg`, note that it is a module — the require and replace belong in the same change, and
+`costsNoMoreThanItNames` will not see it because `firstPartyDependenciesIn`
+(`scripts/extensionlisting_test.go:35-43`) lists without `-test`.
+
+---
+
+Raised by the phase-4 **S1 code review** (Round 1,
+[`EVENTSOURCE_P4_S1_GAPS.md`](EVENTSOURCE_P4_S1_GAPS.md)) against the shipped
+`event/projection/{identity,partition,cover,sequence}.go` and the `checkUnit` alignment. The
+five blocking findings are in that file and are **not** repeated here. Items 9, 10, 12, 16 and
+24 above already cover the `Count`/modulus invitation, the two `Whole`s, the two `Split`s,
+`Sequencer.Name()`'s validity rule and the alignment refusal's three-outcomes-one-message
+problem, and were not re-raised.
+
+### 29. `hash`'s comment says "Published" of an unexported function with no route to reproduce it outside Go  `[low]`
+
+`event/projection/partition.go:132-134`: *"FNV-1a/32 over the UTF-8 bytes of the sequence key.
+**Published**, and never changed: changing it moves every key at once."* The function is
+unexported and the only exported route to the assignment is `Partition.Matches(sequence)`, which
+answers a bool for one partition at a time. An operator who wants to answer "which partition
+holds order 4711" in SQL — the natural question during a split or a park drain — cannot, and
+nothing on the module pages gives them the algorithm. Either the comment says *documented* and
+`docs/modules/{en,ru}/projection.md` carry the algorithm with a worked example, or a
+`Partition.Of(sequence string) uint32`-shaped answer exists. The word "published" currently
+promises a reproducibility the package does not offer.
+
+### 30. `ErrTopology`'s sentinel text is narrower than the refusals that wrap it  `[low]`
+
+`event/projection/errors.go:26`: *"projection: this topology change is not one this projection
+can make"*. It is wrapped by `NewPartition` (a mask that is not a mask — a declaration, not a
+change), `ParsePartition` (a parse), `NewCover`'s gap and overlap (a set being written down for
+the first time) and, from S2, `Split` (an actual change). `errors.go`'s own comment above the
+block already says the wider thing — *"about a set of partitions or a change to one"* — so the
+sentinel and its doc disagree by one word. It is [SPEC] §5.2's exact text, so changing it is a
+spec amendment rather than a code fix; the cheap alternative is the doc comment saying why the
+sentence is narrower than the use.
+
+### 31. `TestNothingInTheProjectionPackageOpensATransaction`'s unit-of-work arm is evaded by an import alias  `[low]`
+
+`scripts/projection_test.go:222-227`: the `crud.InNewTx`/`InTx`/`InAtomic` arm requires
+`selector.X` to be an `*ast.Ident` literally named `crud`, so
+`import vvcrud "github.com/frostgrove/vv/crud"` followed by `vvcrud.InNewTx(...)` is invisible to
+it. The `Begin`/`Commit`/`Rollback` arm has no such escape because it keys on the selector alone.
+The fixture control (`transactionShapes`) uses the plain import and therefore cannot see the hole.
+The package next door already has the shape that closes it — `checkedPackage` type-checks with
+`importer.ForCompiler`, which makes a prohibition about a *type* rather than a spelling
+(`scripts/projection_test.go:525-533`) — so resolving the callee's package path rather than
+matching the identifier is a small edit against an existing helper.
+
+### 32. The resume-time topology refusal sees a coarser row and never a finer one  `[medium]`
+
+Raised while closing GAP-2 of `EVENTSOURCE_P4_S1_GAPS.md`, and recorded rather than fixed.
+`Projection.unclaimed` (`event/projection/pass.go`) asks the store about every **coarser** share
+of this runner's key space — `Identity.coarser()`, at most ten rows for a mask of 1023, none at
+all for a projection that named no partition — and refuses when one is live. The mirror case is
+not covered: a runner at `orders#0.1` started while `orders#0.3` and `orders#2.3` are live is a
+topology being made **coarser**, and it is admitted.
+
+**Amended 2026-09-09, closing GAP-2 of `EVENTSOURCE_P4_S2_GAPS.md`.** The stated reason for
+`[medium]` was wrong on both halves and no longer applies to the part that mattered. It said the
+exposure was "an operator hand-declaring a coarser cover instead of rebuilding, which is a
+documented-against action"; it was not documented against anywhere, and the case actually reachable
+was not hand-declared at all — `Split` retires the parent's row, so redeploying the release that
+ran one release earlier was admitted and replayed the whole log into the live children's read
+model. It also said "§1.3 already refuses a merge outright", which was drift: what is absent is a
+`Merge` **function**, and the state was admitted in silence.
+
+**What is closed:** every coarser share that `Split` itself retired. The handoff now records the
+retirement durably (`<identity>#split`, carrying the parent's cursor, written in the same
+transaction), and `Projection.unretired` reads that record at every resume. The refusal names the
+row and the two ways out.
+
+**What is still open, and why it stays `[medium]`:** a finer row this framework did not create —
+`orders#0.3` hand-declared and live while a runner at `orders#0.1` starts. The finer set is
+unbounded, so detecting *that* still needs either a `List` on the `Checkpoints` contract (which
+phase 3 froze) or a probe of every descendant name down to `MaxPartitions`, which is 1024 loads per
+start. The module page and the release note now state what a rollback does, which is what the old
+justification claimed and did not have.
+
+The shape that would close it cheaply is a `Checkpoints.Names(prefix)` — the same call
+`Observe` would want in S4 for a `Cover` whose members are discovered rather than declared — and
+it is one addition to the store contract, not a projection change.
+
+### 33. `unnameable` duplicates `event.checkName` and only a test holds them together  `[low]`
+
+Raised while closing GAP-3. `event/projection/identity.go:unnameable` spells the kernel's
+identifier rule a second time because §5.1 freezes the `event` surface for this phase, so no
+checker can be exported to call. `TestNewIdentityRefusesEveryNameTheKernelRefuses` walks both over
+one table and over every byte a name can carry, which catches a divergence — but only in the
+direction of *behaviour*, and only for single-byte differences and the shapes the table holds. A
+multi-byte rune class added to `event/text.go` and not to `unnameable` would be caught only if the
+byte walk happened to reach it.
+
+The shape that would close it is exporting the kernel's rule once the surface freeze lifts —
+`event.CheckName(string) error` or a `MaxNameBytes`-shaped constant pair — and deleting the
+duplicate. It is a surface addition and belongs to whichever phase reopens `event`.
+
+### 34. The zero-value door walk cannot see an `Identity` or a `Cover` carried in a spec struct  `[medium]`
+
+Raised in S2 of phase 4, and recorded rather than fixed. `doorsThatDoNotAsk`
+(`scripts/projection_test.go:765-790`) walks an exported function's **parameter list** for a
+parameter whose type is `Cover` or `Identity`, so it holds **P-11** for `Observe(ctx, checkpoints,
+of Identity, over Cover)` and `Reached(...)` — and not for `Split(ctx, spec SplitSpec)`, whose
+identity is a field of the spec, nor for `Cutover(ctx, spec CutoverSpec)`, which is S4's and has
+the same shape. `Split` does refuse `Identity{}` with `ErrSpec` and
+`TestASplitUnderATwiceRunUnitIsOneSplitOrARefusal`'s "the doors Split refuses before it opens
+anything" subtest asserts it, so the rule holds today by a test rather than by the walk.
+
+The shape that would close it is one arm in the same walk: for a parameter whose type is a struct
+declared in the same package, report the function when the body never asks about any field of it
+whose type is `Cover` or `Identity`. The fixture control beside it already has the two-doors-that-
+ask / two-that-do-not shape to extend.
+
+### 35. `durability` is the one checkpoint section no defect names, because its defect is a factory  `[medium]`
+
+Raised in S2 of phase 4 by `TestEveryCheckpointSectionIsNamedByADefectThatBreaksIt`, which S2
+wrote and which found **seven** checkpoint sections with no defect at all — `binding`, `forget`,
+`bounds`, `refusal classes`, `lifecycle`, `concurrency` and `durability`. Six were closed in the
+same change (`checkpointDefects` 5 → 14, and `unfenced` moved from `fence` to `concurrency` with
+`ahead` taking `fence`). `durability` is exempted, named in `undecorated`
+(`event/eventtest/checkpoints_test.go`) so the list can only shrink: a checkpoint defect is a
+`func(event.Checkpoints) event.Checkpoints` wrapped around the value the factory built, and what
+`durability` asserts is that a value the factory builds **afterwards** reads what the first one
+wrote. The store suite spells the equivalent defect as a factory — "claims persistence and builds
+a second value over its backing that has none of what the first wrote" — and the checkpoint
+harness has no shape for one.
+
+The shape that would close it is a second field on the checkpoint defect row, a
+`func(eventtest.CheckpointFactory) eventtest.CheckpointFactory` beside `over`, and one row using
+it. `factoriesFor` (`event/eventtest/defects_test.go:128`) is the precedent.
+
+### 36. Two of S2's checkpoint defects break more sections than the one they name  `[low]`
+
+`adopting` ("creates a row at advance 1 over a live one") also fails `fence` and `refusal classes`,
+and `retiring` ("forgets outside the caller's transaction") also fails `transactions` — because a
+store that is wrong in that one statement really is wrong in every section that asks about it.
+`TestEveryCheckpointDefectIsReportedByItsOwnSection` asserts only that the **named** section fails
+and that the same store without the defect passes, so nothing reports the spread, and the section
+each row names is the obligation it is *about* rather than the only one it breaks.
+
+The shape that would close it is a second assertion in that test — the sections a defect breaks,
+listed on the row — which is a table of 14 rows against 14 sections and is worth it only if a
+defect is ever added whose spread is a surprise.
+
+### 37. Every operator-facing string in the loop names `Spec.Name` and never the identity  `[medium]`
+
+Raised by the S2 review. Thirteen sites in `event/projection/projection.go` and
+`event/projection/pass.go` render `this.spec.Name` into a message that reaches a human:
+`Run`'s twice-run refusal (`projection.go:119`), both `Ready` sentences (`:186`, `:188`), the
+`ErrOvertaken` transition (`pass.go:560`), `refused` (`:575`), `haltedBy` (`:580`) and the six
+`checkUnit` refusals (`:638`–`:658`). With a `Cover` of sixteen partitions, all sixteen runners
+publish `"orders"` in every one of them, and the driven halt in GAP-1 above reads
+`"orders": … refused a save over the very row its own fence admits` for a runner whose row is
+`orders#0.1`.
+
+What keeps it from being higher: `Projection.Name()` *is* the identity
+(`projection.go:77`), so a supervisor's own reporting and any log line carrying the runner name
+disambiguates, and `State.Identity` (`state.go:19`) gives a programmatic observer the exact
+answer. What is ambiguous is the sentence itself, which is what an on-call engineer reads first.
+
+The shape that would close it is one accessor — `this.named()` answering `this.identity.String()`
+— and thirteen substitutions. It is deliberately not folded into GAP-1's fix, because GAP-1 is a
+row key and this is a rendering, and mixing them would make GAP-1's close criteria unreadable.
+
+### 38. `Quarantined` carries `Spec.Name` and no `Identity`, so a sink cannot tell which partition parked an envelope  `[medium]`
+
+Raised by the S2 review. `Projection.quarantine` (`event/projection/pass.go:341-347`) builds
+`Quarantined{Projection: this.spec.Name, …}`. Under a `Cover` of N partitions every sink row is
+recorded under one name, and an operator draining the sink cannot answer "which runner refused
+this" without re-deriving the sequence key and the mask by hand. `Batch` gained `Identity` in this
+same section (`page.go:16`) for exactly this reason; `Quarantined` did not.
+
+Why it is recorded rather than raised: S3 replaces the quarantine sink's role with the park, whose
+key is `Identity.Whole()` by §1.4 and plan **P-8**, so the field this wants may arrive with a
+different name on a different type. Deciding it here would pre-empt S3's contract.
+
+The shape that would close it is one field, `Quarantined.Identity`, set from `this.identity`
+beside the name already there — and a line in `docs/modules/{en,ru}/projection.md` saying a sink
+sees the partition.
+
+### 39. Three symbols named `Whole` in one package, with three different meanings  `[low]`
+
+Raised by the S2 review. `projection.Whole() Partition` (`partition.go:33`) is a constructor for
+the whole key space; `Partition.Whole() bool` (`partition.go:114`) is a predicate; and
+`Identity.Whole() Identity` (`identity.go:145`) is a projection that drops the partition and keeps
+the generation. `spec.Partition.Whole()` and `identity.Whole()` sit four lines apart in
+`pass.go:135` and would read alike to someone skimming, while one is a question and the other is a
+value.
+
+Each name is defensible on its own and the type system keeps them apart, so nothing is wrong
+today. The cost lands in S3, where `Identity.Whole()` is the park's key and will appear in
+argument position beside `Partition.Whole()` in the same expressions.
+
+The shape that would close it is renaming the predicate — `Partition.IsWhole()` or
+`Partition.Everything()` — which is one surface line and touches `pass.go`, `partition.go`,
+`cover.go` and their tests.
+
+### 40. `Split` mints `Progress.At` from `time.Now()` with no seam  `[low]`
+
+Raised by the S2 review. `handOver` (`event/projection/topology.go:128`) takes `at := time.Now()`
+and writes it into both child rows. `SplitSpec` carries no clock and the framework has no ambient
+one, so a caller who runs a split under a frozen clock — a test, a replay harness, a deployment
+that stamps its own instants — cannot make the two child rows carry an instant it chose.
+
+It is consistent with `presentSave` (`pass.go:372`), which does the same, and `Progress.At` is
+documented in `event/checkpoint.go:34-40` as *"the consumer's own observation"* rather than
+anything a resume depends on, so nothing is incorrect. It is recorded because the repository's own
+rule against ad-hoc clocks has no exemption written for either site, and because `Spec.Ticks`
+already establishes that this package injects its time seams.
+
+The shape that would close it is an optional `Now func() time.Time` on `SplitSpec`, defaulting to
+`time.Now`, and the same on `Spec` — one field each, and the two sites read it.
+
+### 41. `ParseIdentity` and `ParsePartition` are exported and called from no non-test file  `[low]`
+
+Raised by the S2 review. `grep -rn "ParseIdentity\|ParsePartition" --include=*.go` over the tree
+finds `event/projection/identity.go:104` (`ParseIdentity` calling `ParsePartition`) and nothing
+else outside `_test.go`. Both are published surface with no consumer, added in S1 for the
+injectivity argument of §INV-097 and for the S3 doors — `Letter.Identity`, `RedriveSpec.Of` — that
+will parse a recorded name back.
+
+Recorded rather than raised because the plan declares both in its contract block and the
+round-trip property they carry is genuinely load-bearing for a name used as a primary key; a
+published parser with a test and no caller is a smaller problem than a name that renders one way
+and reads back another. It is here so that if S3 lands without calling either, the question is
+asked rather than forgotten.
+
+The shape that would close it is S3 calling them, or — if S3 finds it does not need to — removing
+them before the first tag, since after it a disappearing line is a breaking change.
+
+### 42. `ParseIdentity` and `ParsePartition` still have no non-test caller after S3  `[low]`
+
+Item 41 asked the question S3 was to answer, and the answer is that S3 did not need either. The
+doors it landed — `Letter.Identity`, `RedriveSpec.Identity`, `Claim.Of` — carry an `Identity`
+value rather than its rendering, so nothing in the framework parses a recorded name back: the
+framework hands a `Park` an `Identity` and reads one back only from the value it handed over. A
+`Park` implementation over SQL does store the rendering (`event/eventpg/projection_integration_test.go`'s
+`queue` keys its table on `Identity.String()`), and it compares that string rather than parsing it.
+
+Recorded, not fixed: S4's `Observe`, `Cutover` and `Generations.Active` are keyed by a projection
+name and a `Generation`, so they may still reach for the parser. The question is asked again there,
+and if S4 and S5 also do not need it, the two functions are a removal to make before the first tag.
+
+### 43. `Projection.opened` exists for one arm of the failure table  `[low]`
+
+Raised while writing S3. `stalled` (`event/projection/pass.go`) restores `this.attempt` to
+`this.opened`, the attempt the pass began with, because the isolation pass raises `this.attempt`
+on its way in and a blocked pass must consume no attempt (§UC-150). That is one loop field whose
+only writer is `once` and whose only reader is one arm of `applyFailed`.
+
+It is correct and it is measured — `TestAFullParkBlocksTheAdvanceAndSkipsNothing` goes red when the
+restore is dropped — and the alternative shapes are worse in a way worth stating rather than
+absorbing: passing the attempt down through `deliver`/`applier`/`tally` widens four signatures for
+one arm, and not raising the attempt for the isolation pass at all changes what `Batch.Attempt`
+tells a handler about a re-delivery.
+
+The shape that would close it is folding the entry attempt into `tally` at the point `deliver`
+builds one, which is a change to `deliver`'s signature and therefore to every applier.
+
+### 44. §UC-146's "without ever reaching the handler" is exact for one of its two cases  `[medium]`
+
+Raised while writing S3, and recorded in the plan's S3 amendment 3 as well. An envelope whose
+sequence the queue **already** holds never reaches the handler at all, which is UC-147 and is
+asserted absolutely. An envelope in the same page as the failure that **discovers** the block was
+in the whole-page batch that discovered it, and that batch rolled back — under tier A, the only
+tier `ParkSequence` constructs at, so the handler's writes for it went back with the advance. From
+the moment the failure is known it is never delivered again, which is what
+`TestAPermanentFailureParksItsSequenceAndTheEventsBehindIt` asserts through `delivered.redelivered`.
+
+The gap is between the prose and the mechanism rather than in the mechanism: a handler with a
+side effect outside the transaction — which is outside the contract §1.1 already states — would
+observe the rolled-back delivery. Closing it absolutely means delivering one envelope at a time to
+every projection carrying a `Park`, which is page batching gone for the healthy case that UC-148
+exists to keep free.
+
+The shape that would close it, if it is ever wanted, is an opt-in `Spec` field that skips the
+whole-page attempt when a `Park` is set — paid for by the projections that want it and by no
+others.
+
+### 45. `State.Parked` and `PhaseDegraded` are generation-wide, so a partition holding nothing never reports "following"  `[medium]`
+
+Raised by the S3 code review (`EVENTSOURCE_P4_S3_GAPS.md` GAP-7), driven rather than read.
+`Projection.counted` asks `Park.Sequences(ctx, this.identity.Whole())` and `followed()` answers
+`PhaseDegraded` whenever that count is non-zero, so after a split of a partition holding one
+parked sequence both children report it:
+
+```
+child orders#0.1: phase=degraded parked=1 quarantined=2
+child orders#1.1: phase=degraded parked=1 quarantined=0
+```
+
+The second child holds no letter and can never drain the sequence — its mask does not match the
+key — and still publishes `Parked: 1` for as long as its sibling's poison order stands. `Ready`
+passes and no envelope is affected, so this is a monitoring statement that is wrong about the
+runner it is published for rather than a correctness defect. The module page states the `Holds`
+cost of the generation-wide key and not this consequence of it.
+
+The shape that would close it is either a sentence in `docs/modules/{en,ru}/projection.md` saying
+the two are generation-wide, or a per-partition count — which needs a `Park.Sequences` that takes
+the partition, and that is the shape §1.4 refuses because it orphans letters at a split.
+
+### 46. A redrive under a unit that runs its body twice reports the opposite of what happened  `[medium]`
+
+Raised by the S3 code review (GAP-8). A `RedriveSpec.Unit` that calls its body twice, each in its
+own committed transaction, leaves the first letter applied and evicted — `rows=[A2]`, one letter
+left of two — and `Redrive.letter`'s `case answered != nil` arm answers:
+
+```
+answered={Applied:0 Left:2}
+err=the unit carrying the letter … did not commit, so nothing was applied and nothing was evicted
+```
+
+Both clauses are false. `errLetterRanTwice` correctly stops the second run from re-applying, so
+nothing is lost or doubled and a re-run drains from the next letter; only the report is wrong.
+The loop has a settlement for the analogous case (`Projection.settle` reads the row back); the
+redrive has none and cannot, having no row to read.
+
+The shape that would close it is telling "the body never ran to completion" apart from "the body
+completed and the unit then answered", and saying only what is known.
+
+### 47. `Retried.Left` is a snapshot count and its comment claims it is live  `[medium]`
+
+Raised by the S3 code review (GAP-9). `redrive.go` says *"Left is what the sequence still holds
+when the call returns"*, and every arm derives it from the slice `Park.Sequence` answered at the
+top of the drain. Driven: the loop parks a later envelope into a sequence a redrive is mid-drain
+of, and the redrive answers `{Applied:1 Left:0}` over a queue holding one letter. The ordering is
+correct throughout — the redrive applied `A1`, the loop parked `A2`, nothing was applied out of
+order — so the defect is the number and the sentence.
+
+The shape that would close it is the comment saying `Left` is measured against the letters the
+call was handed, plus a case that pins it under that interleaving.
+
+### 48. The module page's `RedriveSpec` example does not compile  `[low]`
+
+Raised by the S3 code review (GAP-10). `docs/modules/en/projection.md` and its `ru` twin write
+`Identity: projection.NewIdentity("orders", 2, projection.Whole())` inside a struct literal, and
+`NewIdentity` answers `(Identity, error)`. `scripts/docs_test.go` checks that the symbols a page
+names exist rather than that its snippets build, so it went green.
+
+### 49. The study's nuance-6 saga clause is carried nowhere  `[low]`
+
+Raised by the S3 code review (GAP-11). §ES-03's source states *"there is no support for using a
+dead-letter queue for sagas"*, because a saga's ordering across associations is not expressible
+as one sequence identifier. vv's answer exists — `SequenceBy` and `OneSequence` let a caller
+widen the key until the ordering is expressible — and is written down nowhere beside
+`ParkSequence`, so a handler that correlates across streams under the default `ByStream()` gets a
+park that blocks one stream while its correlated partner carries on.
+
+The shape that would close it is one paragraph in `docs/modules/{en,ru}/projection.md`.

@@ -40,32 +40,41 @@ func (this *delivered) page(index int) []string {
 	return this.pages[index]
 }
 
+// Whether an envelope was ever handed to the handler on its own, which is the
+// isolation pass's shape: the whole-page attempt that DISCOVERS a permanent
+// failure carries every envelope of the page and rolls back as one, and what the
+// queue promises is that from the moment the failure is known, an envelope
+// behind a parked one is never delivered again.
+func (this *delivered) redelivered(payload string) bool {
+	this.mutex.Lock()
+	defer this.mutex.Unlock()
+	for _, page := range this.pages {
+		if len(page) == 1 && page[0] == payload {
+			return true
+		}
+	}
+	return false
+}
+
+// Whether an envelope ever reached the handler at all, which is what a park
+// promises for a sequence the queue was already holding.
+func (this *delivered) reached(payload string) bool {
+	this.mutex.Lock()
+	defer this.mutex.Unlock()
+	for _, page := range this.pages {
+		for _, held := range page {
+			if held == payload {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func (this *delivered) count() int {
 	this.mutex.Lock()
 	defer this.mutex.Unlock()
 	return len(this.attempts)
-}
-
-type sink struct {
-	mutex   sync.Mutex
-	took    []projection.Quarantined
-	refuses error
-}
-
-func (this *sink) Quarantine(_ context.Context, quarantined projection.Quarantined) error {
-	this.mutex.Lock()
-	defer this.mutex.Unlock()
-	if this.refuses != nil {
-		return this.refuses
-	}
-	this.took = append(this.took, quarantined)
-	return nil
-}
-
-func (this *sink) held() []projection.Quarantined {
-	this.mutex.Lock()
-	defer this.mutex.Unlock()
-	return append([]projection.Quarantined(nil), this.took...)
 }
 
 // The delays are the spec's, doubling and capped, and they are proved by the
@@ -212,10 +221,11 @@ func TestARedeliveryCarriesTheSameIdentitiesInMemoryOfItsOwn(t *testing.T) {
 	}
 }
 
-// Envelope granularity is the whole of what a quarantine buys, so the assertion
-// is the count: a page-granular one loses up to a page of good events for one
-// corrupt payload and passes every test that only counts halts.
-func TestAPermanentFailureHaltsAndQuarantineIsEnvelopeGranular(t *testing.T) {
+// Sequence granularity is what a park buys, so the assertion is what the page
+// kept: a page-granular policy loses up to a page of good events for one corrupt
+// payload and passes every test that only counts halts, and an envelope-granular
+// one applies the next event of the order whose first one failed.
+func TestAPermanentFailureHaltsAndParkSequenceIsSequenceGranular(t *testing.T) {
 	permanent := fmt.Errorf("this build cannot read the payload: %w", event.ErrPayload)
 	refuses := func(payload string) func(context.Context, projection.Batch) error {
 		return func(_ context.Context, batch projection.Batch) error {
@@ -259,11 +269,13 @@ func TestAPermanentFailureHaltsAndQuarantineIsEnvelopeGranular(t *testing.T) {
 		}
 	})
 
-	t.Run("under Quarantine the page loses one envelope and no more", func(t *testing.T) {
+	t.Run("under ParkSequence the page loses one sequence and no more", func(t *testing.T) {
 		stand := newStand(t, eventmemory.Spec{})
-		stand.append(t, "a", "one", "two", "three")
+		stand.append(t, "a", "one")
+		stand.append(t, "b", "two")
+		stand.append(t, "c", "three")
 
-		held := &sink{}
+		held := newPark()
 		refuse := refuses("two")
 		spec := stand.spec("orders", projection.HandlerFunc(func(ctx context.Context, batch projection.Batch) error {
 			if err := refuse(ctx, batch); err != nil {
@@ -272,62 +284,61 @@ func TestAPermanentFailureHaltsAndQuarantineIsEnvelopeGranular(t *testing.T) {
 			stand.model.write(payloadsOf(batch.Envelopes)...)
 			return nil
 		}))
-		spec.OnPermanentFailure = projection.Quarantine
-		spec.Quarantine = held
-		running(t, newProjection(t, spec))
+		running(t, newProjection(t, stand.parking(spec, held)))
 
 		stand.observer.await(t, "the page was accounted for", func(state projection.State) bool {
 			return state.Progress.Quarantined == 1
 		})
 		if rows := stand.model.rows(); !same(rows, []string{"one", "three"}) {
-			t.Fatalf("the isolation pass applied %v, where every envelope but the refused one applies", rows)
+			t.Fatalf("the isolation pass applied %v, where every envelope but the refused one is of another sequence and applies", rows)
 		}
-		took := held.held()
+		took := held.letters(identityOf(t, "orders", projection.Ungenerated, projection.Whole()), sequenceOf("b"))
 		if len(took) != 1 {
-			t.Fatalf("the sink took %d envelopes for one the handler refused", len(took))
+			t.Fatalf("the park holds %d letters for one envelope the handler refused", len(took))
 		}
-		if string(took[0].Envelope.Payload) != "two" || took[0].Projection != "orders" || !errors.Is(took[0].Cause, event.ErrPayload) {
-			t.Fatalf("the sink was handed %+v, where it is told the projection, the envelope and the cause", took[0])
+		if string(took[0].Envelope.Payload) != "two" || took[0].Sequencer != "by-stream" || !errors.Is(took[0].Cause, event.ErrPayload) {
+			t.Fatalf("the park was handed %+v, where a letter carries the sequencer that named it, the envelope and the cause", took[0])
 		}
 		row := stand.row(t, "orders")
 		if row.Advance != 1 {
-			t.Fatalf("the checkpoint is at advance %d, and a quarantined page advances it exactly once", row.Advance)
+			t.Fatalf("the checkpoint is at advance %d, and a page whose failure was parked advances it exactly once", row.Advance)
 		}
 		if row.Progress.Quarantined != 1 || row.Progress.Applied != 2 {
-			t.Fatalf("the row records %d quarantined and %d applied, where one envelope of three was passed", row.Progress.Quarantined, row.Progress.Applied)
+			t.Fatalf("the row records %d quarantined and %d applied, where one envelope of three was parked", row.Progress.Quarantined, row.Progress.Applied)
 		}
 		if count := stand.observer.counted(projection.PhaseHalted); count != 0 {
-			t.Fatal("a quarantined envelope halted the projection")
+			t.Fatal("a parked envelope halted the projection")
 		}
 	})
 
-	t.Run("the control: a sink that refuses halts instead of skipping", func(t *testing.T) {
+	t.Run("the control: a park that refuses halts instead of skipping", func(t *testing.T) {
 		stand := newStand(t, eventmemory.Spec{})
-		stand.append(t, "a", "one", "two")
+		stand.append(t, "a", "one")
+		stand.append(t, "b", "two")
 
-		held := &sink{refuses: errors.New("the quarantine table is unreachable")}
+		held := newPark()
+		held.refuses = errors.New("the park table is unreachable")
 		refuse := refuses("two")
 		spec := stand.spec("orders", projection.HandlerFunc(refuse))
-		spec.OnPermanentFailure = projection.Quarantine
-		spec.Quarantine = held
-		running(t, newProjection(t, spec))
+		running(t, newProjection(t, stand.parking(spec, held)))
 
 		halted := stand.observer.await(t, "the projection halted", func(state projection.State) bool {
 			return state.Phase == projection.PhaseHalted
 		})
 		if !errors.Is(halted.Err, projection.ErrHalted) {
-			t.Fatalf("a sink that refused answered %v", halted.Err)
+			t.Fatalf("a park that refused answered %v", halted.Err)
 		}
 		if row := stand.row(t, "orders"); !row.Fresh() {
 			t.Fatalf("the checkpoint advanced to %d over an envelope nothing recorded", row.Advance)
 		}
 	})
 
-	t.Run("the control: a retryable failure inside the isolation pass quarantines nothing", func(t *testing.T) {
+	t.Run("the control: a retryable failure inside the isolation pass parks nothing", func(t *testing.T) {
 		stand := newStand(t, eventmemory.Spec{})
-		stand.append(t, "a", "one", "two")
+		stand.append(t, "a", "one")
+		stand.append(t, "b", "two")
 
-		held := &sink{}
+		held := newPark()
 		spec := stand.spec("orders", projection.HandlerFunc(func(_ context.Context, batch projection.Batch) error {
 			if len(batch.Envelopes) > 1 {
 				return permanent
@@ -338,9 +349,7 @@ func TestAPermanentFailureHaltsAndQuarantineIsEnvelopeGranular(t *testing.T) {
 			stand.model.write(payloadsOf(batch.Envelopes)...)
 			return nil
 		}))
-		spec.OnPermanentFailure = projection.Quarantine
-		spec.Quarantine = held
-		running(t, newProjection(t, spec))
+		running(t, newProjection(t, stand.parking(spec, held)))
 
 		stand.ticks.expect(t, time.Second, "the poll the loop opens with")
 		stand.ticks.expect(t, 250*time.Millisecond, "the backoff after the isolation pass met a retryable failure")
@@ -350,8 +359,8 @@ func TestAPermanentFailureHaltsAndQuarantineIsEnvelopeGranular(t *testing.T) {
 		if !errors.Is(retrying.Err, errReadModelAway) {
 			t.Fatalf("the isolation pass returned the page to retrying with %v", retrying.Err)
 		}
-		if took := held.held(); len(took) != 0 {
-			t.Fatalf("the sink took %d envelopes over a failure a database that went away produced, and a retryable failure is not a corrupt payload", len(took))
+		if written := held.written.Load(); written != 0 {
+			t.Fatalf("the park took %d letters over a failure a database that went away produced, and a retryable failure is not a corrupt payload", written)
 		}
 		if row := stand.row(t, "orders"); !row.Fresh() {
 			t.Fatalf("the checkpoint advanced to %d over a page the isolation pass did not finish", row.Advance)

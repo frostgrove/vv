@@ -1208,3 +1208,55 @@ func deliveryFixture(t *testing.T) string {
 	}
 	return root
 }
+
+// The reverse index in docs/ai/flows/Index.md is what an agent reads before
+// editing a file, and CLAUDE.md's sentence about it is exact: an index that does
+// not list a file is worse than a missing file, because an agent trusts the index
+// and stops looking. Nothing else in this repository can see a file that was
+// added and not listed — the flow bodies name symbols and the surface baseline
+// names packages, and neither notices a whole new file.
+func TestEveryProjectionSourceFileIsNamedByTheFlowReverseIndex(t *testing.T) {
+	listed := reverseIndex(t)
+	walked := 0
+	for _, source := range projectionSources(t) {
+		walked++
+		if !strings.Contains(listed, "`"+source+"`") {
+			t.Errorf("%s is a file of event/projection and docs/ai/flows/Index.md's reverse index does not name it, so an agent reading the index before editing it finds a file outside every flow", source)
+		}
+	}
+	if walked < 16 {
+		t.Fatalf("%d files of event/projection were read, and the package holds sixteen outside its tests — so this walked the wrong directory", walked)
+	}
+
+	t.Run("the control: the same containment answers no for a file nobody wrote", func(t *testing.T) {
+		if strings.Contains(listed, "`event/projection/no-such-file.go`") {
+			t.Fatal("the index names a file that does not exist, so the containment above is satisfied by anything and the arm proves nothing")
+		}
+	})
+}
+
+func reverseIndex(t *testing.T) string {
+	t.Helper()
+	held, err := os.ReadFile("../docs/ai/flows/Index.md")
+	if err != nil {
+		t.Fatalf("the flow index could not be read: %v", err)
+	}
+	return string(held)
+}
+
+func projectionSources(t *testing.T) []string {
+	t.Helper()
+	entries, err := os.ReadDir("../event/projection")
+	if err != nil {
+		t.Fatalf("event/projection could not be listed: %v", err)
+	}
+	var found []string
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		found = append(found, "event/projection/"+name)
+	}
+	return found
+}

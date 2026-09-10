@@ -26,13 +26,23 @@ that.
 
 `event/projection/spec.go`:
 
-1. `New(spec)` calls `event.Track(spec.Checkpoints, spec.Name)` and refuses a nil
-   `Log`, `Handler` or `Checkpoints`; a `Log` that is also an `event.Store`, so a
-   projector cannot assert its way back to the append surface; an `Advance`
-   outside the enum; `InUnit` with a nil `Unit`, with a checkpoint store whose
-   `Transactions` is not `Supported`, or with `Destination` unstated;
-   a `Unit` supplied beside `AfterApply`; `Quarantine` as a policy with no sink;
-   a backoff that shrinks; and a negative `Idle`, `Attempts` or `Tolerate`.
+1. `New(spec)` builds `NewIdentity(spec.Name, spec.Generation, spec.Partition)`
+   and hands **its rendering** to `event.Track` — the row key, the runner name and
+   `Batch.Identity` are all that one string. It refuses a nil `Log`, `Handler` or
+   `Checkpoints`; a `Log` that is also an `event.Store`, so a projector cannot
+   assert its way back to the append surface; an `Advance` outside the enum;
+   `InUnit` with a nil `Unit`, with a checkpoint store whose `Transactions` is not
+   `Supported`, or with `Destination` unstated; a `Unit` supplied beside
+   `AfterApply`; `ParkSequence` with no `Park`, outside `InUnit`, or beside a
+   `Destination` of `Unchecked` — the three that make the queue's ordering a
+   property every shipped configuration has rather than half of them; a `Sequence`
+   that does not name itself or is a `SequenceBy` over a nil function; a backoff
+   that shrinks; and a negative `Idle`, `Attempts` or `Tolerate`.
+   `NewIdentity` refuses `@` and `#` in a name, and spells the kernel's own
+   identifier rule a second time — empty, over the bound, invalid UTF-8, a control
+   character, a bracket — because an `Identity` is an input at doors that never
+   reach `event.Track`. The two spellings are pinned to one another by
+   `TestNewIdentityRefusesEveryNameTheKernelRefuses`.
 2. **Every refusal wraps `ErrSpec` and they are collected rather than reported
    one at a time**, because a spec assembled wrong is usually assembled wrong in
    more than one place.
@@ -83,38 +93,84 @@ that.
 
 `event/projection/pass.go`, `event/projection/projection.go`:
 
-1. **Resume**, once: `Tracker.Load`, then `event.Read(log, held.Cursor)`. The
-   reader is held for the loop's life and the cumulative counts are seeded from
-   the row, because `Applied` and `Quarantined` are persisted columns and a
-   dashboard that resets on every deploy is one nobody can read.
+1. **Resume**, once: `Projection.unclaimed`, then `Tracker.Load`, then
+   `event.Read(log, held.Cursor)`. The reader is held for the loop's life and
+   the cumulative counts are seeded from the row, because `Applied` and
+   `Quarantined` are persisted columns and a dashboard that resets on every
+   deploy is one nobody can read. `unclaimed` is the topology half and asks two
+   questions. `Projection.unretired` costs one `Tracker.Load` for **this**
+   identity's retirement row — `<identity>#split`, the record `Split` leaves —
+   and halts with `ErrTopology` when it is there: redeploying the release that
+   ran before a split is the ordinary rollback of a bad deploy, and without that
+   record it resumes from the origin into the read model the children are
+   filling. Then one `Tracker.Load` per **coarser** share of this runner's key
+   space — `Identity.coarser()`, which is empty for a projection that named no
+   partition: a live row at `orders` beside a runner at `orders#0.1` is two
+   writers over every key of that half, so it halts with `ErrTopology` naming
+   `Split`.
 2. **Read**, outside every unit of work. An empty page is `PhaseFollowing`: the
    cursor stays in the reader, **nothing is saved**, and the loop waits on the
    ticker, on `Spec.Wake` or on the context. A non-empty page is `PhaseDraining`,
    and the page and its cursor are captured together — a retry re-applies the
-   page it holds and issues no read.
+   page it holds and issues no read. `Projection.matching` decides this runner's
+   share of that page once, at the read, on the key `Spec.Sequence` answers; a
+   panic out of a sequencer **halts** rather than failing the page, because an
+   envelope with no sequence belongs to no partition and there is nothing for a
+   retry or a park to be about.
 3. **Deliver.** Outside a unit the order is the delivery guarantee itself: handle
    first, advance last. Inside one, `Spec.Unit` is called and the body presents
    the advance **before** the handler runs ([[D-133]]) — the two writes commit
    together, so their order is the lock manager's business alone, and a fenced
    save takes the checkpoint row's lock.
-4. **`InUnit`'s two per-pass checks** run inside the unit and before the handler:
-   `Tracker.Transaction(ctx)` must answer a valid authority, and — unless
-   `Destination` is `Unchecked` — `crud.ExecutorFor` must find an executor
-   `crud.IsTransaction` accepts. Either failing rolls the unit back and halts
-   **without calling the classifier**.
+4. **`InUnit`'s three per-pass checks** run inside the unit and before the
+   handler: `Tracker.Transaction(ctx)` must answer a valid authority; unless
+   `Destination` is `Unchecked`, `crud.ExecutorFor` must find an executor
+   `crud.IsTransaction` accepts; and the two must be **the same** transaction —
+   `event.NewAuthority(Tracker.Backing(), crud.KeyOf(executor))` compared
+   `Same` against the authority the store answered. The third is the one that
+   tells an aligned unit from a divergent one: two transactions under one unit
+   pass both of the others and buy `AfterApply` atomicity under an `InUnit`
+   spec. Any of the three failing rolls the unit back and halts **without
+   calling the classifier**, per pass and never cached.
 5. **`Progress` is built at the save and nowhere else**, so it describes a page
    that was applied or quarantined rather than one that was merely delivered:
-   `{Highest: the page's last position, Applied: seeded + this page's envelopes,
-   Quarantined: seeded + what the sink took, At: now}`.
-6. **The isolation pass** is how quarantine buys envelope granularity without a
-   second handler signature: the page is delivered again one envelope to a
-   `Batch`, in position order; one that applies is applied; one whose failure the
-   classifier calls permanent goes to the sink with its cause and is passed; a
-   **retryable** failure ends the pass and returns the whole page to retrying
-   under the same attempt budget. Under `InUnit` the whole isolation pass is one
-   unit, the sink included — a sink called outside it is the one write that
-   survives the rollback of the advance.
-7. **Each attempt is handed its own page.** `event/projection/page.go:copyOf`
+   `{Highest: the page's last position, Applied: seeded + the envelopes this
+   partition matched, Quarantined: seeded + what the queue took, At: now}`. The
+   watermark is the **read** page's last position and not the matched one's, so a
+   partition that matched nothing in a page still advances past it rather than
+   re-walking the log at every restart.
+6. **The count is read once per resume and again per pass while it is non-zero**
+   (`Projection.counted`), and while it is zero `Park.Holds` is never called at
+   all — the fast path is exact rather than a cache, and the loop's own park is
+   what makes it believe. `counted` runs from `once`, **before `deliver` opens
+   the unit**, so `Park.Sequences` is the one method of the interface called
+   outside it; a healthy projection would otherwise open a transaction per pass
+   to be told the queue is still empty, and an implementation that requires the
+   ambient transaction there postpones for ever. A pass over a non-empty queue
+   delivers through `unblockedPage`, which asks `Holds` once per matched envelope
+   **inside** the unit and parks a held one without calling the handler. The
+   whole path is reachable only under `OnPermanentFailure: ParkSequence`:
+   `withDefaults` drops `Spec.Park` beside any other policy, in one place rather
+   than at each of the three that reach for it, because the field is accepted
+   there (a composition root builds one spec for a live generation and a rebuild)
+   and asking the queue at a tier that opens no unit is the blocking path outside
+   a transaction.
+7. **The isolation pass** (`Projection.sequenceBySequence`) is how a park buys
+   sequence granularity without a second handler signature: the page is delivered
+   again one envelope to a `Batch`, in position order; one that applies is
+   applied; one whose failure the classifier calls permanent goes to the `Park`
+   with its cause **and every later envelope of the same sequence goes with it
+   without reaching the handler**; a **retryable** failure ends the pass and
+   returns the whole page to retrying under the same attempt budget — and once
+   that budget is spent the same rule that made the page's failure permanent
+   makes this one permanent too, so an outage lasting `Attempts` passes parks
+   every sequence of the page it was on and an operator's redrive is what clears
+   them. The delivery and the queue are one unit — `ParkSequence` constructs at
+   no other tier, and a letter written outside it is the one write that survives
+   the rollback of the advance. `ErrParkFull` is the third verdict: the unit rolls
+   back, nothing is parked, no envelope is skipped, and the partition retries
+   without an attempt budget at `PhaseBlocked`.
+8. **Each attempt is handed its own page.** `event/projection/page.go:copyOf`
    takes a fresh slice and a fresh copy of every payload, the first attempt
    included, and keeps the log's own page untouched beside them. It is the
    eighth hand-off of §INV-021 and the first whose sender re-reads what it handed
@@ -143,6 +199,57 @@ of its own, and the advance **and the cursor** the row carries decide:
 `event/projection/pass.go:anothers` is the cursor comparison, and it is what
 keeps a settlement from attributing another instance's row to itself — which
 would lose every event between the two cursors, permanently and silently.
+
+## The handoff
+
+`event/projection/topology.go`, and it is the one topology change there is:
+`Split(ctx, SplitSpec{Checkpoints, Identity, Unit})` answers the two identities a
+`Cover` is then declared from. It runs on the operator's own goroutine, opens
+nothing, and every statement it issues goes through `event.Track` — one tracker
+per identity, never the raw store, so the advance a child is created at is the
+one the door's fence derived from that child's own `Load` and never a number this
+call computed.
+
+1. `children` decides what the call would create **before** the unit opens:
+   `Partition.Split` for the arithmetic, `NewIdentity` twice for the names. A
+   ceiling, a nil `Checkpoints`, a nil `Unit` and the zero `Identity` are refused
+   here, without a transaction being opened for them.
+2. `inACallersTransaction` asks `Tracker.Transaction(ctx)` inside the unit and
+   before anything is read: a `Unit` that bound none would leave four writes the
+   store commits one at a time.
+3. `handOver` loads the parent, **both children**, and the retirement row of all
+   three. A parent that already holds one is `ErrTopology` naming the children it
+   found: this split already happened, and the rows tell that absence from every
+   other one. An absent parent with no such record is `ErrTopology` naming both
+   readings and both remedies — a partition that never ran needs no split, one
+   whose row was lost is a restore — and naming any child row it found, which is
+   the reading that says an earlier attempt committed. A child row beside a live
+   parent is `ErrTopology` too, and so is a child that was itself retired by a
+   split (`recordingFiner`): that share is already being recorded by a finer
+   topology. A name with no room for the mark is refused before any of it
+   (`retirable`, `unrecordable`), because a split whose retirement cannot be
+   recorded is one nothing can refuse afterwards.
+4. Both children are saved at advance 1 carrying the parent's cursor **byte for
+   byte** and its `Progress.Highest`, which is enumerated because `Tracker.admit`
+   deliberately does not make `Progress` total — a child at `Highest: 0` is a
+   legal row nothing refuses, and every barrier derived from the set would be
+   trivially reached. The lower child takes the parent's `Applied` and
+   `Quarantined` and the higher starts at zero, so the sum across the set is
+   unchanged. Then the retirement is recorded — a row at `<identity>#split`
+   carrying the parent's own cursor — and only then is the parent `Forget`ten.
+   Four writes, and the record is the one that makes the handoff one way:
+   `Forget` deletes the only evidence the retired share was ever recorded, and
+   the resume above reads rows.
+5. Nothing is carried between two runs of the body, so a `Unit` that runs it
+   twice ([[D-130]]) performs one split or answers a refusal. What the unit
+   answers is read against what the body reached, never against its text: a body
+   that refused travels as that refusal even when the unit answers `nil`.
+
+The parent is not told. A running parent whose row is split away finds it absent
+at its next save and **halts** — [[D-133]]'s absent-row arm, unchanged — which is
+why the operator's order is drain, split, start the children. There is no
+`Merge`: it would have to order two cursors, and a cursor answers equality and
+emptiness only ([[D-129]]).
 
 ## The two shipped checkpoint stores
 
@@ -226,18 +333,26 @@ save ever created.
 | `event/eventmemory/transaction.go` | `stageSave`, `revalidateSaves`, `checkpointHeld` — the second staging area, and why `Rollback`'s position arithmetic reads only the first |
 | `event/eventpg/checkpoints.go` | `CheckpointSpec`, `Checkpoints`, `NewCheckpoints`, `Prepare`, `Check`, `Transaction`, `opened`, `Load`, `Save`, `Forget`, `on`, `promisedCheckpoint`, `refusable`, `loadStatement`, `saveStatement`, `forgetStatement` — the fourth table, and the two fenced statements its save is |
 | `event/eventtest/checkpoints.go` | `CheckpointFactory`, `RunCheckpoints`, `tracking`, `checkpoints`, `admitCheckpoints`, `admitInstant`, `missingCheckpointHook`, `checkpointName`, `sameCheckpoint` — the runner a third implementation is proved by, under the same three anti-vacuity rules the store suite uses |
-| `event/eventtest/sections_checkpoints.go` | `checkpointInventory`, `needsCheckpointTransactions`, `needsCheckpointPersistence`, `cursorOfWidth`, `firstDifference`, `forgetsInAUnit`, `forgetRacingASave` and the twelve section bodies |
-| `event/eventtest/defects_checkpoints.go` | `checkpointDefect`, `checkpointDefects`, `unfenced`, `stale`, `absent`, `oneName`, `detaching` — the five broken stores the runner is falsified with |
+| `event/eventtest/sections_checkpoints.go` | `checkpointInventory`, `needsCheckpointTransactions`, `needsCheckpointPersistence`, `cursorOfWidth`, `firstDifference`, `forgetsInAUnit`, `forgetRacingASave` and twelve of the fourteen section bodies |
+| `event/eventtest/sections_topology.go` | `topologySection`, `topologyHandoffSection`, `checkpoints.handOver`, `checkpoints.absentOutside` — the other two, and the only place the suite asks what a split rests on: one cursor written under two names, a save at advance 1 over a live row, and a read, two saves and a removal that are one transaction or none |
+| `event/eventtest/defects_checkpoints.go` | `checkpointDefect`, `checkpointDefects`, `unfenced`, `ahead`, `ambient`, `pedantic`, `narrow`, `verbose`, `closing`, `stale`, `absent`, `oneName`, `detaching`, `namespaced`, `recomposed`, `adopting`, `retiring`, `beside` — the fourteen broken stores the runner is falsified with, one per section but `durability`, whose defect is a factory rather than a decorator |
 | `event/projection/doc.go` | the package sentence: at least once in both modes, one name is one writer, there is no head, and nothing here writes a line |
-| `event/projection/errors.go` | `ErrSpec`, `ErrHalted`, `ErrOvertaken`, `ErrUnrouted` — four, none of which crosses a store seam |
-| `event/projection/spec.go` | `Advance` and its three values, `Advance.Valid`, `Advance.String`, `Backoff`, `Spec`, `unchecked`, `Unchecked`, `New`, `namedRefusal`, `refusedAdvance`, `refusedNumbers`, `withDefaults`, `appends`, `absent` — the whole refusal set, collected rather than reported one at a time |
-| `event/projection/page.go` | `Batch`, `Handler`, `HandlerFunc`, `copyOf` — the page per attempt, which is §INV-021's eighth hand-off |
-| `event/projection/classify.go` | `Verdict`, `Retryable`, `Permanent`, `Classifier`, `Classify`, `Failure`, `Halt`, `Quarantine`, `Quarantined`, `Quarantines` — the history class and `ErrUnrouted` are permanent and everything else is retryable |
-| `event/projection/state.go` | `Phase` and its five values, `State`, `Observer`, `ObserverFunc`, `observing`, `Projection.State`, `Projection.transition`, `Projection.progressed`, `Projection.seed`, `Projection.publish` — published on a change and never on every pass, and a panicking observer does not take the loop down |
+| `event/projection/errors.go` | `ErrSpec`, `ErrHalted`, `ErrOvertaken`, `ErrUnrouted`, `ErrTopology`, `ErrParkFull`, `ErrClaimLost` — seven, none of which crosses a store seam |
+| `event/projection/spec.go` | `Advance` and its three values, `Advance.Valid`, `Advance.String`, `Backoff`, `Spec` — `Sequence`, `Partition` and `Generation` among its fields — `unchecked`, `Unchecked`, `New`, `namedRefusal`, `refusedAdvance`, `refusedPark`, `refusedNumbers`, `withDefaults`, `appends`, `absent` — the whole refusal set, collected rather than reported one at a time, and the three the park costs are about the tier rather than about the queue |
+| `event/projection/page.go` | `Batch` and its `Identity`, `Handler`, `HandlerFunc`, `copyOf` — the page per attempt, which is §INV-021's eighth hand-off |
+| `event/projection/classify.go` | `Verdict`, `Retryable`, `Permanent`, `Classifier`, `Classify`, `Failure`, `Halt`, `ParkSequence` — the history class and `ErrUnrouted` are permanent and everything else is retryable, and the second verdict parks the sequence rather than the envelope. A `RedriveSpec` carries no `Classifier`: a letter that fails again is requeued with its new cause whichever class it is in, because giving up on one removes it without applying it and that is an operator's act through `Evict` |
+| `event/projection/park.go` | `Letter`, `Park` — the queue a permanent failure parks a whole sequence in, keyed by `Identity.Whole()` so a split moves nothing, bounded per sequence rather than per queue, and counted once per resume so a healthy projection pays nothing |
+| `event/projection/redrive.go` | `Claim`, `Redriver`, `Retried`, `RedriveSpec`, `Redrive`, `NewRedrive`, `errLetterRanTwice`, `refusedDestination`, `Redrive.Sequence`, `Redrive.Any`, `Redrive.claimed`, `Redrive.drain`, `Redrive.sequenced`, `Redrive.letter`, `Redrive.apply`, `Redrive.requeued`, `Redrive.checkUnit` — the operator's half: one unit per letter, in insert order, stopping at the first that fails again, claimed rather than read, and touching no checkpoint |
+| `event/projection/state.go` | `Phase` and its seven values, `PhaseDegraded` and `PhaseBlocked` among them, `State` and its `Parked`, `State.Identity`, `Observer`, `ObserverFunc`, `observing`, `Projection.State`, `Projection.transition`, `Projection.progressed`, `Projection.counting`, `Projection.seed`, `Projection.publish` — published on a change and never on every pass, and a panicking observer does not take the loop down |
 | `event/projection/router.go` | `Foreign`, `SkipForeign`, `RefuseForeign`, `routeKey`, `Router`, `NewRouter`, `On`, `TryOn`, `Ignore`, `TryIgnore`, `Router.declare`, `Router.ignore`, `Router.unclaimed`, `Router.Apply`, `Router.claims`, `Router.foreignTo`, `Router.unrouted`, `Router.seal`, `Router.Skipped`, `refusedName` |
 | `event/projection/projection.go` | `Projection`, `newProjection`, `Projection.Name`, `Projection.Declaration`, `Projection.Run`, `Projection.Drain`, `Projection.Ready`, `Projection.until`, `Projection.follow`, `Projection.backoff`, `Projection.delay`, `Projection.acknowledge`, `Projection.stop` — the loop, and the six properties of it that are load-bearing and invisible from its shape |
-| `event/projection/pass.go` | `step` and its four values, `Projection.once`, `Projection.resume`, `Projection.read`, `tally`, `applier`, `Projection.deliver`, `Projection.outsideAUnit`, `Projection.insideAUnit`, `Projection.claimed`, `Projection.wholePage`, `Projection.oneAtATime`, `Projection.quarantine`, `Projection.applyPage`, `Projection.presentSave`, `Projection.applyFailed`, `Projection.permanent`, `Projection.saveFailed`, `pending`, `Projection.awaiting`, `Projection.settle`, `fenced`, `Projection.anothers`, `answered`, `Projection.confirmed`, `Projection.rolledBack`, `Projection.overtaken`, `Projection.refused`, `Projection.haltedBy`, `Projection.redeliver`, `Projection.postpone`, `Projection.landed`, `Projection.settled`, `Projection.checkUnit`, `panicked`, `asPanic`, `stopping` — one pass, the two modes, the retry, the isolation pass and the settlement |
-| `scripts/projection_test.go` | the five surface, AST and comment walks four invariants name: no exported function from a position or a progress to a cursor, no ordering of a cursor, no comment promising exactly-once delivery, and no snapshot declared or published |
+| `event/projection/pass.go` | `step` and its four values, `Projection.once`, `Projection.counted`, `Projection.resume`, `Projection.unclaimed`, `Projection.read`, `Projection.followed`, `Projection.matching`, `tally`, `applier`, `Projection.deliver`, `Projection.outsideAUnit`, `Projection.insideAUnit`, `Projection.claimed`, `Projection.delivering`, `Projection.matchedPage`, `Projection.unblockedPage`, `Projection.sequenceBySequence`, `Projection.parking`, `Projection.applyPage`, `Projection.presentSave`, `Projection.applyFailed`, `Projection.permanent`, `Projection.saveFailed`, `pending`, `Projection.unretired`, `Projection.awaiting`, `Projection.settle`, `fenced`, `Projection.anothers`, `answered`, `Projection.confirmed`, `Projection.rolledBack`, `Projection.overtaken`, `Projection.refused`, `Projection.haltedBy`, `Projection.redeliver`, `Projection.postpone`, `Projection.stalled`, `Projection.landed`, `Projection.settled`, `Projection.checkUnit`, `panicked`, `asPanic`, `stopping` — one pass, the two modes, the partition filter, the blocking dispatch, the retry, the isolation pass and the settlement |
+| `event/projection/identity.go` | `Generation`, `Ungenerated`, `Identity`, `NewIdentity`, `unnameable`, `ParseIdentity`, `parseGeneration`, `Identity.Projection`, `Identity.Generation`, `Identity.Partition`, `Identity.Whole`, `Identity.coarser`, `retirable`, `Identity.String` — the one place a recorded name is built, and the kernel's identifier rule spelled a second time because an Identity is an input at doors that never reach `event.Track` |
+| `event/projection/partition.go` | `MaxPartitions`, `Partition`, `Whole`, `NewPartition`, `ParsePartition`, `parseNumber`, `Partition.Matches`, `Partition.Split`, `Partition.Mask`, `Partition.ID`, `Partition.Count`, `Partition.Whole`, `Partition.String`, `Partition.described`, `hash` — a mask and never a modulus, and the published FNV-1a/32 that makes it reproducible in a second process |
+| `event/projection/cover.go` | `Cover`, `NewCover`, `Cover.Partitions`, `Cover.Count`, `gapIn` — the set is the thing that has to be right, checked by two exact arithmetic facts |
+| `event/projection/sequence.go` | `Sequencer`, `ByStream`, `Unordered`, `OneSequence`, `SequenceBy`, `sequencer`, `sequencer.Name`, `sequencer.SequenceOf`, `unusable` — who names a sequence, and the three obligations the type cannot carry |
+| `event/projection/topology.go` | `SplitSpec`, `Split`, `children`, `handOver`, `recordingFiner`, `tracking`, `retired`, `loaded`, `inACallersTransaction`, `noParent`, `besideAnAbsentParent`, `alreadySplit`, `unrecordable`, `alreadyFiner` — the one topology change there is, six steps in the caller's own transaction, the record that makes it one way, and nothing carried between two runs of it |
+| `scripts/projection_test.go` | the surface, AST and comment walks the invariants name: no exported function from a position or a progress to a cursor, no ordering of a cursor, no comment promising exactly-once delivery, no snapshot declared or published, no transaction opened, no published topology predicate left without a caller, and no door taking a `Cover` or an `Identity` without asking whether it was built |
 | `scripts/event_test.go` | the `projection` row of `charged`: this package costs the vocabulary plus `runtime` and nothing else |
 | `_examples/event-checkpoints-elsewhere/main.go` | a complete `event.Checkpoints` over a database this framework ships no store for, and the `InUnit` wiring that is accepted and cannot be checked |
 
@@ -253,7 +368,7 @@ Untagged, in `make unit`: `event/checkpoint_test.go` and `event/tracker_test.go`
 seam), `event/reader_test.go` (the page and the cursor checked together),
 `event/eventmemory/checkpoints_test.go` and `event/eventmemory/transaction_test.go`
 (the memory store and its staging), `event/eventtest/checkpoints_test.go` (the
-runner's own falsification), and the eight files of `event/projection`.
+runner's own falsification), and the twelve files of `event/projection`.
 
 Behind `//go:build integration`, against a live PostgreSQL:
 `event/eventpg/checkpoints_integration_test.go`,
@@ -278,13 +393,28 @@ FROSTGROVE_EVENTPG_TEST_DSN='postgres://vv:vv@localhost:55432/vv?sslmode=disable
 | the reader checks the cursor beside the page | `TestAReaderRefusesACursorOverTheCeiling`, `TestAReaderRefusesAnEmptyCursorBesideANonEmptyPage`, `TestAConsumerReadsThroughPagesTheStorePublished` |
 | a fact reads a stored envelope through its own chain and refuses the four history classes | `TestFactReadDecodesThroughItsOwnChainAndRefusesTheFourHistoryClasses` |
 | both shipped checkpoint stores satisfy the contract, and the memory one's rows are the log's | `TestTheCheckpointStoreSatisfiesTheContract`, `TestTwoCheckpointValuesOverOneLogAreOneStore`, `TestARolledBackUnitStagedBothAndBurntOnlyTheAppends` |
-| the conformance runner detects every defect it was built to detect, and declines rather than passes what it cannot certify | `TestEveryCheckpointDefectIsReportedByItsOwnSection`, `TestAStoreThatDoesNotPersistDeclinesDurabilityAndCertifiesTheOtherEleven`, `TestACheckpointFactoryClaimingPersistenceWithNoSiblingFailsBeforeASectionRuns` |
+| the conformance runner detects every defect it was built to detect, every section it dispatches is named by one, and it declines rather than passes what it cannot certify | `TestEveryCheckpointDefectIsReportedByItsOwnSection`, `TestEveryCheckpointSectionIsNamedByADefectThatBreaksIt`, `TestAStoreThatDoesNotPersistDeclinesDurabilityAndCertifiesTheOtherThirteen`, `TestACheckpointFactoryClaimingPersistenceWithNoSiblingFailsBeforeASectionRuns` |
 | a spec assembled wrong is refused whole, and `InUnit` is never downgraded | `TestNewRefusesEverySpecItCannotAssemble`, `TestInUnitIsRefusedAndNeverDowngraded`, `TestASpecCarryingAStoreIsRefusedAndReadOnlyIsAccepted` |
+| a name is built in one place, renders injectively and is refused wherever the kernel refuses it | `TestAnIdentityRendersAndRoundTrips`, `TestADelimiterInAProjectionNameIsRefusedAtConstruction`, `TestTwoDistinctIdentitiesNeverRenderOneName`, `TestNewIdentityRefusesEveryNameTheKernelRefuses` |
+| a partition is a mask, a declared set covers the space exactly once, and neither type's zero value passes for a checked one | `TestASplitAtTheCeilingIsRefusedAndOneBelowItSucceeds`, `TestAMaskMovesNoKeyOutOfTheParentsHalfOfTheSpace`, `TestACoverWithAGapIsRefusedAndACompleteOneIsNot`, `TestACoverWithAnOverlapIsRefusedByMaskArithmeticAndNotByName`, `TestTheZeroCoverAndTheZeroIdentityAreTellableFromEveryCheckedOne` |
+| four partitions apply every event once, a page one matches nothing in still advances, and a sequencer panic halts | `TestFourPartitionsApplyEveryEventOnceAndKeepEachKeyInOrder`, `TestAPageThatMatchesNothingAdvancesAndCallsNoHandler`, `TestEverySequencerIsTotalPureAndStable`, `TestASequencerPanicHaltsAndAHandlerPanicDoesNot` |
+| only the first start chooses a topology, and a partitioned runner beside a live coarser row is refused | `TestAPartitionedRunnerBesideALiveCoarserRowIsRefused` |
+| a split is four writes in one transaction at the parent's cursor, refused without a parent row and over a child that already has one, and holds nothing between two runs of one unit | `TestASplitWritesTwoChildrenAtTheParentsCursorInOneTransaction`, `TestASplitOfAParentWithNoRowIsRefusedForBothAbsences`, `TestASplitOverAnExistingChildRowIsRefused`, `TestASplitUnderATwiceRunUnitIsOneSplitOrARefusal` |
+| a split is one way: the release that ran before it is refused when it is redeployed, a second split of a retired parent is refused, and a name with no room for the record is refused rather than retired unrecorded | `TestTheReleaseThatRanBeforeASplitIsRefusedWhenItIsRedeployed`, `TestASplitOfAnAlreadyRetiredParentIsRefused`, `TestASplitOfANameWithNoRoomForItsRetirementIsRefused` |
+| every checkpoint call of a runner is keyed by its own identity, on the settlement as on the resume | `TestALostFenceIsSettledOnTheRowOfThisRunnersOwnIdentity`, `TestAUnitThatRollsBackLeavesTheAdvanceOnThisRunnersOwnRow`, `TestEveryTrackerInTheProjectionPackageIsKeyedByAnIdentity` |
+| the two sequencers with no ordering requirement and with a total one are told apart by where the log landed, and a re-delivery lands where it landed before | `TestUnorderedSpreadsAndOneSequenceConcentrates` |
+| the advance and the handler's writes are one transaction authority, compared inside the unit and before the handler | `TestTheAlignmentIsComparedInsideTheUnitBeforeTheHandler`, `TestTwoTransactionsUnderOneUnitAreRefusedAndOneIsAccepted`, `TestUncheckedMakesNoComparisonAtAll` |
 | the loop drains, follows, and issues no write while it is idle | `TestADrainingProjectionReachesFollowingAndStaysThere`, `TestNIdlePollsIssueZeroSavesAndNRoundTrips`, `TestAFirstRunStartsAtTheOriginAndASecondResumes` |
 | the read is outside every unit, and the advance is claimed before the handler only inside one | `TestEveryReadArrivesOutsideEveryUnit`, `TestTheAdvanceIsClaimedBeforeTheHandlerInsideAUnitAndAfterItOutside`, `TestTheAdvanceAndTheHandlersRowsCommitTogetherInMemory` |
 | a unit runs the work once, and a second run re-delivers rather than halts | `TestAUnitThatRunsTheWorkTwiceIsRefusedAndThePageIsRedelivered` |
 | a retry re-applies the page it holds, in memory of its own | `TestARetryReAppliesTheLogsOwnPageAfterABackoff`, `TestARedeliveryCarriesTheSameIdentitiesInMemoryOfItsOwn` |
-| a permanent failure halts, and quarantine is envelope-granular | `TestAPermanentFailureHaltsAndQuarantineIsEnvelopeGranular`, `TestAHistoryClassFailureHaltsAndNamesNoData`, `TestAQuarantineIsEnvelopeGranular` |
+| a permanent failure halts, and `ParkSequence` is sequence-granular | `TestAPermanentFailureHaltsAndParkSequenceIsSequenceGranular`, `TestAHistoryClassFailureHaltsAndNamesNoData`, `TestAParkIsSequenceGranular` |
+| a poison event parks its sequence and the events behind it, a later page parks what the queue already holds, and the fast path costs nothing | `TestAPermanentFailureParksItsSequenceAndTheEventsBehindIt`, `TestALaterPageParksWhatTheQueueAlreadyHolds`, `TestTheFastPathCallsHoldsNeverAndSequencesOncePerResume` |
+| a `Park` beside a policy that does not name it is never asked, and each method of the interface is called where its contract says it is | `TestAParkIsInertBesideAPolicyThatDoesNotNameIt`, `TestEachParkMethodIsCalledWhereItsContractSaysItIs` |
+| a spent attempt budget parks a transient failure, and a redrive is what clears the page | `TestASpentAttemptBudgetParksATransientFailureAndARedriveClearsIt` |
+| the park write rolls back with its unit, a full park blocks without skipping, and the bound is two-dimensional | `TestAParkWriteRollsBackWithItsUnitAndAnOvertakenRereadsTheCount`, `TestAFullParkBlocksTheAdvanceAndSkipsNothing`, `TestTheParksBoundIsPerSequenceAndNotPerQueue`, `TestAParkFailureThatIsNotFullHaltsAndAReadFailurePostpones` |
+| a redrive is ordered, rotating, exclusive, one sequence at a time, and touches no checkpoint | `TestARedriveDrainsASequenceInInsertOrderAndTouchesNoCheckpoint`, `TestARedriveStopsAtTheFirstLetterThatFailsAgain`, `TestARedriveRotatesByLeastRecentlyTried`, `TestTwoGatedRedrivesNeverProcessOneSequence`, `TestAnExpiredClaimAppliesEvictsAndReleasesNothing`, `TestARedriveNamingAnotherSequencerOrAPartitionIsRefused` |
+| a parked projection is degraded and still ready, an eviction leaves a hole, and a park is keyed by the generation | `TestAParkedProjectionIsDegradedAndStillReady`, `TestAnEvictionLeavesAHoleAndDecrementsNothing`, `TestTwoGenerationsShareAParkAndSeeNoneOfEachOthersLetters`, `TestParkSequenceIsRefusedOutsideTierA` |
 | a halt is terminal and silent, and a drain finishes the pass in flight | `TestAHaltedProjectionIssuesNothingAndReportsThroughReady`, `TestADrainFinishesThePassInFlightAndAHaltedOneReturnsAtOnce` |
 | a store failure is retried without limit and reported through `Ready` only past `Tolerate` | `TestAClosedStoreHaltsAndATransientBackendRecovers`, `TestASingleFailureFollowedByASuccessNeverReportsUnhealthy` |
 | an unreadable cursor halts and never restarts at the origin | `TestAnUnreadableCursorHaltsAndNeverRestartsAtTheOrigin` |
@@ -302,4 +432,5 @@ FROSTGROVE_EVENTPG_TEST_DSN='postgres://vv:vv@localhost:55432/vv?sslmode=disable
 | a projection resumes through a second value over one backing | `TestAProjectionResumesThroughASecondValueOverOneBacking` |
 | the replay benchmark measures what the snapshot deferral rests on | `TestTheReplayBenchmarkMeasuresTwoOrdersApart` |
 | no exported function turns a position or a progress into a cursor, no cursor is ordered, no comment promises exactly-once delivery, and no snapshot is declared or published | `TestNoExportedFunctionTakesAPositionAndAnswersACursor`, `TestNoConstructorTakesAProgressAndAnswersACursor`, `TestCursorIsNeverCompared`, `TestNoCommentInTheProjectionPackagePromisesExactlyOnce`, `TestNoSnapshotAuthorityIsDeclaredOrPromised` |
+| this package opens no transaction, no published topology predicate is inert, no door takes an unchecked `Cover` or `Identity`, and every file of it is named by the reverse index | `TestNothingInTheProjectionPackageOpensATransaction`, `TestEveryPublishedTopologyPredicateHasACaller`, `TestEveryDoorTakingACoverOrAnIdentityRefusesItsZeroValue`, `TestEveryProjectionSourceFileIsNamedByTheFlowReverseIndex` |
 | this package costs the vocabulary plus `runtime` and nothing else | `TestNoEventPackageCostsMoreThanTheSeamItNames` |

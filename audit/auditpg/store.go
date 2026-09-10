@@ -259,7 +259,6 @@ func (s *Store) Close() error {
 	if !s.value.closed.CompareAndSwap(false, true) {
 		return audit.Failure(audit.Closed, errors.New("auditpg: store is closed"))
 	}
-	s.value.state.Store(nil)
 	return nil
 }
 

@@ -20,20 +20,26 @@ import (
 // answers what it presented, so there is one copy of the fence in this loop and
 // it is not this value's.
 type Projection struct {
-	spec    Spec
-	tracker *event.Tracker
+	spec     Spec
+	identity Identity
+	tracker  *event.Tracker
 
 	mutex sync.Mutex
 	state State
 
 	reader      *event.Reader
 	page        []event.Envelope
+	matched     []event.Envelope
+	keys        []string
 	cursor      event.Cursor
 	unsettled   *pending
 	wake        <-chan struct{}
 	attempt     int
+	opened      int
 	applied     uint64
 	quarantined uint64
+	parked      uint64
+	resumed     bool
 	streak      int
 	contested   bool
 
@@ -53,22 +59,27 @@ type Projection struct {
 
 var _ runtime.Runner = (*Projection)(nil)
 
-func newProjection(spec Spec, tracker *event.Tracker) *Projection {
+func newProjection(spec Spec, tracker *event.Tracker, identity Identity) *Projection {
 	return &Projection{
-		spec:    spec,
-		tracker: tracker,
-		state:   State{Projection: spec.Name, Phase: PhaseStarting},
-		wake:    spec.Wake,
-		drain:   make(chan struct{}),
-		drained: make(chan struct{}),
-		halting: make(chan struct{}),
-		done:    make(chan struct{}),
+		spec:     spec,
+		identity: identity,
+		tracker:  tracker,
+		state:    State{Projection: spec.Name, Identity: identity, Phase: PhaseStarting},
+		resumed:  true,
+		wake:     spec.Wake,
+		drain:    make(chan struct{}),
+		drained:  make(chan struct{}),
+		halting:  make(chan struct{}),
+		done:     make(chan struct{}),
 	}
 }
 
-// The supervisor's duplicate-name refusal covers two projections of one name in
-// one process, and an operator sees the name they chose.
-func (this *Projection) Name() string { return "vv.event.projection." + this.spec.Name }
+// The supervisor's duplicate-name refusal covers two runners of one identity in
+// one process, and an operator sees the name they chose. It is the identity
+// rather than Spec.Name because two partitions of one projection are two runners
+// and two checkpoint rows, and at Ungenerated over the whole key space the two
+// render alike.
+func (this *Projection) Name() string { return "vv.event.projection." + this.identity.String() }
 
 // A promise about how a deployment should run it and not an enforcement: the
 // checkpoint's fence is what actually holds when a deployment ignores it.

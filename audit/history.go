@@ -712,10 +712,13 @@ func revisionRead(stored StoredRevisionView, grant AccessGrantSpec, query StoreQ
 		Operation: view.Header.Operation, OperationID: view.Header.OperationID,
 		ObservedAt: view.Header.ObservedAt, RecordedAt: stored.RecordedAt,
 		Retention: view.Header.Retention, Consequence: view.Header.Consequence,
-		Actors: make([]ActorReadView, len(view.Actors)), Items: make([]ItemReadView, 0, len(view.Items)),
+		Items: make([]ItemReadView, 0, len(view.Items)),
 	}
-	for index, actor := range view.Actors {
-		result.Actors[index] = ActorReadView{Ordinal: actor.Ordinal, Kind: actor.Kind, Provenance: actor.Provenance, Reference: readValue(actor.Reference, true, grant)}
+	if slices.Contains(grant.Context, ActorChainContext) {
+		result.Actors = make([]ActorReadView, len(view.Actors))
+		for index, actor := range view.Actors {
+			result.Actors[index] = ActorReadView{Ordinal: actor.Ordinal, Kind: actor.Kind, Provenance: actor.Provenance, Reference: readValue(actor.Reference, true, grant)}
+		}
 	}
 	for _, fact := range view.Context {
 		if !slices.Contains(grant.Context, fact.Kind) {

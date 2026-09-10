@@ -25,6 +25,17 @@
 // and a unit that retries its transaction answers the failure instead: the page
 // is re-delivered rather than saved over twice.
 //
+// A permanent failure under OnPermanentFailure: ParkSequence parks a SEQUENCE
+// and not an event. The failing envelope goes to the caller's own queue with its
+// cause, every later envelope of the same sequence goes with it without reaching
+// the handler at all, and every other sequence in the page carries on — so
+// nothing is applied over a read model that never received what came before it.
+// It constructs only beside InUnit and a resolvable Destination, because the
+// order it promises is a property of the queue and the read model committing
+// together. While the queue holds nothing it costs one round trip per resume and
+// nothing per pass. A redrive is the operator's, on the operator's goroutine,
+// and it touches no checkpoint.
+//
 // There is no head. A store that will not promise monotone visibility has no
 // number that is the end of the log, so being caught up is a statement about the
 // last read and never about the log: PhaseFollowing means the last read

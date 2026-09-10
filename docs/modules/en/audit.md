@@ -19,10 +19,10 @@ evidence, never the caller's context values or an arbitrary object graph.
 
 The current supported boundary is an **application-development alpha**. Manual
 capture, grouping, idempotency/reconciliation, the memory store, transactional
-CRUD, PostgreSQL persistence, and public one-page history are usable. Protected
-history, resumable cursors, attempts, reconstruction, corrections, holds, and
-purge planning are not shipped yet; their vocabulary being public is not a
-capability claim.
+CRUD, PostgreSQL persistence, public one-page history, and exact revision/item
+inspection are usable. Protected history, resumable cursors, attempts,
+reconstruction, corrections, holds, and purge planning are not shipped yet;
+their vocabulary being public is not a capability claim.
 
 ---
 
@@ -40,9 +40,9 @@ capability claim.
 | `Recorder.Within` · `Stage` | One operation revision containing several declared facts; joins only an exact source-bound root transaction |
 | `auditmemory` | Concurrent in-process writer/log plus explicit deployment activation and immutable catalog-mutation readback |
 | `auditcrud.Secured` | A sealed security-first CRUD terminal for create, assigned/unassigned save, update, hard/soft delete, and restore |
-| `NewHistory` | Independently authorized, bounded public history for resource, subject, event type/target, and operation type/instance |
-| `audittest.BasicHistory` | Reusable history conformance for a store implementation |
-| `auditpg` | Exact schema readiness, catalog activation/readback, durable append/reconciliation, transaction joining, and basic history |
+| `NewHistory` | Independently authorized, bounded public search plus exact revision/item inspection |
+| `audittest.BasicHistory` · `ExactHistory` | Reusable search and exact-read conformance for a store implementation |
+| `auditpg` | Exact schema readiness, catalog activation/readback, durable append/reconciliation, transaction joining, search, and exact reads |
 
 ## Declare first
 
@@ -243,6 +243,7 @@ history, err := audit.NewHistory(audit.HistoryConfig{
     Profile:  audit.PublicOnePageDevelopmentAlpha,
     Recorder: recorder,
     Log:      store,
+    Exact:    store,
     Access:   historyAuthority,
 })
 if err != nil {
@@ -259,6 +260,35 @@ page, err := StatusPublishedEvent.History(history).Events(ctx, audit.Query{
     Limit:     100,
 })
 ```
+
+When a receipt or an exported reference already identifies the evidence, use an
+exact read with explicit resource, action, and classification ceilings:
+
+```go
+result, err := history.Revision(ctx, audit.RevisionRef{
+    Catalog:  catalog.Ref(),
+    Revision: receipt.RevisionID(),
+}, audit.ExactAccessQuery{
+    Resources:       []audit.Resource{"platform.status"},
+    Classifications: []audit.Classification{audit.Public},
+    Query: audit.Query{
+        Purpose: "incident.review",
+        Role:    "auditor",
+        Scope:   audit.CurrentScope(),
+        Actions: []audit.Action{"status.published"},
+        Fields:  audit.AllFields(),
+        Context: audit.AllContext(),
+    },
+})
+revision := result.Revision()
+```
+
+`History.Item` accepts an `audit.ItemRef` and returns only that item. The store
+still supplies the complete revision envelope: Frostgrove binds the result to
+the exact request and verifies the record-era catalog, integrity digest, and
+signature before projecting one item. Missing references are authorized before
+they become `audit.ErrNotFound`, so this API is not an unauthenticated existence
+oracle.
 
 The authority receives an origin-bound `AccessRequest` and must answer with
 `AllowAccess(request, grant)` or `DenyAccess(request, reason)`. A grant can only

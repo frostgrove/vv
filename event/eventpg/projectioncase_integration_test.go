@@ -388,6 +388,19 @@ func (this *running) following(t *testing.T, what string) {
 	})
 }
 
+// The whole log read over a queue that is holding something, which is what
+// following looks like once a sequence is parked: the projection has not caught
+// up, and saying it had would be the lie the phase exists to prevent.
+func (this *running) degraded(t *testing.T, what string) {
+	t.Helper()
+	waitFor(t, what, func() bool {
+		if state := this.held.State(); state.Phase == projection.PhaseHalted {
+			t.Fatalf("the projection halted with %v where this case expects it to be degraded", state.Err)
+		}
+		return this.held.State().Phase == projection.PhaseDegraded
+	})
+}
+
 func (this *running) halted(t *testing.T, what string) error {
 	t.Helper()
 	waitFor(t, what, func() bool { return this.held.State().Phase == projection.PhaseHalted })

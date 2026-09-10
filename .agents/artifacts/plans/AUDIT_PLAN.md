@@ -8117,8 +8117,9 @@ controls for every negative test.
 ### S2 — store seam, recorder, memory store, and conformance
 
 **Status:** alpha implemented — recorder, grouping, retry/reconciliation,
-catalog-mutation readback, memory append and signed public one-page history pass
-the root conformance slice; protected disclosure and cursors remain S3
+catalog-mutation readback, memory append, signed public one-page history and
+exact revision/item reads pass the root conformance slice; protected disclosure
+and cursors remain S3
 
 Files owned:
 
@@ -8183,8 +8184,9 @@ reviewer; run conformance against both real and deliberately broken stores.
 
 ### S3 — attempts, advanced reader, reconstruction, and lifecycle kernel
 
-**Status:** pending — intentionally follows the usable recorder/CRUD/integration
-base
+**Status:** in progress — public exact revision/item inspection is implemented;
+attempts and the remaining advanced reader/lifecycle surface follow the usable
+recorder/CRUD/integration base
 
 Files owned: `audit/attempt*.go`, advanced `audit/history*.go`,
 `audit/selector*.go`, `audit/grant*.go`, `audit/reconstruct*.go`,
@@ -8304,8 +8306,8 @@ audit-fault, source-mismatch, and concurrent-victim cases.
 
 **Status:** partial alpha — exact schema readiness, deployment, activation and
 bounded mutation readback, append, transaction joining, lookup/reconciliation,
-basic history and restart behavior are implemented; exact inspection and
-advanced control parity remain owed
+basic search, exact revision/item inspection and restart behavior are
+implemented; stable cursors and advanced control parity remain owed
 
 Files owned: `audit/auditpg/**` and auditpg-local conformance/schema fixtures.
 Workspace and consumer module files are reserved for S6, so S5 cannot race their

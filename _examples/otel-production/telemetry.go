@@ -141,7 +141,7 @@ func defaultTelemetryFactories() telemetryFactories {
 
 func newTelemetry(ctx context.Context, config Config, factories telemetryFactories) (*Telemetry, error) {
 	config, err := normalizeTelemetryConfig(config)
-	if err != nil || ctx == nil || factories.resource == nil || factories.traceExporter == nil || factories.metricExporter == nil {
+	if err != nil || nilInterfaceValue(ctx) || factories.resource == nil || factories.traceExporter == nil || factories.metricExporter == nil {
 		return nil, ErrInvalidTelemetryConfig
 	}
 	res, err := callResourceFactory(factories.resource, ctx, config)
@@ -257,6 +257,9 @@ func normalizeTelemetryConfig(config Config) (Config, error) {
 	}
 	if config.SampleRatio == 0 {
 		config.SampleRatio = 0.1
+	}
+	if config.Sampler != nil && nilInterfaceValue(config.Sampler) {
+		return Config{}, ErrInvalidTelemetryConfig
 	}
 	if len(config.Views) > maxViews {
 		return Config{}, ErrInvalidTelemetryConfig
@@ -569,7 +572,7 @@ func newTelemetryLifecycle(traceProvider providerLifecycle, metricProvider provi
 }
 
 func (lifecycle *telemetryLifecycle) ForceFlush(ctx context.Context) error {
-	if lifecycle == nil || ctx == nil {
+	if lifecycle == nil || nilInterfaceValue(ctx) {
 		return ErrTelemetryClosed
 	}
 	lifecycle.mu.Lock()
@@ -600,7 +603,7 @@ func (lifecycle *telemetryLifecycle) releaseFlush() {
 }
 
 func (lifecycle *telemetryLifecycle) Shutdown(ctx context.Context) error {
-	if lifecycle == nil || ctx == nil {
+	if lifecycle == nil || nilInterfaceValue(ctx) {
 		return ErrTelemetryClosed
 	}
 	lifecycle.mu.Lock()

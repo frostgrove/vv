@@ -71,6 +71,22 @@ type Spec struct {
 	// composition rather than by a field left zero.
 	Destination any
 
+	// The three that name this projection's own share of the log, and every zero
+	// value is what a projection that exists today already is: a nil Sequence is
+	// ByStream(), the zero Partition is Whole(), and Generation zero is
+	// Ungenerated, which renders nothing — so no name and no checkpoint row moves
+	// because these fields arrived.
+	//
+	// Partition is the fraction of the key space this runner reads: every page is
+	// filtered by it before the handler sees one, on the key Sequence answers.
+	// Take it from a Cover, which is the value that checks the set, and reach an
+	// existing projection's topology only through Split — a partitioned runner
+	// started beside a live row for a coarser share of the same space is refused
+	// at its first resume rather than replaying the log into a live read model.
+	Sequence   Sequencer
+	Partition  Partition
+	Generation Generation
+
 	Idle time.Duration
 
 	// A hint that the log has grown, and never the delivery mechanism: Idle polls
@@ -84,8 +100,14 @@ type Spec struct {
 	Attempts int
 	Tolerate time.Duration
 
+	// ParkSequence needs a queue, and it needs the tier InUnit with a resolvable
+	// Destination is: the loop's blocking test, its park write, its applies and a
+	// redrive's eviction order each other because they are rows in one
+	// transaction, and outside that they are two opinions about what is parked.
+	// New refuses the weaker wirings rather than scoping the guarantee to half
+	// the shipped matrix.
 	OnPermanentFailure Failure
-	Quarantine         Quarantines
+	Park               Park
 
 	Classifier Classifier
 	Observer   Observer
@@ -117,9 +139,20 @@ const (
 func New(spec Spec) (*Projection, error) {
 	var problems []error
 
-	tracker, err := event.Track(spec.Checkpoints, spec.Name)
-	if err != nil {
+	identity, named := NewIdentity(spec.Name, spec.Generation, spec.Partition)
+	if named != nil {
+		problems = append(problems, named)
+	}
+	// The two doors ask overlapping questions about one field, so a name the
+	// identity already refused is not reported a second time by the tracker's.
+	tracker, err := event.Track(spec.Checkpoints, identity.String())
+	if err != nil && (named == nil || !errors.Is(err, event.ErrDeclaration)) {
 		problems = append(problems, namedRefusal(err))
+	}
+	if spec.Sequence != nil {
+		if broken := unusable(spec.Sequence); broken != "" {
+			problems = append(problems, fmt.Errorf("%w: %s", ErrSpec, broken))
+		}
 	}
 	if absent(spec.Log) {
 		problems = append(problems, fmt.Errorf("%w: Log names no log, and a projection reads through one", ErrSpec))
@@ -132,16 +165,14 @@ func New(spec Spec) (*Projection, error) {
 	}
 	problems = append(problems, refusedAdvance(spec)...)
 	if !spec.OnPermanentFailure.Valid() {
-		problems = append(problems, fmt.Errorf("%w: OnPermanentFailure is neither Halt nor Quarantine, and an unknown policy is not Halt", ErrSpec))
+		problems = append(problems, fmt.Errorf("%w: OnPermanentFailure is neither Halt nor ParkSequence, and an unknown policy is not Halt", ErrSpec))
 	}
-	if spec.OnPermanentFailure == Quarantine && absent(spec.Quarantine) {
-		problems = append(problems, fmt.Errorf("%w: OnPermanentFailure is Quarantine and Quarantine names no sink, and a policy with nowhere to record is a skip with extra words", ErrSpec))
-	}
+	problems = append(problems, refusedPark(spec)...)
 	problems = append(problems, refusedNumbers(spec)...)
 	if len(problems) > 0 {
 		return nil, errors.Join(problems...)
 	}
-	return newProjection(withDefaults(spec), tracker), nil
+	return newProjection(withDefaults(spec), tracker, identity), nil
 }
 
 // event.Track asks two questions in one call and the classes tell them apart: a
@@ -178,6 +209,30 @@ func refusedAdvance(spec Spec) []error {
 	return problems
 }
 
+// The three the park costs, and all three are about the tier rather than about
+// the queue. The causal order a park promises is not a property of the queue: it
+// is a property of the queue and the read model committing together, so a
+// redrive that evicts the blocking letter while its write for the next one is
+// still in flight lets the loop read a Holds of false and apply the one after
+// that. Under AfterApply there is no unit at all, and under Unchecked there is
+// one the read model is not in — both lose it, with no error on any path.
+func refusedPark(spec Spec) []error {
+	if spec.OnPermanentFailure != ParkSequence {
+		return nil
+	}
+	var problems []error
+	if absent(spec.Park) {
+		problems = append(problems, fmt.Errorf("%w: OnPermanentFailure is ParkSequence and Park names no queue, and a policy with nowhere to record is a skip with extra words", ErrSpec))
+	}
+	if spec.Advance != InUnit {
+		problems = append(problems, fmt.Errorf("%w: OnPermanentFailure is ParkSequence and Advance is not InUnit, and a queue whose letters do not commit with the read model orders nothing — a redrive and this loop would then apply two letters of one sequence out of order, which is what the queue exists to prevent", ErrSpec))
+	}
+	if _, unresolvable := spec.Destination.(unchecked); unresolvable {
+		problems = append(problems, fmt.Errorf("%w: OnPermanentFailure is ParkSequence and Destination is Unchecked, so the read model is outside the unit the park write rides in and the two cannot be ordered against each other — what a destination this framework cannot resolve gets is Halt", ErrSpec))
+	}
+	return problems
+}
+
 func refusedNumbers(spec Spec) []error {
 	var problems []error
 	for _, bound := range []struct {
@@ -204,7 +259,20 @@ func refusedNumbers(spec Spec) []error {
 
 // Each default is the one that promises less. Destination has none under InUnit:
 // the answer "I cannot check this" has to be written rather than defaulted into.
+//
+// A Park is dropped unless the policy names it, and that is the whole of what
+// makes one harmless beside Halt rather than merely unused: a composition root
+// builds one spec for a live generation and a rebuild, so the field arrives
+// beside a policy that never writes to it, and a loop that still read it there
+// would ask Holds per envelope and write letters from outside a unit — the
+// blocking path, at the tier refusedPark exists to refuse. It is dropped once,
+// here, rather than tested at each of the three places that reach for it,
+// because three tests of one condition is how an invariant becomes false
+// without anybody editing it.
 func withDefaults(spec Spec) Spec {
+	if spec.OnPermanentFailure != ParkSequence {
+		spec.Park = nil
+	}
 	if spec.Advance == UnsetAdvance {
 		spec.Advance = AfterApply
 	}
@@ -225,6 +293,9 @@ func withDefaults(spec Spec) Spec {
 	}
 	if spec.Tolerate == 0 {
 		spec.Tolerate = defaultTolerate
+	}
+	if spec.Sequence == nil {
+		spec.Sequence = ByStream()
 	}
 	if spec.Classifier == nil {
 		spec.Classifier = Classify

@@ -67,7 +67,7 @@ func census() []certification {
 // What a conformance run of the checkpoint store must report, section by
 // section. Without it a run whose transactions section reported not certified —
 // the section that certifies the one-unit half of the whole phase — prints ok
-// and passes, because eleven others certified and the suite's own third
+// and passes, because thirteen others certified and the suite's own third
 // anti-vacuity rule does not fire.
 func checkpointCensus() []certification {
 	return []certification{
@@ -83,6 +83,8 @@ func checkpointCensus() []certification {
 		{"concurrency", certified},
 		{"transactions", certified},
 		{"durability", certified},
+		{"topology", certified},
+		{"topology handoff", certified},
 	}
 }
 
