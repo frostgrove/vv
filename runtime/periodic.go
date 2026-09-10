@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sync"
 	"time"
 )
 
@@ -77,12 +78,28 @@ func Every(name string, interval time.Duration, pass func(ctx context.Context) e
 }
 
 type periodic struct {
-	spec PeriodicSpec
+	spec     PeriodicSpec
+	mutex    sync.Mutex
+	flight   *periodicFlight
+	draining bool
+}
+
+type periodicFlight struct {
+	ctx    context.Context
+	cancel context.CancelFunc
+	done   chan struct{}
+	err    error
 }
 
 func (this *periodic) Name() string { return this.spec.Name }
 
 func (this *periodic) Declaration() Declaration { return PerReplicaTimer }
+
+func (this *periodic) BeginRunnerGeneration() {
+	this.mutex.Lock()
+	this.draining = false
+	this.mutex.Unlock()
+}
 
 func (this *periodic) Run(ctx context.Context) error {
 	ticker := this.spec.Ticks(this.spec.Interval)
@@ -94,6 +111,7 @@ func (this *periodic) Run(ctx context.Context) error {
 	for {
 		select {
 		case <-ctx.Done():
+			this.awaitPassOnStop()
 			return ctx.Err()
 		case <-ticker.Ticks():
 			this.once(ctx)
@@ -101,27 +119,125 @@ func (this *periodic) Run(ctx context.Context) error {
 	}
 }
 
-// once keeps a failing pass from ending the schedule: a sweep that cannot reach
-// the database at 3am must still run at 3:05, and a panic in one pass is a
-// defect to report rather than a reason to stop sweeping for the life of the
-// process. What it must not do is hide either — both leave at Error level.
 func (this *periodic) once(ctx context.Context) {
-	pass, cancel := context.WithTimeout(ctx, this.spec.Timeout)
-	defer cancel()
-
-	err := attempt(pass, this.spec.Pass)
+	flight, started := this.beginPass(ctx)
+	if !started {
+		return
+	}
+	err, completed := waitPeriodicPass(flight)
+	flight.cancel()
+	if completed {
+		this.finishPass(flight)
+	}
 	if err == nil || ctx.Err() != nil {
 		return
 	}
 	this.spec.Logger.ErrorContext(ctx, "a periodic pass failed",
-		slog.String("runner", this.spec.Name), slog.String("err", err.Error()))
+		slog.String("runner", this.spec.Name), slog.String("err", safelyRenderError(err, "periodic pass returned an error that could not be inspected")))
+}
+
+func (this *periodic) beginPass(ctx context.Context) (*periodicFlight, bool) {
+	this.mutex.Lock()
+	defer this.mutex.Unlock()
+	if this.draining {
+		return nil, false
+	}
+	if this.flight != nil {
+		select {
+		case <-this.flight.done:
+			this.flight = nil
+		default:
+			return nil, false
+		}
+	}
+	pass, cancel := context.WithTimeout(ctx, this.spec.Timeout)
+	flight := &periodicFlight{ctx: pass, cancel: cancel, done: make(chan struct{})}
+	this.flight = flight
+	go func() {
+		flight.err = attempt(pass, this.spec.Pass)
+		close(flight.done)
+	}()
+	return flight, true
+}
+
+func (this *periodic) finishPass(flight *periodicFlight) {
+	this.mutex.Lock()
+	if this.flight == flight {
+		this.flight = nil
+	}
+	this.mutex.Unlock()
+}
+
+func waitPeriodicPass(flight *periodicFlight) (error, bool) {
+	select {
+	case <-flight.done:
+		return flight.err, true
+	default:
+	}
+	select {
+	case <-flight.done:
+		return flight.err, true
+	case <-flight.ctx.Done():
+		select {
+		case <-flight.done:
+			return flight.err, true
+		default:
+			return flight.ctx.Err(), false
+		}
+	}
+}
+
+func (this *periodic) Drain(ctx context.Context) error {
+	this.mutex.Lock()
+	this.draining = true
+	flight := this.flight
+	this.mutex.Unlock()
+	if flight == nil {
+		return nil
+	}
+	flight.cancel()
+	select {
+	case <-flight.done:
+		this.finishPass(flight)
+		return nil
+	default:
+	}
+	select {
+	case <-flight.done:
+		this.finishPass(flight)
+		return nil
+	case <-ctx.Done():
+		select {
+		case <-flight.done:
+			this.finishPass(flight)
+			return nil
+		default:
+			return ctx.Err()
+		}
+	}
+}
+
+func (this *periodic) awaitPassOnStop() {
+	this.mutex.Lock()
+	flight := this.flight
+	this.mutex.Unlock()
+	if flight == nil {
+		return
+	}
+	flight.cancel()
+	<-flight.done
+	this.finishPass(flight)
 }
 
 func attempt(ctx context.Context, pass func(context.Context) error) (err error) {
+	completed := false
 	defer func() {
-		if recovered := recover(); recovered != nil {
-			err = fmt.Errorf("the pass panicked: %v", recovered)
+		_ = recover()
+		if !completed {
+			err = errors.New("the pass panicked")
 		}
 	}()
-	return pass(ctx)
+	err = pass(ctx)
+	completed = true
+	return err
 }

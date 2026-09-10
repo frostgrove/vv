@@ -101,8 +101,7 @@ type UsageRoot struct {
 	Kind UsageRootKind `json:"kind"`
 }
 
-const GoUsageAnalyzerV1 = "frostgrove.vv-i18n/go-ast/v1"
-const GoUsageAnalyzerV2 = "frostgrove.vv-i18n/go-list/v2"
+const GoUsageAnalyzer = "frostgrove.vv-i18n/go-list/v1"
 
 type UsageFile struct {
 	Root        string `json:"root"`
@@ -167,7 +166,7 @@ func ExpectedUsageSourceDigestContext(ctx context.Context, scope GoUsageScope) (
 	}
 	digest := sha256.New()
 	writer := usageDigestWriter{ctx: ctx, write: digest.Write}
-	if err := writer.field("domain", "frostgrove.i18n.go-usage-source/v2"); err != nil {
+	if err := writer.field("domain", "frostgrove.i18n.go-usage-source/v1"); err != nil {
 		return "", err
 	}
 	if err := writeUsageScopeDigest(&writer, scope); err != nil {
@@ -668,7 +667,7 @@ func CheckContext(ctx context.Context, spec CatalogSpec, policy CheckPolicy) Rep
 	if collector.canceled() {
 		return canceledCheckReport(maximum)
 	}
-	if usageValid && policy.Usage.Complete && policy.Usage.GoScope != nil && policy.Usage.GoScope.Analyzer == GoUsageAnalyzerV2 {
+	if usageValid && policy.Usage.Complete && policy.Usage.GoScope != nil && policy.Usage.GoScope.Analyzer == GoUsageAnalyzer {
 		for _, message := range messages {
 			if collector.pollCancellation() {
 				return canceledCheckReport(maximum)
@@ -1174,13 +1173,12 @@ func checkUsage(messages []checkedMessage, usage UsageManifest, limits UsageLimi
 		domains[message.module] = true
 	}
 	materialBytes := 0
-	v4Scope := usage.GoScope != nil && usage.GoScope.Analyzer == GoUsageAnalyzerV2
-	legacyScope := usage.GoScope != nil && usage.GoScope.Analyzer == GoUsageAnalyzerV1
-	if usage.GoScope != nil && !v4Scope && !legacyScope {
+	scoped := usage.GoScope != nil && usage.GoScope.Analyzer == GoUsageAnalyzer
+	if usage.GoScope != nil && !scoped {
 		collector.add(Finding{Status: CheckInvalid, Severity: SeverityError, Path: "usage.go_scope.analyzer", Detail: "Go usage analyzer is unsupported"})
 		valid = false
 	}
-	if v4Scope {
+	if scoped {
 		if !slices.IsSorted(usage.Keys) {
 			collector.add(Finding{Status: CheckInvalid, Severity: SeverityError, Path: "usage.keys", Detail: "usage keys must be sorted"})
 			valid = false
@@ -1360,7 +1358,7 @@ func checkUsage(messages []checkedMessage, usage UsageManifest, limits UsageLimi
 		}
 		seenCoordinates[coordinate] = struct{}{}
 	}
-	if v4Scope {
+	if scoped {
 		for index, key := range usage.Keys {
 			if !occurrenceKeys[key] {
 				collector.add(Finding{Status: CheckInvalid, Severity: SeverityError, Path: fmt.Sprintf("usage.keys[%d]", index), Key: key, Detail: "scoped usage key has no source occurrence"})
@@ -1376,33 +1374,31 @@ func checkUsage(messages []checkedMessage, usage UsageManifest, limits UsageLimi
 		if !checkGoUsageScope(usage.GoScope, usage.Complete, limits, collector, &materialBytes) {
 			valid = false
 		}
-		if usage.GoScope.Analyzer == GoUsageAnalyzerV2 {
-			if len(usage.ManifestDigest) > limits.MaxStringBytes || len(usage.ManifestDigest) > limits.MaxMaterialBytes-materialBytes {
-				collector.add(Finding{Status: CheckInvalid, Severity: SeverityError, Path: "usage", Detail: "usage manifest exceeds configured byte bounds"})
-				return used, false
+		if len(usage.ManifestDigest) > limits.MaxStringBytes || len(usage.ManifestDigest) > limits.MaxMaterialBytes-materialBytes {
+			collector.add(Finding{Status: CheckInvalid, Severity: SeverityError, Path: "usage", Detail: "usage manifest exceeds configured byte bounds"})
+			return used, false
+		}
+		materialBytes += len(usage.ManifestDigest)
+		selected := make(map[string]bool, usage.GoScope.SelectedFiles)
+		for _, file := range usage.GoScope.Files {
+			if file.Selected {
+				selected[file.LogicalPath] = true
 			}
-			materialBytes += len(usage.ManifestDigest)
-			selected := make(map[string]bool, usage.GoScope.SelectedFiles)
-			for _, file := range usage.GoScope.Files {
-				if file.Selected {
-					selected[file.LogicalPath] = true
-				}
-			}
-			for index, occurrence := range usage.Occurrences {
-				if !selected[occurrence.Path] {
-					collector.add(Finding{Status: CheckInvalid, Severity: SeverityError, Path: fmt.Sprintf("usage.occurrences[%d].path", index), Detail: "usage occurrence is not backed by a selected source file"})
-					valid = false
-				}
-			}
-			expected, err := ExpectedUsageManifestDigestContext(collector.ctx, usage)
-			if err != nil {
-				collector.stopped = true
-				return used, false
-			}
-			if !validUsageSHA256(usage.ManifestDigest) || usage.ManifestDigest != expected {
-				collector.add(Finding{Status: CheckInvalid, Severity: SeverityError, Path: "usage.manifest_digest", Detail: "usage manifest digest does not match its canonical content"})
+		}
+		for index, occurrence := range usage.Occurrences {
+			if !selected[occurrence.Path] {
+				collector.add(Finding{Status: CheckInvalid, Severity: SeverityError, Path: fmt.Sprintf("usage.occurrences[%d].path", index), Detail: "usage occurrence is not backed by a selected source file"})
 				valid = false
 			}
+		}
+		expected, err := ExpectedUsageManifestDigestContext(collector.ctx, usage)
+		if err != nil {
+			collector.stopped = true
+			return used, false
+		}
+		if !validUsageSHA256(usage.ManifestDigest) || usage.ManifestDigest != expected {
+			collector.add(Finding{Status: CheckInvalid, Severity: SeverityError, Path: "usage.manifest_digest", Detail: "usage manifest digest does not match its canonical content"})
+			valid = false
 		}
 	}
 	return used, valid
@@ -1432,7 +1428,7 @@ func checkGoUsageScope(scope *GoUsageScope, complete bool, limits UsageLimits, c
 			valid = false
 		}
 	}
-	if !addMaterial("usage.go_scope.analyzer", scope.Analyzer, min(limits.MaxStringBytes, maximumIdentifierBytes)) || scope.Analyzer != GoUsageAnalyzerV2 {
+	if !addMaterial("usage.go_scope.analyzer", scope.Analyzer, min(limits.MaxStringBytes, maximumIdentifierBytes)) || scope.Analyzer != GoUsageAnalyzer {
 		collector.add(Finding{Status: CheckInvalid, Severity: SeverityError, Path: "usage.go_scope.analyzer", Detail: "Go usage analyzer is unsupported"})
 		valid = false
 	}

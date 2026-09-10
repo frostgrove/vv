@@ -41,6 +41,26 @@ type nativeMetricSpec struct {
 	attributes  func([]attribute.KeyValue) []attribute.KeyValue
 }
 
+var (
+	nativeDurationHistogramBoundaries = [...]float64{0.005, 0.01, 0.025, 0.05, 0.075, 0.1, 0.25, 0.5, 0.75, 1, 2.5, 5, 7.5, 10}
+	nativeSizeHistogramBoundaries     = [...]float64{0, 64, 128, 256, 512, 1024, 4096, 16384, 65536, 262144, 1048576, 4194304, 16777216, 67108864}
+)
+
+func nativeMetricStream(filter attribute.Filter, spec nativeMetricSpec) sdkmetric.Stream {
+	stream := sdkmetric.Stream{AttributeFilter: filter}
+	if spec.shape != metricHistogramInt64 && spec.shape != metricHistogramFloat64 {
+		return stream
+	}
+	boundaries := nativeDurationHistogramBoundaries[:]
+	if spec.unit == "By" {
+		boundaries = nativeSizeHistogramBoundaries[:]
+	}
+	stream.Aggregation = sdkmetric.AggregationExplicitBucketHistogram{
+		Boundaries: append([]float64(nil), boundaries...),
+	}
+	return stream
+}
+
 type metricScopeProjection struct {
 	name    string
 	version string
@@ -57,7 +77,10 @@ func NewDatabaseMetricExporter(next sdkmetric.Exporter, policy DatabaseProjectio
 	if nilInterface(next) {
 		return nil, ErrInvalidDatabaseMetricExporter
 	}
-	compiled := compileDatabaseProjectionPolicy(policy)
+	compiled, err := compileDatabaseProjectionPolicy(policy)
+	if err != nil {
+		return nil, err
+	}
 	return &boundedMetricExporter{
 		next:      next,
 		resources: compiled.resources,
@@ -65,12 +88,19 @@ func NewDatabaseMetricExporter(next sdkmetric.Exporter, policy DatabaseProjectio
 	}, nil
 }
 
-func DatabaseMetricOptions(poolNames ...DatabasePoolName) []sdkmetric.Option {
+func DatabaseMetricOptions(poolNames ...DatabasePoolName) ([]sdkmetric.Option, error) {
+	if len(poolNames) > maxNativeDatabasePools {
+		return nil, ErrInvalidProjectionPolicy
+	}
 	pools := make(map[string]struct{}, len(poolNames))
 	for _, pool := range poolNames {
-		if validDatabasePoolName(pool.value) {
-			pools[pool.value] = struct{}{}
+		if !validDatabasePoolName(pool.value) {
+			return nil, ErrInvalidProjectionPolicy
 		}
+		if _, duplicate := pools[pool.value]; duplicate {
+			return nil, ErrInvalidProjectionPolicy
+		}
+		pools[pool.value] = struct{}{}
 	}
 	scopes := databaseMetricScopes(pools)
 	options := make([]sdkmetric.Option, 0, 15)
@@ -85,11 +115,11 @@ func DatabaseMetricOptions(poolNames ...DatabasePoolName) []sdkmetric.Option {
 					Name:  name,
 					Scope: instrumentation.Scope{Name: policy.name},
 				},
-				sdkmetric.Stream{AttributeFilter: filter},
+				nativeMetricStream(filter, spec),
 			)))
 		}
 	}
-	return options
+	return options, nil
 }
 
 func databaseMetricScopes(pools map[string]struct{}) map[string]metricScopeProjection {
@@ -293,13 +323,13 @@ func projectBoundedResourceMetrics(original *metricdata.ResourceMetrics, resourc
 			projected.ScopeMetrics = append(projected.ScopeMetrics, scopeMetrics)
 			continue
 		}
+		if !databaseScopeVersionAllowed(scopeMetrics.Scope.Name, scopeMetrics.Scope.Version, policy.version) || scopeMetrics.Scope.SchemaURL != "" {
+			continue
+		}
 		scope := instrumentation.Scope{
 			Name:       policy.name,
 			Version:    policy.version,
 			Attributes: attribute.NewSet(),
-		}
-		if !databaseScopeVersionAllowed(scopeMetrics.Scope.Name, scopeMetrics.Scope.Version, policy.version) || scopeMetrics.Scope.SchemaURL != "" {
-			scope.Version = "_OTHER"
 		}
 		measurements := make([]metricdata.Metrics, 0, len(scopeMetrics.Metrics))
 		for _, measurement := range scopeMetrics.Metrics {
@@ -336,28 +366,28 @@ func projectBoundedAggregation(aggregation metricdata.Aggregation, spec nativeMe
 		return data, true
 	case metricSumInt64:
 		data, ok := aggregation.(metricdata.Sum[int64])
-		if !ok || data.IsMonotonic != spec.monotonic {
+		if !ok || data.Temporality != metricdata.CumulativeTemporality || data.IsMonotonic != spec.monotonic {
 			return nil, false
 		}
 		data.DataPoints = projectBoundedDataPoints(data.DataPoints, spec.attributes)
 		return data, true
 	case metricSumFloat64:
 		data, ok := aggregation.(metricdata.Sum[float64])
-		if !ok || data.IsMonotonic != spec.monotonic {
+		if !ok || data.Temporality != metricdata.CumulativeTemporality || data.IsMonotonic != spec.monotonic {
 			return nil, false
 		}
 		data.DataPoints = projectBoundedDataPoints(data.DataPoints, spec.attributes)
 		return data, true
 	case metricHistogramFloat64:
 		data, ok := aggregation.(metricdata.Histogram[float64])
-		if !ok {
+		if !ok || data.Temporality != metricdata.CumulativeTemporality {
 			return nil, false
 		}
 		data.DataPoints = projectBoundedHistogramPoints(data.DataPoints, spec.attributes)
 		return data, true
 	case metricHistogramInt64:
 		data, ok := aggregation.(metricdata.Histogram[int64])
-		if !ok {
+		if !ok || data.Temporality != metricdata.CumulativeTemporality {
 			return nil, false
 		}
 		data.DataPoints = projectBoundedHistogramPoints(data.DataPoints, spec.attributes)

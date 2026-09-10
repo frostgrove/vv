@@ -31,27 +31,31 @@ type applicationJobDiagnostic struct {
 }
 
 type applicationJobAuditRuntime struct {
-	recorder    *audit.Recorder
-	history     *audit.History
-	store       *auditmemory.Store
-	deployment  *auditmemory.Deployment
-	catalogs    *audit.CatalogSet
-	event       *audit.EventType[applicationJobDiagnostic]
-	writer      *observingAuditWriter
-	tokenizer   *observingAuditTokenizer
-	accessCalls atomic.Uint32
-	mu          sync.Mutex
-	captures    []applicationCapture
+	recorder      *audit.Recorder
+	history       *audit.History
+	attempts      *audit.Attempts
+	store         *auditmemory.Store
+	deployment    *auditmemory.Deployment
+	catalogs      *audit.CatalogSet
+	event         *audit.EventType[applicationJobDiagnostic]
+	effectAttempt *audit.AttemptType[applicationJobEffectStart, applicationJobEffectCheckpoint, applicationJobEffectFinish]
+	writer        *observingAuditWriter
+	tokenizer     *observingAuditTokenizer
+	accessCalls   atomic.Uint32
+	mu            sync.Mutex
+	captures      []applicationCapture
 }
 
 type applicationAuditServing struct {
 	recorder *audit.Recorder
 	history  *audit.History
+	attempts *audit.Attempts
 	health   applicationAuditHealth
 }
 
 func (s *applicationAuditServing) Recorder() *audit.Recorder { return s.recorder }
 func (s *applicationAuditServing) History() *audit.History   { return s.history }
+func (s *applicationAuditServing) Attempts() *audit.Attempts { return s.attempts }
 func (s *applicationAuditServing) Health() applicationAuditHealth {
 	return s.health
 }
@@ -87,6 +91,7 @@ func TestAuditServingProfileExposesRuntimeWithoutDeploymentAuthority(t *testing.
 	serving := &applicationAuditServing{
 		recorder: runtime.recorder,
 		history:  runtime.history,
+		attempts: runtime.attempts,
 		health: applicationAuditHealth{
 			store: runtime.store, active: runtime.catalogs.Active(),
 		},
@@ -141,8 +146,8 @@ func TestAuditServingProfileExposesRuntimeWithoutDeploymentAuthority(t *testing.
 	if provideCalls.Load() != 1 || healthCalls.Load() != 1 {
 		t.Fatalf("constructor calls = provide:%d health:%d", provideCalls.Load(), healthCalls.Load())
 	}
-	if serving.Recorder() != runtime.recorder || serving.History() != runtime.history || serving.History().Profile() != audit.PublicOnePageDevelopmentAlpha {
-		t.Fatal("serving graph did not expose the selected recorder and history")
+	if serving.Recorder() != runtime.recorder || serving.History() != runtime.history || serving.Attempts() != runtime.attempts || serving.History().Profile() != audit.PublicOnePageDevelopmentAlpha {
+		t.Fatal("serving graph did not expose the selected recorder, history and attempts")
 	}
 	if err := health.Check(t.Context()); err != nil {
 		t.Fatalf("selected audit health contribution: %v", err)
@@ -274,6 +279,7 @@ func newApplicationJobAuditRuntime(t *testing.T) *applicationJobAuditRuntime {
 			audit.EventValue("final_attempt", func(value applicationJobDiagnostic) bool { return value.final }, audit.Bool(), audit.Public),
 		),
 	})
+	effectMember, effectOperation, effectAttempt := applicationJobEffectDeclarations()
 	fingerprint, err := audit.ComputeEventFixtureFingerprint(event, "job.delivery.diagnostic", applicationJobDiagnostic{
 		invocation: "00000000-0000-4000-8000-000000000321", ordinal: 2, final: true,
 		outcome: "failed", occurred: time.Date(2026, 9, 9, 12, 2, 0, 0, time.UTC),
@@ -300,12 +306,27 @@ func newApplicationJobAuditRuntime(t *testing.T) *applicationJobAuditRuntime {
 	if err != nil {
 		t.Fatal(err)
 	}
+	signer, err := audit.HMACSigner(audit.HMACSigningKey{KeyID: "auditflow-job-signature", Key: bytes.Repeat([]byte{0x74}, 32)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	verifier, err := audit.HMACVerifier(audit.HMACVerificationKey{KeyID: "auditflow-job-signature", Key: bytes.Repeat([]byte{0x74}, 32)})
+	if err != nil {
+		t.Fatal(err)
+	}
 	catalog, err := audit.Compile(audit.CatalogSpec{
 		ID: "auditflow.job.redelivery", Owner: "auditflow.application", Generation: 1,
 		Retention: audit.RetentionRules(audit.KeepForever("operations.forever")),
 		Semantics: semantic.Description(), Identities: identities.ActiveDescription(),
-		Tokens: baseTokenizer.ActiveDescription(), Integrity: audit.IntegrityOnly(),
-	}, event)
+		Tokens: baseTokenizer.ActiveDescription(), Integrity: audit.RequireSignature(signer.Description()),
+		Control: audit.ControlPolicy{
+			Resource: "auditflow.audit_control", Semantics: audit.Semantics(1), Purpose: "operations.audit",
+			Retention: "operations.forever", Consequence: audit.Required,
+			Context: audit.ContextFacts(audit.ScopeFact(audit.ContextRequired, audit.Provenances(audit.Verified), audit.Public, audit.AsPlaintext)),
+			Actions: audit.ControlActions(audit.AttemptContinuationAuthorized, audit.AttemptAccessDenied),
+			Reasons: audit.ControlReasons(audit.ReasonsFor(audit.AttemptAccessDenied, audit.Reasons("attempt.access.denied"))),
+		},
+	}, event, effectMember, effectOperation, effectAttempt)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -343,11 +364,14 @@ func newApplicationJobAuditRuntime(t *testing.T) *applicationJobAuditRuntime {
 		if err != nil {
 			return audit.Context{}, err
 		}
-		return audit.Context{Operation: value}, nil
+		return audit.Context{
+			Actors:    []audit.Actor{{Kind: audit.HumanActor, Reference: "job-worker:auditflow", Provenance: audit.Verified}},
+			Operation: value,
+		}, nil
 	})
 	recorder, err := audit.New(audit.Config{
 		Catalogs: catalogs, Writer: writer, Context: resolver,
-		Semantics: semantic, Identities: identities, Tokenizer: tokenizer,
+		Semantics: semantic, Identities: identities, Tokenizer: tokenizer, Signer: signer,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -372,12 +396,21 @@ func newApplicationJobAuditRuntime(t *testing.T) *applicationJobAuditRuntime {
 		})
 	})
 	history, err := audit.NewHistory(audit.HistoryConfig{
-		Profile: audit.PublicOnePageDevelopmentAlpha, Recorder: recorder, Log: store, Access: authority,
+		Profile: audit.PublicOnePageDevelopmentAlpha, Recorder: recorder, Log: store, Exact: store, Access: authority, Verifier: verifier,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	attempts, err := audit.NewAttempts(audit.AttemptsConfig{
+		Profile: audit.RunOnlyAlpha, Recorder: recorder, State: store, Types: store,
+		History: history, SettlementTimeout: time.Second,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	runtime.history = history
+	runtime.attempts = attempts
+	runtime.effectAttempt = effectAttempt
 	t.Cleanup(func() {
 		if err := store.Close(); err != nil {
 			t.Errorf("close job audit store: %v", err)

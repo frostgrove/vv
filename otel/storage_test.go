@@ -53,6 +53,13 @@ type fakeStorageStore struct {
 	capabilitiesCalls   int
 }
 
+func TestStoreRejectsTypedNilDependency(t *testing.T) {
+	var next *fakeStorageStore
+	if wrapped := vvotel.Store(nil)(next); wrapped != nil {
+		t.Fatalf("typed-nil store wrapped as %#v", wrapped)
+	}
+}
+
 func (f *fakeStorageStore) call(ctx context.Context, operation string) {
 	f.lastCtx = ctx
 	f.calls++
@@ -506,7 +513,7 @@ func TestStorage_AllNineOperationsTotality(t *testing.T) {
 				if raw.calls != 1 || raw.operationCalls[operation] != 1 || len(raw.operationCalls) != 1 {
 					t.Fatalf("business calls=%d by_operation=%v, want only %s once", raw.calls, raw.operationCalls, operation)
 				}
-				if raw.lastCtx.Value(spanKey{}) == nil {
+				if !hasTestSpan(raw.lastCtx) {
 					t.Fatal("derived context not passed to the business operation")
 				}
 				if len(tp.spans) != 1 || tp.endCalls != 1 {
@@ -640,8 +647,8 @@ func TestStorage_NilAndDisabledPreservesBehavior(t *testing.T) {
 
 	tp := newTestTracerProvider()
 	telDisabled, _ := vvotel.New(vvotel.Config{
-		TracerProvider:        tp,
-		StorageTracesDisabled: true,
+		TracerProvider: tp,
+		Disable:        vvotel.Signals{vvotel.SignalStorageSpan},
 	})
 	sDisabled := vvotel.Store(telDisabled)(raw)
 	_, err = sDisabled.Head(context.Background(), k)
@@ -920,7 +927,7 @@ func TestStorage_PanicNilIsNotSuppressed(t *testing.T) {
 
 func TestStorage_OpenDisabled(t *testing.T) {
 	tp := newTestTracerProvider()
-	tel, _ := vvotel.New(vvotel.Config{TracerProvider: tp, StorageTracesDisabled: true})
+	tel, _ := vvotel.New(vvotel.Config{TracerProvider: tp, Disable: vvotel.Signals{vvotel.SignalStorageSpan, vvotel.SignalStorageStreamSpan}})
 
 	raw := &fakeStorageStore{}
 	s := vvotel.Store(tel)(raw)

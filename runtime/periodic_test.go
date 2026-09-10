@@ -3,6 +3,8 @@ package runtime_test
 import (
 	"context"
 	"errors"
+	"os"
+	"os/exec"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -99,6 +101,30 @@ func TestAFailedPassDoesNotEndTheSchedule(t *testing.T) {
 	}
 }
 
+func TestAPassWithHostileErrorTextDoesNotEndTheSchedule(t *testing.T) {
+	ticker := newManualTicker()
+	done := make(chan struct{}, 2)
+	runner := periodic(t, runtime.PeriodicSpec{
+		Name:     "hostile-error-text",
+		Interval: time.Hour,
+		Ticks:    func(time.Duration) runtime.Ticker { return ticker },
+		Pass: func(context.Context) error {
+			done <- struct{}{}
+			return hostileErrorMethod{panicError: true}
+		},
+	})
+	running(t, runner)
+
+	for range 2 {
+		ticker.tick()
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
+			t.Fatal("hostile error text ended the schedule")
+		}
+	}
+}
+
 func TestAPanickingPassDoesNotEndTheSchedule(t *testing.T) {
 	ticker := newManualTicker()
 	var passes atomic.Int64
@@ -123,6 +149,164 @@ func TestAPanickingPassDoesNotEndTheSchedule(t *testing.T) {
 	if passes.Load() != 2 {
 		t.Fatalf("a panic in one pass ended the schedule for the life of the process: %d passes", passes.Load())
 	}
+}
+
+func TestANonCooperativePassCannotHoldShutdownOrOverlapAnotherPass(t *testing.T) {
+	ticker := newManualTicker()
+	entered := make(chan int, 2)
+	release := make(chan struct{})
+	defer func() {
+		select {
+		case <-release:
+		default:
+			close(release)
+		}
+	}()
+	var passes atomic.Int64
+	runner := periodic(t, runtime.PeriodicSpec{
+		Name:     "non-cooperative",
+		Interval: time.Hour,
+		Timeout:  20 * time.Millisecond,
+		Ticks:    func(time.Duration) runtime.Ticker { return ticker },
+		Pass: func(context.Context) error {
+			entered <- int(passes.Add(1))
+			<-release
+			return nil
+		},
+	})
+	supervised := supervisor(t, runtime.Spec{Runners: []runtime.Runner{runner}, DrainGrace: 30 * time.Millisecond})
+	if err := supervised.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	ticker.tick()
+	if pass := <-entered; pass != 1 {
+		t.Fatalf("first pass = %d", pass)
+	}
+	tickConsumed := make(chan struct{})
+	go func() {
+		ticker.tick()
+		close(tickConsumed)
+	}()
+	select {
+	case <-tickConsumed:
+	case <-time.After(2 * time.Second):
+		t.Fatal("an over-budget callback held the scheduler loop")
+	}
+	select {
+	case pass := <-entered:
+		t.Fatalf("stuck callback overlapped pass %d", pass)
+	default:
+	}
+	stopResult := make(chan error, 1)
+	go func() { stopResult <- supervised.Stop(context.Background()) }()
+	select {
+	case err := <-stopResult:
+		if !errors.Is(err, runtime.ErrDrainDeadline) {
+			t.Fatalf("bounded stop = %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("non-cooperative callback held Stop past its grace")
+	}
+	if err := supervised.Start(context.Background()); !errors.Is(err, runtime.ErrStillStopping) {
+		t.Fatalf("restart over a live callback = %v", err)
+	}
+	close(release)
+	awaitPhase(t, supervised, "non-cooperative", runtime.PhaseStopped)
+}
+
+func TestDrainCancelsACooperativePassAndPreventsAnotherTick(t *testing.T) {
+	ticker := newManualTicker()
+	entered := make(chan struct{}, 2)
+	runner := periodic(t, runtime.PeriodicSpec{
+		Name:     "cooperative",
+		Interval: time.Hour,
+		Timeout:  time.Hour,
+		Ticks:    func(time.Duration) runtime.Ticker { return ticker },
+		Pass: func(ctx context.Context) error {
+			entered <- struct{}{}
+			<-ctx.Done()
+			return ctx.Err()
+		},
+	})
+	supervised := supervisor(t, runtime.Spec{Runners: []runtime.Runner{runner}})
+	if err := supervised.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	ticker.tick()
+	<-entered
+	if err := supervised.Stop(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-entered:
+		t.Fatal("a pass started after drain")
+	default:
+	}
+}
+
+func TestRuntimePanicNilBoundaries(t *testing.T) {
+	if os.Getenv("VV_RUNTIME_PANICNIL_HELPER") == "1" {
+		supervised := supervisor(t, runtime.Spec{Runners: []runtime.Runner{
+			&worker{name: "panic-nil", run: func(context.Context) error { panic(nil) }},
+		}})
+		if err := supervised.Start(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		state := awaitPhase(t, supervised, "panic-nil", runtime.PhaseFailed)
+		if !errors.Is(state.Err, runtime.ErrRunnerPanicked) {
+			t.Fatalf("panic(nil) runner state = %+v", state)
+		}
+		if err := supervised.Stop(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+
+		ticker := newManualTicker()
+		var passes atomic.Int64
+		done := make(chan struct{}, 2)
+		runner := periodic(t, runtime.PeriodicSpec{
+			Name:     "panic-nil-pass",
+			Interval: time.Hour,
+			Ticks:    func(time.Duration) runtime.Ticker { return ticker },
+			Pass: func(context.Context) error {
+				passes.Add(1)
+				defer func() { done <- struct{}{} }()
+				panic(nil)
+			},
+		})
+		running(t, runner)
+		ticker.tick()
+		<-done
+		deadline := time.After(2 * time.Second)
+		for passes.Load() < 2 {
+			select {
+			case ticker.ticks <- time.Now():
+			case <-deadline:
+				t.Fatal("periodic runner did not continue after panic(nil)")
+			}
+		}
+		<-done
+		if passes.Load() < 2 {
+			t.Fatalf("panic(nil) stopped periodic runner after %d passes", passes.Load())
+		}
+		return
+	}
+
+	command := exec.Command(os.Args[0], "-test.run=^TestRuntimePanicNilBoundaries$")
+	command.Env = panicNilEnvironment("VV_RUNTIME_PANICNIL_HELPER=1")
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("panic(nil) subprocess: %v\n%s", err, output)
+	}
+}
+
+func panicNilEnvironment(marker string) []string {
+	environment := make([]string, 0, len(os.Environ())+2)
+	for _, value := range os.Environ() {
+		if !strings.HasPrefix(value, "GODEBUG=") {
+			environment = append(environment, value)
+		}
+	}
+	return append(environment, "GODEBUG=panicnil=1", marker)
 }
 
 func TestAPassIsBoundedByItsOwnBudget(t *testing.T) {

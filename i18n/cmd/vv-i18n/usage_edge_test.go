@@ -976,7 +976,7 @@ func TestUsageCodecCanonicalizesUniqueTagsAndRejectsNonCanonicalWireTags(t *test
 	}
 }
 
-func TestUsageCodecRejectsNonCanonicalUnscopedV4Content(t *testing.T) {
+func TestUsageCodecRejectsNonCanonicalUnscopedContent(t *testing.T) {
 	duplicate := i18n.UsageManifest{Keys: []i18n.Key{"app.z", "app.z", "app.a"}}
 	if _, err := encodeUsage(duplicate); err == nil {
 		t.Fatal("duplicate unscoped keys were encoded")
@@ -1045,58 +1045,6 @@ func TestUsageCodecRejectsControlAndBidiInLedgerPaths(t *testing.T) {
 	}
 }
 
-func TestUsageCodecPreservesLegacyPositiveEvidenceWithoutV4Authority(t *testing.T) {
-	tests := []struct {
-		name        string
-		raw         string
-		occurrences int
-	}{
-		{
-			name: "v1",
-			raw:  `{"schema":"frostgrove.i18n.usage/v1","keys":["app.one"],"dynamic":[],"complete":true}`,
-		},
-		{
-			name:        "v2",
-			raw:         `{"schema":"frostgrove.i18n.usage/v2","keys":["app.one"],"dynamic":[],"occurrences":[{"key":"app.one","path":"legacy/use.go","line":1,"column":1}],"complete":true}`,
-			occurrences: 1,
-		},
-		{
-			name:        "v3",
-			raw:         `{"schema":"frostgrove.i18n.usage/v3","keys":["app.one"],"dynamic":[],"occurrences":[{"key":"app.one","path":"legacy/use.go","line":1,"column":1}],"go_scope":{"analyzer":"frostgrove.vv-i18n/go-ast/v1","goos":"linux","goarch":"amd64","compiler":"gc","cgo_enabled":false,"build_tags":[],"tool_tags":[],"release_tags":[],"roots":[{"path":"legacy","kind":"directory"}],"source_digest":"0000000000000000000000000000000000000000000000000000000000000000","selected_files":1,"excluded_files":0},"complete":true}`,
-			occurrences: 1,
-		},
-	}
-	spec := i18n.CatalogSpec{
-		Revision: "legacy/v1", SourceLocale: "en", DefaultLocale: "en", Supported: []string{"en"},
-		Modules: []i18n.Module{{Name: "app", Messages: []i18n.MessageSpec{{
-			ID: "one", Revision: "one/v1", Source: "One", Description: "Legacy usage fixture.", Output: i18n.OutputPlain,
-		}}}},
-	}
-	if _, err := i18n.New(spec); err != nil {
-		t.Fatal(err)
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			usage, err := decodeUsage([]byte(test.raw))
-			if err != nil {
-				t.Fatal(err)
-			}
-			if !slices.Equal(usage.Keys, []i18n.Key{"app.one"}) || len(usage.Occurrences) != test.occurrences || usage.GoScope != nil || usage.Complete {
-				t.Fatalf("legacy migration = %+v", usage)
-			}
-			report := i18n.Check(spec, i18n.CheckPolicy{Usage: usage})
-			if !report.OK() {
-				t.Fatalf("legacy usage check = %+v", report.Findings)
-			}
-			for _, finding := range report.Findings {
-				if strings.HasPrefix(finding.Path, "usage.") || finding.Status == i18n.CheckUnused {
-					t.Fatalf("legacy evidence triggered v4 authority: %+v", report.Findings)
-				}
-			}
-		})
-	}
-}
-
 func TestUsageCodecRejectsPublicStringLimitBeforeCanonicalAllocation(t *testing.T) {
 	limits := i18n.DefaultUsageLimits()
 	manifest := i18n.UsageManifest{Keys: []i18n.Key{i18n.Key(strings.Repeat("x", limits.MaxStringBytes+1))}}
@@ -1107,7 +1055,7 @@ func TestUsageCodecRejectsPublicStringLimitBeforeCanonicalAllocation(t *testing.
 
 func FuzzUsageCodecNeverPanicsAndCanonicalizesSuccessfulInput(f *testing.F) {
 	f.Add([]byte(`{"schema":"frostgrove.i18n.usage/v1","keys":["app.one"],"dynamic":[],"complete":true}`))
-	f.Add([]byte(`{"schema":"frostgrove.i18n.usage/v4","keys":[],"dynamic":[],"occurrences":[],"manifest_digest":"invalid","complete":false}`))
+	f.Add([]byte(`{"schema":"frostgrove.i18n.usage/v1","keys":[],"dynamic":[],"occurrences":[],"manifest_digest":"invalid","complete":false}`))
 	if raw, err := encodeUsage(i18n.UsageManifest{}); err == nil {
 		f.Add(raw)
 	}

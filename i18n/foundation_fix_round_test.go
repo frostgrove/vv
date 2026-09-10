@@ -16,15 +16,15 @@ func TestCatalogEnforcesLocalePluralCategories(t *testing.T) {
 		mode   string
 		key    string
 	}{
-		{locale: "en", mode: "cardinal", key: "one"},
-		{locale: "ru", mode: "cardinal", key: "few"},
-		{locale: "ar", mode: "cardinal", key: "two"},
-		{locale: "pl", mode: "cardinal", key: "many"},
+		{locale: "en", mode: "plural", key: "one"},
+		{locale: "ru", mode: "plural", key: "few"},
+		{locale: "ar", mode: "plural", key: "two"},
+		{locale: "pl", mode: "plural", key: "many"},
 		{locale: "en", mode: "ordinal", key: "few"},
 		{locale: "ru", mode: "ordinal", key: "other"},
 		{locale: "ar", mode: "ordinal", key: "other"},
 		{locale: "pl", mode: "ordinal", key: "other"},
-		{locale: "en", mode: "cardinal", key: "9999999999999999999999999999999999999999"},
+		{locale: "en", mode: "plural", key: "9999999999999999999999999999999999999999"},
 	}
 	for _, test := range valid {
 		t.Run(test.locale+"_"+test.mode+"_"+test.key, func(t *testing.T) {
@@ -38,10 +38,10 @@ func TestCatalogEnforcesLocalePluralCategories(t *testing.T) {
 		mode   string
 		key    string
 	}{
-		{locale: "en", mode: "cardinal", key: "few"},
-		{locale: "ru", mode: "cardinal", key: "zero"},
-		{locale: "ar", mode: "cardinal", key: "bogus"},
-		{locale: "pl", mode: "cardinal", key: "two"},
+		{locale: "en", mode: "plural", key: "few"},
+		{locale: "ru", mode: "plural", key: "zero"},
+		{locale: "ar", mode: "plural", key: "bogus"},
+		{locale: "pl", mode: "plural", key: "two"},
 		{locale: "en", mode: "ordinal", key: "many"},
 		{locale: "ru", mode: "ordinal", key: "one"},
 		{locale: "ar", mode: "ordinal", key: "two"},
@@ -536,10 +536,7 @@ func TestErrorMessagesObservesTerminalFailureClasses(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		localized := source.(interface {
-			MessageWithLocale(context.Context, errs.Violation, string) (string, string, bool)
-		})
-		if text, actual, ok := localized.MessageWithLocale(context.Background(), errs.Violation{Code: "required"}, "ru-RU"); !ok || text != "Электронная почта" || actual != "ru" {
+		if text, actual, ok := source.MessageWithLocale(context.Background(), errs.Violation{Code: "required"}, "ru-RU"); !ok || text != "Электронная почта" || actual != "ru" {
 			t.Fatalf("resolved fallback = %q/%q/%v", text, actual, ok)
 		}
 		assertObservation(t, observations, OutcomeFallback, ReasonLookup)

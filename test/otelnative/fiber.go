@@ -32,14 +32,16 @@ func FiberMiddleware(providers Providers, routes RouteTable, mode IngressMode, p
 			return fallbackHTTPName
 		},
 	}
-	return fiberotel.Middleware(
-		fiberotel.WithTracerProvider(tracerProvider),
-		fiberotel.WithMeterProvider(providers.Meter),
-		fiberotel.WithPropagators(propagatorFor(mode)),
-		fiberotel.WithPort(port),
-		fiberotel.WithClientIP(false),
-		fiberotel.WithSpanNameFormatter(func(ctx fiber.Ctx) string {
-			return routes.SpanName(ctx.Method(), ctx.Route().Path)
-		}),
-	), nil
+	return runNativeAssembly(func() (fiber.Handler, error) {
+		return fiberotel.Middleware(
+			fiberotel.WithTracerProvider(tracerProvider),
+			fiberotel.WithMeterProvider(providers.Meter),
+			fiberotel.WithPropagators(propagatorFor(mode)),
+			fiberotel.WithPort(port),
+			fiberotel.WithClientIP(false),
+			fiberotel.WithSpanNameFormatter(func(ctx fiber.Ctx) string {
+				return routes.SpanName(ctx.Method(), ctx.Route().Path)
+			}),
+		), nil
+	})
 }

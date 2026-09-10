@@ -421,23 +421,21 @@ func assertHTTPFailureIn(t testing.TB, result httpResult, wantMessage, wantLocal
 	if got := result.header.Get("Content-Language"); got != wantLocale {
 		t.Fatalf("Content-Language = %q, want actual template locale %s", got, wantLocale)
 	}
-	if bytes.Contains(result.body, []byte("message_locale")) {
-		t.Fatalf("internal locale provenance leaked into JSON: %s", result.body)
-	}
 	partial, violations := strictHTTPValidation(t, result.body)
 	if partial {
 		t.Fatalf("ordinary failure unexpectedly claimed a partial result: %s", result.body)
 	}
 	if len(violations) != 1 || len(violations[0].Field) != 1 || violations[0].Field[0] != "name" ||
-		violations[0].Code != string(capacityCode) || violations[0].Message != wantMessage {
-		t.Fatalf("violation = %+v, want mapped field, stable code, and %q", violations, wantMessage)
+		violations[0].Code != string(capacityCode) || violations[0].Message != wantMessage || violations[0].MessageLocale != wantLocale {
+		t.Fatalf("violation = %+v, want mapped field, stable code, %q, and locale %q", violations, wantMessage, wantLocale)
 	}
 }
 
 type strictHTTPViolation struct {
-	Field   []any  `json:"field"`
-	Code    string `json:"error_code"`
-	Message string `json:"message"`
+	Field         []any  `json:"field"`
+	Code          string `json:"error_code"`
+	Message       string `json:"message"`
+	MessageLocale string `json:"message_locale"`
 }
 
 func strictHTTPValidation(t testing.TB, body []byte) (bool, []strictHTTPViolation) {
@@ -478,8 +476,8 @@ func strictHTTPValidation(t testing.TB, body []byte) (bool, []strictHTTPViolatio
 		if err := json.Unmarshal(raw, &members); err != nil {
 			t.Fatalf("invalid validation violation %d: %v: %s", index, err, body)
 		}
-		if len(members) != 3 || members["field"] == nil || members["error_code"] == nil || members["message"] == nil {
-			t.Fatalf("validation violation %d has members %v, want exactly field/error_code/message: %s", index, mapsKeys(members), body)
+		if len(members) != 4 || members["field"] == nil || members["error_code"] == nil || members["message"] == nil || members["message_locale"] == nil {
+			t.Fatalf("validation violation %d has members %v, want exactly field/error_code/message/message_locale: %s", index, mapsKeys(members), body)
 		}
 		var violation strictHTTPViolation
 		if err := json.Unmarshal(raw, &violation); err != nil {
@@ -787,14 +785,15 @@ func TestAuthRefusalUsesTheSameResolvedMessageSourceWithoutLeakingItsReason(t *t
 	if w.Code != http.StatusUnauthorized || w.Header().Get("Content-Language") != "fr" {
 		t.Fatalf("refusal = %d in %q: %s", w.Code, w.Header().Get("Content-Language"), w.Body.Bytes())
 	}
-	if strings.Contains(w.Body.String(), "signature") || strings.Contains(w.Body.String(), "message_locale") {
-		t.Fatalf("private refusal detail or locale provenance leaked: %s", w.Body.Bytes())
+	if strings.Contains(w.Body.String(), "signature") {
+		t.Fatalf("private refusal detail leaked: %s", w.Body.Bytes())
 	}
 	var envelope struct {
 		Errors struct {
 			General []struct {
-				Code    string `json:"error_code"`
-				Message string `json:"message"`
+				Code          string `json:"error_code"`
+				Message       string `json:"message"`
+				MessageLocale string `json:"message_locale"`
 			} `json:"general"`
 		} `json:"errors"`
 	}
@@ -802,7 +801,7 @@ func TestAuthRefusalUsesTheSameResolvedMessageSourceWithoutLeakingItsReason(t *t
 		t.Fatal(err)
 	}
 	violations := envelope.Errors.General
-	if len(violations) != 1 || violations[0].Code != string(errs.CodeUnauthenticated) || violations[0].Message != "authentification requise" {
+	if len(violations) != 1 || violations[0].Code != string(errs.CodeUnauthenticated) || violations[0].Message != "authentification requise" || violations[0].MessageLocale != "fr" {
 		t.Fatalf("refusal violations = %+v", violations)
 	}
 }
@@ -840,13 +839,13 @@ func overlaySnapshot(t testing.TB, base *i18n.Snapshot, spec i18n.OverlaySpec) *
 func TestApplicationAndTenantLayersRenderThroughRealCRUDTransportBoundaries(t *testing.T) {
 	base := baseSnapshot(t)
 	baseDigest := base.Digest()
-	applicationText := ".input {$field :string}\n.input {$count :number select=cardinal}\n.match $count\none {{{$field} application {$count}}}\n* {{{$field} application {$count}}}"
+	applicationText := ".input {$field :string}\n.input {$count :number select=plural}\n.match $count\none {{{$field} application {$count}}}\n* {{{$field} application {$count}}}"
 	application := overlaySnapshot(t, base, i18n.ApplicationOverlay(
 		"application/v1", capacityOverride(t, base, applicationText),
 	))
 	applicationDigest := application.Digest()
-	tenantAText := ".input {$field :string}\n.input {$count :number select=cardinal}\n.match $count\none {{{$field} tenant A {$count}}}\n* {{{$field} tenant A {$count}}}"
-	tenantBText := ".input {$field :string}\n.input {$count :number select=cardinal}\n.match $count\none {{{$field} tenant B {$count}}}\n* {{{$field} tenant B {$count}}}"
+	tenantAText := ".input {$field :string}\n.input {$count :number select=plural}\n.match $count\none {{{$field} tenant A {$count}}}\n* {{{$field} tenant A {$count}}}"
+	tenantBText := ".input {$field :string}\n.input {$count :number select=plural}\n.match $count\none {{{$field} tenant B {$count}}}\n* {{{$field} tenant B {$count}}}"
 	tenantA := overlaySnapshot(t, application, i18n.TenantOverlay(
 		"tenant-a/v1", capacityOverride(t, application, tenantAText),
 	))
@@ -1011,13 +1010,13 @@ func firstMetadata(values []string) string {
 func TestOneApplicationBoundaryKeepsTenantCatalogsIsolated(t *testing.T) {
 	base := baseSnapshot(t)
 	application := overlaySnapshot(t, base, i18n.ApplicationOverlay("application/v1", capacityOverride(t, base,
-		".input {$field :string}\n.input {$count :number select=cardinal}\n.match $count\none {{{$field} réservé application {$count} fois}}\n* {{{$field} réservé application {$count} fois}}")))
+		".input {$field :string}\n.input {$count :number select=plural}\n.match $count\none {{{$field} réservé application {$count} fois}}\n* {{{$field} réservé application {$count} fois}}")))
 	overlay := func(revision, text string) *i18n.Snapshot {
 		return overlaySnapshot(t, application, i18n.TenantOverlay(revision, capacityOverride(t, application, text)))
 	}
-	a := overlay("tenant-a/v1", ".input {$field :string}\n.input {$count :number select=cardinal}\n.match $count\none {{{$field} privé A {$count} fois}}\n* {{{$field} privé A {$count} fois}}")
-	b := overlay("tenant-b/v1", ".input {$field :string}\n.input {$count :number select=cardinal}\n.match $count\none {{{$field} privé B {$count} fois}}\n* {{{$field} privé B {$count} fois}}")
-	inactive := overlay("tenant-inactive/v1", ".input {$field :string}\n.input {$count :number select=cardinal}\n.match $count\none {{{$field} SECRET INACTIVE {$count}}}\n* {{{$field} SECRET INACTIVE {$count}}}")
+	a := overlay("tenant-a/v1", ".input {$field :string}\n.input {$count :number select=plural}\n.match $count\none {{{$field} privé A {$count} fois}}\n* {{{$field} privé A {$count} fois}}")
+	b := overlay("tenant-b/v1", ".input {$field :string}\n.input {$count :number select=plural}\n.match $count\none {{{$field} privé B {$count} fois}}\n* {{{$field} privé B {$count} fois}}")
+	inactive := overlay("tenant-inactive/v1", ".input {$field :string}\n.input {$count :number select=plural}\n.match $count\none {{{$field} SECRET INACTIVE {$count}}}\n* {{{$field} SECRET INACTIVE {$count}}}")
 
 	resolutions := map[string]tenancy.Resolution{
 		"tenant-a":        tenantResolution(t, "tenant-a", tenancy.Active),

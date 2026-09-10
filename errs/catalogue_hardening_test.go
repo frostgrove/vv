@@ -108,10 +108,10 @@ func (this *blockedCatalogueDir) ReadDir(count int) ([]fs.DirEntry, error) {
 func TestTheCatalogueLimitsAreStable(t *testing.T) {
 	if MaxCatalogueFileBytes != 1<<20 || MaxCatalogueBytes != 16<<20 || MaxCatalogueFiles != 128 || MaxCatalogueDirectoryEntries != 4096 ||
 		MaxCatalogueEntries != 10_000 || MaxMessageKeyBytes != 256 ||
-		MaxMessageTemplateBytes != 16<<10 || MaxLocaleBytes != 128 {
-		t.Fatalf("catalogue limits are file=%d total=%d files=%d directory=%d entries=%d key=%d template=%d locale=%d",
+		MaxMessageTemplateBytes != 16<<10 || MaxMessageOutputBytes != 16<<10 || MaxLocaleBytes != 128 {
+		t.Fatalf("catalogue limits are file=%d total=%d files=%d directory=%d entries=%d key=%d template=%d output=%d locale=%d",
 			MaxCatalogueFileBytes, MaxCatalogueBytes, MaxCatalogueFiles, MaxCatalogueDirectoryEntries, MaxCatalogueEntries,
-			MaxMessageKeyBytes, MaxMessageTemplateBytes, MaxLocaleBytes)
+			MaxMessageKeyBytes, MaxMessageTemplateBytes, MaxMessageOutputBytes, MaxLocaleBytes)
 	}
 }
 

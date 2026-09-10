@@ -260,7 +260,7 @@ type Violation struct {
     Code        Code
     Origin      Origin       // OriginInput or OriginState
     Message     string
-    MessageLocale string      // proven template locale; omitted from JSON
+    MessageLocale string      // proven template locale; transport projection metadata
     Params      map[string]any  // feeds a template; stays server-side
     Source      Source          // storage provenance; internal, never rendered
     Approximate bool            // a hop could not be resolved and was not invented
@@ -274,9 +274,10 @@ violations at one path, and a client making two round trips to learn that is the
 problem this exists to remove.
 
 `MessageLocale` is projection metadata populated only by
-`LocalizedMessageSource`; the custom JSON form intentionally omits it. It lets
-HTTP and gRPC name the language actually rendered without changing the stable
-error envelope.
+`LocalizedMessageSource`. A violation's general-purpose custom JSON form omits
+it; the HTTP envelope projects a validated value as `message_locale`, and gRPC
+projects it as `LocalizedMessage.locale`. Both carriers keep it only beside the
+message it describes.
 
 `Origin` decides three things: the status (an input rule is 422, a collision with
 stored state is 409), whether the offending value may ever be echoed (only
@@ -426,10 +427,17 @@ sees them.
 Catalogue input is bounded by the exported limits
 `MaxCatalogueFileBytes`, `MaxCatalogueBytes`, `MaxCatalogueFiles`,
 `MaxCatalogueDirectoryEntries`, `MaxCatalogueEntries`, `MaxMessageKeyBytes`,
-`MaxMessageTemplateBytes` and `MaxLocaleBytes`. File loading enforces every
+`MaxMessageTemplateBytes`, `MaxMessageOutputBytes` and `MaxLocaleBytes`. File loading enforces every
 limit, including ignored directory entries, and reports read and close errors.
 Direct `Add` enforces the catalogue entry and in-memory byte totals plus the key,
 template and locale limits.
+
+Message expansion is capped at `MaxMessageOutputBytes`, including substituted
+values. Parameters may be strings, booleans, signed or unsigned integers, or
+finite floating-point values, including named types with one of those underlying
+types. Other values and non-finite numbers make that template decline without
+calling formatting methods. A cancelled lookup context declines before returning
+catalogue or vocabulary wording.
 
 ### The lookup ladder
 
@@ -467,8 +475,8 @@ catalogue fails the build. `Missing("")` checks `default.json` itself.
 
 `MessageWithLocale` returns the locale rung that actually supplied the
 template. Thus a request for `en-GB` may report `en`, while a template from
-`default.json` and a code default report no locale. `Message` remains the small
-compatibility method and returns the same wording without provenance.
+`default.json` and a code default report no locale. `Message` returns the same
+wording without provenance.
 
 The vocabulary is what the ladder falls through to, so a **partial catalogue is
 the designed case**, not a broken one.

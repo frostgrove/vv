@@ -261,7 +261,7 @@ type Violation struct {
     Code        Code
     Origin      Origin       // OriginInput или OriginState
     Message     string
-    MessageLocale string      // доказанная локаль шаблона; отсутствует в JSON
+    MessageLocale string      // доказанная локаль шаблона; metadata transport projection
     Params      map[string]any  // заполняет шаблон; остаётся на сервере
     Source      Source          // происхождение из хранилища; внутреннее, не рендерится
     Approximate bool            // переход не удалось разрешить, и он не был выдуман
@@ -276,9 +276,10 @@ type Violation struct {
 это устраняет.
 
 `MessageLocale` — metadata проекции, которую заполняет только
-`LocalizedMessageSource`; пользовательская JSON-форма намеренно её пропускает.
-Так HTTP и gRPC называют действительно отрендеренный язык без изменения
-стабильного error envelope.
+`LocalizedMessageSource`. Общая custom JSON-форма нарушения её пропускает;
+HTTP-envelope проецирует проверенное значение как `message_locale`, а gRPC —
+как `LocalizedMessage.locale`. Оба carrier сохраняют его только рядом с
+сообщением, которое он описывает.
 
 `Origin` определяет три вещи: статус (входное правило — это 422, коллизия с
 хранимым состоянием — 409), может ли спорное значение вообще быть возвращено
@@ -433,10 +434,17 @@ cat, err := errs.LoadMessages(errs.StandardCodes(), messages, "messages")
 Вход каталога ограничен экспортированными пределами
 `MaxCatalogueFileBytes`, `MaxCatalogueBytes`, `MaxCatalogueFiles`,
 `MaxCatalogueDirectoryEntries`, `MaxCatalogueEntries`, `MaxMessageKeyBytes`,
-`MaxMessageTemplateBytes` и `MaxLocaleBytes`. При загрузке файлов проверяются
+`MaxMessageTemplateBytes`, `MaxMessageOutputBytes` и `MaxLocaleBytes`. При загрузке файлов проверяются
 все пределы, включая проигнорированные элементы каталога, а ошибки чтения и
 закрытия возвращаются вызывающему. Прямой `Add` проверяет число записей и общий
 объём каталога в памяти, а также пределы ключа, шаблона и локали.
+
+Результат подстановки ограничен `MaxMessageOutputBytes`, включая значения
+параметров. Параметрами могут быть строки, логические значения, знаковые и
+беззнаковые целые и конечные числа с плавающей точкой, включая именованные типы
+с такой базой. Остальные значения и неконечные числа заставляют шаблон
+отказаться от ответа без вызова методов форматирования. Отменённый context
+прерывает поиск до возврата текста из каталога или словаря.
 
 ### Лестница поиска
 
@@ -480,8 +488,7 @@ user.email.unique  →  user.unique  →  email.unique  →  unique  →  зна
 `MessageWithLocale` возвращает ту ступень локали, из которой действительно
 взят шаблон. Поэтому запрос `en-GB` может сообщить `en`, а шаблон из
 `default.json` и значение кода по умолчанию не заявляют никакую локаль.
-`Message` остаётся небольшим совместимым методом и возвращает тот же текст без
-provenance.
+`Message` возвращает тот же текст без provenance.
 
 Словарь — это то, до чего лестница в итоге проваливается, так что
 **неполный каталог — это предусмотренный случай**, а не сломанный.

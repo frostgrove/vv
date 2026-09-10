@@ -1930,7 +1930,7 @@ func digitSize(value any) (int, bool) {
 
 func validateNumberConfiguration(localeName, name string, argumentType ArgumentType, options map[string]any) error {
 	selectMode, hasSelect := optionString(options, "select")
-	if hasSelect && selectMode != "exact" && selectMode != "plural" && selectMode != "cardinal" && selectMode != "ordinal" {
+	if hasSelect && selectMode != "exact" && selectMode != "plural" && selectMode != "ordinal" {
 		return fmt.Errorf("%s select option %q is invalid", name, selectMode)
 	}
 	for _, option := range []string{"minimumIntegerDigits", "minimumFractionDigits", "maximumFractionDigits", "minimumSignificantDigits", "maximumSignificantDigits", "roundingIncrement"} {

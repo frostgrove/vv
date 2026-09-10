@@ -42,7 +42,7 @@ func Service[M any, ID comparable, U any](t *Telemetry, opts ...ServiceOption) p
 		s.resourceName = ApprovedName(normalizeResourceName(s.resourceName.Value()))
 	}
 	return func(next port.Service[M, ID, U]) port.Service[M, ID, U] {
-		if next == nil {
+		if nilInterface(next) {
 			return nil
 		}
 		return &serviceDecorator[M, ID, U]{

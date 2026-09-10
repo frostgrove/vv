@@ -37,6 +37,7 @@ type testTracerProvider struct {
 	panicStart       bool
 	typedNilContext  bool
 	typedNilSpan     bool
+	replaceContext   bool
 	panicAttributes  bool
 	panicStatus      bool
 	panicEnd         bool
@@ -75,8 +76,6 @@ type testTracer struct {
 	provider *testTracerProvider
 }
 
-type spanKey struct{}
-
 func (t *testTracer) Start(ctx context.Context, spanName string, opts ...trace.SpanStartOption) (context.Context, trace.Span) {
 	t.provider.mu.Lock()
 	t.provider.startCalls++
@@ -88,7 +87,7 @@ func (t *testTracer) Start(ctx context.Context, spanName string, opts ...trace.S
 	}
 	if t.provider.typedNilSpan {
 		var span *testSpan
-		return context.WithValue(ctx, spanKey{}, "discarded"), span
+		return ctx, span
 	}
 	cfg := trace.NewSpanStartConfig(opts...)
 	if spanName == t.provider.blockSpanName && t.provider.startRelease != nil {
@@ -126,8 +125,16 @@ func (t *testTracer) Start(ctx context.Context, spanName string, opts ...trace.S
 		var next *typedNilContext
 		return next, span
 	}
+	if t.provider.replaceContext {
+		ctx = context.Background()
+	}
 	ctx = trace.ContextWithSpan(ctx, span)
-	return context.WithValue(ctx, spanKey{}, span), span
+	return ctx, span
+}
+
+func hasTestSpan(ctx context.Context) bool {
+	_, ok := trace.SpanFromContext(ctx).(*testSpan)
+	return ok
 }
 
 type typedNilContext struct{}

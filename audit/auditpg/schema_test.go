@@ -2,6 +2,7 @@ package auditpg
 
 import (
 	"bytes"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -42,7 +43,9 @@ func TestMigrationStatementsAreDeterministicOwnedAndComplete(t *testing.T) {
 	for _, required := range []string{
 		`"tenant_audit".settings`, `"tenant_audit".catalogs`, `"tenant_audit".revisions`,
 		`"tenant_audit".idempotency`, `"tenant_audit".entity_chains`, `"tenant_audit".entity_aliases`,
-		`"tenant_audit".entity_transitions`, "deny_immutable_audit_row", "pg_advisory",
+		`"tenant_audit".entity_transitions`, `"tenant_audit".attempt_chains`, `"tenant_audit".attempt_type_states`,
+		`"tenant_audit".attempt_identity_aliases`, `"tenant_audit".attempt_idempotency`, `"tenant_audit".attempt_transitions`,
+		"deny_immutable_audit_row", "pg_advisory",
 	} {
 		if required == "pg_advisory" {
 			continue
@@ -67,4 +70,24 @@ func TestSchemaManagementVocabularyIsClosed(t *testing.T) {
 	if SchemaManagement(99).Valid() || SchemaManagement(99).String() == "" {
 		t.Fatal("unknown schema-management value was accepted or rendered empty")
 	}
+}
+
+func TestAttemptStartIdempotencyIsCatalogWide(t *testing.T) {
+	for _, table := range postgresTables() {
+		if table.name != "attempt_idempotency" {
+			continue
+		}
+		for _, constraint := range table.constraints {
+			if constraint.kind != "p" {
+				continue
+			}
+			want := []string{"domain", "catalog_id", "chain_id", "algorithm", "profile", "key_id", "commitment"}
+			if !slices.Equal(constraint.columns, want) {
+				t.Fatalf("attempt idempotency primary key = %v, want %v", constraint.columns, want)
+			}
+			return
+		}
+		t.Fatal("attempt idempotency primary key is absent")
+	}
+	t.Fatal("attempt idempotency table is absent")
 }

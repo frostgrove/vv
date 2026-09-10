@@ -57,7 +57,7 @@ func TestHealthObservesTheActualProbeAndPreservesTheContribution(t *testing.T) {
 	if calls != 1 {
 		t.Fatalf("probe calls=%d, want one", calls)
 	}
-	if received.Value(healthContextKey{}) != "kept" || received.Value(spanKey{}) == nil {
+	if received.Value(healthContextKey{}) != "kept" || !hasTestSpan(received) {
 		t.Fatal("probe did not receive the derived span context with caller values")
 	}
 	if len(tp.spans) != 1 || !tp.spans[0].ended || tp.spans[0].name != vvotel.SpanHealth {

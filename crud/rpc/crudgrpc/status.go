@@ -119,7 +119,11 @@ func WithResolvers(rs ...errs.Resolver) RenderOption {
 }
 
 func WithMaxViolations(n int) RenderOption {
-	return func(r *StatusRenderer) { r.max = n }
+	return func(r *StatusRenderer) {
+		if n > 0 && n <= MaxViolations {
+			r.max = n
+		}
+	}
 }
 
 func WithRetryDelay(d time.Duration) RenderOption {
@@ -204,14 +208,14 @@ func (this *StatusRenderer) details(ctx context.Context, f *errs.Fault, vs []err
 			Reason: string(v.Code),
 		}
 
-		if v.MessageLocale != "" {
+		if port.ValidMessageText(v.Message) && port.ValidMessageLocale(v.MessageLocale) {
 			fv.LocalizedMessage = &errdetails.LocalizedMessage{Locale: v.MessageLocale, Message: v.Message}
 		}
 		br.FieldViolations = append(br.FieldViolations, fv)
 	}
 
 	reason := f.Code
-	if reason == "" {
+	if !port.ValidErrorCode(reason) {
 		reason = port.CodeForKind(f.Kind)
 	}
 	info := &errdetails.ErrorInfo{Reason: string(reason), Domain: ErrorDomain}

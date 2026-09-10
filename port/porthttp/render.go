@@ -47,7 +47,11 @@ func WithObserver(fn func(context.Context, error)) RenderOption {
 }
 
 func WithMaxViolations(n int) RenderOption {
-	return func(r *EnvelopeRenderer) { r.max = n }
+	return func(r *EnvelopeRenderer) {
+		if n > 0 && n <= MaxViolations {
+			r.max = n
+		}
+	}
 }
 
 func WithRetryAfter(seconds int) RenderOption {

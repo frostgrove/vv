@@ -128,6 +128,13 @@ func (h *History) inspectExact(ctx context.Context, exactTarget ExactTargetView,
 		}
 		return StoredRevision{}, AccessGrantSpec{}, ExactQueryView{}, auditErrorAt(ErrDenied, "history.access")
 	}
+	activeManifest, found := h.value.runtime.recorder.value.catalogs.Manifest(h.value.runtime.recorder.value.catalogs.Active())
+	if !found || !validManifest(activeManifest) {
+		return StoredRevision{}, AccessGrantSpec{}, ExactQueryView{}, auditErrorAt(ErrWrongCatalog, "history.catalog")
+	}
+	if _, err := currentExactCeiling(activeManifest.View().Declarations, grant.Resources, grant.Actions, grant.Classifications); err != nil {
+		return StoredRevision{}, AccessGrantSpec{}, ExactQueryView{}, auditErrorAt(ErrDenied, "history.access")
+	}
 	for _, classification := range grant.Classifications {
 		if classification != Public {
 			return StoredRevision{}, AccessGrantSpec{}, ExactQueryView{}, auditErrorAt(ErrUnsupported, "history.access_evidence")
@@ -172,6 +179,9 @@ func (h *History) inspectExact(ctx context.Context, exactTarget ExactTargetView,
 	if err := verifyHistoryRevisionEvidence(runtimeContext, h.value.runtime.recorder.value.catalogs, h.value.runtime.verifier, entries[0].Revision); err != nil {
 		return StoredRevision{}, AccessGrantSpec{}, ExactQueryView{}, err
 	}
+	if err := validateCurrentExactEvidence(activeManifest.View().Declarations, exactTarget, grant, entries[0].Revision.View().Revision); err != nil {
+		return StoredRevision{}, AccessGrantSpec{}, ExactQueryView{}, err
+	}
 	return entries[0].Revision, grant, query.View(), nil
 }
 
@@ -207,6 +217,11 @@ func normalizeExactAccess(catalogs *CatalogSet, kind AccessTargetKind, exact Exa
 	if err != nil {
 		return historyTarget{}, NormalizedQueryView{}, err
 	}
+	retained, found := catalogs.Manifest(exactTargetRevision(exact).Catalog)
+	if !found || !validManifest(retained) {
+		return historyTarget{}, NormalizedQueryView{}, auditErrorAt(ErrWrongCatalog, "history.catalog")
+	}
+	mergeRetainedExactScope(&ceiling, retained.View().Declarations, resources, actions)
 	query, err := normalizeExactQuery(input.Query, class, actions, ceiling.fields, ceiling.context)
 	if err != nil {
 		return historyTarget{}, NormalizedQueryView{}, err
@@ -234,52 +249,55 @@ type exactCeiling struct {
 	scopeMode     StorageMode
 }
 
+type exactResourceAction struct {
+	resource Resource
+	action   Action
+}
+
 func currentExactCeiling(declarations []DeclarationDescription, resources []Resource, actions []Action, classifications []Classification) (exactCeiling, error) {
 	matchedResources := make(map[Resource]struct{}, len(resources))
 	matchedActions := make(map[Action]struct{}, len(actions))
 	allowedClassifications := make(map[Classification]struct{})
+	fieldCoverage := make(map[FieldName]int)
+	contextCoverage := make(map[ContextFactKind]int)
+	applicable := 0
 	var ceiling exactCeiling
 	for _, declaration := range declarations {
 		if !slices.Contains(resources, declaration.Resource) {
 			continue
 		}
-		declarationActions := exactDeclarationActions(declaration)
-		matched := false
-		for _, action := range declarationActions {
+		for _, action := range exactDeclarationActions(declaration) {
 			if !slices.Contains(actions, action) {
 				continue
 			}
-			matched = true
+			applicable++
+			matchedResources[declaration.Resource] = struct{}{}
 			matchedActions[action] = struct{}{}
-		}
-		if !matched {
-			continue
-		}
-		matchedResources[declaration.Resource] = struct{}{}
-		if declaration.Subject.Classification.Valid() {
-			allowedClassifications[declaration.Subject.Classification] = struct{}{}
-		}
-		if declaration.TargetPresent && declaration.Target.Classification.Valid() {
-			allowedClassifications[declaration.Target.Classification] = struct{}{}
-		}
-		for _, field := range declaration.Fields {
-			ceiling.fields = append(ceiling.fields, field.Name)
-			allowedClassifications[field.Classification] = struct{}{}
-		}
-		for _, fact := range declaration.Context.Facts {
-			ceiling.context = append(ceiling.context, fact.Kind)
-			allowedClassifications[fact.Classification] = struct{}{}
-			if fact.Kind == ScopeContext {
-				ceiling.scopeDeclared = true
-				if ceiling.scopeMode == 0 {
-					ceiling.scopeMode = fact.Mode
-				} else if ceiling.scopeMode != fact.Mode {
-					ceiling.scopeMode = AsProtected
+			if coordinate, present := exactDeclarationSubject(declaration, action); present {
+				allowedClassifications[coordinate.Classification] = struct{}{}
+			}
+			if coordinate, present := exactDeclarationTarget(declaration, action); present {
+				allowedClassifications[coordinate.Classification] = struct{}{}
+			}
+			for _, field := range exactDeclarationFields(declaration, action) {
+				fieldCoverage[field.Name]++
+				allowedClassifications[field.Classification] = struct{}{}
+			}
+			for _, fact := range declaration.Context.Facts {
+				contextCoverage[fact.Kind]++
+				allowedClassifications[fact.Classification] = struct{}{}
+				if fact.Kind == ScopeContext {
+					ceiling.scopeDeclared = true
+					if ceiling.scopeMode == 0 {
+						ceiling.scopeMode = fact.Mode
+					} else if ceiling.scopeMode != fact.Mode {
+						ceiling.scopeMode = AsProtected
+					}
 				}
 			}
 		}
 	}
-	if len(matchedResources) != len(resources) || len(matchedActions) != len(actions) {
+	if applicable == 0 || len(matchedResources) != len(resources) || len(matchedActions) != len(actions) {
 		return exactCeiling{}, auditErrorAt(ErrRefused, "history.exact_ceiling")
 	}
 	for _, classification := range classifications {
@@ -287,14 +305,171 @@ func currentExactCeiling(declarations []DeclarationDescription, resources []Reso
 			return exactCeiling{}, auditErrorAt(ErrRefused, "history.exact_ceiling")
 		}
 	}
+	for field, count := range fieldCoverage {
+		if count == applicable {
+			ceiling.fields = append(ceiling.fields, field)
+		}
+	}
+	for fact, count := range contextCoverage {
+		if count == applicable {
+			ceiling.context = append(ceiling.context, fact)
+		}
+	}
 	slices.Sort(ceiling.fields)
-	ceiling.fields = slices.Compact(ceiling.fields)
 	slices.Sort(ceiling.context)
-	ceiling.context = slices.Compact(ceiling.context)
 	return ceiling, nil
 }
 
+func mergeRetainedExactScope(ceiling *exactCeiling, declarations []DeclarationDescription, resources []Resource, actions []Action) {
+	for _, declaration := range declarations {
+		if !slices.Contains(resources, declaration.Resource) {
+			continue
+		}
+		for _, action := range exactDeclarationActions(declaration) {
+			if !slices.Contains(actions, action) {
+				continue
+			}
+			for _, fact := range declaration.Context.Facts {
+				if fact.Kind != ScopeContext {
+					continue
+				}
+				if !ceiling.scopeDeclared {
+					ceiling.scopeDeclared = true
+					ceiling.scopeMode = fact.Mode
+				} else if ceiling.scopeMode != fact.Mode {
+					ceiling.scopeMode = AsProtected
+				}
+			}
+		}
+	}
+}
+
+func validateCurrentExactEvidence(declarations []DeclarationDescription, target ExactTargetView, grant AccessGrantSpec, revision RevisionWireView) error {
+	allowed := make(map[exactResourceAction]exactPairPolicy)
+	for _, declaration := range declarations {
+		if !slices.Contains(grant.Resources, declaration.Resource) {
+			continue
+		}
+		for _, action := range exactDeclarationActions(declaration) {
+			if slices.Contains(grant.Actions, action) {
+				allowed[exactResourceAction{resource: declaration.Resource, action: action}] = exactPairPolicy{declaration: declaration, action: action}
+			}
+		}
+	}
+	items := revision.Items
+	if target.Kind == ExactItemTarget {
+		if int(target.Item.Ordinal) >= len(items) || items[target.Item.Ordinal].Ordinal != target.Item.Ordinal {
+			return auditErrorAt(ErrIntegrity, "history.exact_item")
+		}
+		items = items[target.Item.Ordinal : target.Item.Ordinal+1]
+	}
+	policies := make([]exactPairPolicy, 0, len(items))
+	for _, item := range items {
+		if !slices.Contains(grant.Resources, item.Resource) || !slices.Contains(grant.Actions, item.Action) {
+			continue
+		}
+		policy, current := allowed[exactResourceAction{resource: item.Resource, action: item.Action}]
+		if !current || !exactItemKindMatches(policy.declaration.Kind, item.Kind) {
+			return auditErrorAt(ErrRefused, "history.exact_pair")
+		}
+		if err := validateCurrentExactItem(policy, item, grant); err != nil {
+			return err
+		}
+		policies = append(policies, policy)
+	}
+	for _, fact := range revision.Context {
+		if !slices.Contains(grant.Context, fact.Kind) || !slices.Contains(grant.Classifications, fact.Classification) {
+			continue
+		}
+		for _, policy := range policies {
+			current, found := exactContextFact(policy.declaration.Context, fact.Kind)
+			if !found || current.Classification != fact.Classification || current.Mode != fact.Mode || !slices.Contains(current.Allowed, fact.Provenance) {
+				return auditErrorAt(ErrRefused, "history.exact_context")
+			}
+		}
+	}
+	if slices.Contains(grant.Context, ActorChainContext) {
+		for _, actor := range revision.Actors {
+			if !slices.Contains(grant.Classifications, actor.Classification) {
+				continue
+			}
+			for _, policy := range policies {
+				current, found := exactContextFact(policy.declaration.Context, ActorChainContext)
+				if !found || current.Classification != actor.Classification || current.Mode != actor.Mode || !slices.Contains(current.Allowed, actor.Provenance) {
+					return auditErrorAt(ErrRefused, "history.exact_actors")
+				}
+			}
+		}
+	}
+	return nil
+}
+
+type exactPairPolicy struct {
+	declaration DeclarationDescription
+	action      Action
+}
+
+func validateCurrentExactItem(policy exactPairPolicy, item ItemWireView, grant AccessGrantSpec) error {
+	if storedValueProjected(item.Subject, grant) {
+		current, present := exactDeclarationSubject(policy.declaration, policy.action)
+		if !present || current.Classification != item.Subject.Classification || current.Mode != item.Subject.Mode {
+			return auditErrorAt(ErrRefused, "history.exact_subject")
+		}
+	}
+	if storedValueProjected(item.Target, grant) {
+		current, present := exactDeclarationTarget(policy.declaration, policy.action)
+		if !present || current.Classification != item.Target.Classification || current.Mode != item.Target.Mode {
+			return auditErrorAt(ErrRefused, "history.exact_target")
+		}
+	}
+	fields := exactDeclarationFields(policy.declaration, policy.action)
+	for _, value := range item.Values {
+		if storedFieldProjected(value, grant) && !exactFieldAllows(fields, value) {
+			return auditErrorAt(ErrRefused, "history.exact_field")
+		}
+	}
+	for _, change := range item.Changes {
+		if storedFieldProjected(change.Before, grant) && !exactFieldAllows(fields, change.Before) || storedFieldProjected(change.After, grant) && !exactFieldAllows(fields, change.After) {
+			return auditErrorAt(ErrRefused, "history.exact_field")
+		}
+	}
+	return nil
+}
+
+func storedValueProjected(value StoredValueView, grant AccessGrantSpec) bool {
+	return value.Classification.Valid() && slices.Contains(grant.Classifications, value.Classification)
+}
+
+func storedFieldProjected(value StoredValueView, grant AccessGrantSpec) bool {
+	return slices.Contains(grant.Fields, value.Field) && storedValueProjected(value, grant)
+}
+
+func exactFieldAllows(fields []FieldDescription, stored StoredValueView) bool {
+	for _, field := range fields {
+		if field.Name == stored.Field && field.Classification == stored.Classification && field.Mode == stored.Mode && field.Codec.Name == stored.Codec.Name && slices.Contains(field.Codec.ReadVersions, stored.Codec.WriteVersion) {
+			return true
+		}
+	}
+	return false
+}
+
+func exactContextFact(policy ContextPolicyDescription, kind ContextFactKind) (ContextFactDescription, bool) {
+	for _, fact := range policy.Facts {
+		if fact.Kind == kind {
+			return fact, true
+		}
+	}
+	return ContextFactDescription{}, false
+}
+
+func exactItemKindMatches(declaration DeclarationKind, item ItemKind) bool {
+	return declaration == ResourceDeclaration && item == EntityItem || declaration == EventDeclaration && item == EventItem || declaration == AttemptDeclaration && item == AttemptItem
+}
+
 func exactDeclarationActions(declaration DeclarationDescription) []Action {
+	if declaration.Kind == AttemptDeclaration {
+		return attemptActions()
+	}
 	if declaration.Action != "" {
 		return []Action{declaration.Action}
 	}
@@ -303,6 +478,50 @@ func exactDeclarationActions(declaration DeclarationDescription) []Action {
 		result[index] = Action(action)
 	}
 	return result
+}
+
+func exactDeclarationSubject(declaration DeclarationDescription, _ Action) (SubjectDescription, bool) {
+	if declaration.Kind == ResourceDeclaration && declaration.Subject.Classification.Valid() {
+		return declaration.Subject, true
+	}
+	return SubjectDescription{}, false
+}
+
+func exactDeclarationTarget(declaration DeclarationDescription, action Action) (SubjectDescription, bool) {
+	if declaration.Kind == EventDeclaration && declaration.TargetPresent {
+		return declaration.Target, true
+	}
+	if declaration.Kind == AttemptDeclaration && action == AttemptStartedAction && declaration.Attempt.Start.TargetPresent {
+		return declaration.Attempt.Start.Target, true
+	}
+	return SubjectDescription{}, false
+}
+
+func exactDeclarationFields(declaration DeclarationDescription, action Action) []FieldDescription {
+	if declaration.Kind != AttemptDeclaration {
+		return declaration.Fields
+	}
+	switch action {
+	case AttemptStartedAction:
+		return declaration.Attempt.Start.Fields
+	case AttemptCheckpointAction:
+		return declaration.Attempt.Checkpoint.Fields
+	}
+	transition := AttemptTransitionKind(0)
+	switch action {
+	case AttemptSucceededAction:
+		transition = AttemptSucceededTransition
+	case AttemptFailedAction:
+		transition = AttemptFailedTransition
+	case AttemptCancelledAction:
+		transition = AttemptCancelledTransition
+	}
+	for _, phase := range declaration.Attempt.Finish {
+		if phase.Transition == transition {
+			return phase.Fields
+		}
+	}
+	return nil
 }
 
 func normalizeExactQuery(input Query, class QueryClass, actions []Action, fields []FieldName, facts []ContextFactKind) (NormalizedQueryView, error) {

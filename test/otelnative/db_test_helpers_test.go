@@ -58,7 +58,11 @@ func newDatabaseTelemetryFixture(t *testing.T, pools []DatabasePoolName, sampler
 		metric.WithReader(reader),
 		metric.WithResource(telemetryResource),
 	}
-	metricOptions = append(metricOptions, DatabaseMetricOptions(pools...)...)
+	metricViews, err := DatabaseMetricOptions(pools...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	metricOptions = append(metricOptions, metricViews...)
 	meterProvider := metric.NewMeterProvider(metricOptions...)
 	fixture := &databaseTelemetryFixture{
 		providers:  Providers{Tracer: tracerProvider, Meter: meterProvider},

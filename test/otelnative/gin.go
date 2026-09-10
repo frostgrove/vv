@@ -2,6 +2,8 @@ package otelnative
 
 import (
 	"errors"
+	"strings"
+	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
@@ -16,7 +18,7 @@ func GinMiddleware(providers Providers, routes RouteTable, mode IngressMode, ser
 	if err := mode.validate(); err != nil {
 		return nil, err
 	}
-	if serverName == "" {
+	if len(serverName) == 0 || len(serverName) > maxNativeServerNameLength || !utf8.ValidString(serverName) || strings.TrimSpace(serverName) == "" {
 		return nil, ErrInvalidServerName
 	}
 	tracerProvider := scopedTracerProvider{
@@ -30,13 +32,15 @@ func GinMiddleware(providers Providers, routes RouteTable, mode IngressMode, ser
 			return fallbackHTTPName
 		},
 	}
-	return otelgin.Middleware(
-		serverName,
-		otelgin.WithTracerProvider(tracerProvider),
-		otelgin.WithMeterProvider(providers.Meter),
-		otelgin.WithPropagators(propagatorFor(mode)),
-		otelgin.WithSpanNameFormatter(func(ctx *gin.Context) string {
-			return routes.SpanName(ctx.Request.Method, ctx.FullPath())
-		}),
-	), nil
+	return runNativeAssembly(func() (gin.HandlerFunc, error) {
+		return otelgin.Middleware(
+			serverName,
+			otelgin.WithTracerProvider(tracerProvider),
+			otelgin.WithMeterProvider(providers.Meter),
+			otelgin.WithPropagators(propagatorFor(mode)),
+			otelgin.WithSpanNameFormatter(func(ctx *gin.Context) string {
+				return routes.SpanName(ctx.Request.Method, ctx.FullPath())
+			}),
+		), nil
+	})
 }

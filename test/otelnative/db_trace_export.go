@@ -27,23 +27,35 @@ func NewDatabaseSpanExporter(next sdktrace.SpanExporter, policy DatabaseProjecti
 	if nilInterface(next) {
 		return nil, ErrInvalidDatabaseSpanExporter
 	}
-	return &databaseSpanExporter{next: next, policy: compileDatabaseProjectionPolicy(policy)}, nil
+	compiled, err := compileDatabaseProjectionPolicy(policy)
+	if err != nil {
+		return nil, err
+	}
+	return &databaseSpanExporter{next: next, policy: compiled}, nil
 }
 
-func compileDatabaseProjectionPolicy(policy DatabaseProjectionPolicy) databaseProjectionPolicy {
+func compileDatabaseProjectionPolicy(policy DatabaseProjectionPolicy) (databaseProjectionPolicy, error) {
+	if len(policy.PoolNames) > maxNativeDatabasePools {
+		return databaseProjectionPolicy{}, ErrInvalidProjectionPolicy
+	}
+	resources, err := compileNativeResources(policy.ResourceAttributes)
+	if err != nil {
+		return databaseProjectionPolicy{}, err
+	}
 	compiled := databaseProjectionPolicy{
 		pools:     make(map[string]struct{}, len(policy.PoolNames)),
-		resources: make(map[string]attribute.Value, len(policy.ResourceAttributes)),
+		resources: resources,
 	}
 	for _, pool := range policy.PoolNames {
-		if validDatabasePoolName(pool.value) {
-			compiled.pools[pool.value] = struct{}{}
+		if !validDatabasePoolName(pool.value) {
+			return databaseProjectionPolicy{}, ErrInvalidProjectionPolicy
 		}
+		if _, duplicate := compiled.pools[pool.value]; duplicate {
+			return databaseProjectionPolicy{}, ErrInvalidProjectionPolicy
+		}
+		compiled.pools[pool.value] = struct{}{}
 	}
-	for _, item := range policy.ResourceAttributes {
-		compiled.resources[string(item.Key)] = item.Value
-	}
-	return compiled
+	return compiled, nil
 }
 
 type databaseSpanExporter struct {
@@ -52,13 +64,16 @@ type databaseSpanExporter struct {
 }
 
 func (e *databaseSpanExporter) ExportSpans(ctx context.Context, spans []sdktrace.ReadOnlySpan) error {
-	projected := make([]sdktrace.ReadOnlySpan, len(spans))
-	for index, span := range spans {
-		if _, known := databaseScope(span.InstrumentationScope()); !known {
-			projected[index] = span
+	projected := make([]sdktrace.ReadOnlySpan, 0, len(spans))
+	for _, span := range spans {
+		scope, known := databaseScope(span.InstrumentationScope())
+		if !known {
+			projected = append(projected, span)
 			continue
 		}
-		projected[index] = projectDatabaseSpan(span, e.policy)
+		if scope.Name != "" {
+			projected = append(projected, projectDatabaseSpan(span, e.policy))
+		}
 	}
 	return e.next.ExportSpans(ctx, projected)
 }

@@ -3,6 +3,9 @@ package crud_test
 import (
 	"context"
 	"errors"
+	"os"
+	"os/exec"
+	"strings"
 	"testing"
 	"time"
 
@@ -114,6 +117,51 @@ func assertScopeFailure(t *testing.T, ctx context.Context, source any, reason cr
 	var scoped *crud.ExecutorScopeError
 	if !errors.As(err, &scoped) || scoped.Reason != reason {
 		t.Fatalf("scope error = %#v, want reason %q", scoped, reason)
+	}
+}
+
+func TestInNewTxPanicNilWithNilRecoverRollsBackAndPropagates(t *testing.T) {
+	const childKey = "VV_CRUD_PANICNIL_CHILD"
+	if os.Getenv(childKey) != "1" {
+		executable, err := os.Executable()
+		if err != nil {
+			t.Fatal(err)
+		}
+		command := exec.Command(executable, "-test.run=^TestInNewTxPanicNilWithNilRecoverRollsBackAndPropagates$", "-test.count=1")
+		environment := make([]string, 0, len(os.Environ())+2)
+		for _, variable := range os.Environ() {
+			key, _, found := strings.Cut(variable, "=")
+			if found && (strings.EqualFold(key, "GODEBUG") || key == childKey) {
+				continue
+			}
+			environment = append(environment, variable)
+		}
+		command.Env = append(environment, "GODEBUG=panicnil=1", childKey+"=1")
+		if output, err := command.CombinedOutput(); err != nil {
+			t.Fatalf("panic(nil) child failed: %v\n%s", err, output)
+		}
+		return
+	}
+
+	tx := &fakeTx{}
+	source := beginnerSource{named: srcOn(dbA, "panicnil"), tx: tx}
+	panicked := false
+	returned := false
+	func() {
+		defer func() {
+			if returned {
+				return
+			}
+			_ = recover()
+			panicked = true
+		}()
+		_ = crud.InNewTx(context.Background(), source, func(context.Context) error {
+			panic(nil)
+		})
+		returned = true
+	}()
+	if !panicked || !tx.rolledBack || tx.committed {
+		t.Fatalf("panicked=%t rollback=%t commit=%t", panicked, tx.rolledBack, tx.committed)
 	}
 }
 

@@ -4,12 +4,16 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/frostgrove/vv/crud/query"
+	"github.com/frostgrove/vv/errs"
+	"github.com/frostgrove/vv/port/porthttp"
 	"github.com/frostgrove/vv/remote"
 )
 
@@ -189,4 +193,113 @@ func TestADirectBulkDeleteWithNoIDsUsesTheEmptySetSpelling(t *testing.T) {
 	if method != http.MethodPost || path != "/bulk-delete" || string(body) != `{"ids":null}` {
 		t.Fatalf("route = %s %s %s, want POST /bulk-delete {\"ids\":null}", method, path, body)
 	}
+}
+
+func TestALocalizedHTTPViolationReachesTheRemoteCallerWhole(t *testing.T) {
+	envelope := porthttp.Envelope{
+		Type: "error",
+		Errors: porthttp.Groups{
+			Validation: []errs.Violation{{
+				Path:          errs.Path{errs.Named("email")},
+				Code:          errs.CodeUnique,
+				Message:       "déjà pris",
+				MessageLocale: "fr",
+			}},
+		},
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Language", "fr")
+		w.WriteHeader(http.StatusConflict)
+		if err := json.NewEncoder(w).Encode(envelope); err != nil {
+			t.Errorf("encoding response: %v", err)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	_, err := Transport(server.URL).Do(context.Background(), &remote.Call{Method: remote.MethodGet, ID: "42"})
+	fault, ok := errs.AsFault(err)
+	if !ok {
+		t.Fatalf("localized response = %T %v, want fault", err, err)
+	}
+	if len(fault.Violations) != 1 {
+		t.Fatalf("localized response carried %d violations", len(fault.Violations))
+	}
+	violation := fault.Violations[0]
+	if violation.Path.String() != "email" || violation.Code != errs.CodeUnique || violation.Message != "déjà pris" || violation.MessageLocale != "fr" {
+		t.Fatalf("localized violation = %+v", violation)
+	}
+}
+
+func TestMalformedOrForeignHTTPEnvelopesRemainProtocolErrors(t *testing.T) {
+	cases := map[string]string{
+		"foreign error object": `{"type":"error","message":"no route matched"}`,
+		"invalid locale":       `{"type":"error","errors":{"general":[{"error_code":"internal","message":"x","message_locale":"fr_CA"}]}}`,
+		"locale without text":  `{"type":"error","errors":{"general":[{"error_code":"internal","message_locale":"fr"}]}}`,
+		"duplicate code":       `{"type":"error","errors":{"general":[{"error_code":"internal","error_code":"conflict"}]}}`,
+	}
+	for name, body := range cases {
+		t.Run(name, func(t *testing.T) {
+			err := fault(remote.MethodGet, "GET http://peer.invalid/widgets/42", "404 Not Found", http.StatusNotFound, []byte(body))
+			var protocol *remote.ProtocolError
+			if !errors.As(err, &protocol) {
+				t.Fatalf("malformed peer body = %T %v, want ProtocolError", err, err)
+			}
+		})
+	}
+}
+
+func TestRemoteHTTPReconstructionKeepsTheHardGlobalViolationBoundary(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		validation int
+		general    int
+		partial    bool
+	}{
+		{"exactly one hundred", porthttp.MaxViolations, 0, false},
+		{"one hundred and one", porthttp.MaxViolations + 1, 0, true},
+		{"split across groups", porthttp.MaxViolations - 1, 2, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			raw := remoteEnvelope(tc.validation, tc.general)
+			err := fault(remote.MethodGet, "GET http://peer.invalid/widgets/42", "422 Unprocessable Entity", http.StatusUnprocessableEntity, raw)
+			decoded, ok := errs.AsFault(err)
+			if !ok {
+				t.Fatalf("bounded peer body = %T %v, want fault", err, err)
+			}
+			if len(decoded.Violations) != porthttp.MaxViolations || decoded.Partial != tc.partial {
+				t.Fatalf("%d+%d violations became %d with partial=%v", tc.validation, tc.general, len(decoded.Violations), decoded.Partial)
+			}
+			if decoded.Violations[0].Code != "v000" {
+				t.Fatalf("first reconstructed code = %q, want v000", decoded.Violations[0].Code)
+			}
+			wantLast := errs.Code("v099")
+			if tc.validation == porthttp.MaxViolations-1 {
+				wantLast = "g000"
+			}
+			if got := decoded.Violations[len(decoded.Violations)-1].Code; got != wantLast {
+				t.Fatalf("last reconstructed code = %q, want %q", got, wantLast)
+			}
+		})
+	}
+}
+
+func remoteEnvelope(validation, general int) []byte {
+	var body strings.Builder
+	body.WriteString(`{"type":"error","errors":{"validation":[`)
+	for i := 0; i < validation; i++ {
+		if i > 0 {
+			body.WriteByte(',')
+		}
+		fmt.Fprintf(&body, `{"field":["f%d"],"error_code":"v%03d"}`, i, i)
+	}
+	body.WriteString(`],"general":[`)
+	for i := 0; i < general; i++ {
+		if i > 0 {
+			body.WriteByte(',')
+		}
+		fmt.Fprintf(&body, `{"error_code":"g%03d"}`, i)
+	}
+	body.WriteString(`]}}`)
+	return []byte(body.String())
 }

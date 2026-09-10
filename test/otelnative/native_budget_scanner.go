@@ -31,6 +31,7 @@ type NativeBudgetScanner struct {
 }
 
 func NewNativeBudgetScanner(manifest NativeBudgetManifest) (*NativeBudgetScanner, error) {
+	manifest = snapshotNativeBudgetManifest(manifest)
 	if err := manifest.Validate(); err != nil {
 		return nil, err
 	}
@@ -45,7 +46,7 @@ func NewNativeBudgetScanner(manifest NativeBudgetManifest) (*NativeBudgetScanner
 		scanner.resources[nativeStringTuple(item.SchemaURL, item.Attributes)] = item.ID
 	}
 	for _, item := range manifest.Scopes {
-		scanner.scopes[nativeStringTuple(item.Name+"\x00"+item.Version+"\x00"+item.SchemaURL, item.Attributes)] = item.ID
+		scanner.scopes[nativeStringTuple(nativeTuple(item.Name, item.Version, item.SchemaURL), item.Attributes)] = item.ID
 	}
 	for _, item := range manifest.Instruments {
 		key := nativeInstrumentKey(item.Resource, item.Scope, item.Name)
@@ -92,7 +93,7 @@ func (s *NativeBudgetScanner) scan(metrics metricdata.ResourceMetrics, expected 
 		if err != nil {
 			return err
 		}
-		scopeTuple := resourceID + "\x00" + scopeID
+		scopeTuple := nativeTuple(resourceID, scopeID)
 		if _, duplicate := batchScopes[scopeTuple]; duplicate {
 			return nativeBudgetViolation("duplicate scope tuple %q/%q", resourceID, scopeID)
 		}
@@ -124,6 +125,9 @@ func (s *NativeBudgetScanner) scan(metrics metricdata.ResourceMetrics, expected 
 			}
 			if metricType != instrument.Type || measurement.Unit != instrument.Unit || temporality != instrument.Temporality || !sameNativeMonotonicity(monotonic, instrument.Monotonic) {
 				return nativeBudgetViolation("instrument %q shape is type=%q unit=%q temporality=%q monotonic=%v", measurement.Name, metricType, measurement.Unit, temporality, monotonic)
+			}
+			if len(points) == 0 {
+				return nativeBudgetViolation("instrument %q has no datapoints", measurement.Name)
 			}
 			if pending[key] == nil {
 				pending[key] = make(map[string]struct{}, len(points))
@@ -187,7 +191,7 @@ func (s *NativeBudgetScanner) exactRoster(resourceID string, expected []NativeBu
 			return nil, nil, nativeBudgetViolation("exact roster duplicates instrument tuple %q/%q/%q", item.Resource, item.Scope, item.Name)
 		}
 		instruments[key] = struct{}{}
-		scopes[item.Resource+"\x00"+item.Scope] = struct{}{}
+		scopes[nativeTuple(item.Resource, item.Scope)] = struct{}{}
 	}
 	return instruments, scopes, nil
 }
@@ -221,7 +225,7 @@ func (s *NativeBudgetScanner) matchScope(value instrumentation.Scope) (string, e
 	if err != nil {
 		return "", nativeBudgetViolation("scope %q: %v", value.Name, err)
 	}
-	tuple := nativeStringTuple(value.Name+"\x00"+value.Version+"\x00"+value.SchemaURL, attributes)
+	tuple := nativeStringTuple(nativeTuple(value.Name, value.Version, value.SchemaURL), attributes)
 	id, known := s.scopes[tuple]
 	if !known {
 		return "", nativeBudgetViolation("unknown scope tuple %q/%q/%q", value.Name, value.Version, value.SchemaURL)
@@ -252,25 +256,60 @@ func (s *NativeBudgetScanner) validateSeries(instrument NativeBudgetInstrument, 
 	for _, key := range keys {
 		definition := declared[key]
 		value, present := actual[key]
-		builder.WriteString(key)
-		builder.WriteByte('=')
+		appendNativeTuplePart(&builder, key)
 		if !present {
 			if !definition.AllowAbsent {
 				return "", fmt.Errorf("attribute %q is absent", key)
 			}
-			builder.WriteString("<absent>")
-			builder.WriteByte(0)
+			appendNativeTuplePart(&builder, "absent")
 			continue
 		}
 		if err := validateNativeDomainValue(s.manifest.Domains[definition.Domain], value); err != nil {
 			return "", fmt.Errorf("attribute %q: %w", key, err)
 		}
-		builder.WriteString(value.Value.Type().String())
-		builder.WriteByte(':')
-		builder.WriteString(value.Value.Emit())
-		builder.WriteByte(0)
+		appendNativeTuplePart(&builder, "present")
+		appendNativeTuplePart(&builder, value.Value.Type().String())
+		appendNativeTuplePart(&builder, value.Value.Emit())
 	}
 	return builder.String(), nil
+}
+
+func snapshotNativeBudgetManifest(source NativeBudgetManifest) NativeBudgetManifest {
+	clone := source
+	clone.Domains = make(map[string]NativeBudgetDomain, len(source.Domains))
+	for name, domain := range source.Domains {
+		domain.StringValues = append([]string(nil), domain.StringValues...)
+		if domain.Int64Range != nil {
+			value := *domain.Int64Range
+			domain.Int64Range = &value
+		}
+		clone.Domains[name] = domain
+	}
+	clone.Resources = append([]NativeBudgetResource(nil), source.Resources...)
+	for index := range clone.Resources {
+		clone.Resources[index].Attributes = cloneNativeStringMap(source.Resources[index].Attributes)
+	}
+	clone.Scopes = append([]NativeBudgetScope(nil), source.Scopes...)
+	for index := range clone.Scopes {
+		clone.Scopes[index].Attributes = cloneNativeStringMap(source.Scopes[index].Attributes)
+	}
+	clone.Instruments = append([]NativeBudgetInstrument(nil), source.Instruments...)
+	for index := range clone.Instruments {
+		clone.Instruments[index].Attributes = append([]NativeBudgetAttribute(nil), source.Instruments[index].Attributes...)
+		if source.Instruments[index].Monotonic != nil {
+			value := *source.Instruments[index].Monotonic
+			clone.Instruments[index].Monotonic = &value
+		}
+	}
+	return clone
+}
+
+func cloneNativeStringMap(source map[string]string) map[string]string {
+	clone := make(map[string]string, len(source))
+	for key, value := range source {
+		clone[key] = value
+	}
+	return clone
 }
 
 func nativeMetricShape(data metricdata.Aggregation) (string, string, *bool, []attribute.Set, error) {

@@ -3,6 +3,7 @@ package otelnative
 import (
 	"context"
 	"errors"
+	"runtime"
 	"slices"
 	"sync/atomic"
 	"testing"
@@ -35,10 +36,14 @@ func TestRuntimeRecipeStartsExactlyOnceForTheSuppliedProvider(t *testing.T) {
 	options = append(options, RuntimeMetricOptions()...)
 	provider := sdkmetric.NewMeterProvider(options...)
 	counted := &countingMeterProvider{MeterProvider: provider}
-	if err = StartRuntimeMetrics(counted); err != nil {
+	runtimeMetrics, err := NewRuntimeMetrics(counted)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err = StartRuntimeMetrics(counted); err != nil {
+	if err = runtimeMetrics.Start(); err != nil {
+		t.Fatal(err)
+	}
+	if err = runtimeMetrics.Start(); err != nil {
 		t.Fatal(err)
 	}
 	if got := counted.calls.Load(); got != 1 {
@@ -71,16 +76,49 @@ func TestRuntimeRecipeStartsExactlyOnceForTheSuppliedProvider(t *testing.T) {
 	}
 }
 
-func TestRuntimeRecipeRejectsUnownedProviderIdentity(t *testing.T) {
-	if err := StartRuntimeMetrics(nil); !errors.Is(err, ErrInvalidRuntimeMeterProvider) {
+func TestRuntimeRecipeRejectsInvalidHandles(t *testing.T) {
+	if runtimeMetrics, err := NewRuntimeMetrics(nil); runtimeMetrics != nil || !errors.Is(err, ErrInvalidRuntimeMeterProvider) {
 		t.Fatalf("nil provider error=%v", err)
 	}
 	provider := nonComparableMeterProvider{
 		MeterProvider: sdkmetric.NewMeterProvider(),
 		identity:      []int{1},
 	}
-	if err := StartRuntimeMetrics(provider); !errors.Is(err, ErrUnidentifiableRuntimeMeterProvider) {
-		t.Fatalf("non-comparable provider error=%v", err)
+	runtimeMetrics, err := NewRuntimeMetrics(provider)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = runtimeMetrics.Start(); err != nil {
+		t.Fatal(err)
+	}
+	var nilRuntime *RuntimeMetrics
+	if err = nilRuntime.Start(); !errors.Is(err, ErrInvalidRuntimeMetrics) {
+		t.Fatalf("nil handle error=%v", err)
+	}
+	var typedNil *countingMeterProvider
+	if runtimeMetrics, err = NewRuntimeMetrics(typedNil); runtimeMetrics != nil || !errors.Is(err, ErrInvalidRuntimeMeterProvider) {
+		t.Fatalf("typed-nil provider result/error=%#v/%v", runtimeMetrics, err)
+	}
+}
+
+func TestRuntimeHandleContainsHostileStartAndRemainsTerminal(t *testing.T) {
+	for _, mode := range []string{"panic", "panicnil", "goexit"} {
+		t.Run(mode, func(t *testing.T) {
+			provider := &hostileRuntimeMeterProvider{MeterProvider: sdkmetric.NewMeterProvider(), mode: mode}
+			runtimeMetrics, err := NewRuntimeMetrics(provider)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err = runtimeMetrics.Start(); !errors.Is(err, ErrRuntimeMetricStart) {
+				t.Fatalf("hostile start error=%v", err)
+			}
+			if err = runtimeMetrics.Start(); !errors.Is(err, ErrRuntimeMetricStart) {
+				t.Fatalf("terminal start error=%v", err)
+			}
+			if calls := provider.calls.Load(); calls != 1 {
+				t.Fatalf("meter calls=%d", calls)
+			}
+		})
 	}
 }
 
@@ -97,4 +135,21 @@ func (p *countingMeterProvider) Meter(name string, options ...otelmetric.MeterOp
 type nonComparableMeterProvider struct {
 	otelmetric.MeterProvider
 	identity []int
+}
+
+type hostileRuntimeMeterProvider struct {
+	otelmetric.MeterProvider
+	mode  string
+	calls atomic.Int64
+}
+
+func (provider *hostileRuntimeMeterProvider) Meter(string, ...otelmetric.MeterOption) otelmetric.Meter {
+	provider.calls.Add(1)
+	if provider.mode == "goexit" {
+		runtime.Goexit()
+	}
+	if provider.mode == "panicnil" {
+		panic(nil)
+	}
+	panic("runtime meter")
 }

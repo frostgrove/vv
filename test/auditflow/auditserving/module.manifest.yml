@@ -6,6 +6,14 @@
   "order": 400,
   "contributions": [
     {
+      "symbol": "NewAttempts",
+      "kind": "provide",
+      "source": "inferred-from-signature",
+      "signature_fingerprint": "8d6af2108659348c333dab49e8a7a758b92bfb832c36013f66adc201dfc5dc23",
+      "excluded": false,
+      "confirmed": true
+    },
+    {
       "symbol": "NewHealth",
       "kind": "check",
       "source": "inferred-from-signature",

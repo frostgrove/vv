@@ -1336,6 +1336,23 @@ copying fault content (`port/porthttp/render.go:123-139`).
 **Blast radius:** data disclosure if an application logs the cause without
 redaction
 
+### E-ERRS-16 — A message parameter performs work or expands without a bound
+**Shape:** adversarial input
+**Setup:** A violation parameter is an arbitrary `fmt.Stringer`, a non-finite
+number, or a string larger than a public response should carry.
+**What the consumer does:** It renders the violation through `Messages` or
+`Codes` while the request may already be cancelled.
+**What must happen:** Expansion accepts only deterministic scalar values, never
+invokes application formatting methods, respects cancellation and cannot exceed
+`MaxMessageOutputBytes`. A declined narrow template may fall through to safe
+wording.
+**Today:** ✅ handled
+**Evidence:** The shared message expander formats only scalar reflection kinds,
+rejects non-finite floats and checks the context and byte budget before every
+write. Tests pin named scalar types, panicking `Stringer` values, cancellation,
+safe fallback and the exact output boundary.
+**Blast radius:** none
+
 ## Edge verdict
 
 The worst new failure is a silent wrong response assembled from values the

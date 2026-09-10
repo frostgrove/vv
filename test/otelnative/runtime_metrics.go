@@ -2,7 +2,6 @@ package otelnative
 
 import (
 	"errors"
-	"reflect"
 	"sync"
 
 	otelruntime "go.opentelemetry.io/contrib/instrumentation/runtime"
@@ -14,13 +13,9 @@ import (
 )
 
 var (
-	ErrInvalidRuntimeMeterProvider        = errors.New("otelnative: runtime meter provider is required")
-	ErrUnidentifiableRuntimeMeterProvider = errors.New("otelnative: runtime meter provider must have comparable identity")
-)
-
-var (
-	runtimeStartMu sync.Mutex
-	runtimeStarts  = make(map[metric.MeterProvider]*runtimeStart)
+	ErrInvalidRuntimeMeterProvider = errors.New("otelnative: runtime meter provider is required")
+	ErrInvalidRuntimeMetrics       = errors.New("otelnative: runtime metrics handle is required")
+	ErrRuntimeMetricStart          = errors.New("otelnative: runtime metric start failed")
 )
 
 var runtimeMetricNames = map[string]struct{}{
@@ -34,34 +29,42 @@ var runtimeMetricNames = map[string]struct{}{
 	"go.config.gogc":        {},
 }
 
-type runtimeStart struct {
-	once sync.Once
-	err  error
+type RuntimeMetrics struct {
+	provider metric.MeterProvider
+	once     sync.Once
+	err      error
 }
 
 type RuntimeProjectionPolicy struct {
 	ResourceAttributes []attribute.KeyValue
 }
 
-func StartRuntimeMetrics(provider metric.MeterProvider) error {
+func NewRuntimeMetrics(provider metric.MeterProvider) (*RuntimeMetrics, error) {
 	if nilInterface(provider) {
-		return ErrInvalidRuntimeMeterProvider
+		return nil, ErrInvalidRuntimeMeterProvider
 	}
-	providerType := reflect.TypeOf(provider)
-	if providerType == nil || !providerType.Comparable() {
-		return ErrUnidentifiableRuntimeMeterProvider
+	return &RuntimeMetrics{provider: provider}, nil
+}
+
+func (runtime *RuntimeMetrics) Start() error {
+	if runtime == nil || nilInterface(runtime.provider) {
+		return ErrInvalidRuntimeMetrics
 	}
-	runtimeStartMu.Lock()
-	state := runtimeStarts[provider]
-	if state == nil {
-		state = &runtimeStart{}
-		runtimeStarts[provider] = state
-	}
-	runtimeStartMu.Unlock()
-	state.once.Do(func() {
-		state.err = otelruntime.Start(otelruntime.WithMeterProvider(provider))
+	runtime.once.Do(func() {
+		runtime.err = ErrRuntimeMetricStart
+		runtime.err = safeRuntimeMetricStart(runtime.provider)
 	})
-	return state.err
+	return runtime.err
+}
+
+func safeRuntimeMetricStart(provider metric.MeterProvider) (err error) {
+	_, err = runNativeAssembly(func() (bool, error) {
+		return true, otelruntime.Start(otelruntime.WithMeterProvider(provider))
+	})
+	if err == ErrNativeAssembly {
+		return ErrRuntimeMetricStart
+	}
+	return err
 }
 
 func RuntimeMetricOptions() []sdkmetric.Option {

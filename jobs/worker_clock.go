@@ -140,13 +140,16 @@ func (clock *workerClock) stopTimerChecked(timer Timer) (bool, bool) {
 }
 
 func callWorkerClockNow(source Clock) (now time.Time, err error) {
+	completed := false
 	defer func() {
-		if recover() != nil {
+		_ = recover()
+		if !completed {
 			now = time.Time{}
 			err = ErrInvalid
 		}
 	}()
 	now, err = requiredTime(source.Now(), "worker clock time")
+	completed = true
 	if err != nil {
 		return time.Time{}, ErrInvalid
 	}
@@ -156,13 +159,12 @@ func callWorkerClockNow(source Clock) (now time.Time, err error) {
 func callWorkerClockTimer(source Clock, deadline time.Time) (inner Timer, channel <-chan time.Time, err error) {
 	completed := false
 	defer func() {
-		if recovered := recover(); recovered != nil {
-			channel = nil
-			err = ErrInvalid
-			return
-		}
+		_ = recover()
 		if !completed {
 			stopWorkerTimer(inner)
+			inner = nil
+			channel = nil
+			err = ErrInvalid
 		}
 	}()
 	inner = source.NewTimerAt(deadline)
@@ -220,13 +222,16 @@ func stopWorkerTimerChecked(timer Timer) (stopped bool, valid bool) {
 	if nilInterface(timer) {
 		return false, false
 	}
-	valid = true
+	completed := false
 	defer func() {
-		if recover() != nil {
+		_ = recover()
+		if !completed {
 			stopped = false
 			valid = false
 		}
 	}()
 	stopped = timer.Stop()
+	valid = true
+	completed = true
 	return stopped, valid
 }

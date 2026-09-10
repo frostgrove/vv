@@ -13,8 +13,6 @@ type Log interface {
 	Search(context.Context, StoreQuery) (StoredPage, error)
 }
 
-type AttemptLog interface{}
-
 type SearchProgressView struct {
 	Pages     uint32
 	Cohorts   uint32

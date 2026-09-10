@@ -111,6 +111,7 @@ func TestSpanExportProjectionRemovesEveryUnapprovedField(t *testing.T) {
 	links := []sdktrace.Link{{SpanContext: parent, Attributes: []attribute.KeyValue{attribute.String("secret", projectionSecret)}}}
 	span := tracetest.SpanStub{
 		Name:        "vv.command get",
+		SpanKind:    trace.SpanKindInternal,
 		SpanContext: spanContext,
 		Parent:      parent,
 		Attributes:  attributes,
@@ -172,7 +173,17 @@ func TestSpanExportProjectionDropsUnknownScopeAndInvalidContract(t *testing.T) {
 		},
 		InstrumentationScope: projection.scope,
 	}.Snapshot()
-	if err := exporter.ExportSpans(t.Context(), []sdktrace.ReadOnlySpan{unknownScope, invalidContract}); err != nil {
+	invalidKind := tracetest.SpanStub{
+		Name:     "vv.command get",
+		SpanKind: trace.SpanKindServer,
+		Attributes: []attribute.KeyValue{
+			vvotel.AttrComponent.String(vvotel.ComponentCommand),
+			vvotel.AttrOperationName.String(vvotel.OpCommandGet),
+			vvotel.AttrOperationOutcome.String(vvotel.OutcomeOk),
+		},
+		InstrumentationScope: projection.scope,
+	}.Snapshot()
+	if err := exporter.ExportSpans(t.Context(), []sdktrace.ReadOnlySpan{unknownScope, invalidContract, invalidKind}); err != nil {
 		t.Fatal(err)
 	}
 	if len(downstream.spans) != 0 {
@@ -201,7 +212,7 @@ func TestMetricExportProjectionCopiesAndBoundsDatapointsAndExemplars(t *testing.
 			Attributes: attribute.NewSet(validAttributes...),
 			Value:      1,
 			Exemplars: []metricdata.Exemplar[int64]{
-				{Value: 1, FilteredAttributes: []attribute.KeyValue{vvotel.AttrComponent.String(vvotel.ComponentJobsScheduler), attribute.String("secret", projectionSecret)}, TraceID: []byte{1}, SpanID: []byte{2}},
+				{Value: 1, FilteredAttributes: []attribute.KeyValue{vvotel.AttrComponent.String(vvotel.ComponentJobsScheduler), attribute.String("secret", projectionSecret)}, TraceID: append([]byte{1}, make([]byte, 15)...), SpanID: append([]byte{2}, make([]byte, 7)...)},
 			},
 		},
 		{Attributes: attribute.NewSet(invalidAttributes...), Value: 1},

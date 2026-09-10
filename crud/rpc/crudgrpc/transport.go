@@ -226,10 +226,9 @@ func (this *transport) fault(m remote.Method, where string, err error) error {
 		return fmt.Errorf("crudgrpc: calling %s: %w", where, err)
 	}
 
-	code := errs.Code("")
-	partial := false
-	var vs []errs.Violation
-	mine := false
+	var info *errdetails.ErrorInfo
+	var badRequest *errdetails.BadRequest
+	malformed := false
 
 	for _, d := range st.Details() {
 		switch detail := d.(type) {
@@ -237,33 +236,80 @@ func (this *transport) fault(m remote.Method, where string, err error) error {
 			if detail.GetDomain() != ErrorDomain {
 				continue
 			}
-			mine = true
-			code = errs.Code(detail.GetReason())
-			partial = detail.GetMetadata()[PartialKey] == "true"
-		case *errdetails.BadRequest:
-			for _, fv := range detail.GetFieldViolations() {
-				vs = append(vs, errs.Violation{
-					Path:    errs.ParsePath(fv.GetField()),
-					Code:    errs.Code(fv.GetReason()),
-					Message: fv.GetDescription(),
-				})
+			if info != nil {
+				malformed = true
+				continue
 			}
+			info = detail
+		case *errdetails.BadRequest:
+			if badRequest != nil {
+				malformed = true
+				continue
+			}
+			badRequest = detail
+		case error:
+			malformed = true
 		}
 	}
 
-	if !mine {
+	if info == nil {
 		if st.Code() == codes.Internal {
 			return port.FaultFrom(errs.KindInternal, errs.CodeInternal, nil, false)
 		}
-		return &remote.ProtocolError{
-			Method: m,
-			Where:  where,
-			Status: st.Code().String(),
-			Body:   remote.Truncate(st.Message(), 200),
-		}
+		return protocolError(m, where, st)
+	}
+	if malformed || badRequest == nil {
+		return protocolError(m, where, st)
+	}
+	if !port.ValidErrorCode(errs.Code(info.GetReason())) {
+		return protocolError(m, where, st)
 	}
 
+	partial := info.GetMetadata()[PartialKey] == "true"
+	fields := badRequest.GetFieldViolations()
+	vs := make([]errs.Violation, 0, min(len(fields), MaxViolations))
+	for i, fv := range fields {
+		description := fv.GetDescription()
+		if !port.ValidErrorCode(errs.Code(fv.GetReason())) || !port.ValidMessageText(description) {
+			malformed = true
+			break
+		}
+		if i >= MaxViolations {
+			partial = true
+			continue
+		}
+		v := errs.Violation{
+			Path:    errs.ParsePath(fv.GetField()),
+			Code:    errs.Code(fv.GetReason()),
+			Message: description,
+		}
+		if localized := fv.GetLocalizedMessage(); validLocalizedMessage(localized, v.Message) {
+			v.MessageLocale = localized.GetLocale()
+		}
+		vs = append(vs, v)
+	}
+	if malformed {
+		return protocolError(m, where, st)
+	}
+
+	code := errs.Code(info.GetReason())
 	return port.FaultFrom(this.kindOf(st.Code(), code), code, vs, partial)
+}
+
+func protocolError(method remote.Method, where string, st *status.Status) error {
+	return &remote.ProtocolError{
+		Method: method,
+		Where:  where,
+		Status: st.Code().String(),
+		Body:   remote.Truncate(st.Message(), 200),
+	}
+}
+
+func validLocalizedMessage(message *errdetails.LocalizedMessage, description string) bool {
+	if message == nil || !port.ValidMessageText(message.GetMessage()) || message.GetMessage() != description {
+		return false
+	}
+	return port.ValidMessageLocale(message.GetLocale())
 }
 
 func (this *transport) kindOf(c codes.Code, code errs.Code) errs.Kind {

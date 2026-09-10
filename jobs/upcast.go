@@ -69,33 +69,45 @@ func (this typedUpcaster[A, B]) upcast(encoded []byte, limit PayloadLimit) (resu
 }
 
 func (this typedUpcaster[A, B]) upcastOwned(encoded []byte, limit PayloadLimit) (result []byte, err error) {
+	completed := false
 	defer func() {
-		if recovered := recover(); recovered != nil {
+		_ = recover()
+		if !completed {
 			result = nil
 			err = fmt.Errorf("%w: upcaster panicked", ErrInvalid)
 		}
 	}()
 	if this.fn == nil {
+		completed = true
 		return nil, fmt.Errorf("%w: upcaster function is required", ErrInvalid)
 	}
 	if len(encoded) > limit.MaxBytes {
+		completed = true
 		return nil, ErrTooLarge
 	}
 	value, err := invokeCodecDecodeOwned(this.from, encoded, limit)
 	if err != nil {
-		return nil, normalizeUpcastRuntimeError(err)
+		normalized := normalizeUpcastRuntimeError(err)
+		completed = true
+		return nil, normalized
 	}
 	next, err := this.fn(value)
 	if err != nil {
-		return nil, normalizeUpcastRuntimeError(err)
+		normalized := normalizeUpcastRuntimeError(err)
+		completed = true
+		return nil, normalized
 	}
 	result, err = invokeCodecEncodeOwned(this.to, next, limit)
 	if err != nil {
-		return nil, normalizeUpcastRuntimeError(err)
+		normalized := normalizeUpcastRuntimeError(err)
+		completed = true
+		return nil, normalized
 	}
 	if len(result) > limit.MaxBytes {
+		completed = true
 		return nil, ErrTooLarge
 	}
+	completed = true
 	return result, nil
 }
 
@@ -108,13 +120,16 @@ type upcasterDescription struct {
 }
 
 func describeUpcaster(upcaster Upcaster) (descriptor upcasterDescription, err error) {
+	completed := false
 	defer func() {
-		if recover() != nil {
+		_ = recover()
+		if !completed {
 			descriptor = upcasterDescription{}
 			err = fmt.Errorf("%w: upcaster descriptor panicked", ErrInvalid)
 		}
 	}()
 	if nilInterface(upcaster) {
+		completed = true
 		return upcasterDescription{}, fmt.Errorf("%w: upcaster is required", ErrInvalid)
 	}
 	descriptor = upcasterDescription{
@@ -125,37 +140,49 @@ func describeUpcaster(upcaster Upcaster) (descriptor upcasterDescription, err er
 		upcaster:    upcaster,
 	}
 	if descriptor.from.IsZero() || descriptor.to.IsZero() || descriptor.sourceCodec.IsZero() || descriptor.targetCodec.IsZero() || descriptor.from == ^SchemaVersion(0) || descriptor.to != descriptor.from+1 {
+		completed = true
 		return upcasterDescription{}, fmt.Errorf("%w: upcaster revisions must be adjacent", ErrInvalid)
 	}
 	if typed, ok := upcaster.(interface{ validateUpcaster() error }); ok {
 		if err := typed.validateUpcaster(); err != nil {
-			return upcasterDescription{}, normalizeDefinitionError(err)
+			normalized := normalizeDefinitionError(err)
+			completed = true
+			return upcasterDescription{}, normalized
 		}
 	}
+	completed = true
 	return descriptor, nil
 }
 
 func invokeUpcaster(upcaster Upcaster, encoded []byte, limit PayloadLimit) (result []byte, err error) {
+	completed := false
 	defer func() {
-		if recover() != nil {
+		_ = recover()
+		if !completed {
 			result = nil
 			err = ErrInvalid
 		}
 	}()
 	result, err = upcaster.upcast(bytes.Clone(encoded), limit)
 	if err != nil {
-		return nil, normalizeUpcastRuntimeError(err)
+		normalized := normalizeUpcastRuntimeError(err)
+		completed = true
+		return nil, normalized
 	}
 	if len(result) > limit.MaxBytes {
+		completed = true
 		return nil, ErrTooLarge
 	}
+	completed = true
 	return bytes.Clone(result), nil
 }
 
 func invokeUpcasterOwned(upcaster Upcaster, encoded []byte, limit PayloadLimit) (result []byte, err error) {
 	encoded = encoded[:len(encoded):len(encoded)]
+	completed := false
 	defer func() {
-		if recover() != nil {
+		_ = recover()
+		if !completed {
 			result = nil
 			err = ErrInvalid
 		}
@@ -168,22 +195,30 @@ func invokeUpcasterOwned(upcaster Upcaster, encoded []byte, limit PayloadLimit) 
 		result, err = upcaster.upcast(encoded, limit)
 	}
 	if err != nil {
-		return nil, normalizeUpcastRuntimeError(err)
+		normalized := normalizeUpcastRuntimeError(err)
+		completed = true
+		return nil, normalized
 	}
 	if len(result) > limit.MaxBytes {
+		completed = true
 		return nil, ErrTooLarge
 	}
 	result = result[:len(result):len(result)]
+	completed = true
 	return result, nil
 }
 
 func invokeUpcasterLimitValidation(upcaster Upcaster, limit PayloadLimit) (err error) {
+	completed := false
 	defer func() {
-		if recover() != nil {
+		_ = recover()
+		if !completed {
 			err = ErrInvalid
 		}
 	}()
-	return normalizeDefinitionError(upcaster.validateUpcasterLimit(limit))
+	err = normalizeDefinitionError(upcaster.validateUpcasterLimit(limit))
+	completed = true
+	return err
 }
 
 func normalizeUpcastRuntimeError(err error) error {

@@ -30,7 +30,7 @@ func TestResolverAcceptLanguageAndCanonicalization(t *testing.T) {
 	}{
 		{name: "weighted", choice: AcceptLanguage(SourceProtocol, "de, en;q=0.1"), locale: "en", reason: ReasonExact, outcome: OutcomeSuccess},
 		{name: "repeated values", choice: AcceptLanguage(SourceProtocol, "de;q=0.9", "fr-CA;q=0.8"), locale: "fr-CA", reason: ReasonExact, outcome: OutcomeSuccess},
-		{name: "legacy alias", choice: Exact(SourceUser, "iw"), locale: "he", reason: ReasonExact, outcome: OutcomeSuccess},
+		{name: "deprecated language subtag", choice: Exact(SourceUser, "iw"), locale: "he", reason: ReasonExact, outcome: OutcomeSuccess},
 		{name: "case", choice: Exact(SourceUser, "ZH-hant-hk"), locale: "zh-Hant-HK", reason: ReasonExact, outcome: OutcomeSuccess},
 		{name: "script", choice: Exact(SourceUser, "sr-latn"), locale: "sr-Latn", reason: ReasonExact, outcome: OutcomeSuccess},
 		{name: "lookup", choice: Exact(SourceUser, "fr-CA-x-client"), locale: "fr-CA", reason: ReasonLookup, outcome: OutcomeFallback},

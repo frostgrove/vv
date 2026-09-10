@@ -35,7 +35,7 @@ func TestPeriodicObservesOnePassWithoutChangingItsContract(t *testing.T) {
 	if calls != 1 {
 		t.Fatalf("pass calls=%d, want one", calls)
 	}
-	if received.Value(periodicContextKey{}) != "kept" || received.Value(spanKey{}) == nil {
+	if received.Value(periodicContextKey{}) != "kept" || !hasTestSpan(received) {
 		t.Fatal("pass did not receive the derived span context with caller values")
 	}
 	if len(tp.spans) != 1 || !tp.spans[0].ended || tp.spans[0].name != vvotel.SpanRuntimePeriodic {

@@ -3740,7 +3740,12 @@ Record, Stage, and caller-authored GroupSpec cannot manufacture an AttemptItem:
 
 ```go
 type Attempts struct{ value attempts }
+type AttemptsProfile uint8
+const (
+	RunOnlyAlpha AttemptsProfile = iota + 1
+)
 type AttemptsConfig struct {
+	Profile           AttemptsProfile
 	Recorder          *Recorder
 	State             AttemptLog
 	Types             AttemptTypeState
@@ -3831,9 +3836,16 @@ func (r *AttemptRun[C, F]) OperationID() OperationID
 func (r *AttemptRun[C, F]) State() (AttemptState, bool)
 ```
 
-NewAttempts is allocation/validation only. It requires AttemptLifecycle,
-Idempotency, StableSearch, and ExactInspection to be exactly SupportSupported,
-requires the
+NewAttempts is allocation/validation only. `RunOnlyAlpha` is the first additive
+service profile: it supports Begin, Run and direct Finish, while Checkpoint,
+Within, Resume, ResolveUnknown, Abandon and broad attempt history refuse before
+any resolver, crypto, authority, store or callback work. The full continuation
+profile remains S3b and does not get implied by a store capability.
+
+NewAttempts requires AttemptLifecycle, Idempotency and ExactInspection to be
+exactly SupportSupported. StableSearch is not a Run/Begin/Finish dependency; it
+is required by broad attempt history and immutable cursor profiles when those
+doors ship. NewAttempts requires the
 AttemptLog, AttemptTypeState, and History facets to share the Recorder's process Backing, durable
 BackingID/LogID, active CatalogRef, and CatalogSet, and requires every catalog
 containing an AttemptType to require a record-era signature. Attempts uses the
@@ -3846,7 +3858,9 @@ MaxAttemptSettlementTimeout; it bounds only the one explicit post-callback
 terminal attempt.
 Each Required Begin/Run and every restart Resume additionally requires
 Persistence and Reconciliation; AttemptRun.Within also requires Transactions and
-CrossSystemAtomic.
+CrossSystemAtomic. ExactInspection remains mandatory for RunOnlyAlpha because an
+existing-chain replay or transition must authenticate the complete signed chain
+before mutable projection state is trusted.
 Each required capability must equal SupportSupported: Unstated is not support.
 The memory store can exercise the full state machine with an explicitly
 BestEffort policy but advertises no durable-across-process completeness claim.
@@ -7824,7 +7838,7 @@ The minimum matrix is:
    projection nor evidence. Combined-budget exhaustion cannot reset for the
    second walk and returns only BudgetExceeded endpoint knowledge plus
    Indeterminate differences after its bounded result evidence commits.
-   Reconstruction from a legacy first-touch changed anchor knows every admitted
+   Reconstruction from a pre-existing-row first-touch changed anchor knows every admitted
    reconstructable field at and after that boundary, exposes no before-baseline
    state, and never labels the anchor as created. Time vectors cover baseline minus
    one nanosecond, the exact baseline, and equal-time descendants in predecessor
@@ -7903,7 +7917,7 @@ The minimum matrix is:
     subject head terminal, recreation through the sealed terminal and every
     retained alias rolls back, delete/recreate races serialize, soft delete and
     restore remain nonterminal, and exact terminal replay advances nothing.
-    Legacy-row cases cover first changed assigned Save/Update, first delete and
+    Pre-existing-row cases cover first changed assigned Save/Update, first delete and
     restore, a no-op that creates no baseline, complete reconstructable full-state
     versus actual Changes, missing/duplicate/secret field failures, one extractor
     path, concurrent first touches, key rotation, rollback, and exact replay.
@@ -7914,7 +7928,7 @@ The minimum matrix is:
     deployment/runtime handles, and holds; least-privilege roles; immutable triggers;
     schema drift; old codec/catalog fixtures; query plans; immutable materialized
     search snapshots under concurrent/backdated commits, cumulative continuation
-    ceilings, terminal entity heads, legacy first-touch full anchors and
+    ceilings, terminal entity heads, pre-existing-row first-touch full anchors and
     recreation races; pagination; rollback;
     cancellation; fence restart/rotation; and full conformance twice under race.
 **AT-014 —** Integration fixtures for auth/security provenance, tenancy scope, event commit,
@@ -8187,6 +8201,13 @@ reviewer; run conformance against both real and deliberately broken stores.
 **Status:** in progress — public exact revision/item inspection is implemented;
 attempts and the remaining advanced reader/lifecycle surface follow the usable
 recorder/CRUD/integration base
+
+Delivery is additive. S3a ships the explicit `RunOnlyAlpha` profile and proves a
+BestEffort memory state machine followed by PostgreSQL Required Run with an
+independently committed start. S3b adds checkpoints, atomic Within, authorized
+restart continuation, broad stable search and control evidence. A run-only
+service never claims those later doors merely because its store exposes the
+attempt CAS primitive.
 
 Files owned: `audit/attempt*.go`, advanced `audit/history*.go`,
 `audit/selector*.go`, `audit/grant*.go`, `audit/reconstruct*.go`,
@@ -9231,7 +9252,7 @@ integration obligation in another package.
 | AM-SNAPSHOT-001 | Page a live result, omit cohort identity/expiry/sort/progress/ceilings, admit a backdated concurrent append, recreate or mutate a snapshot, or reset cumulative limits per page. | One bounded origin cohort tiles exactly once in either direction while concurrent commits remain outside it. | AT-009, AT-013 | S3 | `TestAT009KillsStableSnapshotMutant` |
 | AM-COMPARE-001 | Authorize two independent walks, reverse or cross subject chains, reset the shared budget, guess equality for an unknown endpoint, or omit a boundary/contributor/status from result evidence. | Two ordered boundaries on one authenticated chain yield exact Known/Absent comparison or an explicit Indeterminate under one combined budget. | AT-010, AT-016 | S3 | `TestAT010KillsComparisonKnowledgeMutant` |
 | AM-TERMINAL-001 | Treat a hard-deleted subject as genesis, drop terminal state from head CAS, rebind a retained alias, reject soft-delete restore, or advance terminal replay twice. | One hard delete closes its scoped chain permanently while soft delete remains restorable and exact replay is inert. | AT-004, AT-012, AT-013 | S2 | `TestAT004KillsTerminalIdentityMutant` |
-| AM-BASELINE-001 | Let a delta establish genesis, label a legacy first touch as creation, omit one reconstructable after-state field, capture an unchanged nonreconstructable field, accept a partial/racing baseline, guess pre-baseline absence, or append the same baseline twice on retry. | One changed first touch of a preexisting row creates exactly one truthful full-state anchor; its exact time boundary is known, earlier time is ambiguous, and subsequent mutations are deltas. | AT-004, AT-010, AT-012, AT-013 | S2 | `TestAT004KillsLegacyBaselineMutant` |
+| AM-BASELINE-001 | Let a delta establish genesis, label a pre-existing-row first touch as creation, omit one reconstructable after-state field, capture an unchanged nonreconstructable field, accept a partial/racing baseline, guess pre-baseline absence, or append the same baseline twice on retry. | One changed first touch of a pre-existing row creates exactly one truthful full-state anchor; its exact time boundary is known, earlier time is ambiguous, and subsequent mutations are deltas. | AT-004, AT-010, AT-012, AT-013 | S2 | `TestAT004KillsPreexistingBaselineMutant` |
 | AM-EXACT-READ-001 | Let unknown row contents supply their own access scope, omit requested exact ceilings, authorize any-item/partial-revision content, skip containing-envelope verification, or release a foreign ordinal/catalog/log. | One exact target is authenticated wholly and returned only inside the caller-requested and sealed resource/action/classification ceilings. | AT-010, AT-013 | S3 | `TestAT010KillsExactReadMutant` |
 | AM-ATTEMPT-START-001 | Enter protected work before a Committed Inserted Started transition, return a handle on replay or failed begin, invoke the callback on replay, or let an uncertain absence authorize another start. | One Required Run commits and inserts Started before one callback while an identical retained replay invokes zero callbacks and returns no handle. | AT-005, AT-008, AT-014, AT-018 | S3 | `TestAT018KillsAttemptStartMutant` |
 | AM-ATTEMPT-STATE-001 | Skip or weaken the attempt expected-state CAS, admit an illegal phase edge or second terminal, trust a mutable projection, conflate Open and Uncertain, or expose ResultingState for an uncommitted settlement. | One legal transition advances the verified projection exactly once and only a Committed Inserted or Replayed result exposes that authenticated resulting state. | AT-004, AT-007, AT-008, AT-013, AT-018 | S3 | `TestAT018KillsAttemptStateMutant` |

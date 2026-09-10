@@ -703,15 +703,14 @@ func assertAssemblyErrorRedacted(t *testing.T, err *vvotel.AssemblyError, forbid
 	}
 }
 
-func TestAssembly_ExplicitDisableIsCopiedAndLegacyUnionIsIdempotent(t *testing.T) {
+func TestAssembly_ExplicitDisableIsCopied(t *testing.T) {
 	disable := vvotel.Signals{vvotel.SignalCommandSpan}
 	tp := newTestTracerProvider()
 	mp := newTestMeterProvider()
 	tel, err := vvotel.New(vvotel.Config{
-		TracerProvider:        tp,
-		MeterProvider:         mp,
-		Disable:               disable,
-		CommandTracesDisabled: true,
+		TracerProvider: tp,
+		MeterProvider:  mp,
+		Disable:        disable,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -725,104 +724,6 @@ func TestAssembly_ExplicitDisableIsCopiedAndLegacyUnionIsIdempotent(t *testing.T
 	if len(mp.metrics) != 1 || mp.metrics[0].name != vvotel.MetricCommandDuration {
 		t.Fatalf("caller mutation disabled a metric after assembly: %+v", mp.metrics)
 	}
-}
-
-func TestAssembly_LegacyAliasesMapToExactSignalSets(t *testing.T) {
-	cacheLegacy := vvotel.Signals{
-		vvotel.SignalCacheOperations,
-		vvotel.SignalCacheEvents,
-		vvotel.SignalCacheItems,
-		vvotel.SignalCacheEncodedBytes,
-		vvotel.SignalCachePayloadBytes,
-		vvotel.SignalCacheValueBytes,
-		vvotel.SignalCacheChargedBytes,
-		vvotel.SignalCacheMemoryEntries,
-		vvotel.SignalCacheMemoryBytes,
-		vvotel.SignalCacheMemoryEntryLimit,
-		vvotel.SignalCacheMemoryByteLimit,
-		vvotel.SignalCacheMemoryActive,
-		vvotel.SignalCacheMemoryClosed,
-	}
-	tests := []struct {
-		name        string
-		configure   func(*vvotel.Config)
-		disabled    vvotel.Signals
-		notDisabled vvotel.Signals
-	}{
-		{name: "command_traces", configure: func(c *vvotel.Config) { c.CommandTracesDisabled = true }, disabled: vvotel.Signals{vvotel.SignalCommandSpan}, notDisabled: vvotel.Signals{vvotel.SignalStorageSpan}},
-		{name: "command_metrics", configure: func(c *vvotel.Config) { c.CommandMetricsDisabled = true }, disabled: vvotel.Signals{vvotel.SignalCommandDuration}, notDisabled: vvotel.Signals{vvotel.SignalCacheOperations}},
-		{name: "storage_traces", configure: func(c *vvotel.Config) { c.StorageTracesDisabled = true }, disabled: vvotel.Signals{vvotel.SignalStorageSpan, vvotel.SignalStorageStreamSpan}, notDisabled: vvotel.Signals{vvotel.SignalCommandSpan}},
-		{name: "cache_metrics", configure: func(c *vvotel.Config) { c.CacheMetricsDisabled = true }, disabled: cacheLegacy, notDisabled: vvotel.Signals{vvotel.SignalCacheEvent, vvotel.SignalCacheBackendEvent}},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			mp := newAssemblyMeterProvider()
-			tp := newTestTracerProvider()
-			config := vvotel.Config{TracerProvider: tp, MeterProvider: mp}
-			tc.configure(&config)
-			tel, err := vvotel.New(config)
-			if err != nil {
-				t.Fatal(err)
-			}
-			constructed := map[vvotel.Signal]bool{}
-			for _, call := range mp.meter.callsSnapshot() {
-				constructed[call.signal] = true
-			}
-			for _, signal := range tc.disabled {
-				if constructed[signal] {
-					t.Fatalf("legacy alias left metric signal %d constructed", signal)
-				}
-			}
-			for _, signal := range tc.notDisabled {
-				if isMetricSignal(signal) && !constructed[signal] {
-					t.Fatalf("legacy alias disabled unrelated metric signal %d", signal)
-				}
-			}
-			assertCurrentSignalsForLegacyCase(t, tel, tp, tc.disabled)
-		})
-	}
-}
-
-func isMetricSignal(signal vvotel.Signal) bool {
-	for _, descriptor := range vvotel.SignalDescriptors() {
-		if descriptor.SignalID == signal {
-			return descriptor.Provider == "meter"
-		}
-	}
-	return false
-}
-
-func assertCurrentSignalsForLegacyCase(t *testing.T, tel *vvotel.Telemetry, tp *testTracerProvider, disabled vvotel.Signals) {
-	t.Helper()
-	svc := vvotel.Service[dummyModel, string, dummyModel](tel)(&fakePortService{})
-	_, _ = svc.Get(context.Background(), port.GetCommand[string]{ID: "id"})
-	store := vvotel.Store(tel)(&fakeStorageStore{})
-	key, _ := storage.ParseKey("a/b")
-	_, _ = store.Head(context.Background(), key)
-	ctx, parent := tp.Tracer("ambient").Start(context.Background(), "ambient")
-	vvotel.Cache(tel, vvotel.WithCacheSpanEvents(true)).Observe(ctx, cache.Event{Operation: cache.LookupOperation, Outcome: cache.HitOutcome})
-	vvotel.CacheMemory(tel, vvotel.WithCacheMemorySpanEvents(true)).Observe(ctx, cachememory.Event{Operation: cachememory.GetOperation, Outcome: cachememory.HitOutcome})
-	parent.End()
-	spanNames := map[string]int{}
-	events := map[string]int{}
-	for _, span := range tp.spans {
-		spanNames[span.name]++
-		for _, event := range span.events {
-			events[event]++
-		}
-	}
-	assertPresentUnlessDisabled(t, disabledSignal(disabled, vvotel.SignalCommandSpan), vvotel.SignalCommandSpan, spanNames["vv.command get"])
-	assertPresentUnlessDisabled(t, disabledSignal(disabled, vvotel.SignalStorageSpan), vvotel.SignalStorageSpan, spanNames["vv.storage head"])
-	if events[vvotel.EventCache] != 1 || events[vvotel.EventCacheBackend] != 1 {
-		t.Fatalf("legacy aliases changed context-only events: %v", events)
-	}
-}
-
-func disabledSignal(disabled vvotel.Signals, signal vvotel.Signal) vvotel.Signal {
-	if disabled.Has(signal) {
-		return signal
-	}
-	return 0
 }
 
 func TestAssembly_ContextOnlyEventsRemainActiveWithoutTracerProvider(t *testing.T) {

@@ -44,12 +44,12 @@ func (t scopedTracer) Start(ctx context.Context, name string, options ...trace.S
 			options = append(options, trace.WithNewRoot())
 		}
 	}
-	spanContext, span := t.Tracer.Start(ctx, name, options...)
+	_, span := t.Tracer.Start(ctx, name, options...)
 	wrapped := scopedSpan{
 		Span:          span,
 		normalizeName: t.normalizeName,
 	}
-	return trace.ContextWithSpan(spanContext, wrapped), wrapped
+	return trace.ContextWithSpan(ctx, wrapped), wrapped
 }
 
 type scopedSpan struct {

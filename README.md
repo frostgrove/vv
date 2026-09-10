@@ -63,6 +63,7 @@ storage/storageminio/storageminiofx/  the same backend, in uber/fx
 utils/vvdb/dbpgx/           the same config, a pgx pool
 utils/vvcfg/                a config struct, loaded and validated at start-up
 utils/vvgoose/              Goose migrations and SQL generation from Go models
+i18n/                       MF2 catalogues, typed messages, locale negotiation, CRUD/errs presentation and vv-i18n tooling
 ```
 
 **One page per package** — what it does, everything it can do, and how to wire
@@ -124,6 +125,12 @@ module graph of anyone building the library.
 For the optional OpenTelemetry module, [`_examples/otel-sdk-bootstrap`](_examples/otel-sdk-bootstrap/)
 shows application-owned stdout exporters, readers/processors, flush and shutdown.
 
+The optional [`i18n`](docs/modules/en/i18n.md) module keeps translation and
+presentation outside the CRUD microkernel while integrating with CRUD/full-CRUD
+responses, `errs`, HTTP/gRPC locale propagation and generated typed definitions.
+Its `vv-i18n` command extracts usage, checks and merges catalogues, generates Go
+and TypeScript artifacts, reviews changes and publishes them atomically.
+
 ---
 
 ## Install
@@ -137,6 +144,7 @@ go get github.com/frostgrove/vv/utils/vvdb/dbpgx     # …and a pgx pool opened 
 go get github.com/frostgrove/vv/utils/vvgoose        # …or the application migration CLI
 go get github.com/frostgrove/vv/auth/authjwt        # …and JWT, if that is how you authenticate
 go get github.com/frostgrove/vv/storage/storageminio # …and MinIO, if files are not local
+go get github.com/frostgrove/vv/i18n                 # …and deterministic localized presentation
 ```
 
 The library has **no external dependencies at all**. Anything that would add one

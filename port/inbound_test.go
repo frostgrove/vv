@@ -137,3 +137,21 @@ func TestEveryDecodedViolationKeepsItsPathAndItsCode(t *testing.T) {
 		t.Fatalf("a general violation was given the path %v", f.Violations[1].Path)
 	}
 }
+
+func TestADecodedViolationKeepsOnlyCoherentLocaleProvenance(t *testing.T) {
+	f := port.FaultFrom(errs.KindValidation, errs.CodeCheck, []errs.Violation{
+		{Code: errs.CodeUnique, Message: "déjà pris", MessageLocale: "fr"},
+		{Code: errs.CodeRequired, MessageLocale: "de"},
+		{Code: errs.CodeCheck, Message: "invalid tag", MessageLocale: "fr_CA"},
+	}, false)
+
+	if got := f.Violations[0].MessageLocale; got != "fr" {
+		t.Fatalf("valid locale provenance arrived as %q", got)
+	}
+	if got := f.Violations[1].MessageLocale; got != "" {
+		t.Fatalf("locale without a message arrived as %q", got)
+	}
+	if got := f.Violations[2].MessageLocale; got != "" {
+		t.Fatalf("invalid locale provenance arrived as %q", got)
+	}
+}

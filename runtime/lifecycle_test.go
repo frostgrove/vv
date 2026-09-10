@@ -85,6 +85,16 @@ type declaredWorker struct {
 
 func (w *declaredWorker) Declaration() runtime.Declaration { return w.declaration }
 
+type deadlinePanicCanceledError struct{}
+
+func (deadlinePanicCanceledError) Error() string { return "canceled after hostile deadline check" }
+func (deadlinePanicCanceledError) Is(target error) bool {
+	if target == context.DeadlineExceeded {
+		panic("deadline classification")
+	}
+	return target == context.Canceled
+}
+
 func TestObserversPreserveOrderAndLifecycleCapability(t *testing.T) {
 	var mu sync.Mutex
 	var order []string
@@ -324,6 +334,29 @@ func TestSupervisorReportsExactDrainFailure(t *testing.T) {
 			t.Fatalf("drain event=%+v err=%v", observation.event, observation.event.Err())
 		}
 		return
+	}
+	t.Fatal("drain completion was not observed")
+}
+
+func TestDrainLifecycleClassificationContinuesAfterAHostileDeadlineCheck(t *testing.T) {
+	recorder := newLifecycleRecorder()
+	runner := &drainingWorker{worker: worker{
+		name:  "hostile-classification",
+		drain: func(context.Context) error { return deadlinePanicCanceledError{} },
+	}}
+	supervised := supervisor(t, runtime.Spec{Runners: []runtime.Runner{runner}, Observer: recorder})
+	if err := supervised.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	_ = supervised.Stop(context.Background())
+	_, events, _ := recorder.snapshot()
+	for _, observation := range events {
+		if observation.event.Operation() == runtime.LifecycleOperationDrain {
+			if observation.event.Outcome() != runtime.LifecycleOutcomeCanceled {
+				t.Fatalf("drain lifecycle outcome = %v", observation.event.Outcome())
+			}
+			return
+		}
 	}
 	t.Fatal("drain completion was not observed")
 }

@@ -20,10 +20,7 @@ import (
 )
 
 const (
-	usageSchemaV1 = "frostgrove.i18n.usage/v1"
-	usageSchemaV2 = "frostgrove.i18n.usage/v2"
-	usageSchemaV3 = "frostgrove.i18n.usage/v3"
-	usageSchema   = "frostgrove.i18n.usage/v4"
+	usageSchema = "frostgrove.i18n.usage/v1"
 
 	maximumUsageJSONDepth      = 16
 	maximumUsageJSONMembers    = 1 << 22
@@ -41,30 +38,6 @@ type usageDocument struct {
 	GoScope        *i18n.GoUsageScope     `json:"go_scope,omitempty"`
 	ManifestDigest string                 `json:"manifest_digest"`
 	Complete       bool                   `json:"complete"`
-}
-
-type usageDocumentV3 struct {
-	Schema      string                 `json:"schema"`
-	Keys        []i18n.Key             `json:"keys"`
-	Dynamic     []i18n.DynamicUsage    `json:"dynamic"`
-	Occurrences []i18n.UsageOccurrence `json:"occurrences"`
-	GoScope     *i18n.GoUsageScope     `json:"go_scope,omitempty"`
-	Complete    bool                   `json:"complete"`
-}
-
-type usageDocumentV2 struct {
-	Schema      string                 `json:"schema"`
-	Keys        []i18n.Key             `json:"keys"`
-	Dynamic     []i18n.DynamicUsage    `json:"dynamic"`
-	Occurrences []i18n.UsageOccurrence `json:"occurrences"`
-	Complete    bool                   `json:"complete"`
-}
-
-type usageDocumentV1 struct {
-	Schema   string              `json:"schema"`
-	Keys     []i18n.Key          `json:"keys"`
-	Dynamic  []i18n.DynamicUsage `json:"dynamic"`
-	Complete bool                `json:"complete"`
 }
 
 func encodeUsage(usage i18n.UsageManifest) ([]byte, error) {
@@ -131,7 +104,7 @@ func encodeUsageBoundedContext(ctx context.Context, usage i18n.UsageManifest, ma
 		slices.SortFunc(scope.Metadata, compareUsageMetadataDocument)
 	}
 	canonical := i18n.UsageManifest{Keys: keys, Dynamic: dynamic, Occurrences: occurrences, GoScope: scope, Complete: usage.Complete}
-	if canonical.GoScope != nil && canonical.GoScope.Analyzer == i18n.GoUsageAnalyzerV2 {
+	if canonical.GoScope != nil && canonical.GoScope.Analyzer == i18n.GoUsageAnalyzer {
 		sourceDigest, err := i18n.ExpectedUsageSourceDigestContext(ctx, *canonical.GoScope)
 		if err != nil {
 			return nil, err
@@ -164,7 +137,7 @@ func preflightUsageOutputContext(ctx context.Context, usage i18n.UsageManifest, 
 	var scope *i18n.GoUsageScope
 	if usage.GoScope != nil {
 		cloned := *usage.GoScope
-		if cloned.Analyzer == i18n.GoUsageAnalyzerV2 {
+		if cloned.Analyzer == i18n.GoUsageAnalyzer {
 			cloned.SourceDigest = digest
 		}
 		scope = &cloned
@@ -213,35 +186,7 @@ func decodeUsageContext(ctx context.Context, raw []byte) (i18n.UsageManifest, er
 	if err := ctx.Err(); err != nil {
 		return i18n.UsageManifest{}, err
 	}
-	switch envelope.Schema {
-	case usageSchemaV1:
-		var document usageDocumentV1
-		if err := jsonv2.Unmarshal(raw, &document, jsonv2.RejectUnknownMembers(true), jsontext.AllowDuplicateNames(false)); err != nil {
-			return i18n.UsageManifest{}, fmt.Errorf("decode usage manifest: %w", err)
-		}
-		if err := ctx.Err(); err != nil {
-			return i18n.UsageManifest{}, err
-		}
-		return i18n.UsageManifest{Keys: document.Keys, Dynamic: document.Dynamic}, nil
-	case usageSchemaV2:
-		var document usageDocumentV2
-		if err := jsonv2.Unmarshal(raw, &document, jsonv2.RejectUnknownMembers(true), jsontext.AllowDuplicateNames(false)); err != nil {
-			return i18n.UsageManifest{}, fmt.Errorf("decode usage manifest: %w", err)
-		}
-		if err := ctx.Err(); err != nil {
-			return i18n.UsageManifest{}, err
-		}
-		return i18n.UsageManifest{Keys: document.Keys, Dynamic: document.Dynamic, Occurrences: document.Occurrences}, nil
-	case usageSchemaV3:
-		var document usageDocumentV3
-		if err := jsonv2.Unmarshal(raw, &document, jsonv2.RejectUnknownMembers(true), jsontext.AllowDuplicateNames(false)); err != nil {
-			return i18n.UsageManifest{}, fmt.Errorf("decode usage manifest: %w", err)
-		}
-		if err := ctx.Err(); err != nil {
-			return i18n.UsageManifest{}, err
-		}
-		return i18n.UsageManifest{Keys: document.Keys, Dynamic: document.Dynamic, Occurrences: document.Occurrences}, nil
-	case usageSchema:
+	if envelope.Schema == usageSchema {
 		var document usageDocument
 		if err := jsonv2.Unmarshal(raw, &document, jsonv2.RejectUnknownMembers(true), jsontext.AllowDuplicateNames(false)); err != nil {
 			return i18n.UsageManifest{}, fmt.Errorf("decode usage manifest: %w", err)
@@ -265,9 +210,8 @@ func decodeUsageContext(ctx context.Context, raw []byte) (i18n.UsageManifest, er
 			return i18n.UsageManifest{}, errors.New("usage manifest digest does not match its canonical content")
 		}
 		return manifest, nil
-	default:
-		return i18n.UsageManifest{}, fmt.Errorf("unsupported usage schema %q", envelope.Schema)
 	}
+	return i18n.UsageManifest{}, fmt.Errorf("unsupported usage schema %q", envelope.Schema)
 }
 
 func cloneGoUsageScope(scope *i18n.GoUsageScope) *i18n.GoUsageScope {
@@ -326,7 +270,7 @@ func validateUsageDocumentScope(ctx context.Context, scope *i18n.GoUsageScope, c
 		return nil
 	}
 	decodedDigest, digestErr := hex.DecodeString(scope.SourceDigest)
-	if scope.Analyzer != i18n.GoUsageAnalyzerV2 || scope.GOOS == "" || scope.GOARCH == "" || scope.Compiler == "" || scope.GoVersion == "" || scope.Toolchain == "" ||
+	if scope.Analyzer != i18n.GoUsageAnalyzer || scope.GOOS == "" || scope.GOARCH == "" || scope.Compiler == "" || scope.GoVersion == "" || scope.Toolchain == "" ||
 		len(scope.Roots) == 0 || (complete && len(scope.Files) == 0) || len(scope.Metadata) == 0 ||
 		digestErr != nil || len(decodedDigest) != 32 || strings.ToLower(scope.SourceDigest) != scope.SourceDigest {
 		return errors.New("usage manifest has incomplete Go scope provenance")
@@ -541,7 +485,7 @@ func validateUsageDocument(ctx context.Context, manifest i18n.UsageManifest, lim
 		}
 		dynamic[identity] = true
 	}
-	scoped := manifest.GoScope != nil && manifest.GoScope.Analyzer == i18n.GoUsageAnalyzerV2
+	scoped := manifest.GoScope != nil && manifest.GoScope.Analyzer == i18n.GoUsageAnalyzer
 	selected := make(map[string]bool)
 	if scoped {
 		selected = make(map[string]bool, manifest.GoScope.SelectedFiles)

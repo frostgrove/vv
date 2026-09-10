@@ -322,7 +322,7 @@ metric on the incoming context.
 typed-nil span/context, SetAttributes, SetStatus, End and Record faults through
 both service and storage shared-recorder wiring while pinning one business call.
 `TestCacheAndCacheMemory_FaultsKeepSignalsIndependent` covers IsRecording,
-AddEvent and Add faults. `TestLegacyPanicNilModePreservesPanicAndGoexitSemantics`
+AddEvent and Add faults. `TestPanicNilWithNilRecoverPreservesPanicAndGoexitSemantics`
 re-executes the current test binary with `GODEBUG=panicnil=1` and requires all
 four service/storage panic(nil) and Goexit contracts to run and pass. The fake
 suite pins fallback metric context under trace failure; the real SDK suite pins
@@ -447,8 +447,8 @@ every command's full input, distinctive result and exact-one call across
 success, error, cancellation, deadline and pointer-identity panic terminals;
 `TestService_RestorableTotality` separately pins discovery, commands, results
 and calls for Restore and RestoreMany.
-`TestLegacyPanicNilModePreservesPanicAndGoexitSemantics` executes panic(nil) and
-Goexit under legacy runtime mode. The isolated SDK and OTLP tests assert SERVER
+`TestPanicNilWithNilRecoverPreservesPanicAndGoexitSemantics` executes panic(nil)
+when recover returns nil and covers Goexit. The isolated SDK and OTLP tests assert SERVER
 → command INTERNAL → CLIENT parentage and an exemplar carrying the command
 span's exact trace/span IDs.
 

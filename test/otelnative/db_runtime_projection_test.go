@@ -33,7 +33,7 @@ func TestDatabaseMetricProjectionPinsEveryFieldPerInstrumentWithoutMutation(t *t
 					Name:        "db.client.operation.duration",
 					Description: "database-description-secret-13285",
 					Unit:        "database-unit-secret-95412",
-					Data: metricdata.Histogram[float64]{DataPoints: []metricdata.HistogramDataPoint[float64]{
+					Data: metricdata.Histogram[float64]{Temporality: metricdata.CumulativeTemporality, DataPoints: []metricdata.HistogramDataPoint[float64]{
 						{
 							Attributes: attribute.NewSet(
 								attribute.String("db.operation.name", "sql.conn.query"),
@@ -55,6 +55,8 @@ func TestDatabaseMetricProjectionPinsEveryFieldPerInstrumentWithoutMutation(t *t
 						},
 					}},
 				},
+				{Name: "db.client.operation.duration", Description: "undefined-temporality-secret", Data: metricdata.Histogram[float64]{}},
+				{Name: "db.client.operation.duration", Description: "delta-temporality-secret", Data: metricdata.Histogram[float64]{Temporality: metricdata.DeltaTemporality}},
 				{Name: "db.client.operation.duration", Description: "wrong-shape-secret-41782", Data: metricdata.Sum[int64]{IsMonotonic: true}},
 				{
 					Name:        "db.sql.connection.max_open",
@@ -112,6 +114,8 @@ func TestDatabaseMetricProjectionPinsEveryFieldPerInstrumentWithoutMutation(t *t
 		"database-unit-secret-95412",
 		"database-attribute-secret-38471",
 		"database-exemplar-secret-52814",
+		"undefined-temporality-secret",
+		"delta-temporality-secret",
 		"wrong-shape-secret-41782",
 		"pool-description-secret-51842",
 		"pool-unit-secret-61935",
@@ -140,16 +144,18 @@ func TestRuntimeMetricProjectionPinsMetadataShapeAndAttributeOwnership(t *testin
 					Name:        goconv.MemoryUsed{}.Name(),
 					Description: secret,
 					Unit:        secret,
-					Data: metricdata.Sum[int64]{DataPoints: []metricdata.DataPoint[int64]{
+					Data: metricdata.Sum[int64]{Temporality: metricdata.CumulativeTemporality, DataPoints: []metricdata.DataPoint[int64]{
 						{Attributes: attribute.NewSet(attribute.String("go.memory.type", "stack"), attribute.String("secret.attribute", secret))},
 					}},
 				},
 				{
 					Name: goconv.MemoryLimit{}.Name(),
-					Data: metricdata.Sum[int64]{DataPoints: []metricdata.DataPoint[int64]{
+					Data: metricdata.Sum[int64]{Temporality: metricdata.CumulativeTemporality, DataPoints: []metricdata.DataPoint[int64]{
 						{Attributes: attribute.NewSet(attribute.String("go.memory.type", "stack"))},
 					}},
 				},
+				{Name: goconv.MemoryUsed{}.Name(), Description: "undefined-temporality-secret", Data: metricdata.Sum[int64]{}},
+				{Name: goconv.MemoryUsed{}.Name(), Description: "delta-temporality-secret", Data: metricdata.Sum[int64]{Temporality: metricdata.DeltaTemporality}},
 				{Name: goconv.MemoryAllocated{}.Name(), Data: metricdata.Sum[int64]{IsMonotonic: false}},
 			},
 		}},
@@ -180,7 +186,7 @@ func TestRuntimeMetricProjectionPinsMetadataShapeAndAttributeOwnership(t *testin
 	if limit.Data.(metricdata.Sum[int64]).DataPoints[0].Attributes.Len() != 0 {
 		t.Fatalf("memory limit accepted memory-used attributes: %#v", limit.Data)
 	}
-	assertNativePrivacy(t, nil, exported, secret)
+	assertNativePrivacy(t, nil, exported, secret, "undefined-temporality-secret", "delta-temporality-secret")
 }
 
 func findNativeMetric(t *testing.T, metrics metricdata.ResourceMetrics, scopeName, name string) metricdata.Metrics {

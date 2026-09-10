@@ -144,13 +144,55 @@ func TestContentLanguageNamesTheTemplatesActuallyUsed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(raw), "MessageLocale") || strings.Contains(string(raw), "message_locale") {
-		t.Fatalf("the internal message locale leaked into the stable envelope: %s", raw)
+	if strings.Contains(string(raw), "MessageLocale") || !strings.Contains(string(raw), `"message_locale":"fr"`) {
+		t.Fatalf("the HTTP projection did not carry canonical locale provenance: %s", raw)
 	}
 
 	_, header, _ = NewRenderer(WithMessages(catalogueSource{})).Render(ctx, fault)
 	if got := header.Get("Content-Language"); got != "" {
 		t.Fatalf("a source that cannot prove its template locale emitted %q", got)
+	}
+}
+
+func TestContentLanguageAggregatesMixedPerViolationLocales(t *testing.T) {
+	fault := errs.Validation().
+		Field("email").Code(errs.CodeUnique).
+		Field("name").Code(errs.CodeRequired).
+		Fault()
+
+	_, header, body := NewRenderer(WithMessages(mixedLocalizedSource{})).Render(context.Background(), fault)
+	if got := header.Get("Content-Language"); got != "de, fr" {
+		t.Fatalf("Content-Language is %q, want the sorted proven locale set", got)
+	}
+	raw, err := json.Marshal(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, ok := ParseEnvelope(raw)
+	if !ok {
+		t.Fatalf("mixed-locale renderer output was refused: %s", raw)
+	}
+	violations := parsed.Violations()
+	if len(violations) != 2 || violations[0].MessageLocale != "fr" || violations[1].MessageLocale != "de" {
+		t.Fatalf("mixed locale provenance = %+v", violations)
+	}
+}
+
+type mixedLocalizedSource struct{}
+
+func (mixedLocalizedSource) Message(ctx context.Context, violation errs.Violation, locale string) (string, bool) {
+	message, _, ok := (mixedLocalizedSource{}).MessageWithLocale(ctx, violation, locale)
+	return message, ok
+}
+
+func (mixedLocalizedSource) MessageWithLocale(_ context.Context, violation errs.Violation, _ string) (string, string, bool) {
+	switch violation.Code {
+	case errs.CodeUnique:
+		return "déjà pris", "fr", true
+	case errs.CodeRequired:
+		return "ist erforderlich", "de", true
+	default:
+		return "", "", false
 	}
 }
 

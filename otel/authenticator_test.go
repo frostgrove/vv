@@ -42,7 +42,7 @@ func TestAuthenticatorPreservesTheCompleteCallAndUsesTheDerivedContext(t *testin
 	if calls != 1 || receivedCredential != credential {
 		t.Fatalf("calls/credential = %d/%+v, want 1/%+v", calls, receivedCredential, credential)
 	}
-	if receivedContext == incoming || receivedContext.Value(authenticationContextKey{}) != "preserved" || receivedContext.Value(spanKey{}) == nil {
+	if receivedContext == incoming || receivedContext.Value(authenticationContextKey{}) != "preserved" || !hasTestSpan(receivedContext) {
 		t.Fatal("authenticator did not receive the derived span context with incoming values")
 	}
 	if len(tp.spans) != 1 || len(mp.metrics) != 1 {

@@ -63,7 +63,7 @@ The only body this library puts on the wire for a failed request:
   "type": "error",
   "errors": {
     "validation": [
-      {"field": ["user","email"], "error_code": "unique", "message": "that address is taken"}
+      {"field": ["user","email"], "error_code": "unique", "message": "cette adresse est déjà prise", "message_locale": "fr"}
     ],
     "general": [
       {"error_code": "restrict", "message": "something still refers to this record"}
@@ -87,6 +87,14 @@ type Groups struct {
 
 `Type` is always `"error"`, so a client can branch before parsing.
 
+Each violation has one required non-empty `error_code`. `field` is required and
+non-empty in `validation`, and forbidden in `general`. `message_locale` is
+optional, but is emitted and accepted only beside a non-empty `message` and only
+when it is a bounded ASCII language tag. It records the locale that produced
+that one message, so mixed-locale fallback remains attributable after an HTTP
+round trip. Storage provenance, template arguments and approximate path state
+remain outside the body.
+
 **The group says what the client can act on, not where the failure came from** —
 which is why a 409 unique conflict appears under `validation`: it names a field
 the client sent, so a form can mark it ([[UC-017]]).
@@ -98,10 +106,9 @@ is claiming there were four.
 rather than the encoder's habit — the same reason [[D-014]] gives for everything
 else here being byte-identical run to run.
 
-> RFC 9457 problem+json is not shipped, and neither is the older
-> `{"error":…,"message":…}` body. Two shapes is twice the surface to test and
-> keep honest for a choice almost nobody changes; the `Renderer` seam is there
-> for a consumer who does.
+> RFC 9457 problem+json is not shipped. One owned shape keeps classification,
+> limits and strict parsing testable; the `Renderer` seam is there for a
+> consumer who needs a different representation.
 
 ## The renderer
 
@@ -119,7 +126,7 @@ type Renderer interface {
 | `WithMessages(errs.MessageSource)` | the catalogue rung of the message ladder |
 | `WithResolvers(rs...)` | declared path hops, wired **ahead** of the body fallback |
 | `WithObserver(func(context.Context, error))` | observe the private cause of an internal response; an observer panic is isolated |
-| `WithMaxViolations(n)` | cap the list. Default 100 |
+| `WithMaxViolations(n)` | narrow the list to `1..100`. Non-positive or larger values retain the hard default of 100 |
 | `WithRetryAfter(seconds)` | the header on a 503. Default 1 |
 
 The observer runs only for the redacted 500 path, before `Internal()` discards
@@ -127,11 +134,12 @@ the cause. It is an injected callback, not a logger or telemetry dependency, and
 applies the application's own privacy and cardinality policy.
 
 If the message source implements `errs.LocalizedMessageSource`, the renderer
-sets `Content-Language` from the actual template locales. It never copies the
-requested header into that response header when a legacy source cannot prove
-which catalogue rung supplied the text.
+sets `Content-Language` to the sorted set of actual template locales and writes
+each one beside its own violation as `message_locale`. It never copies the
+requested header into either place when a source cannot prove which catalogue
+rung supplied the text.
 
-Replace it wholesale — with RFC 9457, with a legacy shape, with nothing at all —
+Replace it wholesale — with RFC 9457, with an application-specific shape, with nothing at all —
 through `WithRenderer` on any binding.
 
 > The `Renderer` interface lives here rather than in `errs` on purpose: an
@@ -205,6 +213,17 @@ an application answering its own errors may want them too:
 |---|---|
 | `KindForStatus(code int) errs.Kind` | the class a status came from |
 | `ParseEnvelope(body []byte) (Envelope, bool)` | the envelope, and **false** when the body is not one — which is what keeps a router's or a gateway's own 404 from reading as `crud.ErrNotFound` |
+
+`ParseEnvelope` accepts exactly the owned object grammar: required `type`,
+`errors`, group shape and machine codes; no unknown or duplicate member at the
+envelope, group or violation level; no trailing JSON; coherent locale
+provenance. The decoder retains at most `MaxViolations` entries across both
+groups in canonical validation-then-general wire order. More entries set
+`Partial` even if the peer omitted it. `MaxEnvelopeBytes` is 32 MiB, and each
+accepted message is at most `errs.MaxMessageOutputBytes`; crossing either
+boundary returns `false` without constructing a framework fault. The fixed
+grammar admits no recursively nested object or array beyond a path's scalar
+steps.
 
 ## The request helpers
 

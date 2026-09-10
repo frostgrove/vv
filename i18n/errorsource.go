@@ -43,11 +43,6 @@ type ErrorPlanSpec struct {
 	FieldLabels []FieldLabel
 }
 
-type LocalizedMessageSource interface {
-	errs.MessageSource
-	MessageWithLocale(ctx context.Context, violation errs.Violation, locale string) (message, actualLocale string, ok bool)
-}
-
 type compiledErrorMapping struct {
 	key           Key
 	params        []compiledErrorParam
@@ -66,7 +61,7 @@ type ErrorPlan struct {
 	fieldLabels map[string]Key
 }
 
-type errorMessageSource struct {
+type ErrorSource struct {
 	plan             *ErrorPlan
 	view             *View
 	formattingLocale string
@@ -74,7 +69,7 @@ type errorMessageSource struct {
 	presentation     Presentation
 }
 
-var _ LocalizedMessageSource = (*errorMessageSource)(nil)
+var _ errs.MessageSource = (*ErrorSource)(nil)
 
 type errorTerminal struct {
 	outcome Outcome
@@ -121,7 +116,7 @@ func safeRenderTerminal(outcome Outcome, reason Reason) (Outcome, Reason) {
 	return OutcomeInvalid, ReasonTemplateFailure
 }
 
-func (s *Snapshot) ErrorMessages(spec ErrorSpec) (LocalizedMessageSource, error) {
+func (s *Snapshot) ErrorMessages(spec ErrorSpec) (*ErrorSource, error) {
 	if s == nil || s.resolver == nil {
 		return nil, fmt.Errorf("%w: snapshot is nil", ErrInvalidCatalog)
 	}
@@ -156,7 +151,7 @@ func (s *Snapshot) ErrorMessages(spec ErrorSpec) (LocalizedMessageSource, error)
 			return nil, err
 		}
 	}
-	return &errorMessageSource{
+	return &ErrorSource{
 		plan:             plan,
 		formattingLocale: formattingLocale,
 		timeZone:         canonicalZone,
@@ -171,7 +166,7 @@ func (s *Snapshot) ErrorPlan(spec ErrorPlanSpec) (*ErrorPlan, error) {
 	return s.compileErrorPlan(spec)
 }
 
-func (v *View) ErrorMessages(plan *ErrorPlan) (LocalizedMessageSource, error) {
+func (v *View) ErrorMessages(plan *ErrorPlan) (*ErrorSource, error) {
 	if v == nil || v.snapshot == nil {
 		return nil, fmt.Errorf("%w: view is nil", ErrInvalidCatalog)
 	}
@@ -181,7 +176,7 @@ func (v *View) ErrorMessages(plan *ErrorPlan) (LocalizedMessageSource, error) {
 	if plan.snapshot != v.snapshot {
 		return nil, fmt.Errorf("%w: error plan belongs to another snapshot", ErrInvalidCatalog)
 	}
-	return &errorMessageSource{plan: plan, view: v}, nil
+	return &ErrorSource{plan: plan, view: v}, nil
 }
 
 func (s *Snapshot) compileErrorPlan(spec ErrorPlanSpec, extraMaterial ...string) (*ErrorPlan, error) {
@@ -339,12 +334,12 @@ func validateErrorParams(mapping ErrorMapping, descriptor Descriptor, limits Lim
 	return out
 }
 
-func (s *errorMessageSource) Message(ctx context.Context, violation errs.Violation, requestedLocale string) (string, bool) {
+func (s *ErrorSource) Message(ctx context.Context, violation errs.Violation, requestedLocale string) (string, bool) {
 	text, _, ok := s.MessageWithLocale(ctx, violation, requestedLocale)
 	return text, ok
 }
 
-func (s *errorMessageSource) MessageWithLocale(ctx context.Context, violation errs.Violation, requestedLocale string) (text, actualLocale string, ok bool) {
+func (s *ErrorSource) MessageWithLocale(ctx context.Context, violation errs.Violation, requestedLocale string) (text, actualLocale string, ok bool) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -448,7 +443,7 @@ func (s *errorMessageSource) MessageWithLocale(ctx context.Context, violation er
 	return "", "", false
 }
 
-func (s *errorMessageSource) mappingArguments(ctx context.Context, view *View, mapping compiledErrorMapping, violation errs.Violation, templateLocale string) ([]Argument, Outcome, Reason, bool) {
+func (s *ErrorSource) mappingArguments(ctx context.Context, view *View, mapping compiledErrorMapping, violation errs.Violation, templateLocale string) ([]Argument, Outcome, Reason, bool) {
 	arguments := make([]Argument, 0, len(mapping.params)+1)
 	for _, binding := range mapping.params {
 		value, exists := violation.Params[binding.param]

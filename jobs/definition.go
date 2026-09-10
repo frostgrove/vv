@@ -290,20 +290,25 @@ func (this *Definition[P]) declarationName() Name { return this.name }
 func (this *Definition[P]) declarationMarker()    {}
 
 func describePayloadIdentity[P any](identity PayloadIdentity[P]) (description PayloadIdentityDescription, err error) {
+	completed := false
 	defer func() {
-		if recover() != nil {
+		_ = recover()
+		if !completed {
 			description = PayloadIdentityDescription{}
 			err = fmt.Errorf("%w: payload identity descriptor panicked", ErrInvalid)
 		}
 	}()
 	if nilInterface(identity) {
+		completed = true
 		return PayloadIdentityDescription{}, fmt.Errorf("%w: payload identity is required", ErrInvalid)
 	}
 	id := identity.ID()
 	version := identity.Version()
 	if id.IsZero() || version.IsZero() {
+		completed = true
 		return PayloadIdentityDescription{}, fmt.Errorf("%w: payload identity id and version are required", ErrInvalid)
 	}
+	completed = true
 	return PayloadIdentityDescription{ID: id, Version: version, Available: true}, nil
 }
 
@@ -319,8 +324,10 @@ func validatePayloadIdentitySnapshot[P any](identity PayloadIdentity[P], expecte
 }
 
 func invokePayloadIdentity[P any](identity PayloadIdentity[P], value P, limit PayloadLimit) (digest [32]byte, err error) {
+	completed := false
 	defer func() {
-		if recover() != nil {
+		_ = recover()
+		if !completed {
 			digest = [32]byte{}
 			err = fmt.Errorf("%w: payload identity panicked", ErrInvalid)
 		}
@@ -328,13 +335,17 @@ func invokePayloadIdentity[P any](identity PayloadIdentity[P], value P, limit Pa
 	digest, err = identity.Digest(value, limit)
 	if err != nil {
 		if errors.Is(err, ErrTooLarge) {
+			completed = true
 			return [32]byte{}, ErrTooLarge
 		}
+		completed = true
 		return [32]byte{}, ErrInvalid
 	}
 	if digest == [32]byte{} {
+		completed = true
 		return [32]byte{}, ErrInvalid
 	}
+	completed = true
 	return digest, nil
 }
 
@@ -401,8 +412,10 @@ func validateUpcasterSnapshot(expected upcasterDescription) error {
 }
 
 func invokeCodecEncode[P any](codec Codec[P], value P, limit PayloadLimit) (encoded []byte, err error) {
+	completed := false
 	defer func() {
-		if recover() != nil {
+		_ = recover()
+		if !completed {
 			encoded = nil
 			err = fmt.Errorf("%w: codec encode panicked", ErrInvalid)
 		}
@@ -412,6 +425,7 @@ func invokeCodecEncode[P any](codec Codec[P], value P, limit PayloadLimit) (enco
 		encoded = nil
 		err = normalizeCodecEncodeError(err)
 	}
+	completed = true
 	return encoded, err
 }
 
@@ -435,8 +449,10 @@ func invokeCodecDecode[P any](codec Codec[P], encoded []byte, limit PayloadLimit
 
 func invokeCodecDecodeOwned[P any](codec Codec[P], encoded []byte, limit PayloadLimit) (value P, err error) {
 	encoded = encoded[:len(encoded):len(encoded)]
+	completed := false
 	defer func() {
-		if recover() != nil {
+		_ = recover()
+		if !completed {
 			var zero P
 			value = zero
 			err = fmt.Errorf("%w: codec decode panicked", ErrInvalid)
@@ -458,6 +474,7 @@ func invokeCodecDecodeOwned[P any](codec Codec[P], encoded []byte, limit Payload
 		raw = raw[:len(raw):len(raw)]
 		value = any(raw).(P)
 	}
+	completed = true
 	return value, err
 }
 

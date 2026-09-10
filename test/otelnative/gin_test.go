@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -15,6 +16,15 @@ import (
 )
 
 type ginContextKey struct{}
+
+func TestGinRejectsHostileServerNames(t *testing.T) {
+	telemetry := newTelemetryFixture(t, TraceProjectionPolicy{}, nil)
+	for _, name := range []string{"", "   ", strings.Repeat("s", maxNativeServerNameLength+1), string([]byte{0xff})} {
+		if _, err := GinMiddleware(telemetry.providers, RouteTable{}, TrustedIngress, name); !errors.Is(err, ErrInvalidServerName) {
+			t.Fatalf("server name %q error=%v", name, err)
+		}
+	}
+}
 
 func TestGinPublicIngressUsesOneNativeBoundary(t *testing.T) {
 	gin.SetMode(gin.TestMode)

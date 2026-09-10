@@ -353,6 +353,110 @@ func TestPartialIsTheOnlyMetadataKey(t *testing.T) {
 	}
 }
 
+func TestTheDefaultViolationLimitHasAnExactBoundary(t *testing.T) {
+	for _, tc := range []struct {
+		count   int
+		partial bool
+	}{
+		{MaxViolations, false},
+		{MaxViolations + 1, true},
+	} {
+		st := render(t, faultWithViolations(tc.count))
+		if got := len(fieldViolations(t, st)); got != MaxViolations {
+			t.Fatalf("%d input violations rendered %d, want %d", tc.count, got, MaxViolations)
+		}
+		partial := errorInfo(t, st).GetMetadata()[PartialKey] == "true"
+		if partial != tc.partial {
+			t.Fatalf("%d input violations produced partial=%v, want %v", tc.count, partial, tc.partial)
+		}
+	}
+}
+
+func TestInvalidViolationLimitsCannotRemoveTheHardCap(t *testing.T) {
+	for _, limit := range []int{-1, 0, MaxViolations + 1, MaxViolations * 10} {
+		t.Run(strconv.Itoa(limit), func(t *testing.T) {
+			st := render(t, faultWithViolations(MaxViolations+1), WithMaxViolations(limit))
+			if got := len(fieldViolations(t, st)); got != MaxViolations {
+				t.Fatalf("limit %d rendered %d violations", limit, got)
+			}
+			if errorInfo(t, st).GetMetadata()[PartialKey] != "true" {
+				t.Fatalf("limit %d removed the partial marker", limit)
+			}
+		})
+	}
+}
+
+func TestStatusMessageLimitHasAnExactBoundary(t *testing.T) {
+	failure := errs.Validation().Field("name").Code(errs.CodeRequired).Fault()
+	for _, tc := range []struct {
+		name     string
+		message  string
+		accepted bool
+	}{
+		{"N", strings.Repeat("x", errs.MaxMessageOutputBytes), true},
+		{"N plus one", strings.Repeat("x", errs.MaxMessageOutputBytes+1), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fv := fieldViolations(t, render(t, failure, WithMessages(boundaryLocalizedSource{message: tc.message})))[0]
+			if tc.accepted {
+				if fv.GetDescription() != tc.message || fv.GetLocalizedMessage().GetMessage() != tc.message || fv.GetLocalizedMessage().GetLocale() != "fr" {
+					t.Fatalf("message at N changed: %+v", fv)
+				}
+				return
+			}
+			if len(fv.GetDescription()) > errs.MaxMessageOutputBytes || fv.GetDescription() == tc.message || fv.GetLocalizedMessage() != nil {
+				t.Fatalf("message beyond N survived: %+v", fv)
+			}
+		})
+	}
+}
+
+func TestStatusErrorCodesUseTheSharedExactBoundary(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		code errs.Code
+		want errs.Code
+	}{
+		{"N", errs.Code(strings.Repeat("x", errs.MaxMessageKeyBytes)), errs.Code(strings.Repeat("x", errs.MaxMessageKeyBytes))},
+		{"N plus one", errs.Code(strings.Repeat("x", errs.MaxMessageKeyBytes+1)), errs.CodeBadQuery},
+		{"empty", "", errs.CodeBadQuery},
+		{"invalid UTF-8", errs.Code(string([]byte{0xff})), errs.CodeBadQuery},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			failure := errs.BadRequest().General().Fault()
+			failure.Code = tc.code
+			failure.Violations[0].Code = tc.code
+			st := render(t, failure)
+			if got := errs.Code(errorInfo(t, st).GetReason()); got != tc.want {
+				t.Fatalf("ErrorInfo reason = %q, want %q", got, tc.want)
+			}
+			if got := errs.Code(fieldViolations(t, st)[0].GetReason()); got != tc.want {
+				t.Fatalf("FieldViolation reason = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+type boundaryLocalizedSource struct {
+	message string
+}
+
+func (this boundaryLocalizedSource) Message(context.Context, errs.Violation, string) (string, bool) {
+	return this.message, true
+}
+
+func (this boundaryLocalizedSource) MessageWithLocale(context.Context, errs.Violation, string) (string, string, bool) {
+	return this.message, "fr", true
+}
+
+func faultWithViolations(count int) error {
+	b := errs.Validation().Code(errs.CodeCheck)
+	for i := 0; i < count; i++ {
+		b = b.At(errs.Path{errs.Named("f" + strconv.Itoa(i))}).Code(errs.CodeCheck)
+	}
+	return b.Fault()
+}
+
 func TestTheErrorInfoNamesTheFaultsOwnCode(t *testing.T) {
 	info := errorInfo(t, render(t, errs.NotFound().Fault()))
 	if info == nil {

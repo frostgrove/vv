@@ -507,8 +507,14 @@ func TestWorkerAttemptControllerRejectsClosedDeliveryBeforeProgressCapability(t 
 	}
 }
 
-func TestWorkersDrainBeforeRunSealsLifecycle(t *testing.T) {
-	spec, consumer, _, _ := workersConfigFixture(t, "workers.run.sealed")
+func TestWorkersDrainBeforeRunEndsOnlyThatGeneration(t *testing.T) {
+	spec, consumer, _, _ := workersConfigFixture(t, "workers.run.predrain")
+	spec.Driver = &workersRunDriver{
+		description: queueTestBackendDescription(1),
+		observedAt:  time.Now().UTC(),
+		claimed:     true,
+		finished:    make(chan struct{}),
+	}
 	workers, err := NewWorkers(spec, consumer)
 	if err != nil {
 		t.Fatal(err)
@@ -521,6 +527,63 @@ func TestWorkersDrainBeforeRunSealsLifecycle(t *testing.T) {
 	}
 	if err = workers.Run(context.Background()); !errors.Is(err, ErrConflict) {
 		t.Fatalf("run after drain = %v", err)
+	}
+	runContext, cancelRun := context.WithCancel(context.Background())
+	result := make(chan error, 1)
+	go func() { result <- workers.Run(runContext) }()
+	deadline := time.Now().Add(2 * time.Second)
+	for workers.Check(context.Background()) != nil && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if err = workers.Check(context.Background()); err != nil {
+		cancelRun()
+		t.Fatalf("next generation did not start: %v", err)
+	}
+	cancelRun()
+	select {
+	case err = <-result:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("restarted run = %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("restarted run did not stop")
+	}
+}
+
+func TestWorkersCanRunAgainAfterACompletedGeneration(t *testing.T) {
+	spec, consumer, _, _ := workersConfigFixture(t, "workers.run.restart")
+	spec.Driver = &workersRunDriver{
+		description: queueTestBackendDescription(1),
+		observedAt:  time.Now().UTC(),
+		claimed:     true,
+		finished:    make(chan struct{}),
+	}
+	spec.Entropy = bytes.NewReader(bytes.Repeat([]byte{1}, WorkerIncarnationBytes*2))
+	workers, err := NewWorkers(spec, consumer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for generation := 1; generation <= 2; generation++ {
+		runContext, cancelRun := context.WithCancel(context.Background())
+		result := make(chan error, 1)
+		go func() { result <- workers.Run(runContext) }()
+		deadline := time.Now().Add(2 * time.Second)
+		for workers.Check(context.Background()) != nil && time.Now().Before(deadline) {
+			time.Sleep(time.Millisecond)
+		}
+		if err = workers.Check(context.Background()); err != nil {
+			cancelRun()
+			t.Fatalf("generation %d did not start: %v", generation, err)
+		}
+		cancelRun()
+		select {
+		case err = <-result:
+			if !errors.Is(err, context.Canceled) {
+				t.Fatalf("generation %d result = %v", generation, err)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatalf("generation %d did not stop", generation)
+		}
 	}
 }
 

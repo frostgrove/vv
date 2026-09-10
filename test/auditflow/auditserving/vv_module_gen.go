@@ -10,6 +10,7 @@ var VVModule = vvmodule.MustDefine(vvmodule.Spec{
 	Name:  "audit",
 	Order: 400,
 	Provide: []any{
+		NewAttempts,
 		NewHistory,
 		NewRecorder,
 	},

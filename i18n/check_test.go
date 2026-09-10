@@ -225,7 +225,7 @@ func TestCheckUsageAcceptsIncompleteEmptySourceLedger(t *testing.T) {
 	}
 }
 
-func TestCheckUsageRejectsSelfConsistentForgedV4Provenance(t *testing.T) {
+func TestCheckUsageRejectsSelfConsistentForgedProvenance(t *testing.T) {
 	tests := []struct {
 		name            string
 		mutate          func(*UsageManifest)
@@ -470,26 +470,6 @@ func TestCheckUsageLimitsAreIndependentFromCatalogLimits(t *testing.T) {
 		}
 	}
 	t.Fatalf("narrow usage limit was not enforced: %+v", narrow.Findings)
-}
-
-func TestCheckTreatsLegacyUsageScopeAsNonAuthoritative(t *testing.T) {
-	scope := testGoUsageScope()
-	scope.Analyzer = GoUsageAnalyzerV1
-	usage := UsageManifest{
-		Keys:        []Key{"app.notice"},
-		Occurrences: []UsageOccurrence{{Key: "app.notice", Path: "legacy/use.go", Line: 1, Column: 1}},
-		GoScope:     scope,
-		Complete:    true,
-	}
-	report := Check(checkFixture(t), CheckPolicy{Usage: usage})
-	if !report.OK() {
-		t.Fatalf("legacy positive usage failed: %+v", report.Findings)
-	}
-	for _, finding := range report.Findings {
-		if strings.HasPrefix(finding.Path, "usage.") || finding.Status == CheckUnused {
-			t.Fatalf("legacy scope became v4 authority: %+v", report.Findings)
-		}
-	}
 }
 
 func TestCheckApplicationOverrideCanCompleteARequiredLocale(t *testing.T) {
@@ -771,7 +751,7 @@ func completeUsage(keys []Key, dynamic []DynamicUsage) UsageManifest {
 
 func testGoUsageScope() *GoUsageScope {
 	scope := &GoUsageScope{
-		Analyzer: GoUsageAnalyzerV2, GOOS: "linux", GOARCH: "amd64", Compiler: "gc", GoVersion: "go1.26.5", Toolchain: "go1.26.5", GoWork: "off", GoEnv: "off",
+		Analyzer: GoUsageAnalyzer, GOOS: "linux", GOARCH: "amd64", Compiler: "gc", GoVersion: "go1.26.5", Toolchain: "go1.26.5", GoWork: "off", GoEnv: "off",
 		Environment: []UsageSetting{{Name: "CGO_ENABLED", Value: "false"}, {Name: "GOARCH", Value: "amd64"}, {Name: "GOENV", Value: "off"}, {Name: "GOEXPERIMENT"}, {Name: "GOFLAGS"}, {Name: "GOOS", Value: "linux"}, {Name: "GOVERSION", Value: "go1.26.5"}, {Name: "GOWORK", Value: "off"}},
 		Roots:       []UsageRoot{{Path: "example.test/app", Kind: UsageRootDirectory}},
 		Files:       []UsageFile{{Root: "example.test/app", Path: "use.go", LogicalPath: "example.test/app/use.go", SHA256: strings.Repeat("1", sha256.Size*2), Selected: true}},

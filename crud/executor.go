@@ -89,6 +89,17 @@ func (this *transactionAdmission) inspect(v any, depth int) bool {
 	if state, transactional := v.(Transactional); transactional && state.InTransaction() {
 		return true
 	}
+	if unified, ok := v.(SourceExecutorUnwrapper); ok {
+		inner := unified.UnwrapSourceExecutor()
+		if isNilValue(inner) {
+			return true
+		}
+		result := this.inspect(inner, depth+1)
+		if comparable {
+			this.states[key] = transactionAdmissionDone
+		}
+		return result
+	}
 	source, hasSource := v.(SourceUnwrapper)
 	executor, hasExecutor := v.(ExecutorUnwrapper)
 	var sourceInner Source
@@ -173,9 +184,7 @@ func (this readWrite) UnsafeBulkInsert(ctx context.Context, target Executor, tab
 	return bulk.UnsafeBulkInsert(ctx, target, table, columns, rows)
 }
 
-func (this readWrite) UnwrapSource() Source { return this.Source }
-
-func (this readWrite) UnwrapExecutor() Executor { return this.Source }
+func (this readWrite) UnwrapSourceExecutor() Source { return this.Source }
 
 func (this readWrite) DataSource() any {
 	return identityOf(this.Source)
@@ -297,6 +306,10 @@ type ExecutorUnwrapper interface {
 	UnwrapExecutor() Executor
 }
 
+type SourceExecutorUnwrapper interface {
+	UnwrapSourceExecutor() Source
+}
+
 func unwrapSource(v any, want func(any) bool) (any, bool) {
 	for i := 0; !isNilValue(v) && i < maxChainDepth; i++ {
 		if want(v) {
@@ -304,6 +317,14 @@ func unwrapSource(v any, want func(any) bool) (any, bool) {
 		}
 		if i == maxChainDepth-1 {
 			return nil, false
+		}
+		if u, ok := v.(SourceExecutorUnwrapper); ok {
+			inner := u.UnwrapSourceExecutor()
+			if isNilValue(inner) {
+				return nil, false
+			}
+			v = inner
+			continue
 		}
 		u, ok := v.(SourceUnwrapper)
 		if !ok {
@@ -325,6 +346,14 @@ func unwrapExecutor(v any, want func(any) bool) (any, bool) {
 		}
 		if i == maxChainDepth-1 {
 			return nil, false
+		}
+		if u, ok := v.(SourceExecutorUnwrapper); ok {
+			inner := u.UnwrapSourceExecutor()
+			if isNilValue(inner) {
+				return nil, false
+			}
+			v = inner
+			continue
 		}
 		u, ok := v.(ExecutorUnwrapper)
 		if !ok {
@@ -725,11 +754,11 @@ func declaresIdentity(v any) bool {
 }
 
 var (
-	_ Source            = readWrite{}
-	_ ReadSourcer       = readWrite{}
-	_ Identified        = readWrite{}
-	_ Beginner          = readWriteTx{}
-	_ ExecutorUnwrapper = readWrite{}
+	_ Source                  = readWrite{}
+	_ ReadSourcer             = readWrite{}
+	_ Identified              = readWrite{}
+	_ Beginner                = readWriteTx{}
+	_ SourceExecutorUnwrapper = readWrite{}
 )
 
 func SameDataSource(a, b any) bool {
@@ -793,19 +822,42 @@ func inNewTx(ctx context.Context, source Executor, fn func(context.Context) erro
 	if err != nil {
 		return err
 	}
+	completed := false
 	defer func() {
-		if p := recover(); p != nil {
+		if !completed {
 			_ = rollback(tx, ctx)
-			panic(p)
 		}
 	}()
-	if err := fn(push(ctx, ds, tx, true, false)); err != nil {
-		if rbErr := rollback(tx, ctx); rbErr != nil {
-			return errJoin(err, rbErr)
-		}
-		return err
+	callErr, panicked, panicValue := invokeTransactionCallback(push(ctx, ds, tx, true, false), fn)
+	if panicked {
+		completed = true
+		_ = rollback(tx, ctx)
+		panic(panicValue)
 	}
-	return tx.Commit(ctx)
+	if callErr != nil {
+		completed = true
+		if rbErr := rollback(tx, ctx); rbErr != nil {
+			return errJoin(callErr, rbErr)
+		}
+		return callErr
+	}
+	err = tx.Commit(ctx)
+	completed = true
+	return err
+}
+
+func invokeTransactionCallback(ctx context.Context, fn func(context.Context) error) (err error, panicked bool, panicValue any) {
+	returned := false
+	defer func() {
+		if returned {
+			return
+		}
+		panicValue = recover()
+		panicked = true
+	}()
+	err = fn(ctx)
+	returned = true
+	return err, false, nil
 }
 
 const rollbackTimeout = 5 * time.Second

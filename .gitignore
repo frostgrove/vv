@@ -2,6 +2,7 @@
 # `rxcrud` was tracked for exactly that reason until it was noticed.
 /vv
 /rxcrud
+/i18n/vv-i18n
 
 # Local database state and editor scratch.
 *.db

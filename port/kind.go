@@ -193,7 +193,13 @@ func FaultFrom(kind errs.Kind, code errs.Code, vs []errs.Violation, partial bool
 			b = b.Approximate(true)
 		}
 	}
-	return b.Fault()
+	f := b.Fault()
+	for i, v := range vs {
+		if v.Message != "" && ValidMessageLocale(v.MessageLocale) {
+			f.Violations[i].MessageLocale = v.MessageLocale
+		}
+	}
+	return f
 }
 
 func sentinelFor(kind errs.Kind, code errs.Code) error {

@@ -41,6 +41,33 @@ type reportingWorker struct {
 
 func (this *reportingWorker) Ready(ctx context.Context) error { return this.ready(ctx) }
 
+type generationWorker struct {
+	worker
+	begin func()
+}
+
+func (this *generationWorker) BeginRunnerGeneration() { this.begin() }
+
+type hostileErrorMethod struct {
+	panicError      bool
+	panicIs         bool
+	matchesCanceled bool
+}
+
+func (err hostileErrorMethod) Error() string {
+	if err.panicError {
+		panic("error text panic")
+	}
+	return "hostile runner error"
+}
+
+func (err hostileErrorMethod) Is(error) bool {
+	if err.panicIs {
+		panic("error classification panic")
+	}
+	return err.matchesCanceled
+}
+
 func supervisor(t *testing.T, spec runtime.Spec) *runtime.Supervisor {
 	t.Helper()
 	built, err := runtime.NewSupervisor(spec)
@@ -125,6 +152,39 @@ func TestTwoRunnersWithOneNameAreRefusedBeforeAnythingStarts(t *testing.T) {
 	}
 }
 
+func TestATypedNilRunnerIsRefusedBeforeItsMethodsAreCalled(t *testing.T) {
+	var runner *worker
+	_, err := runtime.NewSupervisor(runtime.Spec{Runners: []runtime.Runner{runner}})
+	if err == nil || !strings.Contains(err.Error(), "runner 0 is nil") {
+		t.Fatalf("typed nil runner = %v", err)
+	}
+}
+
+func TestRunnerGenerationPreparationCanReadSupervisorState(t *testing.T) {
+	var supervised *runtime.Supervisor
+	var generations atomic.Int32
+	runner := &generationWorker{worker: worker{name: "generation-aware"}}
+	runner.begin = func() {
+		generations.Add(1)
+		_ = supervised.States()
+		if err := supervised.Start(context.Background()); !errors.Is(err, runtime.ErrAlreadyStarted) {
+			t.Fatalf("reentrant Start = %v", err)
+		}
+	}
+	supervised = supervisor(t, runtime.Spec{Runners: []runtime.Runner{runner}})
+	for range 2 {
+		if err := supervised.Start(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		if err := supervised.Stop(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if generations.Load() != 2 {
+		t.Fatalf("generation preparations = %d", generations.Load())
+	}
+}
+
 func TestARunnerOutlivesTheStartUpThatLaunchedIt(t *testing.T) {
 	supervised := supervisor(t, runtime.Spec{Runners: []runtime.Runner{&worker{name: "sweeper"}}})
 
@@ -200,6 +260,122 @@ func TestStopNamesTheRunnerThatIgnoredTheDrainGrace(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "stuck") {
 		t.Fatalf("the shutdown failure does not name the runner still holding the process: %v", err)
+	}
+}
+
+func TestStopCancelsTheRunnerWhenDrainIgnoresItsContext(t *testing.T) {
+	runEntered := make(chan struct{})
+	runCanceled := make(chan struct{})
+	drainEntered := make(chan struct{})
+	releaseDrain := make(chan struct{})
+	supervised := supervisor(t, runtime.Spec{
+		DrainGrace: time.Hour,
+		Runners: []runtime.Runner{&drainingWorker{worker: worker{
+			name: "stuck-drain",
+			run: func(ctx context.Context) error {
+				close(runEntered)
+				<-ctx.Done()
+				close(runCanceled)
+				return ctx.Err()
+			},
+			drain: func(context.Context) error {
+				close(drainEntered)
+				<-releaseDrain
+				return nil
+			},
+		}}},
+	})
+	if err := supervised.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	<-runEntered
+	stopContext, cancelStop := context.WithCancel(context.Background())
+	stopped := make(chan error, 1)
+	go func() { stopped <- supervised.Stop(stopContext) }()
+	<-drainEntered
+	cancelStop()
+	select {
+	case <-runCanceled:
+	case <-time.After(2 * time.Second):
+		t.Fatal("runner cancellation waited for Drain to return")
+	}
+	select {
+	case err := <-stopped:
+		if !errors.Is(err, runtime.ErrDrainDeadline) || !strings.Contains(err.Error(), "stuck-drain") {
+			t.Fatalf("bounded stop = %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Stop waited forever for Drain")
+	}
+	if err := supervised.Start(context.Background()); !errors.Is(err, runtime.ErrStillStopping) {
+		t.Fatalf("restart over a live Drain = %v", err)
+	}
+	close(releaseDrain)
+}
+
+func TestStopPrefersAnAlreadyFinishedGenerationToAnExpiredContext(t *testing.T) {
+	supervised := supervisor(t, runtime.Spec{Runners: []runtime.Runner{
+		&worker{name: "finished", run: func(context.Context) error { return errors.New("finished") }},
+	}})
+	if err := supervised.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	awaitPhase(t, supervised, "finished", runtime.PhaseFailed)
+	stopContext, cancelStop := context.WithCancel(context.Background())
+	cancelStop()
+	if err := supervised.Stop(stopContext); err != nil {
+		t.Fatalf("finished generation became a deadline failure: %v", err)
+	}
+}
+
+func TestHostileReturnedErrorsBecomeTerminalFailuresWithoutEscaping(t *testing.T) {
+	for _, returned := range []error{
+		hostileErrorMethod{panicError: true},
+		hostileErrorMethod{panicIs: true},
+	} {
+		supervised := supervisor(t, runtime.Spec{Runners: []runtime.Runner{
+			&worker{name: "hostile", run: func(context.Context) error { return returned }},
+		}})
+		if err := supervised.Start(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		state := awaitPhase(t, supervised, "hostile", runtime.PhaseFailed)
+		if state.Err != returned {
+			t.Fatal("hostile error identity changed")
+		}
+		if err := supervised.Stop(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	draining := supervisor(t, runtime.Spec{Runners: []runtime.Runner{
+		&drainingWorker{worker: worker{name: "hostile-drain", drain: func(context.Context) error {
+			return hostileErrorMethod{panicError: true}
+		}}},
+	}})
+	if err := draining.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := draining.Stop(context.Background()); err == nil || !strings.Contains(err.Error(), "hostile-drain") {
+		t.Fatalf("hostile drain error was not safely returned")
+	}
+}
+
+func TestARecognizedCancellationStaysExpectedWhenItsErrorTextPanics(t *testing.T) {
+	supervised := supervisor(t, runtime.Spec{Runners: []runtime.Runner{
+		&worker{name: "hostile-cancellation", run: func(ctx context.Context) error {
+			<-ctx.Done()
+			return hostileErrorMethod{panicError: true, matchesCanceled: true}
+		}},
+	}})
+	if err := supervised.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := supervised.Stop(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if state := stateOf(t, supervised, "hostile-cancellation"); state.Phase != runtime.PhaseStopped || state.Err != nil {
+		t.Fatal("recognized cancellation was changed into a failure")
 	}
 }
 

@@ -36,18 +36,23 @@ type entityHead struct {
 }
 
 type log struct {
-	mu          sync.RWMutex
-	backing     audit.Backing
-	backingID   audit.BackingID
-	logID       audit.LogID
-	limits      audit.Limits
-	catalogs    audit.StoreCatalogState
-	manifests   map[audit.CatalogRef]audit.Manifest
-	mutations   []audit.CatalogMutationView
-	revisions   map[audit.RevisionID]revisionRecord
-	idempotency map[idempotencyKey]audit.RevisionID
-	heads       map[entityKey]entityHead
-	sequence    uint64
+	mu           sync.RWMutex
+	backing      audit.Backing
+	backingID    audit.BackingID
+	logID        audit.LogID
+	limits       audit.Limits
+	catalogs     audit.StoreCatalogState
+	manifests    map[audit.CatalogRef]audit.Manifest
+	mutations    []audit.CatalogMutationView
+	revisions    map[audit.RevisionID]revisionRecord
+	idempotency  map[idempotencyKey]audit.RevisionID
+	heads        map[entityKey]entityHead
+	attempts     map[audit.AttemptChainID]attemptRecord
+	attemptOps   map[attemptOperationKey]audit.AttemptChainID
+	attemptTypes map[attemptTypeKey]audit.AttemptTypeProjectionStateView
+	attemptLocks map[attemptTypeKey]chan struct{}
+	attemptKeys  map[attemptIdempotencyKey]audit.RevisionID
+	sequence     uint64
 }
 
 type Log struct{ value *log }
@@ -77,6 +82,9 @@ func NewLog(spec LogSpec) (*Log, error) {
 		limits: limits, catalogs: audit.NewEmptyStoreCatalogState(),
 		manifests: make(map[audit.CatalogRef]audit.Manifest), revisions: make(map[audit.RevisionID]revisionRecord),
 		idempotency: make(map[idempotencyKey]audit.RevisionID), heads: make(map[entityKey]entityHead),
+		attempts: make(map[audit.AttemptChainID]attemptRecord), attemptOps: make(map[attemptOperationKey]audit.AttemptChainID),
+		attemptTypes: make(map[attemptTypeKey]audit.AttemptTypeProjectionStateView), attemptLocks: make(map[attemptTypeKey]chan struct{}),
+		attemptKeys: make(map[attemptIdempotencyKey]audit.RevisionID),
 	}
 	value.backingID, err = randomID[audit.BackingID]()
 	if err != nil {
@@ -444,7 +452,7 @@ func memoryCapabilities() audit.Capabilities {
 		Transactions: audit.SupportSupported, CrossSystemAtomic: audit.SupportUnsupported,
 		Persistence: audit.SupportUnsupported, Idempotency: audit.SupportSupported,
 		Reconciliation: audit.SupportSupported, StableSearch: audit.SupportUnsupported,
-		ExactInspection: audit.SupportSupported, AttemptLifecycle: audit.SupportUnsupported,
+		ExactInspection: audit.SupportSupported, AttemptLifecycle: audit.SupportSupported,
 		Holds: audit.SupportUnsupported, PurgePlanning: audit.SupportUnsupported,
 	})
 	return value
@@ -707,7 +715,13 @@ func appendLocked(target *log, clock func() time.Time, request audit.AppendReque
 		if existing.stored.Intent() != view.Intent {
 			return audit.AppendResult{}, audit.Failure(audit.Conflict, errors.New("auditmemory: revision identity conflicts"))
 		}
+		if view.Attempt.Chain != (audit.AttemptChainID{}) {
+			return audit.NewAttemptAppendResult(request, existing.stored, audit.Replayed, authority)
+		}
 		return audit.NewAppendResult(request, existing.stored, audit.Replayed, authority)
+	}
+	if view.Attempt.Chain != (audit.AttemptChainID{}) {
+		return appendAttemptLocked(target, clock, request, authority)
 	}
 	if revision.Header.HasIdempotency {
 		key := idempotencyKey{catalog: revision.Header.Catalog.ID, operation: revision.Header.Operation, token: revision.Header.Idempotency}
@@ -955,7 +969,9 @@ func (tx *Tx) Commit(ctx context.Context) error {
 		backing: tx.store.log.backing, backingID: tx.store.log.backingID, logID: tx.store.log.logID,
 		limits: tx.store.log.limits, catalogs: tx.store.log.catalogs, manifests: tx.store.log.manifests,
 		revisions: cloneRevisions(tx.store.log.revisions), idempotency: cloneIdempotency(tx.store.log.idempotency),
-		heads: cloneHeads(tx.store.log.heads), sequence: tx.store.log.sequence,
+		heads: cloneHeads(tx.store.log.heads), attempts: cloneAttempts(tx.store.log.attempts),
+		attemptOps: cloneAttemptOps(tx.store.log.attemptOps), attemptTypes: cloneAttemptTypes(tx.store.log.attemptTypes),
+		attemptKeys: cloneAttemptKeys(tx.store.log.attemptKeys), sequence: tx.store.log.sequence,
 	}
 	for _, request := range tx.requests {
 		if _, err := appendLocked(staged, tx.store.clock, request, tx.authority); err != nil {
@@ -966,6 +982,10 @@ func (tx *Tx) Commit(ctx context.Context) error {
 	tx.store.log.revisions = staged.revisions
 	tx.store.log.idempotency = staged.idempotency
 	tx.store.log.heads = staged.heads
+	tx.store.log.attempts = staged.attempts
+	tx.store.log.attemptOps = staged.attemptOps
+	tx.store.log.attemptTypes = staged.attemptTypes
+	tx.store.log.attemptKeys = staged.attemptKeys
 	tx.store.log.sequence = staged.sequence
 	tx.state = 1
 	return nil
@@ -1053,13 +1073,26 @@ func (e *execution) Append(ctx context.Context, request audit.AppendRequest) (au
 	binary.BigEndian.PutUint64(positionBytes, uint64(len(e.tx.requests)+1))
 	position, _ := audit.NewStorePosition(positionBytes)
 	stored, err := audit.NewStoredHeader(audit.StoredHeaderData{Header: view.Header, Intent: request.View().Intent, RecordedAt: e.store.clock().UTC(), Position: position})
+	if request.View().Attempt.Chain != (audit.AttemptChainID{}) {
+		item := request.View().Revision.View().Items[0]
+		stored, err = audit.NewStoredHeader(audit.StoredHeaderData{
+			Header: view.Header, Intent: request.View().Intent, RecordedAt: e.store.clock().UTC(), Position: position,
+			AttemptTransitionPresent: true, AttemptTransition: item.Attempt,
+			AttemptProjection: request.View().Attempt.Candidate.Result,
+		})
+	}
 	if err != nil {
 		return audit.AppendResult{}, audit.Failure(audit.Corrupt, err)
 	}
 	e.tx.requests = append(e.tx.requests, request)
+	if request.View().Attempt.Chain != (audit.AttemptChainID{}) {
+		return audit.NewAttemptAppendResult(request, stored, audit.Inserted, e.authority)
+	}
 	return audit.NewAppendResult(request, stored, audit.Inserted, e.authority)
 }
 
 var _ audit.Writer = (*Store)(nil)
 var _ audit.Log = (*Store)(nil)
+var _ audit.AttemptLog = (*Store)(nil)
+var _ audit.AttemptTypeState = (*Store)(nil)
 var _ audit.Execution = (*execution)(nil)

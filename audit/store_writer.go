@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/binary"
+	"reflect"
 	"slices"
 	"time"
 
@@ -132,7 +133,7 @@ type entityAliasBinding struct {
 }
 
 type EntityAliasBinding struct{ value entityAliasBinding }
-type AttemptIdentityAliasBinding struct{ value struct{} }
+type AttemptIdentityAliasBinding struct{ value attemptIdentityAliasBinding }
 type HoldIDAliasBinding struct{ value struct{} }
 type HoldMatterAliasBinding struct{ value struct{} }
 
@@ -226,6 +227,26 @@ func newAppendRequestWithEntities(revision Revision, intent AppendIntentDigest, 
 	}}, nil
 }
 
+func newAttemptAppendRequest(revision Revision, idempotency IdentityCommitmentSet, attempt AttemptConditionalAppendView, binding AttemptIdentityAliasBinding) (AppendRequest, error) {
+	if !revision.valid() || idempotency.Domain() != CommitIdempotency || len(idempotency.Aliases()) == 0 {
+		return AppendRequest{}, auditErrorAt(ErrInvalid, "attempt.append_request")
+	}
+	view := revision.View()
+	attempt.Candidate.Revision = revision
+	request := AppendRequest{value: appendRequest{
+		view: AppendRequestView{
+			Revision: revision, Attempt: attempt, Idempotency: idempotency,
+			Attempts: []AttemptIdentityAliasBinding{binding},
+		},
+		origin: &appendRequestOrigin{},
+	}}
+	request.value.view.Intent = attemptAppendIntentDigestOf(view, attempt)
+	if err := validateAttemptAppendRequest(request); err != nil {
+		return AppendRequest{}, err
+	}
+	return request, nil
+}
+
 func (r AppendRequest) View() AppendRequestView {
 	view := r.value.view
 	view.Revision = Revision{value: revision{view: cloneRevisionView(view.Revision.View())}}
@@ -237,7 +258,58 @@ func (r AppendRequest) View() AppendRequestView {
 }
 
 func (r AppendRequest) valid() bool {
-	return r.value.origin != nil && r.value.view.Revision.valid() && r.value.view.Intent != (AppendIntentDigest{})
+	if r.value.origin == nil || !r.value.view.Revision.valid() || r.value.view.Intent == (AppendIntentDigest{}) {
+		return false
+	}
+	if r.value.view.Attempt.Chain != (AttemptChainID{}) {
+		return validateAttemptAppendRequest(r) == nil
+	}
+	return true
+}
+
+func validateAttemptAppendRequest(request AppendRequest) error {
+	view := request.value.view
+	if request.value.origin == nil || len(view.Attempts) != 1 || len(view.Entities) != 0 || len(view.HoldIDs) != 0 || len(view.HoldMatters) != 0 || view.Hold.Kind != 0 || view.Idempotency.Domain() != CommitIdempotency || len(view.Idempotency.Aliases()) == 0 || !view.Revision.valid() {
+		return auditErrorAt(ErrInvalid, "attempt.append_request")
+	}
+	revision := view.Revision.View()
+	if len(revision.Items) != 1 || revision.Items[0].Kind != AttemptItem {
+		return auditErrorAt(ErrInvalid, "attempt.append_request")
+	}
+	item := revision.Items[0]
+	transition := item.Attempt
+	conditional := view.Attempt
+	result := attemptStateFromNext(transition.Result, item.Leaf)
+	typeResult := attemptTypeStateFromNext(transition.TypeResult, item.Leaf)
+	if conditional.Chain != transition.Chain || conditional.Expected != transition.Expected || conditional.TypeExpected != transition.TypeExpected || conditional.ResumeAuthorization != transition.ResumeAuthorization || conditional.Candidate.Result != result || conditional.Candidate.TypeResult != typeResult || !reflect.DeepEqual(conditional.Candidate.Revision.View().Header, revision.Header) || conditional.Candidate.Revision.View().Items[0].Leaf != item.Leaf || view.Intent != attemptAppendIntentDigestOf(revision, conditional) {
+		return auditErrorAt(ErrInvalid, "attempt.append_request")
+	}
+	binding := view.Attempts[0]
+	if binding.Chain() != transition.Chain || binding.Operation() != transition.Operation || binding.Policy() != transition.Policy || binding.Replay() != transition.Replay || binding.OperationID() != transition.OperationID || binding.TargetPresent() != result.TargetPresent || binding.ScopePresent() != result.ScopePresent || !validAttemptAliasSet(binding.OwnerCommitments(), CommitAttemptOwner) {
+		return auditErrorAt(ErrInvalid, "attempt.aliases")
+	}
+	if binding.TargetPresent() != validAttemptAliasSet(binding.TargetCommitments(), CommitAttemptTarget) || binding.ScopePresent() != validAttemptAliasSet(binding.ScopeCommitments(), CommitEvidenceScope) {
+		return auditErrorAt(ErrInvalid, "attempt.aliases")
+	}
+	return nil
+}
+
+func attemptStateFromNext(value AttemptProjectionNextView, leaf LeafDigest) AttemptProjectionStateView {
+	return AttemptProjectionStateView{
+		Present: value.Present, Chain: value.Chain, Policy: value.Policy, Replay: value.Replay,
+		Operation: value.Operation, OperationID: value.OperationID,
+		TargetPresent: value.TargetPresent, Target: value.Target,
+		ScopePresent: value.ScopePresent, Scope: value.Scope, Owner: value.Owner,
+		State: value.State, Sequence: value.Sequence, CheckpointCount: value.CheckpointCount,
+		TransitionBytes: value.TransitionBytes, Start: value.Start, Head: value.Head, Leaf: leaf, ExpiresAt: value.ExpiresAt,
+	}
+}
+
+func attemptTypeStateFromNext(value AttemptTypeProjectionNextView, leaf LeafDigest) AttemptTypeProjectionStateView {
+	return AttemptTypeProjectionStateView{
+		Catalog: value.Catalog, Operation: value.Operation, Policy: value.Policy, Replay: value.Replay,
+		Anchor: value.Anchor, Unsettled: value.Unsettled, Head: value.Head, Leaf: leaf,
+	}
 }
 
 type storedHeader struct {
@@ -274,6 +346,14 @@ func NewStoredHeader(data StoredHeaderData) (StoredHeader, error) {
 	}
 	if data.AttemptTransitionPresent && data.HoldTransitionPresent {
 		return StoredHeader{}, auditErrorAt(ErrMalformedEvidence, "stored_header")
+	}
+	if data.AttemptTransitionPresent {
+		transition := data.AttemptTransition
+		if !validAttemptProjectionState(data.AttemptProjection) || data.AttemptProjection != attemptStateFromNext(transition.Result, data.AttemptProjection.Leaf) || transition.Operation != data.Header.Operation || transition.OperationID != data.Header.OperationID {
+			return StoredHeader{}, auditErrorAt(ErrMalformedEvidence, "stored_header.attempt")
+		}
+	} else if data.AttemptTransition != (AttemptTransitionWireView{}) || data.AttemptProjection != (AttemptProjectionStateView{}) {
+		return StoredHeader{}, auditErrorAt(ErrMalformedEvidence, "stored_header.attempt")
 	}
 	data.Header.Authorization.Resources = slices.Clone(data.Header.Authorization.Resources)
 	data.Header.Authorization.Actions = slices.Clone(data.Header.Authorization.Actions)
@@ -341,6 +421,9 @@ func NewHoldAppendResult(request AppendRequest, stored StoredHeader, disposition
 }
 
 func NewAttemptAppendResult(request AppendRequest, stored StoredHeader, disposition AppendDisposition, authority Authority) (AppendResult, error) {
+	if request.View().Attempt.Chain == (AttemptChainID{}) {
+		return AppendResult{}, auditErrorAt(ErrMalformedEvidence, "attempt.append_result")
+	}
 	return NewAppendResult(request, stored, disposition, authority)
 }
 
@@ -431,14 +514,6 @@ func (r LookupResult) HoldDisposition() (HoldTransitionDisposition, bool) {
 
 func (r LookupResult) HoldProjection() (HoldProjectionStateView, bool) {
 	return r.value.data.Stored.HoldProjection()
-}
-
-func (r LookupResult) AttemptTransition() (AttemptTransitionWireView, bool) {
-	return r.value.data.Stored.AttemptTransition()
-}
-
-func (r LookupResult) AttemptProjection() (AttemptProjectionStateView, bool) {
-	return r.value.data.Stored.AttemptProjection()
 }
 
 type IdempotencyLookupRequestView struct {

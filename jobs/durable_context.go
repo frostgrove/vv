@@ -532,15 +532,21 @@ func (r RestoredIdentity) validFor(request IdentityRestoreRequest) bool {
 
 type identityRestoreLineageKey struct{}
 
-func RestoreTrustedIdentity(ctx context.Context, restorer TrustedIdentityRestorer, request IdentityRestoreRequest) (restored context.Context, err error) {
+func RestoreTrustedIdentity(ctx context.Context, restorer TrustedIdentityRestorer, request IdentityRestoreRequest) (context.Context, error) {
 	if nilInterface(ctx) || nilInterface(restorer) || !request.valid() {
 		return nil, invalid("trusted identity restoration")
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	return invokeTrustedIdentityRestore(ctx, restorer, request)
+}
+
+func invokeTrustedIdentityRestore(ctx context.Context, restorer TrustedIdentityRestorer, request IdentityRestoreRequest) (restored context.Context, err error) {
+	completed := false
 	defer func() {
-		if recover() != nil {
+		_ = recover()
+		if !completed {
 			restored = nil
 			if contextErr := ctx.Err(); contextErr != nil {
 				err = contextErr
@@ -549,6 +555,12 @@ func RestoreTrustedIdentity(ctx context.Context, restorer TrustedIdentityRestore
 			}
 		}
 	}()
+	restored, err = restoreTrustedIdentity(ctx, restorer, request)
+	completed = true
+	return restored, err
+}
+
+func restoreTrustedIdentity(ctx context.Context, restorer TrustedIdentityRestorer, request IdentityRestoreRequest) (context.Context, error) {
 	lineage := new(byte)
 	provided := context.WithValue(ctx, identityRestoreLineageKey{}, lineage)
 	identity, restoreErr := restorer.RestoreIdentity(provided, request)
@@ -558,7 +570,7 @@ func RestoreTrustedIdentity(ctx context.Context, restorer TrustedIdentityRestore
 	if restoreErr != nil || !identity.validFor(request) {
 		return nil, ErrDriver
 	}
-	restored = identity.context
+	restored := identity.context
 	if restored.Value(identityRestoreLineageKey{}) != lineage || !sameContextLifetime(provided, restored) {
 		return nil, ErrDriver
 	}

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -33,6 +34,8 @@ type Supervisor struct {
 	states   map[string]RunnerState
 	cancel   context.CancelFunc
 	finished chan struct{}
+	drained  chan struct{}
+	starting bool
 	started  bool
 	stopping bool
 }
@@ -55,7 +58,7 @@ func NewSupervisor(spec Spec) (*Supervisor, error) {
 	named := make(map[string]struct{}, len(spec.Runners))
 	runners := make([]Runner, 0, len(spec.Runners))
 	for position, runner := range spec.Runners {
-		if runner == nil {
+		if runnerNil(runner) {
 			problems = append(problems, fmt.Errorf("runtime: runner %d is nil", position))
 			continue
 		}
@@ -94,6 +97,11 @@ func NewSupervisor(spec Spec) (*Supervisor, error) {
 
 func Auto(runners ...Runner) (*Supervisor, error) { return NewSupervisor(Spec{Runners: runners}) }
 
+type RunnerGenerationStarter interface {
+	Runner
+	BeginRunnerGeneration()
+}
+
 // Start hands every runner its own goroutine and a context that outlives the
 // start call: an fx OnStart context is cancelled the moment start-up finishes,
 // and a background worker given that context stops the instant it is ready.
@@ -103,7 +111,7 @@ func Auto(runners ...Runner) (*Supervisor, error) { return NewSupervisor(Spec{Ru
 // supervisor over them would run every runner twice.
 func (this *Supervisor) Start(ctx context.Context) error {
 	this.mutex.Lock()
-	if this.started {
+	if this.started || this.starting {
 		this.mutex.Unlock()
 		return ErrAlreadyStarted
 	}
@@ -111,13 +119,33 @@ func (this *Supervisor) Start(ctx context.Context) error {
 		this.mutex.Unlock()
 		return ErrStillStopping
 	}
+	this.starting = true
+	this.mutex.Unlock()
+	committed := false
+	defer func() {
+		if committed {
+			return
+		}
+		this.mutex.Lock()
+		this.starting = false
+		this.mutex.Unlock()
+	}()
+	for _, runner := range this.runners {
+		if err := beginRunnerGeneration(runner); err != nil {
+			return err
+		}
+	}
 	running, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	finished := make(chan struct{})
+	this.mutex.Lock()
 	this.started = true
+	this.starting = false
 	this.stopping = false
 	this.cancel = cancel
 	this.finished = finished
+	this.drained = nil
 	this.mutex.Unlock()
+	committed = true
 
 	var group sync.WaitGroup
 	for _, runner := range this.runners {
@@ -143,12 +171,46 @@ func (this *Supervisor) Start(ctx context.Context) error {
 	return nil
 }
 
+func beginRunnerGeneration(runner Runner) (err error) {
+	starter, ok := runner.(RunnerGenerationStarter)
+	if !ok {
+		return nil
+	}
+	completed := false
+	defer func() {
+		_ = recover()
+		if !completed {
+			err = fmt.Errorf("%w: %q", ErrRunnerPanicked, runner.Name())
+		}
+	}()
+	starter.BeginRunnerGeneration()
+	completed = true
+	return nil
+}
+
+func runnerNil(runner Runner) bool {
+	if runner == nil {
+		return true
+	}
+	value := reflect.ValueOf(runner)
+	switch value.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+		return value.IsNil()
+	default:
+		return false
+	}
+}
+
 func (this *Supervisor) previousGenerationFinished() bool {
-	if this.finished == nil {
+	return channelFinished(this.finished) && channelFinished(this.drained)
+}
+
+func channelFinished(done <-chan struct{}) bool {
+	if done == nil {
 		return true
 	}
 	select {
-	case <-this.finished:
+	case <-done:
 		return true
 	default:
 		return false
@@ -159,14 +221,16 @@ func (this *Supervisor) supervise(ctx context.Context, runner Runner) {
 	startedAt := time.Now()
 	err := invoke(ctx, runner)
 	elapsed := time.Since(startedAt)
+	err, canceled, errorText := inspectRunnerError(err)
 
 	this.mutex.Lock()
 	stopping := this.stopping
 	this.mutex.Unlock()
 
-	expected := stopping && (err == nil || errors.Is(err, context.Canceled))
+	expected := stopping && (err == nil || canceled)
 	if !expected && err == nil {
 		err = fmt.Errorf("%w: %q", ErrRunnerReturned, runner.Name())
+		errorText = err.Error()
 	}
 
 	state := this.transition(runner.Name(), func(state *RunnerState) {
@@ -185,17 +249,56 @@ func (this *Supervisor) supervise(ctx context.Context, runner Runner) {
 	observingLifecycle(this.observer, ctx, lifecycleEvent(LifecycleOperationRun, state.Declaration, eventErr, elapsed))
 	if state.Phase == PhaseFailed {
 		this.log.ErrorContext(ctx, "a supervised runner stopped on its own",
-			slog.String("runner", runner.Name()), slog.String("err", err.Error()))
+			slog.String("runner", runner.Name()), slog.String("err", errorText))
 	}
 }
 
-func invoke(ctx context.Context, runner Runner) (err error) {
+func inspectRunnerError(returned error) (err error, canceled bool, text string) {
+	if returned == nil {
+		return nil, false, ""
+	}
+	canceled = safelyMatches(returned, context.Canceled)
+	text = safelyRenderError(returned, "runner returned an error that could not be inspected")
+	return returned, canceled, text
+}
+
+func safelyMatches(err error, target error) (matched bool) {
+	completed := false
 	defer func() {
-		if recovered := recover(); recovered != nil {
-			err = fmt.Errorf("%w: %q: %v", ErrRunnerPanicked, runner.Name(), recovered)
+		_ = recover()
+		if !completed {
+			matched = false
 		}
 	}()
-	return runner.Run(ctx)
+	matched = errors.Is(err, target)
+	completed = true
+	return matched
+}
+
+func safelyRenderError(err error, fallback string) (text string) {
+	completed := false
+	defer func() {
+		_ = recover()
+		if !completed {
+			text = fallback
+		}
+	}()
+	text = err.Error()
+	completed = true
+	return text
+}
+
+func invoke(ctx context.Context, runner Runner) (err error) {
+	completed := false
+	defer func() {
+		_ = recover()
+		if !completed {
+			err = fmt.Errorf("%w: %q", ErrRunnerPanicked, runner.Name())
+		}
+	}()
+	err = runner.Run(ctx)
+	completed = true
+	return err
 }
 
 // Stop drains before it cancels: a runner that is told to finish what it holds
@@ -203,6 +306,10 @@ func invoke(ctx context.Context, runner Runner) (err error) {
 // that is cancelled first can only abandon it.
 func (this *Supervisor) Stop(ctx context.Context) error {
 	this.mutex.Lock()
+	if this.starting {
+		this.mutex.Unlock()
+		return ErrAlreadyStarted
+	}
 	if !this.started {
 		this.mutex.Unlock()
 		return nil
@@ -215,13 +322,27 @@ func (this *Supervisor) Stop(ctx context.Context) error {
 	deadline, release := context.WithTimeout(ctx, this.grace)
 	defer release()
 
-	problems := this.drain(deadline)
+	problems, pending, drained := this.drain(deadline)
+	this.mutex.Lock()
+	this.drained = drained
+	this.mutex.Unlock()
 	cancel()
 
+	overran := len(pending) > 0
 	select {
 	case <-finished:
-	case <-deadline.Done():
-		problems = append(problems, fmt.Errorf("%w: %s", ErrDrainDeadline, strings.Join(this.stillRunning(), ", ")))
+	default:
+		select {
+		case <-finished:
+		case <-deadline.Done():
+			overran = true
+		}
+	}
+	if overran {
+		pending = append(pending, this.stillRunning()...)
+		slices.Sort(pending)
+		pending = slices.Compact(pending)
+		problems = append(problems, fmt.Errorf("%w: %s", ErrDrainDeadline, strings.Join(pending, ", ")))
 	}
 
 	this.mutex.Lock()
@@ -230,14 +351,23 @@ func (this *Supervisor) Stop(ctx context.Context) error {
 	return errors.Join(problems...)
 }
 
-func (this *Supervisor) drain(ctx context.Context) []error {
-	problems := make([]error, len(this.runners))
+type drainResult struct {
+	position int
+	name     string
+	err      error
+	text     string
+}
+
+func (this *Supervisor) drain(ctx context.Context) ([]error, []string, chan struct{}) {
+	results := make(chan drainResult, len(this.runners))
+	pending := make(map[int]string, len(this.runners))
 	var group sync.WaitGroup
 	for position, runner := range this.runners {
 		drainer, drainable := runner.(Drainer)
 		if !drainable {
 			continue
 		}
+		pending[position] = runner.Name()
 		declaration := this.runnerDeclaration(runner.Name())
 		group.Add(1)
 		go func() {
@@ -245,14 +375,84 @@ func (this *Supervisor) drain(ctx context.Context) []error {
 			startedAt := time.Now()
 			err := drainer.Drain(ctx)
 			elapsed := time.Since(startedAt)
-			if err != nil {
-				problems[position] = fmt.Errorf("runtime: draining %q: %w", runner.Name(), err)
-			}
+			err, text := inspectDrainError(err)
 			observingLifecycle(this.observer, ctx, lifecycleEvent(LifecycleOperationDrain, declaration, err, elapsed))
+			results <- drainResult{position: position, name: runner.Name(), err: err, text: text}
 		}()
 	}
-	group.Wait()
-	return slices.DeleteFunc(problems, func(err error) bool { return err == nil })
+	drained := make(chan struct{})
+	go func() {
+		group.Wait()
+		close(drained)
+	}()
+
+	completed := make(map[int]error, len(pending))
+	for len(pending) > 0 {
+		select {
+		case result := <-results:
+			delete(pending, result.position)
+			if result.err != nil {
+				completed[result.position] = drainFailure{name: result.name, cause: result.err, text: result.text}
+			}
+		case <-ctx.Done():
+			for {
+				select {
+				case result := <-results:
+					delete(pending, result.position)
+					if result.err != nil {
+						completed[result.position] = drainFailure{name: result.name, cause: result.err, text: result.text}
+					}
+				default:
+					problems, names := orderedDrainResults(completed, pending)
+					return problems, names, drained
+				}
+			}
+		}
+	}
+	problems, _ := orderedDrainResults(completed, pending)
+	<-drained
+	return problems, nil, drained
+}
+
+func inspectDrainError(returned error) (err error, text string) {
+	if returned == nil {
+		return nil, ""
+	}
+	return returned, safelyRenderError(returned, "drainer returned an error that could not be inspected")
+}
+
+type drainFailure struct {
+	name  string
+	cause error
+	text  string
+}
+
+func (failure drainFailure) Error() string {
+	return fmt.Sprintf("runtime: draining %q: %s", failure.name, failure.text)
+}
+
+func (failure drainFailure) Unwrap() error { return failure.cause }
+
+func orderedDrainResults(completed map[int]error, pending map[int]string) ([]error, []string) {
+	positions := make([]int, 0, len(completed))
+	for position := range completed {
+		positions = append(positions, position)
+	}
+	slices.Sort(positions)
+	problems := make([]error, 0, len(positions))
+	for _, position := range positions {
+		problems = append(problems, completed[position])
+	}
+	positions = positions[:0]
+	for position := range pending {
+		positions = append(positions, position)
+	}
+	slices.Sort(positions)
+	names := make([]string, 0, len(positions))
+	for _, position := range positions {
+		names = append(names, pending[position])
+	}
+	return problems, names
 }
 
 func (this *Supervisor) runnerDeclaration(name string) Declaration {

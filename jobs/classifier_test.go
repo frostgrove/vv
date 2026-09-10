@@ -6,12 +6,17 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/frostgrove/vv/port"
 	"log/slog"
+	"os"
+	"os/exec"
 	"reflect"
+	goruntime "runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
+
+	"github.com/frostgrove/vv/port"
 )
 
 type classifierTypedError struct{ secret string }
@@ -27,6 +32,75 @@ type classifierPanicPayload struct {
 	formats *atomic.Int32
 	secret  string
 }
+
+type panicNilEntropyReader struct{}
+
+func (panicNilEntropyReader) Read([]byte) (int, error) { panic(nil) }
+
+type panicNilClock struct{}
+
+func (panicNilClock) Now() time.Time { panic(nil) }
+
+func (panicNilClock) NewTimerAt(time.Time) Timer { panic("unexpected timer") }
+
+type panicNilCodec struct{ phase string }
+
+func (panicNilCodec) ID() CodecID            { return builtinCodecID("panicnil") }
+func (panicNilCodec) Version() SchemaVersion { return 1 }
+func (codec panicNilCodec) Encode(value string, _ PayloadLimit) ([]byte, error) {
+	if codec.phase == "encode" {
+		panic(nil)
+	}
+	return []byte(value), nil
+}
+func (codec panicNilCodec) Decode(value []byte, _ PayloadLimit) (string, error) {
+	if codec.phase == "decode" {
+		panic(nil)
+	}
+	return string(value), nil
+}
+
+type panicNilLeaseFence struct{}
+
+func (panicNilLeaseFence) Fence(context.Context, LeaseRef) error { panic(nil) }
+
+type panicNilTimerClock struct{ timer Timer }
+
+func (panicNilTimerClock) Now() time.Time { return time.Date(2035, 1, 2, 3, 0, 0, 0, time.UTC) }
+func (clock panicNilTimerClock) NewTimerAt(time.Time) Timer {
+	if clock.timer == nil {
+		panic(nil)
+	}
+	return clock.timer
+}
+
+type panicNilTimer struct {
+	phase string
+	stops *atomic.Int32
+}
+
+func (timer *panicNilTimer) C() <-chan time.Time {
+	if timer.phase == "channel" {
+		panic(nil)
+	}
+	return make(chan time.Time)
+}
+
+func (timer *panicNilTimer) Stop() bool {
+	if timer.phase == "stop" {
+		panic(nil)
+	}
+	timer.stops.Add(1)
+	return true
+}
+
+type panicNilErrContext struct{ context.Context }
+
+func (panicNilErrContext) Err() error { panic(nil) }
+
+type panicNilDescriptionDriver struct{ DeliveryDriver }
+
+func (panicNilDescriptionDriver) Description() BackendDescription { panic(nil) }
 
 func (payload classifierPanicPayload) String() string {
 	payload.formats.Add(1)
@@ -130,6 +204,211 @@ func TestClassifierDefaultsSkipsSuccessAndRunsExactlyOnce(t *testing.T) {
 	if disposition := classifyHandlerResult(successClassifier, normal); disposition.Kind() != DispositionSucceeded || successCalls.Load() != 1 {
 		t.Fatalf("classified success = (%v, calls=%d)", disposition.Kind(), successCalls.Load())
 	}
+}
+
+func TestJobsPanicNilBoundaries(t *testing.T) {
+	if os.Getenv("VV_JOBS_PANICNIL_HELPER") == "1" {
+		result := invokeHandlerContained(context.Background(), func() error { panic(nil) })
+		failure, ok := result.(HandlerFailure)
+		if !ok || !failure.Panicked() || failure.Unwrap() != nil {
+			t.Fatalf("panic(nil) handler result = %#v", result)
+		}
+		disposition := classifyHandlerResult(nil, result)
+		assertClassifierDisposition(t, disposition, DispositionRetry, ReasonPanic, RetryCostCharged)
+
+		classifierResult := classifyHandlerFailure(func(HandlerFailure) Disposition { panic(nil) }, HandlerFailure{cause: ErrConflict, initialized: true})
+		assertClassifierDisposition(t, classifierResult, DispositionRetry, ReasonClassifier, RetryCostCharged)
+
+		definition := MustDefine(DefinitionSpec[string]{
+			Name:   testJobName(t, "maintenance.panicnil"),
+			Codec:  String(1),
+			Policy: testPolicy(t),
+		})
+		sender := &scheduleSender{description: queueTestBackendDescription(1)}
+		queue, err := NewQueue(QueueSpec{
+			Namespace: queueTestNamespace(t, "scheduler-panicnil"),
+			Catalog:   MustCatalog(definition),
+			Sender:    sender,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		now := time.Date(2035, 1, 2, 3, 0, 0, 0, time.UTC)
+		schedule, err := DefineSchedule(ScheduleSpec[string]{
+			Name:     testJobName(t, "maintenance.panicnil.hourly"),
+			Revision: 1,
+			Cadence:  At(now),
+			Job:      definition,
+			Payload:  func(time.Time) (string, error) { panic(nil) },
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		scheduler, err := NewScheduler(SchedulerSpec{Queue: queue, Clock: scheduleClock{now: now}}, schedule)
+		if err != nil {
+			t.Fatal(err)
+		}
+		scheduleResult, err := scheduler.RunDue(context.Background())
+		if !errors.Is(err, ErrInvalid) || scheduleResult != (ScheduleRunResult{Due: 1}) {
+			t.Fatalf("panic(nil) schedule result = (%+v, %v)", scheduleResult, err)
+		}
+		sender.mu.Lock()
+		placements := len(sender.placements)
+		sender.mu.Unlock()
+		if placements != 0 {
+			t.Fatalf("panic(nil) payload placed %d jobs", placements)
+		}
+
+		entropyQueue, err := NewQueue(QueueSpec{
+			Namespace: queueTestNamespace(t, "entropy-panicnil"),
+			Catalog:   MustCatalog(definition),
+			Sender:    sender,
+			Entropy:   panicNilEntropyReader{},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := Enqueue(context.Background(), entropyQueue, definition, "payload"); !errors.Is(err, ErrEntropy) {
+			t.Fatalf("panic(nil) entropy error = %v", err)
+		}
+
+		clockScheduler, err := NewScheduler(SchedulerSpec{Queue: queue, Clock: panicNilClock{}}, schedule)
+		if err != nil {
+			t.Fatal(err)
+		}
+		clockResult, err := clockScheduler.RunDue(context.Background())
+		if !errors.Is(err, ErrInvalid) || clockResult != (ScheduleRunResult{}) {
+			t.Fatalf("panic(nil) clock result = (%+v, %v)", clockResult, err)
+		}
+		sender.mu.Lock()
+		placements = len(sender.placements)
+		sender.mu.Unlock()
+		if placements != 0 {
+			t.Fatalf("panic(nil) entropy or clock placed %d jobs", placements)
+		}
+
+		encodeDefinition := MustDefine(DefinitionSpec[string]{
+			Name:   testJobName(t, "codec.panicnil.encode"),
+			Codec:  panicNilCodec{phase: "encode"},
+			Policy: testPolicy(t),
+		})
+		encodeQueue, err := NewQueue(QueueSpec{
+			Namespace: queueTestNamespace(t, "codec-encode-panicnil"),
+			Catalog:   MustCatalog(encodeDefinition),
+			Sender:    sender,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err = Enqueue(context.Background(), encodeQueue, encodeDefinition, "payload"); !errors.Is(err, ErrInvalid) {
+			t.Fatalf("panic(nil) codec encode = %v", err)
+		}
+		sender.mu.Lock()
+		placements = len(sender.placements)
+		sender.mu.Unlock()
+		if placements != 0 {
+			t.Fatalf("panic(nil) codec encode placed %d jobs", placements)
+		}
+
+		decodeDefinition := MustDefine(DefinitionSpec[string]{
+			Name:   testJobName(t, "codec.panicnil.decode"),
+			Codec:  panicNilCodec{phase: "decode"},
+			Policy: testPolicy(t),
+		})
+		encoded, err := NewEncodedPayload(panicNilCodec{}.ID(), 1, []byte("payload"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if decoded, err := decodeDefinition.Decode(encoded); !errors.Is(err, ErrInvalid) || decoded != "" {
+			t.Fatalf("panic(nil) codec decode = (%q, %v)", decoded, err)
+		}
+		if decoded, err := decodeClaimedPayloadOwned(consumerBinding{decodeOwned: func(EncodedPayload) (any, error) { panic(nil) }}, encoded); !errors.Is(err, ErrInvalid) || decoded != nil {
+			t.Fatalf("panic(nil) claimed decode = (%#v, %v)", decoded, err)
+		}
+
+		upcastDefinition := MustDefine(DefinitionSpec[string]{
+			Name:  testJobName(t, "codec.panicnil.upcast"),
+			Codec: String(2),
+			Upcasters: []Upcaster{Upcast(String(1), String(2), func(string) (string, error) {
+				panic(nil)
+			})},
+			Policy: testPolicy(t),
+		})
+		upcastPayload, err := NewEncodedPayload(String(1).ID(), 1, []byte("payload"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if decoded, err := upcastDefinition.Decode(upcastPayload); !errors.Is(err, ErrInvalid) || decoded != "" {
+			t.Fatalf("panic(nil) upcast = (%q, %v)", decoded, err)
+		}
+
+		_, _, _, _, _, request := identityRestoreFixture(t)
+		if restored, err := RestoreTrustedIdentity(context.Background(), TrustedIdentityRestorerFunc(func(context.Context, IdentityRestoreRequest) (RestoredIdentity, error) {
+			panic(nil)
+		}), request); !errors.Is(err, ErrDriver) || restored != nil {
+			t.Fatalf("panic(nil) identity restore = (%v, %v)", restored, err)
+		}
+
+		delivery := &activeWorkerDelivery{}
+		if err := (workerAttemptController{delivery: delivery}).Guard(context.Background(), panicNilLeaseFence{}); !errors.Is(err, ErrDriver) {
+			t.Fatalf("panic(nil) fence = %v", err)
+		}
+
+		if inner, channel, err := callWorkerClockTimer(panicNilTimerClock{}, time.Now()); !errors.Is(err, ErrInvalid) || inner != nil || channel != nil {
+			t.Fatalf("panic(nil) timer constructor = (%v, %v, %v)", inner, channel, err)
+		}
+		var timerStops atomic.Int32
+		channelTimer := &panicNilTimer{phase: "channel", stops: &timerStops}
+		if inner, channel, err := callWorkerClockTimer(panicNilTimerClock{timer: channelTimer}, time.Now()); !errors.Is(err, ErrInvalid) || inner != nil || channel != nil || timerStops.Load() != 1 {
+			t.Fatalf("panic(nil) timer channel = (%v, %v, %v, stops=%d)", inner, channel, err, timerStops.Load())
+		}
+		if stopped, valid := stopWorkerTimerChecked(&panicNilTimer{phase: "stop", stops: &timerStops}); stopped || valid {
+			t.Fatalf("panic(nil) timer stop = (%t, %t)", stopped, valid)
+		}
+
+		if description, err := ValidateDeliveryDriver(panicNilDescriptionDriver{}); !errors.Is(err, ErrInvalid) || description.valid() {
+			t.Fatalf("panic(nil) driver description = (%+v, %v)", description, err)
+		}
+
+		fatal := newWorkerFailureLatch()
+		if value, err, failure := callWorkerDriver(fatal, context.Background(), func(context.Context) (int, error) { panic(nil) }); value != 0 || !errors.Is(err, ErrDriver) || failure != WorkerFailureDriverPanic {
+			t.Fatalf("panic(nil) driver call = (%d, %v, %v)", value, err, failure)
+		}
+		fatal = newWorkerFailureLatch()
+		if value, failure := validateWorkerDriverResult(fatal, 1, func(int) (int, error) { panic(nil) }); value != 0 || failure != WorkerFailureRuntime {
+			t.Fatalf("panic(nil) driver validation = (%d, %v)", value, failure)
+		}
+
+		spec, consumer, _, _ := workersConfigFixture(t, "workers.driver-envelope-panicnil")
+		workers, err := NewWorkers(spec, consumer)
+		if err != nil {
+			t.Fatal(err)
+		}
+		value, call := invokeWorkerDriver(workers.driverBoundary(), panicNilErrContext{Context: context.Background()}, func(context.Context) (int, error) {
+			t.Fatal("driver callback ran after the parent boundary panicked")
+			return 1, nil
+		}, func(value int) (int, error) { return value, nil })
+		if value != 0 || call.failure != WorkerFailureRuntime || !errors.Is(call.err, ErrInvalid) {
+			t.Fatalf("panic(nil) worker envelope = (%d, %+v)", value, call)
+		}
+		return
+	}
+
+	command := exec.Command(os.Args[0], "-test.run=^TestJobsPanicNilBoundaries$")
+	command.Env = jobsPanicNilEnvironment("VV_JOBS_PANICNIL_HELPER=1")
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("panic(nil) subprocess: %v\n%s", err, output)
+	}
+}
+
+func jobsPanicNilEnvironment(marker string) []string {
+	environment := make([]string, 0, len(os.Environ())+2)
+	for _, value := range os.Environ() {
+		if !strings.HasPrefix(value, "GODEBUG=") {
+			environment = append(environment, value)
+		}
+	}
+	return append(environment, "GODEBUG=panicnil=1", marker)
 }
 
 func TestClassifierFailsClosedForPanicInvalidAndControlPlaneResults(t *testing.T) {
@@ -306,4 +585,26 @@ func TestAContainedPanicKeepsItsValueAndStackAndLogsNeitherVerbatim(t *testing.T
 		t.Fatalf("the panic payload's contents reached the log line: %s", line)
 	}
 	assertHandlerFailureRedacted(t, failure, "panic-private")
+}
+
+func TestHandlerGoexitIsNotLoggedAsAPanic(t *testing.T) {
+	var written bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&written, nil))
+	returned := atomic.Bool{}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_ = invokeHandlerContained(port.WithLogger(context.Background(), logger), func() error {
+			goruntime.Goexit()
+			return nil
+		})
+		returned.Store(true)
+	}()
+	<-done
+	if returned.Load() {
+		t.Fatal("Goexit returned from the handler boundary")
+	}
+	if written.Len() != 0 {
+		t.Fatalf("Goexit was logged as a panic: %s", written.String())
+	}
 }

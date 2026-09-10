@@ -15,9 +15,13 @@ import (
 
 func TestDatabaseAndRuntimeViewsOwnValuesPerInstrumentBeforeAggregation(t *testing.T) {
 	pool := mustDatabasePoolName(t, "primary")
-	reader := sdkmetric.NewManualReader()
+	reader := sdkmetric.NewManualReader(sdkmetric.WithAggregationSelector(exponentialHistogramSelector))
 	options := []sdkmetric.Option{sdkmetric.WithReader(reader)}
-	options = append(options, DatabaseMetricOptions(pool)...)
+	databaseViews, err := DatabaseMetricOptions(pool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	options = append(options, databaseViews...)
 	options = append(options, RuntimeMetricOptions()...)
 	provider := sdkmetric.NewMeterProvider(options...)
 	t.Cleanup(func() {

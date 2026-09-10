@@ -20,7 +20,11 @@ func NewTransportMetricExporter(next sdkmetric.Exporter, policy TraceProjectionP
 	if nilInterface(next) {
 		return nil, ErrInvalidMetricExporter
 	}
-	return &projectingMetricExporter{next: next, policy: compileTracePolicy(policy)}, nil
+	compiled, err := compileTracePolicy(policy)
+	if err != nil {
+		return nil, err
+	}
+	return &projectingMetricExporter{next: next, policy: compiled}, nil
 }
 
 type projectingMetricExporter struct {
@@ -59,6 +63,9 @@ func projectResourceMetrics(original *metricdata.ResourceMetrics, policy compile
 	}
 	for _, scopeMetrics := range original.ScopeMetrics {
 		scope, native := nativeMetricScope(scopeMetrics.Scope)
+		if native && scope.Name == "" {
+			continue
+		}
 		specs := transportMetricSpecs(scopeMetrics.Scope.Name, policy)
 		if !native {
 			scope = cloneScope(scopeMetrics.Scope)
@@ -185,21 +192,21 @@ func projectTransportAggregation(aggregation metricdata.Aggregation, spec native
 	switch spec.shape {
 	case metricSumInt64:
 		data, ok := aggregation.(metricdata.Sum[int64])
-		if !ok || data.IsMonotonic != spec.monotonic {
+		if !ok || data.Temporality != metricdata.CumulativeTemporality || data.IsMonotonic != spec.monotonic {
 			return nil, false
 		}
 		data.DataPoints = projectBoundedDataPoints(data.DataPoints, project)
 		return data, true
 	case metricHistogramInt64:
 		data, ok := aggregation.(metricdata.Histogram[int64])
-		if !ok {
+		if !ok || data.Temporality != metricdata.CumulativeTemporality {
 			return nil, false
 		}
 		data.DataPoints = projectBoundedHistogramPoints(data.DataPoints, project)
 		return data, true
 	case metricHistogramFloat64:
 		data, ok := aggregation.(metricdata.Histogram[float64])
-		if !ok {
+		if !ok || data.Temporality != metricdata.CumulativeTemporality {
 			return nil, false
 		}
 		data.DataPoints = projectBoundedHistogramPoints(data.DataPoints, project)
@@ -217,16 +224,13 @@ func nativeMetricScope(scope instrumentation.Scope) (instrumentation.Scope, bool
 	if scope.Name == otelgrpc.ScopeName {
 		expectedSchema = semconv.SchemaURL
 	}
-	version := expectedVersion
-	schemaURL := expectedSchema
 	if scope.Version != expectedVersion || scope.SchemaURL != expectedSchema {
-		version = "_OTHER"
-		schemaURL = ""
+		return instrumentation.Scope{}, true
 	}
 	return instrumentation.Scope{
 		Name:       scope.Name,
-		Version:    version,
-		SchemaURL:  schemaURL,
+		Version:    expectedVersion,
+		SchemaURL:  expectedSchema,
 		Attributes: attribute.NewSet(),
 	}, true
 }

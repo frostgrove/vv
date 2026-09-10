@@ -57,8 +57,8 @@ export: those are application boundaries rather than hidden i18n runtime work.
 6. `Check` validates source while retaining authoring states. It classifies
    missing, stale, review-required, rejected, unused and structurally invalid
    entries, calculates exact coverage and bounds retained findings. Only a
-   valid v4 manifest with complete scope provenance makes absence usable as
-   evidence; incomplete and migrated v1-v3 input does not.
+   valid v1 manifest with complete scope provenance makes absence usable as
+   evidence; incomplete input does not.
 
 ## Construction and the pinned profile
 
@@ -198,8 +198,8 @@ export: those are application boundaries rather than hidden i18n runtime work.
    exposed.
 2. When an operation already owns a view, `Snapshot.ErrorPlan` compiles those
    mappings once and `View.ErrorMessages` binds them to exactly that snapshot,
-   resolution, formatting locale, zone and presentation. The legacy requested
-   locale argument cannot renegotiate a second view.
+   resolution, formatting locale, zone and presentation. The interface's
+   requested locale argument cannot renegotiate a second view.
 3. Its immutable adapter implements `errs.MessageSource` and
    `errs.LocalizedMessageSource`. It takes the locale already carried by the
    existing `port` context, builds a snapshot view and renders wording only.
@@ -209,8 +209,8 @@ export: those are application boundaries rather than hidden i18n runtime work.
    Internal/500 redaction stays at the transport boundary.
 5. The adapter reports the template locale that really won. `porthttp` derives
    `Content-Language` from those proven locales and CRUD gRPC emits
-   `LocalizedMessage.Locale`; a legacy source causes neither projection to
-   claim the requested locale.
+   `LocalizedMessage.Locale`; a source without locale provenance causes neither
+   projection to claim the requested locale.
 6. The three CRUD HTTP shells and CRUD gRPC preserve a non-empty locale already
    bound in context. Their fallback header/metadata helpers select only a first
    tag. An application needing the full resolver runs it before the error
@@ -302,15 +302,13 @@ export: those are application boundaries rather than hidden i18n runtime work.
   proven across all reaching assignments and returns. Effective-build exclusions
   remain in the hashed ledger but do not by themselves invalidate that build's
   proof.
-- Usage v4 binds sorted unique aggregates and bidirectional source occurrences
+- Usage v1 binds sorted unique aggregates and bidirectional source occurrences
   to canonical root/file/metadata/environment/package-graph ledgers through
   recomputable source and manifest SHA-256 digests. The decoder and `Check`
   validate counts, containment, coordinates, selected-file backing, reverse
   evidence and canonical ordering under bounded JSON work. Build, tool and
-  release tag ledgers are sorted and unique. V1-v3 retain positive aggregates
-  and occurrences but discard legacy scope and always decode as incomplete, so
-  they neither assert non-use nor incur v4 provenance failures. Ledger
-  self-consistency is neither authenticity nor freshness, so
+  release tag ledgers are sorted and unique. Other schema and analyzer
+  identities are rejected. Ledger self-consistency is neither authenticity nor freshness, so
   a trusted release that consumes non-use evidence reruns the same
   `extract -complete ... -check` command against the physical checkout; plain
   `check -usage` performs no filesystem revalidation.
@@ -393,6 +391,7 @@ export: those are application boundaries rather than hidden i18n runtime work.
 | `crud/rpc/crudgrpc/handler.go` · `crud/rpc/crudgrpc/interceptor.go` | additive resource rendering across unary/stream boundaries |
 | `test/i18nflow/` | full HTTP/gRPC, overlays, cache identity and edge-boundary integration |
 | `scripts/i18n-consumer.sh` · `scripts/i18n_test.go` · `scripts/i18n_release_test.go` | optional dependency, lifecycle and standalone release gates |
+| `scripts/api-surface/` · `scripts/api_surface_test.go` · `scripts/modules.sh` | complete exported declarations, fields and method sets in the manually reviewed first-tag baseline; failed generation preserves the published file |
 
 ## Tests that walk this flow
 
@@ -407,4 +406,5 @@ source fuzz target cover malformed inputs. `cmd/vv-i18n/*_test.go`, including
 `output_context_test.go`, covers every
 command, direct output and generational publication. `test/i18nflow/*_test.go` walks integration through
 HTTP, gRPC and cache boundaries. The scripts named above run dependency and
-standalone-consumer gates with workspace resolution disabled.
+standalone-consumer gates with workspace resolution disabled and prove complete,
+atomic regeneration of the manually reviewed exported-surface baseline.

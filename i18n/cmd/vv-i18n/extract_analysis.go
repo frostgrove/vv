@@ -27,30 +27,31 @@ const (
 )
 
 type extractPackageAnalysis struct {
-	state               *extractState
-	info                *types.Info
-	files               []extractParsedFile
-	assignments         map[types.Object]extractAssignment
-	origins             map[types.Object]extractAssignment
-	capabilityValues    map[types.Object][]ast.Expr
-	capabilityMemo      map[types.Object]uint8
-	bindAliases         map[types.Object]int
-	keyAliases          map[types.Object]extractKeyCallable
-	qualifiers          map[types.Object]bool
-	definitions         map[types.Object]bool
-	definitionSpecs     map[types.Object]bool
-	structDefinitions   map[types.Object]bool
-	definitionFactories map[extractFactoryResult]map[string]bool
-	contractFactories   map[extractFactoryResult]bool
-	directFactories     map[extractFactoryResult]string
-	tupleOrigins        map[types.Object]extractTupleOrigin
-	untrustedCallables  map[types.Object]bool
-	trackedKeyWrites    map[types.Object]extractTrackedKeyWrites
-	selectedFunctions   map[types.Object]bool
-	packageVariables    map[types.Object]bool
-	parameters          map[types.Object]bool
-	resultVariables     map[types.Object]bool
-	addressTaken        map[types.Object]bool
+	state                 *extractState
+	info                  *types.Info
+	files                 []extractParsedFile
+	assignments           map[types.Object]extractAssignment
+	origins               map[types.Object]extractAssignment
+	capabilityValues      map[types.Object][]ast.Expr
+	capabilityMemo        map[types.Object]uint8
+	bindAliases           map[types.Object]int
+	keyAliases            map[types.Object]extractKeyCallable
+	qualifiers            map[types.Object]bool
+	definitions           map[types.Object]bool
+	definitionSpecs       map[types.Object]bool
+	structDefinitions     map[types.Object]bool
+	definitionFactories   map[extractFactoryResult]map[string]bool
+	contractFactories     map[extractFactoryResult]bool
+	directFactories       map[extractFactoryResult]string
+	tupleOrigins          map[types.Object]extractTupleOrigin
+	untrustedCallables    map[types.Object]bool
+	trackedKeyWrites      map[types.Object]extractTrackedKeyWrites
+	selectedFunctions     map[types.Object]bool
+	packageVariables      map[types.Object]bool
+	parameters            map[types.Object]bool
+	resultVariables       map[types.Object]bool
+	addressTaken          map[types.Object]bool
+	trustedFactoryReturns map[extractFactoryReturn]bool
 }
 
 type extractKeyCallable struct {
@@ -73,6 +74,11 @@ type extractAssignment struct {
 type extractFactoryResult struct {
 	function types.Object
 	index    int
+}
+
+type extractFactoryReturn struct {
+	statement *ast.ReturnStmt
+	index     int
 }
 
 type extractTupleOrigin struct {
@@ -218,6 +224,7 @@ func (s *extractState) analyze(ctx context.Context) error {
 	}
 	graph.collectFactories(analyses)
 	for _, analysis := range analyses {
+		analysis.collectTrustedFactoryReturns()
 		for _, file := range analysis.files {
 			if err := analysis.inspectFile(ctx, file); err != nil {
 				return err
@@ -333,6 +340,7 @@ func (g *extractPackageGraph) prepareAnalysis(unit *extractPackageUnit) (*extrac
 		trackedKeyWrites:   make(map[types.Object]extractTrackedKeyWrites),
 		selectedFunctions:  g.selectedFunctions, packageVariables: make(map[types.Object]bool),
 		parameters: make(map[types.Object]bool), resultVariables: make(map[types.Object]bool), addressTaken: make(map[types.Object]bool),
+		trustedFactoryReturns: make(map[extractFactoryReturn]bool),
 	}
 	analysis.collectPackageVariables()
 	analysis.collectCapabilityFlowObjects()
@@ -826,6 +834,53 @@ func (a *extractPackageAnalysis) pruneDefinitionFactories() bool {
 	return changed
 }
 
+func (a *extractPackageAnalysis) collectTrustedFactoryReturns() {
+	for _, file := range a.files {
+		for _, declaration := range file.file.Decls {
+			function, ok := declaration.(*ast.FuncDecl)
+			if !ok || function.Body == nil {
+				continue
+			}
+			object := a.info.Defs[function.Name]
+			if object == nil {
+				continue
+			}
+			signature, _ := object.Type().(*types.Signature)
+			if signature == nil {
+				continue
+			}
+			for _, statement := range extractFunctionReturns(function.Body) {
+				if len(statement.Results) == signature.Results().Len() {
+					for index := range statement.Results {
+						if a.definitionFactoryResultPartiallyKnown(object, index) {
+							a.trustedFactoryReturns[extractFactoryReturn{statement: statement, index: index}] = true
+						}
+					}
+					continue
+				}
+				if len(statement.Results) != 1 || signature.Results().Len() < 2 {
+					continue
+				}
+				trusted := true
+				for index := 0; index < signature.Results().Len(); index++ {
+					if extractContainsHiddenKeyType(signature.Results().At(index).Type(), make(map[types.Type]bool)) &&
+						!a.definitionFactoryResultPartiallyKnown(object, index) {
+						trusted = false
+						break
+					}
+				}
+				if trusted {
+					a.trustedFactoryReturns[extractFactoryReturn{statement: statement, index: 0}] = true
+				}
+			}
+		}
+	}
+}
+
+func (a *extractPackageAnalysis) definitionFactoryResultPartiallyKnown(function types.Object, index int) bool {
+	return len(a.definitionFactories[extractFactoryResult{function: function, index: index}]) != 0
+}
+
 func (a *extractPackageAnalysis) definitionFactoriesFor(function types.Object) map[int]map[string]bool {
 	result := make(map[int]map[string]bool)
 	for key, fields := range a.definitionFactories {
@@ -961,6 +1016,9 @@ func (a *extractPackageAnalysis) definitionReturnedFieldKnown(function *ast.Func
 	case *ast.CompositeLit:
 		return a.definitionContainerExpressionFieldKnown(expression, field)
 	case *ast.Ident:
+		if expression.Name == "nil" {
+			return true
+		}
 		object := a.info.ObjectOf(expression)
 		if object == nil || object.Parent() == nil || object.Pkg() == nil || object.Parent() == object.Pkg().Scope() || a.definitionObjectUntrusted(function, object, allowedAddress) {
 			return false
@@ -1015,6 +1073,8 @@ func (a *extractPackageAnalysis) definitionContainerExpressionFieldKnown(express
 	case *ast.CompositeLit:
 		value, found := extractCompositeFieldValue(a.info, expression, field)
 		return !found || a.definitionValueKnown(value, make(map[types.Object]bool))
+	case *ast.Ident:
+		return expression.Name == "nil"
 	case *ast.CallExpr:
 		return a.definitionFactories[extractFactoryResult{function: extractCalledObject(a.info, expression.Fun), index: 0}][field.Name()]
 	}
@@ -1099,6 +1159,30 @@ func extractCompositeFieldValue(info *types.Info, literal *ast.CompositeLit, fie
 			continue
 		}
 		if index < structure.NumFields() && structure.Field(index) == field {
+			return element, true
+		}
+	}
+	return nil, false
+}
+
+func extractCompositeNamedFieldValue(info *types.Info, literal *ast.CompositeLit, name string) (ast.Expr, bool) {
+	value := types.Unalias(info.TypeOf(literal))
+	if pointer, ok := value.(*types.Pointer); ok {
+		value = types.Unalias(pointer.Elem())
+	}
+	structure, ok := value.Underlying().(*types.Struct)
+	if !ok {
+		return nil, false
+	}
+	for index, element := range literal.Elts {
+		if pair, keyed := element.(*ast.KeyValueExpr); keyed {
+			identifier := extractIdentifier(pair.Key)
+			if identifier != nil && identifier.Name == name {
+				return pair.Value, true
+			}
+			continue
+		}
+		if index < structure.NumFields() && structure.Field(index).Name() == name {
 			return element, true
 		}
 	}
@@ -1367,14 +1451,15 @@ func (a *extractPackageAnalysis) inspectFile(ctx context.Context, file extractPa
 		case *ast.RangeStmt:
 			a.inspectKeyFieldRange(node)
 		case *ast.ReturnStmt:
-			for _, result := range node.Results {
+			for index, result := range node.Results {
 				if a.definitionConstructorCallable(result) {
 					a.state.addFindingAt(result.Pos(), "escaped i18n definition constructor callable is not statically extractable")
 				}
 				if a.unresolvedDefinitionCallback(result) || a.unresolvedHiddenKeyValue(result) {
 					a.state.complete = false
 				}
-				if a.usageCapabilityExpression(result, make(map[types.Object]bool)) {
+				if !a.trustedFactoryReturns[extractFactoryReturn{statement: node, index: index}] &&
+					a.usageCapabilityExpression(result, make(map[types.Object]bool)) {
 					a.state.complete = false
 				}
 			}
@@ -1447,8 +1532,22 @@ func (a *extractPackageAnalysis) inspectCapabilityComposite(literal *ast.Composi
 	if object := extractNamedTypeObject(a.info.TypeOf(literal)); object != nil && object.Pkg() != nil && object.Pkg().Path() == i18nPackagePath {
 		return
 	}
+	value := a.info.TypeOf(literal)
+	if value == nil {
+		return
+	}
+	value = types.Unalias(value)
+	if pointer, ok := value.(*types.Pointer); ok {
+		value = types.Unalias(pointer.Elem())
+	}
+	_, mapLiteral := value.Underlying().(*types.Map)
 	for index, element := range literal.Elts {
 		if pair, ok := element.(*ast.KeyValueExpr); ok {
+			if mapLiteral && (a.usageCapabilityExpression(pair.Key, make(map[types.Object]bool)) ||
+				a.unresolvedDefinitionCallback(pair.Key) || a.unresolvedHiddenKeyValue(pair.Key)) {
+				a.state.complete = false
+				return
+			}
 			element = pair.Value
 		}
 		expression, ok := element.(ast.Expr)
@@ -2161,7 +2260,13 @@ func (a *extractPackageAnalysis) definitionValueKnown(expression ast.Expr, seen 
 	case *ast.StarExpr:
 		return a.definitionValueKnown(expression.X, seen)
 	case *ast.Ident:
+		if expression.Name == "nil" {
+			return true
+		}
 		object := a.info.ObjectOf(expression)
+		if a.zeroValueObjectKnown(object) {
+			return true
+		}
 		if tuple, ok := a.tupleOrigins[object]; ok && a.singleStableAssignment(object) {
 			if a.directFactoryCallKnown(tuple.call, tuple.index, "Definition") {
 				return true
@@ -2175,17 +2280,148 @@ func (a *extractPackageAnalysis) definitionValueKnown(expression ast.Expr, seen 
 		return a.definitionConstructorExpression(origin) || a.definitionValueKnown(origin, seen)
 	case *ast.SelectorExpr:
 		selection := a.info.Selections[expression]
-		return selection != nil && extractNamedTypeName(selection.Obj().Type()) == "Definition" && a.definitionContainerFieldKnown(expression.X, selection.Obj(), seen)
+		return selection != nil && extractNamedTypeName(selection.Obj().Type()) == "Definition" &&
+			a.definitionContainerPathKnown(expression.X, []types.Object{selection.Obj()}, seen, make(map[types.Object]bool))
 	case *ast.CallExpr:
 		return a.directFactoryCallKnown(expression, 0, "Definition") || a.definitionConstructorExpression(expression)
+	case *ast.CompositeLit:
+		return extractNamedTypeName(a.info.TypeOf(expression)) == "Definition" && len(expression.Elts) == 0
 	}
 	return false
+}
+
+func (a *extractPackageAnalysis) definitionContainerPathKnown(expression ast.Expr, fields []types.Object, seenObjects, seenFunctions map[types.Object]bool) bool {
+	if len(fields) == 0 {
+		return a.definitionValueKnown(expression, seenObjects)
+	}
+	expression = extractUnparenthesized(expression)
+	switch expression := expression.(type) {
+	case *ast.Ident:
+		if expression.Name == "nil" {
+			return true
+		}
+		object := a.info.ObjectOf(expression)
+		if object == nil || seenObjects[object] {
+			return false
+		}
+		seenObjects[object] = true
+		if a.zeroValueObjectKnown(object) {
+			return true
+		}
+		if origin, ok := a.followAddressOrigin(object, make(map[types.Object]bool)); ok {
+			return a.definitionContainerPathKnown(origin, fields, seenObjects, seenFunctions)
+		}
+		if tuple, ok := a.tupleOrigins[object]; ok && a.singleStableAssignment(object) {
+			return a.definitionCallPathKnown(tuple.call, tuple.index, fields, seenObjects, seenFunctions)
+		}
+		origin, ok := a.followOrigin(object, make(map[types.Object]bool))
+		return ok && a.definitionContainerPathKnown(origin, fields, seenObjects, seenFunctions)
+	case *ast.UnaryExpr:
+		return expression.Op == token.AND && a.definitionContainerPathKnown(expression.X, fields, seenObjects, seenFunctions)
+	case *ast.StarExpr:
+		return a.definitionContainerPathKnown(expression.X, fields, seenObjects, seenFunctions)
+	case *ast.SelectorExpr:
+		selection := a.info.Selections[expression]
+		if selection == nil || selection.Kind() != types.FieldVal {
+			return false
+		}
+		path := make([]types.Object, 0, len(fields)+1)
+		path = append(path, selection.Obj())
+		path = append(path, fields...)
+		return a.definitionContainerPathKnown(expression.X, path, seenObjects, seenFunctions)
+	case *ast.CallExpr:
+		return a.definitionCallPathKnown(expression, 0, fields, seenObjects, seenFunctions)
+	case *ast.CompositeLit:
+		value, found := extractCompositeNamedFieldValue(a.info, expression, fields[0].Name())
+		return !found || a.definitionContainerPathKnown(value, fields[1:], seenObjects, seenFunctions)
+	}
+	return false
+}
+
+func (a *extractPackageAnalysis) definitionCallPathKnown(call *ast.CallExpr, resultIndex int, fields []types.Object, seenObjects, seenFunctions map[types.Object]bool) bool {
+	key := extractFactoryResult{function: extractCalledObject(a.info, call.Fun), index: resultIndex}
+	if len(fields) == 1 {
+		value := a.info.TypeOf(call)
+		if tuple, ok := value.(*types.Tuple); ok {
+			if resultIndex < 0 || resultIndex >= tuple.Len() {
+				return false
+			}
+			value = tuple.At(resultIndex).Type()
+		}
+		for _, field := range extractDefinitionResultFields(value) {
+			if field.Name() == fields[0].Name() {
+				return a.definitionFactories[key][field.Name()]
+			}
+		}
+	}
+	function, ok := key.function.(*types.Func)
+	if !ok || !a.selectedFunctions[function] || seenFunctions[function] {
+		return false
+	}
+	declaration := a.localFunctionDeclaration(function)
+	signature, _ := function.Type().(*types.Signature)
+	if declaration == nil || signature == nil || resultIndex < 0 || resultIndex >= signature.Results().Len() {
+		return false
+	}
+	seenFunctions[function] = true
+	defer delete(seenFunctions, function)
+	returns := extractFunctionReturns(declaration.Body)
+	if len(returns) == 0 {
+		return false
+	}
+	for _, statement := range returns {
+		result, found := a.definitionReturnExpression(statement, signature, resultIndex)
+		if !found || !a.definitionReturnPathKnown(result, fields, cloneObjectSet(seenObjects), seenFunctions) {
+			return false
+		}
+	}
+	return true
+}
+
+func (a *extractPackageAnalysis) definitionReturnPathKnown(expression ast.Expr, fields []types.Object, seenObjects, seenFunctions map[types.Object]bool) bool {
+	expression = extractUnparenthesized(expression)
+	switch expression := expression.(type) {
+	case *ast.Ident:
+		return expression.Name == "nil"
+	case *ast.UnaryExpr:
+		return expression.Op == token.AND && a.definitionReturnPathKnown(expression.X, fields, seenObjects, seenFunctions)
+	case *ast.StarExpr:
+		return a.definitionReturnPathKnown(expression.X, fields, seenObjects, seenFunctions)
+	case *ast.CallExpr, *ast.CompositeLit:
+		return a.definitionContainerPathKnown(expression, fields, seenObjects, seenFunctions)
+	}
+	return false
+}
+
+func (a *extractPackageAnalysis) localFunctionDeclaration(object types.Object) *ast.FuncDecl {
+	for _, file := range a.files {
+		for _, declaration := range file.file.Decls {
+			function, ok := declaration.(*ast.FuncDecl)
+			if ok && a.info.Defs[function.Name] == object {
+				return function
+			}
+		}
+	}
+	return nil
+}
+
+func (a *extractPackageAnalysis) zeroValueObjectKnown(object types.Object) bool {
+	if object == nil || a.packageVariables[object] || a.parameters[object] || a.resultVariables[object] || a.addressTaken[object] {
+		return false
+	}
+	_, variable := object.(*types.Var)
+	_, assigned := a.assignments[object]
+	_, originated := a.origins[object]
+	return variable && !assigned && !originated
 }
 
 func (a *extractPackageAnalysis) definitionContainerFieldKnown(expression ast.Expr, field types.Object, seen map[types.Object]bool) bool {
 	expression = extractUnparenthesized(expression)
 	switch expression := expression.(type) {
 	case *ast.Ident:
+		if expression.Name == "nil" {
+			return true
+		}
 		object := a.info.ObjectOf(expression)
 		if tuple, ok := a.tupleOrigins[object]; ok && a.singleStableAssignment(object) {
 			key := extractFactoryResult{function: extractCalledObject(a.info, tuple.call.Fun), index: tuple.index}
@@ -2224,8 +2460,11 @@ func (a *extractPackageAnalysis) definitionSpecKnown(expression ast.Expr, seen m
 		return a.definitionSpecKnown(expression.X, seen)
 	case *ast.CompositeLit:
 		contract := extractCompositeFieldExpression(expression, "Contract", 0)
-		return contract != nil && a.contractValueKnown(contract, seen)
+		return contract == nil || a.contractValueKnown(contract, seen)
 	case *ast.Ident:
+		if expression.Name == "nil" {
+			return true
+		}
 		object := a.info.ObjectOf(expression)
 		if tuple, ok := a.tupleOrigins[object]; ok && a.singleStableAssignment(object) {
 			return a.directFactoryCallKnown(tuple.call, tuple.index, "DefinitionSpec")
@@ -2255,8 +2494,11 @@ func (a *extractPackageAnalysis) contractValueKnown(expression ast.Expr, seen ma
 		return a.contractValueKnown(expression.X, seen)
 	case *ast.CompositeLit:
 		key := extractCompositeKeyExpression(expression, "ContractRef")
-		return key != nil && a.keyExpressionBounded(key)
+		return key == nil || a.keyExpressionBounded(key)
 	case *ast.Ident:
+		if expression.Name == "nil" {
+			return true
+		}
 		object := a.info.ObjectOf(expression)
 		if tuple, ok := a.tupleOrigins[object]; ok && a.singleStableAssignment(object) {
 			key := extractFactoryResult{function: extractCalledObject(a.info, tuple.call.Fun), index: tuple.index}
@@ -2314,6 +2556,9 @@ func (a *extractPackageAnalysis) descriptorValueKnown(expression ast.Expr, seen 
 	case *ast.StarExpr:
 		return a.descriptorValueKnown(expression.X, seen)
 	case *ast.Ident:
+		if expression.Name == "nil" {
+			return true
+		}
 		object := a.info.ObjectOf(expression)
 		if tuple, ok := a.tupleOrigins[object]; ok && a.singleStableAssignment(object) {
 			return a.directFactoryCallKnown(tuple.call, tuple.index, "Descriptor") || tuple.index == 0 && a.descriptorCallKnown(tuple.call)
@@ -2322,6 +2567,9 @@ func (a *extractPackageAnalysis) descriptorValueKnown(expression ast.Expr, seen 
 		return ok && a.descriptorValueKnown(origin, seen)
 	case *ast.CallExpr:
 		return a.directFactoryCallKnown(expression, 0, "Descriptor") || a.descriptorCallKnown(expression)
+	case *ast.CompositeLit:
+		key := extractCompositeKeyExpression(expression, "Descriptor")
+		return key == nil || a.keyExpressionBounded(key)
 	}
 	return false
 }
@@ -2367,6 +2615,9 @@ func (a *extractPackageAnalysis) errorSpecKnown(expression ast.Expr, seen map[ty
 		labels := extractCompositeFieldExpression(expression, "FieldLabels", 1)
 		return a.integrationSliceKnown(mappings, "ErrorMapping", seen) && a.integrationSliceKnown(labels, "FieldLabel", seen)
 	case *ast.Ident:
+		if expression.Name == "nil" {
+			return true
+		}
 		object := a.info.ObjectOf(expression)
 		if tuple, ok := a.tupleOrigins[object]; ok && a.singleStableAssignment(object) {
 			return a.directFactoryCallKnown(tuple.call, tuple.index, kind)
@@ -3167,8 +3418,13 @@ func extractUsageCapabilityType(value types.Type, seen map[types.Type]bool) bool
 		if bind {
 			return true
 		}
+		for index := 0; index < value.Params().Len(); index++ {
+			if extractUsageSensitiveType(value.Params().At(index).Type(), make(map[types.Type]bool)) {
+				return true
+			}
+		}
 		for index := 0; index < value.Results().Len(); index++ {
-			if extractUsageCapabilityType(value.Results().At(index).Type(), seen) {
+			if extractUsageSensitiveType(value.Results().At(index).Type(), make(map[types.Type]bool)) {
 				return true
 			}
 		}
@@ -3187,8 +3443,13 @@ func extractUsageCapabilityType(value types.Type, seen map[types.Type]bool) bool
 				return true
 			}
 			if signature, ok := method.Type().(*types.Signature); ok {
+				for parameter := 0; parameter < signature.Params().Len(); parameter++ {
+					if extractUsageSensitiveType(signature.Params().At(parameter).Type(), make(map[types.Type]bool)) {
+						return true
+					}
+				}
 				for result := 0; result < signature.Results().Len(); result++ {
-					if extractUsageCapabilityType(signature.Results().At(result).Type(), seen) {
+					if extractUsageSensitiveType(signature.Results().At(result).Type(), make(map[types.Type]bool)) {
 						return true
 					}
 				}
@@ -3226,11 +3487,146 @@ func extractUsageCapabilityType(value types.Type, seen map[types.Type]bool) bool
 	return false
 }
 
+func extractUsageSensitiveType(value types.Type, seen map[types.Type]bool) bool {
+	if value == nil {
+		return false
+	}
+	value = types.Unalias(value)
+	if seen[value] {
+		return false
+	}
+	seen[value] = true
+	if owner := extractHiddenKeyTypeName(value); owner != "" {
+		return owner != "Message"
+	}
+	if name := extractNamedTypeName(value); name == "Snapshot" || name == "Head" || name == "Lease" || name == "Controller" || name == "ControllerSpec" {
+		return true
+	}
+	if object := extractNamedTypeObject(value); object != nil && object.Pkg() != nil && object.Pkg().Path() == i18nPackagePath {
+		return false
+	}
+	switch value := value.(type) {
+	case *types.Pointer:
+		return extractUsageSensitiveType(value.Elem(), seen)
+	case *types.Signature:
+		for index := 0; index < value.Params().Len(); index++ {
+			if extractUsageSensitiveType(value.Params().At(index).Type(), seen) {
+				return true
+			}
+		}
+		for index := 0; index < value.Results().Len(); index++ {
+			if extractUsageSensitiveType(value.Results().At(index).Type(), seen) {
+				return true
+			}
+		}
+	case *types.Named:
+		return extractUsageSensitiveType(value.Underlying(), seen)
+	case *types.Interface:
+		value.Complete()
+		for index := 0; index < value.NumEmbeddeds(); index++ {
+			if extractUsageSensitiveType(value.EmbeddedType(index), seen) {
+				return true
+			}
+		}
+		for index := 0; index < value.NumMethods(); index++ {
+			if extractUsageSensitiveType(value.Method(index).Type(), seen) {
+				return true
+			}
+		}
+	case *types.Struct:
+		for index := 0; index < value.NumFields(); index++ {
+			if extractUsageSensitiveType(value.Field(index).Type(), seen) {
+				return true
+			}
+		}
+	case *types.Array:
+		return extractUsageSensitiveType(value.Elem(), seen)
+	case *types.Slice:
+		return extractUsageSensitiveType(value.Elem(), seen)
+	case *types.Map:
+		return extractUsageSensitiveType(value.Key(), seen) || extractUsageSensitiveType(value.Elem(), seen)
+	case *types.Chan:
+		return extractUsageSensitiveType(value.Elem(), seen)
+	case *types.Tuple:
+		for index := 0; index < value.Len(); index++ {
+			if extractUsageSensitiveType(value.At(index).Type(), seen) {
+				return true
+			}
+		}
+	case *types.TypeParam:
+		return extractUsageSensitiveType(value.Constraint(), seen)
+	case *types.Union:
+		for index := 0; index < value.Len(); index++ {
+			if extractUsageSensitiveType(value.Term(index).Type(), seen) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func extractContainsHiddenKeyType(value types.Type, seen map[types.Type]bool) bool {
+	if value == nil {
+		return false
+	}
+	value = types.Unalias(value)
+	if seen[value] {
+		return false
+	}
+	seen[value] = true
+	if owner := extractHiddenKeyTypeName(value); owner != "" {
+		return owner != "Message"
+	}
+	if object := extractNamedTypeObject(value); object != nil && object.Pkg() != nil && object.Pkg().Path() == i18nPackagePath {
+		return false
+	}
+	switch value := value.(type) {
+	case *types.Pointer:
+		return extractContainsHiddenKeyType(value.Elem(), seen)
+	case *types.Named:
+		return extractContainsHiddenKeyType(value.Underlying(), seen)
+	case *types.Struct:
+		for index := 0; index < value.NumFields(); index++ {
+			if extractContainsHiddenKeyType(value.Field(index).Type(), seen) {
+				return true
+			}
+		}
+	case *types.Array:
+		return extractContainsHiddenKeyType(value.Elem(), seen)
+	case *types.Slice:
+		return extractContainsHiddenKeyType(value.Elem(), seen)
+	case *types.Map:
+		return extractContainsHiddenKeyType(value.Key(), seen) || extractContainsHiddenKeyType(value.Elem(), seen)
+	case *types.Chan:
+		return extractContainsHiddenKeyType(value.Elem(), seen)
+	case *types.Tuple:
+		for index := 0; index < value.Len(); index++ {
+			if extractContainsHiddenKeyType(value.At(index).Type(), seen) {
+				return true
+			}
+		}
+	case *types.TypeParam:
+		return extractContainsHiddenKeyType(value.Constraint(), seen)
+	case *types.Union:
+		for index := 0; index < value.Len(); index++ {
+			if extractContainsHiddenKeyType(value.Term(index).Type(), seen) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func (a *extractPackageAnalysis) usageCapabilityExpression(expression ast.Expr, seen map[types.Object]bool) bool {
 	if expression == nil {
 		return false
 	}
 	if extractUsageCapabilityType(a.info.TypeOf(expression), make(map[types.Type]bool)) {
+		return true
+	}
+	if extractHiddenKeyTypeName(a.info.TypeOf(expression)) == "" &&
+		extractContainsHiddenKeyType(a.info.TypeOf(expression), make(map[types.Type]bool)) &&
+		!a.hiddenKeyContainerKnown(expression, cloneObjectSet(seen)) {
 		return true
 	}
 	expression = extractUnparenthesized(expression)
@@ -3275,6 +3671,147 @@ func (a *extractPackageAnalysis) usageCapabilityExpression(expression ast.Expr, 
 		}
 	}
 	return false
+}
+
+func (a *extractPackageAnalysis) hiddenKeyContainerKnown(expression ast.Expr, seen map[types.Object]bool) bool {
+	if expression == nil {
+		return true
+	}
+	expression = extractUnparenthesized(expression)
+	if owner := extractHiddenKeyTypeName(a.info.TypeOf(expression)); owner != "" {
+		return owner == "Message" || a.hiddenKeyAssignmentKnown(expression, owner)
+	}
+	if !extractContainsHiddenKeyType(a.info.TypeOf(expression), make(map[types.Type]bool)) {
+		return true
+	}
+	switch expression := expression.(type) {
+	case *ast.Ident:
+		if expression.Name == "nil" {
+			return true
+		}
+		object := a.info.ObjectOf(expression)
+		if object == nil || seen[object] {
+			return false
+		}
+		seen[object] = true
+		if a.zeroValueObjectKnown(object) {
+			return true
+		}
+		if origin, ok := a.followAddressOrigin(object, make(map[types.Object]bool)); ok {
+			return a.hiddenKeyContainerKnown(origin, seen)
+		}
+		if tuple, ok := a.tupleOrigins[object]; ok && a.singleStableAssignment(object) {
+			return a.hiddenKeyFactoryResultKnown(tuple.call, tuple.index)
+		}
+		origin, ok := a.followOrigin(object, make(map[types.Object]bool))
+		return ok && a.hiddenKeyContainerKnown(origin, seen)
+	case *ast.UnaryExpr:
+		return expression.Op == token.AND && a.hiddenKeyContainerKnown(expression.X, seen)
+	case *ast.StarExpr:
+		return a.hiddenKeyContainerKnown(expression.X, seen)
+	case *ast.CallExpr:
+		if converted, safe := a.typeConversion(expression.Fun); converted {
+			return safe && len(expression.Args) == 1 && a.hiddenKeyContainerKnown(expression.Args[0], seen)
+		}
+		if tuple, ok := a.info.TypeOf(expression).(*types.Tuple); ok {
+			for index := 0; index < tuple.Len(); index++ {
+				if extractContainsHiddenKeyType(tuple.At(index).Type(), make(map[types.Type]bool)) &&
+					!a.hiddenKeyFactoryResultKnown(expression, index) {
+					return false
+				}
+			}
+			return true
+		}
+		return a.hiddenKeyFactoryResultKnown(expression, 0)
+	case *ast.CompositeLit:
+		for _, value := range a.hiddenKeyCompositeExpressions(expression) {
+			if !extractContainsHiddenKeyType(a.info.TypeOf(value), make(map[types.Type]bool)) {
+				continue
+			}
+			if !a.hiddenKeyContainerKnown(value, cloneObjectSet(seen)) {
+				return false
+			}
+		}
+		return true
+	}
+	return false
+}
+
+func (a *extractPackageAnalysis) hiddenKeyCompositeExpressions(literal *ast.CompositeLit) []ast.Expr {
+	value := a.info.TypeOf(literal)
+	if value == nil {
+		return nil
+	}
+	value = types.Unalias(value)
+	if pointer, ok := value.(*types.Pointer); ok {
+		value = types.Unalias(pointer.Elem())
+	}
+	_, mapLiteral := value.Underlying().(*types.Map)
+	expressions := make([]ast.Expr, 0, len(literal.Elts))
+	for _, element := range literal.Elts {
+		if pair, ok := element.(*ast.KeyValueExpr); ok {
+			if mapLiteral {
+				expressions = append(expressions, pair.Key)
+			}
+			expressions = append(expressions, pair.Value)
+			continue
+		}
+		if expression, ok := element.(ast.Expr); ok {
+			expressions = append(expressions, expression)
+		}
+	}
+	return expressions
+}
+
+func (a *extractPackageAnalysis) hiddenKeyFactoryResultKnown(call *ast.CallExpr, index int) bool {
+	tuple, tupleResult := a.info.TypeOf(call).(*types.Tuple)
+	value := a.info.TypeOf(call)
+	if tupleResult {
+		if index < 0 || index >= tuple.Len() {
+			return false
+		}
+		value = tuple.At(index).Type()
+	} else if index != 0 {
+		return false
+	}
+	if owner := extractHiddenKeyTypeName(value); owner != "" {
+		key := extractFactoryResult{function: extractCalledObject(a.info, call.Fun), index: index}
+		switch owner {
+		case "Message":
+			return true
+		case "Definition":
+			return a.directFactories[key] == owner || index == 0 && a.definitionConstructorExpression(call)
+		case "ContractRef":
+			if a.contractFactories[key] {
+				return true
+			}
+			callable, ok := a.snapshotKeyCallExpression(call.Fun)
+			return index == 0 && ok && callable.owner == "Snapshot.ContractRef" && callable.index < len(call.Args) && a.keyExpressionBounded(call.Args[callable.index])
+		case "Descriptor":
+			return a.directFactories[key] == owner || index == 0 && a.descriptorCallKnown(call)
+		default:
+			return a.directFactories[key] == owner
+		}
+	}
+	value = types.Unalias(value)
+	if pointer, ok := value.(*types.Pointer); ok {
+		value = types.Unalias(pointer.Elem())
+	}
+	structure, ok := value.Underlying().(*types.Struct)
+	if !ok {
+		return false
+	}
+	known := a.definitionFactories[extractFactoryResult{function: extractCalledObject(a.info, call.Fun), index: index}]
+	for fieldIndex := 0; fieldIndex < structure.NumFields(); fieldIndex++ {
+		field := structure.Field(fieldIndex)
+		if !extractContainsHiddenKeyType(field.Type(), make(map[types.Type]bool)) {
+			continue
+		}
+		if extractHiddenKeyTypeName(field.Type()) != "Definition" || !known[field.Name()] {
+			return false
+		}
+	}
+	return true
 }
 
 func (a *extractPackageAnalysis) usageCapabilityObject(object types.Object, seen map[types.Object]bool) bool {
@@ -3523,7 +4060,7 @@ func (*Snapshot) For(string) (*View, error)
 func (*Snapshot) ForContext(context.Context, ...Choice) (*View, error)
 func (*Snapshot) View(ViewSpec) (*View, error)
 	func (*Snapshot) Reference() SnapshotRef
-	func (*Snapshot) ErrorMessages(ErrorSpec) (LocalizedMessageSource, error)
+	func (*Snapshot) ErrorMessages(ErrorSpec) (*ErrorSource, error)
 	func (*Snapshot) ErrorPlan(ErrorPlanSpec) (*ErrorPlan, error)
 type Descriptor struct { Key Key; Revision string; Description string; Arguments []ArgumentSpec; Output OutputKind; Markup []string; Override OverridePolicy; AllowEmpty bool; Public bool }
 func (Descriptor) ContractRef() ContractRef
@@ -3542,7 +4079,7 @@ type View struct { resolution Resolution }
 func (*View) Render(context.Context, Message) (Rendered, error)
 	func (*View) RenderKey(Message) (string, error)
 	func (*View) Explain(Message) (Explanation, error)
-	func (*View) ErrorMessages(*ErrorPlan) (LocalizedMessageSource, error)
+	func (*View) ErrorMessages(*ErrorPlan) (*ErrorSource, error)
 
 type ArtifactLimits struct { MaxBytes int; MaxDepth int; MaxMembers int }
 func DefaultArtifactLimits() ArtifactLimits
@@ -3592,7 +4129,9 @@ type FieldLabel struct { Field string; Key Key }
 	type ErrorSpec struct { Mappings []ErrorMapping; FieldLabels []FieldLabel; FormattingLocale string; TimeZone string; Presentation Presentation }
 	type ErrorPlanSpec struct { Mappings []ErrorMapping; FieldLabels []FieldLabel }
 	type ErrorPlan struct{}
-type LocalizedMessageSource interface { errs.MessageSource; MessageWithLocale(context.Context, errs.Violation, string) (string, string, bool) }
+type ErrorSource struct{}
+func (*ErrorSource) Message(context.Context, errs.Violation, string) (string, bool)
+func (*ErrorSource) MessageWithLocale(context.Context, errs.Violation, string) (string, string, bool)
 type Operation uint8
 const ( OperationResolve Operation = iota + 1; OperationRender; OperationCompile; OperationLoad; OperationActivate; OperationRollback )
 func (Operation) String() string
@@ -3614,8 +4153,7 @@ const ( UsageRootDirectory UsageRootKind = "directory"; UsageRootFile UsageRootK
 func (UsageRootKind) String() string
 func (UsageRootKind) Valid() bool
 type UsageRoot struct { Path string ` + "\x60json:\"path\"\x60" + `; Kind UsageRootKind ` + "\x60json:\"kind\"\x60" + ` }
-const GoUsageAnalyzerV1 = "frostgrove.vv-i18n/go-ast/v1"
-const GoUsageAnalyzerV2 = "frostgrove.vv-i18n/go-list/v2"
+const GoUsageAnalyzer = "frostgrove.vv-i18n/go-list/v1"
 type UsageFile struct { Root string ` + "\x60json:\"root\"\x60" + `; Path string ` + "\x60json:\"path\"\x60" + `; LogicalPath string ` + "\x60json:\"logical_path\"\x60" + `; SHA256 string ` + "\x60json:\"sha256\"\x60" + `; Selected bool ` + "\x60json:\"selected\"\x60" + ` }
 type UsageMetadata struct { Kind string ` + "\x60json:\"kind\"\x60" + `; Path string ` + "\x60json:\"path\"\x60" + `; SHA256 string ` + "\x60json:\"sha256\"\x60" + ` }
 type UsageSetting struct { Name string ` + "\x60json:\"name\"\x60" + `; Value string ` + "\x60json:\"value\"\x60" + ` }
@@ -3853,6 +4391,7 @@ const (
 	MaxCatalogueEntries = 10_000
 	MaxMessageKeyBytes = 256
 	MaxMessageTemplateBytes = 16 << 10
+	MaxMessageOutputBytes = 16 << 10
 	MaxLocaleBytes = 128
 )
 

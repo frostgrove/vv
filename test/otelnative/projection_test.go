@@ -69,7 +69,9 @@ func TestTransportSpanProjectionCoversEveryExportFieldWithoutMutation(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := exporter.ExportSpans(context.Background(), []sdktrace.ReadOnlySpan{original.Snapshot()}); err != nil {
+	mismatched := original
+	mismatched.InstrumentationScope.Version = "secret-wrong-version"
+	if err := exporter.ExportSpans(context.Background(), []sdktrace.ReadOnlySpan{original.Snapshot(), mismatched.Snapshot()}); err != nil {
 		t.Fatal(err)
 	}
 	spans := sink.GetSpans()
@@ -92,6 +94,7 @@ func TestTransportSpanProjectionCoversEveryExportFieldWithoutMutation(t *testing
 		"secret-projection-link",
 		"secret-projection-status",
 		"secret-projection-scope",
+		"secret-wrong-version",
 	)
 	if original.Name != "GET /secret-projection-id" || original.Status.Description != "secret-projection-status" || len(original.Events) != 1 || len(original.Links[0].Attributes) != 1 {
 		t.Fatalf("input span mutated: %#v", original)
@@ -119,6 +122,7 @@ func TestTransportMetricProjectionCoversExemplarsAndDoesNotAliasInput(t *testing
 					Description: "secret-metric-description",
 					Unit:        "secret-unit",
 					Data: metricdata.Histogram[float64]{
+						Temporality: metricdata.CumulativeTemporality,
 						DataPoints: []metricdata.HistogramDataPoint[float64]{{
 							Attributes: attribute.NewSet(
 								attribute.String("http.request.method", "SECRET-METHOD"),
@@ -133,6 +137,8 @@ func TestTransportMetricProjectionCoversExemplarsAndDoesNotAliasInput(t *testing
 						}},
 					},
 				},
+				{Name: "http.server.request.duration", Description: "undefined-temporality-secret", Data: metricdata.Histogram[float64]{}},
+				{Name: "http.server.request.duration", Description: "delta-temporality-secret", Data: metricdata.Histogram[float64]{Temporality: metricdata.DeltaTemporality}},
 				{Name: "http.server.request.duration", Description: "wrong-shape-secret", Unit: "By", Data: metricdata.Sum[int64]{IsMonotonic: true}},
 				{Name: "secret.metric.name", Data: metricdata.Gauge[int64]{}},
 			},
@@ -168,6 +174,8 @@ func TestTransportMetricProjectionCoversExemplarsAndDoesNotAliasInput(t *testing
 		"secret-exemplar-url",
 		"secret-metric-description",
 		"secret-unit",
+		"undefined-temporality-secret",
+		"delta-temporality-secret",
 		"wrong-shape-secret",
 		"secret.metric.name",
 	)

@@ -36,8 +36,11 @@ type transportMetricView struct {
 	keys       map[attribute.Key]struct{}
 }
 
-func TransportMetricOptions(policy TraceProjectionPolicy) []sdkmetric.Option {
-	compiled := compileTracePolicy(policy)
+func TransportMetricOptions(policy TraceProjectionPolicy) ([]sdkmetric.Option, error) {
+	compiled, err := compileTracePolicy(policy)
+	if err != nil {
+		return nil, err
+	}
 	specs := []transportMetricView{
 		{otelhttp.ScopeName, "http.server.request.body.size", httpServerMetricAttributes},
 		{otelhttp.ScopeName, "http.server.response.body.size", httpServerMetricAttributes},
@@ -57,15 +60,16 @@ func TransportMetricOptions(policy TraceProjectionPolicy) []sdkmetric.Option {
 	options := make([]sdkmetric.Option, 0, len(specs))
 	for _, spec := range specs {
 		filter := transportMetricFilter(spec.scope, spec.keys, compiled)
+		metricSpec := transportMetricSpecs(spec.scope, compiled)[spec.instrument]
 		options = append(options, sdkmetric.WithView(sdkmetric.NewView(
 			sdkmetric.Instrument{
 				Name:  spec.instrument,
 				Scope: instrumentation.Scope{Name: spec.scope},
 			},
-			sdkmetric.Stream{AttributeFilter: filter},
+			nativeMetricStream(filter, metricSpec),
 		)))
 	}
-	return options
+	return options, nil
 }
 
 func transportMetricFilter(scope string, keys map[attribute.Key]struct{}, policy compiledTracePolicy) attribute.Filter {

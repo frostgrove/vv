@@ -12,8 +12,8 @@ func Source(t *Telemetry, next crud.Source) crud.Source {
 	}
 
 	decorator := &crudSourceDecorator{inner: next, tel: t}
-	decorator.beginner, decorator.hasBeginner = crud.BeginnerOf(next)
-	decorator.readSourcer, decorator.hasReadSourcer = crud.ReadSourcerOf(next)
+	decorator.beginner, decorator.hasBeginner = safeCrudBeginnerOf(next)
+	decorator.readSourcer, decorator.hasReadSourcer = safeCrudReadSourcerOf(next)
 	decorator.bulkInserter, decorator.hasBulkInserter = crud.UnsafeBulkInserterOf(next)
 
 	switch {
@@ -61,9 +61,7 @@ func (d *crudSourceDecorator) Query(ctx context.Context, query string, args ...a
 
 func (d *crudSourceDecorator) Dialect() crud.Dialect { return d.inner.Dialect() }
 
-func (d *crudSourceDecorator) UnwrapSource() crud.Source { return d.inner }
-
-func (d *crudSourceDecorator) UnwrapExecutor() crud.Executor { return d.inner }
+func (d *crudSourceDecorator) UnwrapSourceExecutor() crud.Source { return d.inner }
 
 func (d *crudSourceDecorator) begin(ctx context.Context) (crud.Tx, error) {
 	tx, err := executeCrudSource(ctx, d.tel, OpCrudSourceBegin, func(next context.Context) (crud.Tx, error) {
@@ -140,7 +138,7 @@ type crudTransactionDecorator struct {
 func wrapCrudTransaction(t *Telemetry, tx crud.Tx) crud.Tx {
 	decorator := &crudTransactionDecorator{inner: tx, tel: t}
 	decorator.identified, _ = tx.(crud.Identified)
-	beginner, ok := crud.BeginnerOf(tx)
+	beginner, ok := safeCrudBeginnerOf(tx)
 	switch {
 	case ok && !nilInterface(decorator.identified):
 		return &crudNestedIdentifiedTransactionDecorator{crudNestedTransactionDecorator: &crudNestedTransactionDecorator{
@@ -154,6 +152,36 @@ func wrapCrudTransaction(t *Telemetry, tx crud.Tx) crud.Tx {
 	default:
 		return decorator
 	}
+}
+
+func safeCrudBeginnerOf(value any) (beginner crud.Beginner, ok bool) {
+	completed := false
+	defer func() {
+		if completed {
+			return
+		}
+		_ = recover()
+		beginner = nil
+		ok = false
+	}()
+	beginner, ok = crud.BeginnerOf(value)
+	completed = true
+	return beginner, ok
+}
+
+func safeCrudReadSourcerOf(value any) (reader crud.ReadSourcer, ok bool) {
+	completed := false
+	defer func() {
+		if completed {
+			return
+		}
+		_ = recover()
+		reader = nil
+		ok = false
+	}()
+	reader, ok = crud.ReadSourcerOf(value)
+	completed = true
+	return reader, ok
 }
 
 func (d *crudTransactionDecorator) Exec(ctx context.Context, query string, args ...any) (crud.Result, error) {
@@ -234,13 +262,12 @@ func executeCrudSource[T any](ctx context.Context, t *Telemetry, operation strin
 }
 
 var (
-	_ crud.Source            = (*crudSourceDecorator)(nil)
-	_ crud.SourceUnwrapper   = (*crudSourceDecorator)(nil)
-	_ crud.ExecutorUnwrapper = (*crudSourceDecorator)(nil)
-	_ crud.Tx                = (*crudTransactionDecorator)(nil)
-	_ crud.ExecutorUnwrapper = (*crudTransactionDecorator)(nil)
-	_ crud.Identified        = (*crudIdentifiedTransactionDecorator)(nil)
-	_ crud.Beginner          = (*crudNestedTransactionDecorator)(nil)
-	_ crud.Identified        = (*crudNestedIdentifiedTransactionDecorator)(nil)
-	_ crud.Beginner          = (*crudNestedIdentifiedTransactionDecorator)(nil)
+	_ crud.Source                  = (*crudSourceDecorator)(nil)
+	_ crud.SourceExecutorUnwrapper = (*crudSourceDecorator)(nil)
+	_ crud.Tx                      = (*crudTransactionDecorator)(nil)
+	_ crud.ExecutorUnwrapper       = (*crudTransactionDecorator)(nil)
+	_ crud.Identified              = (*crudIdentifiedTransactionDecorator)(nil)
+	_ crud.Beginner                = (*crudNestedTransactionDecorator)(nil)
+	_ crud.Identified              = (*crudNestedIdentifiedTransactionDecorator)(nil)
+	_ crud.Beginner                = (*crudNestedIdentifiedTransactionDecorator)(nil)
 )

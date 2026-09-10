@@ -8,6 +8,14 @@ import (
 	"strings"
 	"testing"
 
+	"google.golang.org/genproto/googleapis/rpc/errdetails"
+	statuspb "google.golang.org/genproto/googleapis/rpc/status"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/encoding/protowire"
+	"google.golang.org/protobuf/protoadapt"
+	"google.golang.org/protobuf/types/known/anypb"
+
 	"github.com/frostgrove/vv/crud"
 	"github.com/frostgrove/vv/crud/query"
 	"github.com/frostgrove/vv/errs"
@@ -441,6 +449,282 @@ func TestAValidationFailureAndAMalformedRequestAreToldApartByTheirCode(t *testin
 	malformed := errs.BadRequest().Code(errs.CodeBadQuery).General().Code(errs.CodeBadQuery).Fault()
 	if got := kindOf(t, malformed); got != errs.KindBadRequest {
 		t.Fatalf("a malformed request came back as %v", got)
+	}
+}
+
+func TestTheClientPreservesOnlyProvenLocalizedMessageDetails(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		localized  *errdetails.LocalizedMessage
+		wantLocale string
+	}{
+		{"valid provenance", &errdetails.LocalizedMessage{Locale: "fr-CA", Message: "déjà pris"}, "fr-CA"},
+		{"mismatched wording", &errdetails.LocalizedMessage{Locale: "fr-CA", Message: "autre texte"}, ""},
+		{"invalid locale", &errdetails.LocalizedMessage{Locale: "fr_CA", Message: "déjà pris"}, ""},
+		{"oversized locale", &errdetails.LocalizedMessage{Locale: strings.Repeat("a", errs.MaxLocaleBytes+1), Message: "déjà pris"}, ""},
+		{"empty locale", &errdetails.LocalizedMessage{Message: "déjà pris"}, ""},
+		{"empty localized wording", &errdetails.LocalizedMessage{Locale: "fr-CA"}, ""},
+		{"missing provenance", nil, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			br := &errdetails.BadRequest{FieldViolations: []*errdetails.BadRequest_FieldViolation{{
+				Field:            "email",
+				Reason:           string(errs.CodeUnique),
+				Description:      "déjà pris",
+				LocalizedMessage: tc.localized,
+			}}}
+			info := &errdetails.ErrorInfo{Domain: ErrorDomain, Reason: string(errs.CodeUnique)}
+			st, err := status.New(codes.AlreadyExists, "déjà pris").WithDetails(br, info)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			got, ok := errs.AsFault((&transport{}).fault(remote.MethodGet, "/test", st.Err()))
+			if !ok || len(got.Violations) != 1 {
+				t.Fatalf("decoded failure = %#v", got)
+			}
+			v := got.Violations[0]
+			if v.Message != "déjà pris" || v.MessageLocale != tc.wantLocale {
+				t.Fatalf("decoded message = %q at %q, want locale %q", v.Message, v.MessageLocale, tc.wantLocale)
+			}
+		})
+	}
+}
+
+func TestLocalizedMessageProvenanceSurvivesTheStatusRoundTrip(t *testing.T) {
+	messages := errs.NewMessages(nil)
+	if err := messages.Add("fr", "email.unique", "déjà pris"); err != nil {
+		t.Fatal(err)
+	}
+	failure := errs.Conflict().Code(errs.CodeUnique).
+		Field("email").Code(errs.CodeUnique).Origin(errs.OriginState).Fault()
+	st := NewRenderer(WithMessages(messages)).Render(WithLocale(context.Background(), "fr-CA"), failure)
+
+	got, ok := errs.AsFault((&transport{}).fault(remote.MethodGet, "/test", st.Err()))
+	if !ok || len(got.Violations) != 1 {
+		t.Fatalf("round trip decoded as %#v", got)
+	}
+	v := got.Violations[0]
+	if v.Message != "déjà pris" || v.MessageLocale != "fr" {
+		t.Fatalf("round trip message = %q at %q", v.Message, v.MessageLocale)
+	}
+}
+
+func TestTheClientMessageLimitHasAnExactBoundary(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		message string
+		ok      bool
+	}{
+		{"N", strings.Repeat("x", errs.MaxMessageOutputBytes), true},
+		{"N plus one", strings.Repeat("x", errs.MaxMessageOutputBytes+1), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			br := &errdetails.BadRequest{FieldViolations: []*errdetails.BadRequest_FieldViolation{{
+				Field: "email", Reason: string(errs.CodeUnique), Description: tc.message,
+			}}}
+			info := &errdetails.ErrorInfo{Domain: ErrorDomain, Reason: string(errs.CodeUnique)}
+			st, err := status.New(codes.AlreadyExists, "refused").WithDetails(br, info)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			decoded := (&transport{}).fault(remote.MethodGet, "/test", st.Err())
+			fault, ok := errs.AsFault(decoded)
+			if ok != tc.ok {
+				t.Fatalf("message of %d bytes decoded as %T, fault=%v", len(tc.message), decoded, ok)
+			}
+			if ok {
+				if got := fault.Violations[0].Message; got != tc.message {
+					t.Fatalf("message at N changed length to %d", len(got))
+				}
+				return
+			}
+			var protocol *remote.ProtocolError
+			if !errors.As(decoded, &protocol) {
+				t.Fatalf("message beyond N decoded as %T, want ProtocolError", decoded)
+			}
+		})
+	}
+}
+
+func TestTheClientErrorCodeLimitHasAnExactBoundaryForEveryReason(t *testing.T) {
+	for _, target := range []string{"ErrorInfo", "FieldViolation"} {
+		for _, tc := range []struct {
+			name string
+			code errs.Code
+			ok   bool
+		}{
+			{"N", errs.Code(strings.Repeat("x", errs.MaxMessageKeyBytes)), true},
+			{"N plus one", errs.Code(strings.Repeat("x", errs.MaxMessageKeyBytes+1)), false},
+			{"empty", "", false},
+		} {
+			t.Run(target+"/"+tc.name, func(t *testing.T) {
+				infoCode := errs.CodeCheck
+				fieldCode := errs.CodeCheck
+				if target == "ErrorInfo" {
+					infoCode = tc.code
+				} else {
+					fieldCode = tc.code
+				}
+				br := &errdetails.BadRequest{FieldViolations: []*errdetails.BadRequest_FieldViolation{{
+					Field: "email", Reason: string(fieldCode), Description: "refused",
+				}}}
+				info := &errdetails.ErrorInfo{Domain: ErrorDomain, Reason: string(infoCode)}
+				st, err := status.New(codes.InvalidArgument, "refused").WithDetails(br, info)
+				if err != nil {
+					t.Fatal(err)
+				}
+
+				decoded := (&transport{}).fault(remote.MethodGet, "/test", st.Err())
+				fault, ok := errs.AsFault(decoded)
+				if ok != tc.ok {
+					t.Fatalf("%s reason of %d bytes decoded as %T, fault=%v", target, len(tc.code), decoded, ok)
+				}
+				if ok {
+					if target == "ErrorInfo" && fault.Code != tc.code {
+						t.Fatalf("ErrorInfo reason at N became %q", fault.Code)
+					}
+					if target == "FieldViolation" && fault.Violations[0].Code != tc.code {
+						t.Fatalf("FieldViolation reason at N became %q", fault.Violations[0].Code)
+					}
+					return
+				}
+				var protocol *remote.ProtocolError
+				if !errors.As(decoded, &protocol) {
+					t.Fatalf("invalid %s reason decoded as %T, want ProtocolError", target, decoded)
+				}
+			})
+		}
+	}
+}
+
+func TestTheClientRejectsInvalidUTF8InEveryReason(t *testing.T) {
+	valid := []byte(errs.CodeCheck)
+	invalid := []byte{0xff}
+	for _, tc := range []struct {
+		name       string
+		badRequest []byte
+		errorInfo  []byte
+	}{
+		{"ErrorInfo", rawBadRequest(valid), rawErrorInfo(invalid)},
+		{"FieldViolation", rawBadRequest(invalid), rawErrorInfo(valid)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			st := status.FromProto(&statuspb.Status{
+				Code:    int32(codes.InvalidArgument),
+				Message: "refused",
+				Details: []*anypb.Any{
+					{TypeUrl: "type.googleapis.com/google.rpc.BadRequest", Value: tc.badRequest},
+					{TypeUrl: "type.googleapis.com/google.rpc.ErrorInfo", Value: tc.errorInfo},
+				},
+			})
+			decoded := (&transport{}).fault(remote.MethodGet, "/test", st.Err())
+			var protocol *remote.ProtocolError
+			if !errors.As(decoded, &protocol) {
+				t.Fatalf("invalid UTF-8 %s reason decoded as %T, want ProtocolError", tc.name, decoded)
+			}
+		})
+	}
+}
+
+func rawBadRequest(reason []byte) []byte {
+	field := appendStringField(nil, 1, []byte("email"))
+	field = appendStringField(field, 2, []byte("refused"))
+	field = appendStringField(field, 3, reason)
+	return appendStringField(nil, 1, field)
+}
+
+func rawErrorInfo(reason []byte) []byte {
+	out := appendStringField(nil, 1, reason)
+	return appendStringField(out, 2, []byte(ErrorDomain))
+}
+
+func appendStringField(out []byte, number protowire.Number, value []byte) []byte {
+	out = protowire.AppendTag(out, number, protowire.BytesType)
+	return protowire.AppendBytes(out, value)
+}
+
+func TestTheClientBoundsRemoteViolationsAtTheExactBoundary(t *testing.T) {
+	for _, count := range []int{MaxViolations, MaxViolations + 1} {
+		fields := make([]*errdetails.BadRequest_FieldViolation, count)
+		for i := range fields {
+			fields[i] = &errdetails.BadRequest_FieldViolation{
+				Field:       fmt.Sprintf("field%03d", i),
+				Reason:      string(errs.CodeCheck),
+				Description: fmt.Sprintf("message %03d", i),
+			}
+		}
+		br := &errdetails.BadRequest{FieldViolations: fields}
+		info := &errdetails.ErrorInfo{Domain: ErrorDomain, Reason: string(errs.CodeCheck)}
+		st, err := status.New(codes.InvalidArgument, "invalid").WithDetails(br, info)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		got, ok := errs.AsFault((&transport{}).fault(remote.MethodGet, "/test", st.Err()))
+		if !ok {
+			t.Fatalf("%d details decoded as %T", count, got)
+		}
+		if len(got.Violations) != MaxViolations {
+			t.Fatalf("%d details reconstructed as %d", count, len(got.Violations))
+		}
+		if got.Partial != (count > MaxViolations) {
+			t.Fatalf("%d details reconstructed with partial=%v", count, got.Partial)
+		}
+		if first, last := got.Violations[0], got.Violations[MaxViolations-1]; first.Path.String() != "field000" || last.Path.String() != "field099" ||
+			first.Message != "message 000" || last.Message != "message 099" {
+			t.Fatalf("detail order changed: first=%+v last=%+v", first, last)
+		}
+	}
+}
+
+func TestTheClientValidatesViolationsBeyondTheReconstructionBoundary(t *testing.T) {
+	fields := make([]*errdetails.BadRequest_FieldViolation, MaxViolations+1)
+	for i := range fields {
+		fields[i] = &errdetails.BadRequest_FieldViolation{
+			Field:       fmt.Sprintf("field%03d", i),
+			Reason:      string(errs.CodeCheck),
+			Description: "refused",
+		}
+	}
+	fields[MaxViolations].Reason = ""
+	st, err := status.New(codes.InvalidArgument, "refused").WithDetails(
+		&errdetails.BadRequest{FieldViolations: fields},
+		&errdetails.ErrorInfo{Domain: ErrorDomain, Reason: string(errs.CodeCheck)},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded := (&transport{}).fault(remote.MethodGet, "/test", st.Err())
+	var protocol *remote.ProtocolError
+	if !errors.As(decoded, &protocol) {
+		t.Fatalf("an invalid 101st violation decoded as %T, want ProtocolError", decoded)
+	}
+}
+
+func TestDuplicateOrIncompleteFrameworkDetailsAreProtocolErrors(t *testing.T) {
+	info := &errdetails.ErrorInfo{Domain: ErrorDomain, Reason: string(errs.CodeCheck)}
+	request := &errdetails.BadRequest{}
+	for _, tc := range []struct {
+		name    string
+		details []protoadapt.MessageV1
+	}{
+		{"duplicate ErrorInfo", []protoadapt.MessageV1{request, info, info}},
+		{"duplicate BadRequest", []protoadapt.MessageV1{request, request, info}},
+		{"missing BadRequest", []protoadapt.MessageV1{info}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			st, err := status.New(codes.InvalidArgument, "invalid").WithDetails(tc.details...)
+			if err != nil {
+				t.Fatal(err)
+			}
+			decoded := (&transport{}).fault(remote.MethodGet, "/test", st.Err())
+			var protocol *remote.ProtocolError
+			if !errors.As(decoded, &protocol) {
+				t.Fatalf("malformed details decoded as %T: %v", decoded, decoded)
+			}
+		})
 	}
 }
 

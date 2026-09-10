@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -48,9 +49,10 @@ func (meter *callbackMeter) RegisterCallback(callback metric.Callback, _ ...metr
 
 type registrationProbe struct {
 	metric.Registration
-	calls atomic.Int64
-	err   error
-	panic bool
+	calls  atomic.Int64
+	err    error
+	panic  bool
+	goexit bool
 }
 
 func (registration *registrationProbe) Unregister() error {
@@ -58,7 +60,33 @@ func (registration *registrationProbe) Unregister() error {
 	if registration.panic {
 		panic("unregister-secret-29173")
 	}
+	if registration.goexit {
+		runtime.Goexit()
+	}
 	return registration.err
+}
+
+type pgxStatsProbe struct {
+	calls   atomic.Int64
+	once    sync.Once
+	entered chan struct{}
+	release chan struct{}
+	panic   bool
+	result  *pgxpool.Stat
+}
+
+func (source *pgxStatsProbe) Stat() *pgxpool.Stat {
+	source.calls.Add(1)
+	if source.entered != nil {
+		source.once.Do(func() { close(source.entered) })
+	}
+	if source.release != nil {
+		<-source.release
+	}
+	if source.panic {
+		panic("pgx stats")
+	}
+	return source.result
 }
 
 type countingObserver struct {
@@ -142,6 +170,119 @@ func TestPGXPoolStatsOwnsARegistrationAndBoundedIdentity(t *testing.T) {
 	}
 }
 
+func TestPGXPoolStatsDeactivatesDrainsAndClearsCallback(t *testing.T) {
+	native := &registrationProbe{}
+	meter := &callbackMeter{Meter: metricnoop.NewMeterProvider().Meter("base"), registration: native}
+	providers := Providers{
+		Tracer: tracenoop.NewTracerProvider(),
+		Meter:  &callbackMeterProvider{MeterProvider: metricnoop.NewMeterProvider(), meter: meter},
+	}
+	pool := &pgxStatsProbe{entered: make(chan struct{}), release: make(chan struct{})}
+	registration, err := RegisterPGXPoolStats(providers, pool, mustDatabasePoolName(t, "primary"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	observer := &countingObserver{}
+	callbackDone := make(chan error, 1)
+	go func() { callbackDone <- meter.callback(context.Background(), observer) }()
+	select {
+	case <-pool.entered:
+	case <-time.After(time.Second):
+		t.Fatal("callback did not enter Stat")
+	}
+	unregisterDone := make(chan error, 1)
+	go func() { unregisterDone <- registration.Unregister() }()
+	deadline := time.Now().Add(time.Second)
+	for native.calls.Load() == 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if native.calls.Load() != 1 {
+		t.Fatal("native registration was not unregistered")
+	}
+	select {
+	case err := <-unregisterDone:
+		t.Fatalf("Unregister returned before callback drain: %v", err)
+	default:
+	}
+	close(pool.release)
+	if err = <-callbackDone; err != nil {
+		t.Fatalf("callback error=%v", err)
+	}
+	if err = <-unregisterDone; err != nil {
+		t.Fatalf("Unregister error=%v", err)
+	}
+	beforeCalls := pool.calls.Load()
+	beforeObservations := observer.count.Load()
+	if err = meter.callback(context.Background(), observer); err != nil || pool.calls.Load() != beforeCalls || observer.count.Load() != beforeObservations {
+		t.Fatalf("retained callback = %v calls:%d/%d observations:%d/%d", err, pool.calls.Load(), beforeCalls, observer.count.Load(), beforeObservations)
+	}
+	if err = registration.Unregister(); err != nil || native.calls.Load() != 1 {
+		t.Fatalf("repeated Unregister=%v calls=%d", err, native.calls.Load())
+	}
+}
+
+func TestPGXPoolStatsContainsCallbackAndCleanupFailures(t *testing.T) {
+	newRegistration := func(t *testing.T, pool *pgxStatsProbe, native *registrationProbe) (*MetricRegistration, *callbackMeter) {
+		t.Helper()
+		meter := &callbackMeter{Meter: metricnoop.NewMeterProvider().Meter("base"), registration: native}
+		providers := Providers{
+			Tracer: tracenoop.NewTracerProvider(),
+			Meter:  &callbackMeterProvider{MeterProvider: metricnoop.NewMeterProvider(), meter: meter},
+		}
+		registration, err := RegisterPGXPoolStats(providers, pool, mustDatabasePoolName(t, "primary"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return registration, meter
+	}
+
+	pool := &pgxStatsProbe{panic: true}
+	registration, meter := newRegistration(t, pool, &registrationProbe{})
+	if err := meter.callback(context.Background(), &countingObserver{}); !errors.Is(err, ErrMetricCallback) {
+		t.Fatalf("Stat panic error=%v", err)
+	}
+	canceled, cancel := context.WithCancel(context.Background())
+	cancel()
+	before := pool.calls.Load()
+	if err := meter.callback(canceled, &countingObserver{}); !errors.Is(err, context.Canceled) || pool.calls.Load() != before {
+		t.Fatalf("canceled callback=%v calls=%d/%d", err, pool.calls.Load(), before)
+	}
+	if err := registration.Unregister(); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, mode := range []string{"panic", "goexit"} {
+		t.Run(mode, func(t *testing.T) {
+			native := &registrationProbe{panic: mode == "panic", goexit: mode == "goexit"}
+			pool := &pgxStatsProbe{}
+			registration, meter := newRegistration(t, pool, native)
+			if mode == "panic" {
+				if err := registration.Unregister(); !errors.Is(err, ErrMetricRegistrationCleanup) {
+					t.Fatalf("panic cleanup error=%v", err)
+				}
+			} else {
+				exited := make(chan struct{})
+				go func() {
+					defer close(exited)
+					_ = registration.Unregister()
+				}()
+				select {
+				case <-exited:
+				case <-time.After(time.Second):
+					t.Fatal("Goexit cleanup did not unwind")
+				}
+			}
+			if err := registration.Unregister(); !errors.Is(err, ErrMetricRegistrationCleanup) || native.calls.Load() != 1 {
+				t.Fatalf("terminal cleanup=%v calls=%d", err, native.calls.Load())
+			}
+			before := pool.calls.Load()
+			if err := meter.callback(context.Background(), &countingObserver{}); err != nil || pool.calls.Load() != before {
+				t.Fatalf("post-cleanup callback=%v calls=%d/%d", err, pool.calls.Load(), before)
+			}
+		})
+	}
+}
+
 func TestDatabaseMetricExporterDropsUnconfiguredPoolAtExport(t *testing.T) {
 	const secretPool = "secret_pool_identity_4815"
 	allowedPool, err := NewDatabasePoolName("primary")
@@ -187,8 +328,8 @@ func TestDatabaseMetricExporterDropsUnconfiguredPoolAtExport(t *testing.T) {
 	}
 	exported := sink.snapshot()
 	assertNativePrivacy(t, nil, exported, secretPool, secretResource, "secret-schema-4815")
-	if got := exported.ScopeMetrics[0].Scope.Version; got != "_OTHER" {
-		t.Fatalf("unknown scope tuple version=%q", got)
+	if len(exported.ScopeMetrics) != 0 {
+		t.Fatalf("unknown scope tuple survived=%#v", exported.ScopeMetrics)
 	}
 }
 

@@ -26,11 +26,6 @@ type Config struct {
 
 	Disabled bool
 
-	CommandTracesDisabled  bool
-	CommandMetricsDisabled bool
-	StorageTracesDisabled  bool
-	CacheMetricsDisabled   bool
-
 	ResourceName ApprovedName
 	Disable      Signals
 }
@@ -71,7 +66,6 @@ func New(config Config) (*Telemetry, error) {
 		return nil, newProviderError(ErrNilProvider, "")
 	}
 
-	applyLegacyDisable(disabled, config)
 	if err := t.selectActiveSignals(descriptors, disabled, config); err != nil {
 		return nil, err
 	}

@@ -778,18 +778,21 @@ re-discovering them.
 **Setup:** A service author writes `NewRenderer(WithMaxViolations(0))`, reasonably reading zero as “use the published default”.
 **What the consumer does:** One bulk-validation fault contains thousands of field violations.
 **What must happen:** A non-positive cap is refused at construction or falls back to the advertised cap of 100; a one-character configuration mistake must not remove the response bound.
-**Today:** ❌ wrong or unhandled
-**Evidence:** `status.go:177-195` stores zero without validation, while `port/violations.go:9-16` describes the zero-value pipeline as having no cap and `port/violations.go:90-92` truncates only when `Max > 0`. `status_test.go:350-378` tests custom caps of 3 and 50 only; no non-positive-cap test exists.
-**Blast radius:** crash
+**Today:** ✅ handled
+**Evidence:** `WithMaxViolations` only accepts a narrowing value in
+`1..MaxViolations`; zero, negative and oversized values preserve the hard
+default. Renderer tests pin all invalid options.
+**Blast radius:** none
 
 ### E-CRUDGRPC-05 — The 100th and 101st invalid fields stay distinguishable
 **Shape:** boundary
 **Setup:** A batch validator returns exactly 100 field violations, then 101, with the default renderer.
 **What the consumer does:** The caller renders every error at the limit, and when one is dropped it needs the `partial` marker before asking the user to correct a list that is known to be incomplete.
 **What must happen:** One hundred entries arrive without `partial`; one hundred and one arrive as 100 entries with `partial=true`, in deterministic order.
-**Today:** 🟡 partial
-**Evidence:** `status.go:28-31` takes the 100-entry limit from `port.MaxViolations`; `status.go:251-267` passes it to the pipeline; `status.go:325-330` marks truncation. `status_test.go:350-378` establishes the behaviour only at 3/10 and 50/10, not the published 100/101 boundary.
-**Blast radius:** confusing error
+**Today:** ✅ handled
+**Evidence:** Default-renderer tests pin exactly 100 entries without the partial
+marker and 101 as 100 deterministic entries with `partial=true`.
+**Blast radius:** none
 
 ### E-CRUDGRPC-06 — A presenter returns something JSON cannot carry
 **Shape:** degenerate declaration
@@ -833,9 +836,12 @@ a separator-bearing transport control; it must not invent a second path grammar.
 **Setup:** An older or misconfigured remote service sends a framework-marked status with many `BadRequest.FieldViolations`, exceeding this binding's 100-entry outbound convention.
 **What the consumer does:** The remote caller needs a bounded fault with an honest partial marker, just as it receives from a current server, rather than allocating one violation per received detail.
 **What must happen:** The client applies `MaxViolations` while reconstructing remote failures and marks dropped detail as partial, or rejects the oversized status as a protocol error.
-**Today:** ❌ wrong or unhandled
-**Evidence:** The server uses the 100-entry cap (`status.go:28-31`, `:251-267`), but `transport.go:209-249` appends every received `FieldViolation` without a cap and returns them all in `FaultFrom`. `client_test.go:224-262` exercises one violation only; no oversized remote-detail test exists.
-**Blast radius:** crash
+**Today:** ✅ handled
+**Evidence:** The client reconstructs at most `MaxViolations` entries from the
+single accepted `BadRequest` detail and marks every dropped tail as partial.
+Client tests pin the exact 100/101 boundary, malformed locale provenance and
+duplicate framework details.
+**Blast radius:** none
 
 ### E-CRUDGRPC-11 — A client is constructed with a nil connection
 **Shape:** misuse

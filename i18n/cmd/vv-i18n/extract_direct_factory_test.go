@@ -15,6 +15,7 @@ func TestExtractUsageTrustsSelectedDirectResultFactories(t *testing.T) {
 	writeTestFile(t, filepath.Join(directory, "use.go"), `package sample
 import "github.com/frostgrove/vv/i18n"
 type Payload struct { Value string }
+type Bundle struct { Definition i18n.Definition[Payload] }
 func Definition(snapshot *i18n.Snapshot) (i18n.Definition[Payload], error) {
   return i18n.NewStructDefinition[Payload](snapshot, "app.direct.definition")
 }
@@ -24,6 +25,16 @@ func ForwardDefinition(snapshot *i18n.Snapshot) (i18n.Definition[Payload], error
 func RepackDefinition(snapshot *i18n.Snapshot) (i18n.Definition[Payload], error) {
   definition, err := ForwardDefinition(snapshot)
   return definition, err
+}
+func BundleFactory(snapshot *i18n.Snapshot) (*Bundle, error) {
+  definition, err := i18n.NewStructDefinition[Payload](snapshot, "app.direct.bundle")
+  if err != nil { return nil, err }
+  return &Bundle{Definition: definition}, nil
+}
+func ErrorDefinition(snapshot *i18n.Snapshot) (i18n.Definition[Payload], error) {
+  definition, err := i18n.NewStructDefinition[Payload](snapshot, "app.direct.zero_error")
+  if err != nil { return i18n.Definition[Payload]{}, err }
+  return definition, nil
 }
 func DefinitionPointer(snapshot *i18n.Snapshot) *i18n.Definition[Payload] {
   definition, _ := i18n.NewStructDefinition[Payload](snapshot, "app.direct.pointer")
@@ -69,6 +80,10 @@ func ErrorConfigurationPointer() *i18n.ErrorSpec {
 func use(snapshot *i18n.Snapshot) {
   definition, _ := RepackDefinition(snapshot)
   _, _ = definition.Bind(Payload{})
+  errorDefinition, _ := ErrorDefinition(snapshot)
+  _, _ = errorDefinition.Bind(Payload{})
+  bundle, err := BundleFactory(snapshot)
+  if err == nil { _, _ = bundle.Definition.Bind(Payload{}) }
   _, _ = (*DefinitionPointer(snapshot)).Bind(Payload{})
   _, _ = i18n.Define(snapshot, Specification(snapshot))
   _, _ = i18n.Define(snapshot, *SpecificationPointer(snapshot))
@@ -84,12 +99,14 @@ func use(snapshot *i18n.Snapshot) {
 		t.Fatal(err)
 	}
 	want := []i18n.Key{
+		"app.direct.bundle",
 		"app.direct.definition",
 		"app.direct.descriptor",
 		"app.direct.descriptor_pointer",
 		"app.direct.pointer",
 		"app.direct.specification",
 		"app.direct.specification_pointer",
+		"app.direct.zero_error",
 		"errors.direct.mapping",
 		"errors.direct.mapping_pointer",
 		"fields.direct.name",

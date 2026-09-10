@@ -8,6 +8,7 @@ import (
 	"math"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -140,7 +141,7 @@ func (m NativeBudgetManifest) Validate() error {
 		if _, exists := scopes[scope.ID]; exists {
 			return nativeBudgetError("duplicate scope ID %q", scope.ID)
 		}
-		tuple := nativeStringTuple(scope.Name+"\x00"+scope.Version+"\x00"+scope.SchemaURL, scope.Attributes)
+		tuple := nativeStringTuple(nativeTuple(scope.Name, scope.Version, scope.SchemaURL), scope.Attributes)
 		if prior, exists := scopeTuples[tuple]; exists {
 			return nativeBudgetError("scopes %q and %q have the same tuple", prior, scope.ID)
 		}
@@ -283,16 +284,28 @@ func nativeStringTuple(prefix string, values map[string]string) string {
 	}
 	sort.Strings(keys)
 	var builder strings.Builder
-	builder.WriteString(prefix)
+	appendNativeTuplePart(&builder, prefix)
 	for _, key := range keys {
-		builder.WriteByte(0)
-		builder.WriteString(key)
-		builder.WriteByte('=')
-		builder.WriteString(values[key])
+		appendNativeTuplePart(&builder, key)
+		appendNativeTuplePart(&builder, values[key])
 	}
 	return builder.String()
 }
 
 func nativeInstrumentKey(resource, scope, name string) string {
-	return resource + "\x00" + scope + "\x00" + name
+	return nativeTuple(resource, scope, name)
+}
+
+func nativeTuple(values ...string) string {
+	var builder strings.Builder
+	for _, value := range values {
+		appendNativeTuplePart(&builder, value)
+	}
+	return builder.String()
+}
+
+func appendNativeTuplePart(builder *strings.Builder, value string) {
+	builder.WriteString(strconv.Itoa(len(value)))
+	builder.WriteByte(':')
+	builder.WriteString(value)
 }

@@ -718,19 +718,24 @@ func capturePlacementContext(ctx context.Context, queue *Queue, definition Name,
 }
 
 func invokeContextProvider(provider TrustedContextProvider, ctx context.Context, request ContextCaptureRequest) (capture ContextCapture, err error) {
+	completed := false
 	defer func() {
-		if recover() != nil {
+		_ = recover()
+		if !completed {
 			capture = ContextCapture{}
 			err = ErrDriver
 		}
 	}()
 	capture, err = provider.Capture(ctx, request)
 	if err != nil {
+		completed = true
 		return ContextCapture{}, ErrDriver
 	}
 	if !capture.valid() {
+		completed = true
 		return ContextCapture{}, invalid("trusted context provider result")
 	}
+	completed = true
 	return capture, nil
 }
 
@@ -745,18 +750,23 @@ func (q *Queue) nextInvocationID() (InvocationID, error) {
 }
 
 func readEntropy(reader io.Reader, destination []byte) (err error) {
+	completed := false
 	defer func() {
-		if recover() != nil {
+		_ = recover()
+		if !completed {
 			err = ErrEntropy
 		}
 	}()
 	_, err = io.ReadFull(reader, destination)
+	completed = true
 	return err
 }
 
 func place(sender Sender, ctx context.Context, placement Placement) (result PlacementResult, err error) {
+	completed := false
 	defer func() {
-		if recover() != nil {
+		_ = recover()
+		if !completed {
 			result = PlacementResult{}
 			err = ErrAmbiguous
 		}
@@ -764,16 +774,22 @@ func place(sender Sender, ctx context.Context, placement Placement) (result Plac
 	result, err = sender.Place(ctx, placement)
 	if err != nil {
 		if !result.IsZero() {
+			completed = true
 			return PlacementResult{}, ErrAmbiguous
 		}
-		return PlacementResult{}, normalizeSenderError(err)
+		normalized := normalizeSenderError(err)
+		completed = true
+		return PlacementResult{}, normalized
 	}
+	completed = true
 	return result, nil
 }
 
 func stage(stager Stager, ctx context.Context, placement Placement) (result Staged, err error) {
+	completed := false
 	defer func() {
-		if recover() != nil {
+		_ = recover()
+		if !completed {
 			result = Staged{}
 			err = ErrAmbiguous
 		}
@@ -781,10 +797,14 @@ func stage(stager Stager, ctx context.Context, placement Placement) (result Stag
 	result, err = stager.Stage(ctx, placement)
 	if err != nil {
 		if !result.IsZero() {
+			completed = true
 			return Staged{}, ErrAmbiguous
 		}
-		return Staged{}, normalizeSenderError(err)
+		normalized := normalizeSenderError(err)
+		completed = true
+		return Staged{}, normalized
 	}
+	completed = true
 	return result, nil
 }
 
@@ -834,30 +854,38 @@ func validPlacementResult(placement Placement, result PlacementResult) bool {
 }
 
 func senderDescription(sender Sender) (description BackendDescription, err error) {
+	completed := false
 	defer func() {
-		if recover() != nil {
+		_ = recover()
+		if !completed {
 			description = BackendDescription{}
 			err = invalid("sender description")
 		}
 	}()
 	description = sender.Description()
 	if !description.valid() {
+		completed = true
 		return BackendDescription{}, invalid("sender description")
 	}
+	completed = true
 	return description, nil
 }
 
 func stagerTransaction(stager Stager) (transaction TransactionContext, err error) {
+	completed := false
 	defer func() {
-		if recover() != nil {
+		_ = recover()
+		if !completed {
 			transaction = TransactionContext{}
 			err = invalid("stager transaction")
 		}
 	}()
 	transaction = stager.Transaction()
 	if !transaction.valid() {
+		completed = true
 		return TransactionContext{}, invalid("stager transaction")
 	}
+	completed = true
 	return transaction, nil
 }
 

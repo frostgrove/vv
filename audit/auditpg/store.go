@@ -167,9 +167,41 @@ func (s *Store) LookupIdempotency(ctx context.Context, request audit.Idempotency
 		return audit.IdempotencyLookupResult{}, audit.Failure(audit.StaleCatalog, errors.New("auditpg: idempotency lookup catalog is stale"))
 	}
 	q := quoteIdentifier(s.value.configured.schema.Name)
+	if view.Domain.Kind != audit.RecordIdempotencyDomain {
+		return s.lookupAttemptIdempotency(ctx, q, request)
+	}
 	row := s.value.configured.db.QueryRowContext(ctx, `SELECT r.wire, r.intent, r.recorded_at, r.position
 FROM `+q+`.idempotency i JOIN `+q+`.revisions r ON r.revision_id=i.revision_id
 WHERE i.catalog_id=$1 AND i.operation=$2 AND i.token=$3`, string(view.Catalog.ID), string(view.Domain.Operation), view.Domain.Token[:])
+	stored, err := scanStored(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return audit.NewIdempotencyLookupResult(request, audit.IdempotencyLookupResultData{State: audit.AbsentNow})
+	}
+	if err != nil {
+		return audit.IdempotencyLookupResult{}, classifyStored(err)
+	}
+	return audit.NewIdempotencyLookupResult(request, audit.IdempotencyLookupResultData{State: audit.Found, Stored: stored})
+}
+
+func (s *Store) lookupAttemptIdempotency(ctx context.Context, schema string, request audit.IdempotencyLookupRequest) (audit.IdempotencyLookupResult, error) {
+	view := request.View()
+	if view.Domain.Kind != audit.AttemptStartIdempotencyDomain && view.Domain.Kind != audit.AttemptCheckpointIdempotencyDomain && view.Domain.Kind != audit.AttemptFinishIdempotencyDomain || view.Idempotency.Domain() != audit.CommitIdempotency {
+		return audit.IdempotencyLookupResult{}, audit.Failure(audit.Refused, errors.New("auditpg: attempt idempotency lookup is invalid"))
+	}
+	chain := view.Domain.Attempt
+	if view.Domain.Kind == audit.AttemptStartIdempotencyDomain {
+		chain = audit.AttemptChainID{}
+	} else if chain == (audit.AttemptChainID{}) {
+		return audit.IdempotencyLookupResult{}, audit.Failure(audit.Refused, errors.New("auditpg: attempt idempotency chain is absent"))
+	}
+	active := view.Idempotency.Active()
+	description := active.Description()
+	row := s.value.configured.db.QueryRowContext(ctx, `SELECT r.wire, r.intent, r.recorded_at, r.position
+FROM `+schema+`.attempt_idempotency i JOIN `+schema+`.revisions r ON r.revision_id=i.revision_id
+WHERE i.domain=$1 AND i.catalog_id=$2 AND i.chain_id=$3
+AND i.algorithm=$4 AND i.profile=$5 AND i.key_id=$6 AND i.commitment=$7`,
+		int(view.Domain.Kind), string(view.Domain.Catalog), chain[:],
+		description.Algorithm, description.Profile, description.KeyID, active.Bytes())
 	stored, err := scanStored(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return audit.NewIdempotencyLookupResult(request, audit.IdempotencyLookupResultData{State: audit.AbsentNow})
@@ -234,7 +266,19 @@ func scanStored(row interface{ Scan(...any) error }) (audit.StoredHeader, error)
 	if err != nil {
 		return audit.StoredHeader{}, err
 	}
-	stored, err := audit.NewStoredHeader(audit.StoredHeaderData{Header: view.Header, Intent: intent, RecordedAt: recordedAt.Time.UTC(), Position: storePosition})
+	data := audit.StoredHeaderData{Header: view.Header, Intent: intent, RecordedAt: recordedAt.Time.UTC(), Position: storePosition}
+	for _, item := range view.Items {
+		if item.Kind != audit.AttemptItem {
+			continue
+		}
+		if data.AttemptTransitionPresent {
+			return audit.StoredHeader{}, errorsWire("stored attempt header")
+		}
+		data.AttemptTransitionPresent = true
+		data.AttemptTransition = item.Attempt
+		data.AttemptProjection = storedAttemptProjection(item)
+	}
+	stored, err := audit.NewStoredHeader(data)
 	if err != nil {
 		return audit.StoredHeader{}, errorsWire("stored header")
 	}

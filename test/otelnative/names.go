@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"unicode/utf8"
 )
 
 var (
@@ -12,8 +13,14 @@ var (
 )
 
 const (
-	fallbackHTTPName = "HTTP _OTHER"
-	fallbackRPCName  = "_OTHER/_OTHER"
+	fallbackHTTPName          = "HTTP _OTHER"
+	fallbackRPCName           = "_OTHER/_OTHER"
+	maxNativeRoutes           = 4096
+	maxNativeRouteLength      = 1024
+	maxNativeMethodLength     = 16
+	maxNativeRPCs             = 4096
+	maxNativeRPCLength        = 1024
+	maxNativeServerNameLength = 255
 )
 
 type Route struct {
@@ -27,16 +34,22 @@ type RouteTable struct {
 }
 
 func NewRouteTable(routes ...Route) (RouteTable, error) {
+	if len(routes) > maxNativeRoutes {
+		return RouteTable{}, ErrInvalidRoute
+	}
 	table := RouteTable{
 		names:    make(map[string]string, len(routes)),
 		patterns: make(map[string]struct{}, len(routes)),
 	}
 	for _, route := range routes {
 		method := normalizeHTTPMethod(route.Method)
-		if method == "_OTHER" || route.Pattern == "" {
+		if method == "_OTHER" || !validNativeRoutePattern(route.Pattern) {
 			return RouteTable{}, ErrInvalidRoute
 		}
 		key := routeKey(method, route.Pattern)
+		if _, exists := table.names[key]; exists {
+			return RouteTable{}, ErrInvalidRoute
+		}
 		table.names[key] = method + " " + route.Pattern
 		table.patterns[route.Pattern] = struct{}{}
 	}
@@ -70,6 +83,9 @@ func routeKey(method, pattern string) string {
 }
 
 func normalizeHTTPMethod(method string) string {
+	if len(method) == 0 || len(method) > maxNativeMethodLength || !utf8.ValidString(method) {
+		return "_OTHER"
+	}
 	switch strings.ToUpper(method) {
 	case http.MethodConnect:
 		return http.MethodConnect
@@ -99,15 +115,28 @@ type RPCTable struct {
 }
 
 func NewRPCTable(fullMethods ...string) (RPCTable, error) {
+	if len(fullMethods) > maxNativeRPCs {
+		return RPCTable{}, ErrInvalidRPC
+	}
 	table := RPCTable{methods: make(map[string]string, len(fullMethods))}
 	for _, fullMethod := range fullMethods {
+		if len(fullMethod) > maxNativeRPCLength || !utf8.ValidString(fullMethod) {
+			return RPCTable{}, ErrInvalidRPC
+		}
 		name, ok := rpcSpanName(fullMethod)
 		if !ok {
+			return RPCTable{}, ErrInvalidRPC
+		}
+		if _, exists := table.methods[fullMethod]; exists {
 			return RPCTable{}, ErrInvalidRPC
 		}
 		table.methods[fullMethod] = name
 	}
 	return table, nil
+}
+
+func validNativeRoutePattern(pattern string) bool {
+	return pattern != "" && len(pattern) <= maxNativeRouteLength && utf8.ValidString(pattern)
 }
 
 func (t RPCTable) boundedFullMethod(fullMethod string) string {
@@ -127,7 +156,7 @@ func (t RPCTable) containsSpanName(name string) bool {
 }
 
 func rpcSpanName(fullMethod string) (string, bool) {
-	if !strings.HasPrefix(fullMethod, "/") {
+	if len(fullMethod) == 0 || len(fullMethod) > maxNativeRPCLength || !utf8.ValidString(fullMethod) || !strings.HasPrefix(fullMethod, "/") {
 		return "", false
 	}
 	name := strings.TrimPrefix(fullMethod, "/")

@@ -117,8 +117,8 @@ small flat catalogue remains supported. Localization changes human wording
 only. Kind, code, public path, partial marker, HTTP status, gRPC code and
 internal-error redaction remain transport-owned.
 
-An application may either build the legacy locale-taking adapter directly from
-a snapshot or compile an `ErrorPlan` and bind it to an operation's existing
+An application may either build a locale-taking error source directly from a
+snapshot or compile an `ErrorPlan` and bind it to an operation's existing
 `View`. The latter makes one resolution, formatting locale, zone and presentation
 authoritative for both application messages and errors; a transport's requested
 locale parameter cannot trigger a second negotiation.
@@ -161,7 +161,7 @@ select `DefaultUsageLimits`; callers may narrow them but cannot exceed the hard
 contract maxima. Keys, dynamic ranges and occurrences are each capped at
 262144; roots at 1024; files and metadata records at 100000 each; every tag and
 environment ledger at 256; one retained string at 4 MiB; and aggregate semantic
-material at 64 MiB. The v4 decoder and core checker use those same limits, so a
+material at 64 MiB. The usage decoder and core checker use those same limits, so a
 small catalogue policy cannot invalidate otherwise legitimate call-site
 evidence.
 
@@ -169,8 +169,8 @@ Those ceilings reach the producer, not only the final writer. Compilation,
 canonical source encoding, pseudolocalization, Go generation, public manifest
 and TypeScript generation, reports and usage manifests reject an impossible
 output before proportional cloning, formatting or hashing. Their context-aware
-paths poll cancellation while walking and encoding retained material; legacy
-convenience functions use `context.Background()` and the same finite defaults.
+paths poll cancellation while walking and encoding retained material;
+context-free convenience functions use `context.Background()` and the same finite defaults.
 Source merge accounts aggregate catalogue material and canonical source bytes
 in a first pass before appending anything. It retains only the exact obsolete
 count and lexicographically first diagnostic; review validates its locale,
@@ -204,15 +204,13 @@ authority.
 The usage document is evidence consumed by `check`, not a catalogue consumed by
 `review`. A separate loss-aware merge combines newly authored source with the
 previous reviewed source and refuses to discard obsolete work without explicit
-intent. Usage v4 adds reproducible call-site locations, canonical file and
+intent. Usage v1 adds reproducible call-site locations, canonical file and
 metadata ledgers, effective environment and package-graph identity, recomputable
 source and manifest digests, and bidirectional aggregate/occurrence evidence.
-Readers preserve positive keys, ranges and occurrences from v1-v3 documents but
-discard their legacy scope and completeness authority, so legacy input cannot
-assert non-use or trigger v4 provenance errors. Build, tool and release tag
+Other schema and analyzer identities are rejected. Build, tool and release tag
 ledgers are sorted and unique in canonical output and rejected otherwise by the
-decoder and checker. V4 digest validation establishes internal consistency,
-not authenticity or filesystem freshness; trusted release automation reruns
+decoder and checker. Digest validation establishes internal consistency, not
+authenticity or filesystem freshness; trusted release automation reruns
 `extract -check` against the physical checkout before consuming non-use proof.
 
 Publication validates a complete candidate before one compare-and-swap. The

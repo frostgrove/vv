@@ -197,11 +197,11 @@ func TestPostgresExactHistorySurvivesRestartAndRejectsCorruptEvidence(t *testing
 	if _, err := freshDatabase.ExecContext(ctx, `DROP TRIGGER revisions_immutable ON `+quoteIdentifier(schema.Name)+`.revisions`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := freshDatabase.ExecContext(ctx, `UPDATE `+quoteIdentifier(schema.Name)+`.revisions SET wire=$1 WHERE revision_id=$2`, []byte{0xff}, reference.Revision[:]); err != nil {
+	if _, err := freshDatabase.ExecContext(ctx, `UPDATE `+quoteIdentifier(schema.Name)+`.revisions SET wire=wire || $1 WHERE revision_id=$2`, []byte{'\n'}, reference.Revision[:]); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := history.Revision(ctx, reference, query); !errors.Is(err, audit.ErrIntegrity) {
-		t.Fatalf("corrupt exact revision = %v", err)
+		t.Fatalf("noncanonical exact revision = %v", err)
 	}
 }
 

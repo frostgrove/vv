@@ -44,7 +44,7 @@ func Store(t *Telemetry, opts ...StorageOption) storage.Middleware {
 		s.resourceName = ApprovedName(normalizeResourceName(s.resourceName.Value()))
 	}
 	return func(next storage.Store) storage.Store {
-		if next == nil {
+		if nilInterface(next) {
 			return nil
 		}
 		return &storeDecorator{

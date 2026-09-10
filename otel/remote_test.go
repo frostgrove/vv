@@ -55,7 +55,7 @@ func TestRemotePreservesTheCallResultAndDerivedContext(t *testing.T) {
 	if len(got) != len(response) || &got[0] != &response[0] {
 		t.Fatal("remote response slice identity changed")
 	}
-	if receivedContext == incoming || receivedContext.Value(remoteContextKey{}) != "preserved" || receivedContext.Value(spanKey{}) == nil {
+	if receivedContext == incoming || receivedContext.Value(remoteContextKey{}) != "preserved" || !hasTestSpan(receivedContext) {
 		t.Fatal("transport did not receive the derived span context with incoming values")
 	}
 	if len(tp.spans) != 1 || len(mp.metrics) != 1 {

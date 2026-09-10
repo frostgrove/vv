@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"sync"
 	"time"
 )
 
@@ -115,10 +116,11 @@ type resolvedWorkersConfig struct {
 }
 
 type Workers struct {
-	config  resolvedWorkersConfig
-	plan    WorkerPlan
-	fatal   *workerFailureLatch
-	runtime *workersRuntime
+	config    resolvedWorkersConfig
+	plan      WorkerPlan
+	lifecycle sync.RWMutex
+	fatal     *workerFailureLatch
+	runtime   *workersRuntime
 }
 
 func NewWorkers(spec WorkersSpec, consumers ...Consumer) (*Workers, error) {

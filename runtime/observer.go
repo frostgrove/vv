@@ -125,13 +125,11 @@ func lifecycleOutcome(err error) (outcome LifecycleOutcome) {
 	if err == nil {
 		return LifecycleOutcomeOK
 	}
-	outcome = LifecycleOutcomeError
-	defer func() { _ = recover() }()
-	if errors.Is(err, context.DeadlineExceeded) {
+	if safelyMatches(err, context.DeadlineExceeded) {
 		return LifecycleOutcomeTimeout
 	}
-	if errors.Is(err, context.Canceled) {
+	if safelyMatches(err, context.Canceled) {
 		return LifecycleOutcomeCanceled
 	}
-	return outcome
+	return LifecycleOutcomeError
 }

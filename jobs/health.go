@@ -6,6 +6,8 @@ func (workers *Workers) Check(ctx context.Context) error {
 	if workers == nil || workers.runtime == nil || nilInterface(ctx) {
 		return ErrInvalid
 	}
+	workers.lifecycle.RLock()
+	defer workers.lifecycle.RUnlock()
 	if err := ctx.Err(); err != nil {
 		return err
 	}

@@ -676,7 +676,7 @@ func (s *extractState) usageScope(ctx context.Context) (*i18n.GoUsageScope, erro
 	}
 	environment := s.loader.environment
 	scope := &i18n.GoUsageScope{
-		Analyzer: i18n.GoUsageAnalyzerV2, GOOS: environment.GOOS, GOARCH: environment.GOARCH, Compiler: s.buildContext.Compiler,
+		Analyzer: i18n.GoUsageAnalyzer, GOOS: environment.GOOS, GOARCH: environment.GOARCH, Compiler: s.buildContext.Compiler,
 		CgoEnabled: environment.CgoEnabled, GoVersion: environment.GOVersion, Toolchain: environment.Toolchain, GoExperiment: environment.GoExperiment,
 		GoFlags: environment.GoFlags, GoWork: environment.GoWork, GoEnv: environment.GoEnv, BuildTags: slices.Clone(s.buildTags),
 		ToolTags: slices.Clone(s.buildContext.ToolTags), ReleaseTags: slices.Clone(s.buildContext.ReleaseTags), Roots: roots,

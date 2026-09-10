@@ -265,8 +265,9 @@ func TestMF2ProfileRejectsInvalidOptionsOperandsSelectorsAndMarkupMetadata(t *te
 		{name: "date with time option", source: "{$date :date timeStyle=short}", arguments: []ArgumentSpec{dateArgument}, capabilities: []Capability{CapabilityDateTime}},
 		{name: "invalid date option value", source: "{$date :date dateStyle=bogus}", arguments: []ArgumentSpec{dateArgument}, capabilities: []Capability{CapabilityDateTime}},
 		{name: "exact selector with category", source: ".input {$n :number select=exact}\n.match $n\none {{bad}}\n* {{other}}", arguments: []ArgumentSpec{numberArgument}},
-		{name: "unknown plural category", source: ".input {$n :number select=cardinal}\n.match $n\noen {{bad}}\n* {{other}}", arguments: []ArgumentSpec{numberArgument}},
-		{name: "invalid string select mode", source: ".input {$s :string select=cardinal}\n.match $s\nx {{x}}\n* {{other}}", arguments: []ArgumentSpec{textArgument}},
+		{name: "noncanonical numeric selector", source: ".input {$n :number select=cardinal}\n.match $n\none {{bad}}\n* {{other}}", arguments: []ArgumentSpec{numberArgument}},
+		{name: "unknown plural category", source: ".input {$n :number select=plural}\n.match $n\noen {{bad}}\n* {{other}}", arguments: []ArgumentSpec{numberArgument}},
+		{name: "invalid string select mode", source: ".input {$s :string select=exact}\n.match $s\nx {{x}}\n* {{other}}", arguments: []ArgumentSpec{textArgument}},
 		{name: "markup options", source: "{#strong tone=|loud|}x{/strong}", output: OutputRich, markup: []string{"strong"}},
 		{name: "time function rejects date", source: "{$date :time timeStyle=short}", arguments: []ArgumentSpec{dateArgument}, capabilities: []Capability{CapabilityDateTime}},
 		{name: "datetime function rejects date", source: "{$date :datetime}", arguments: []ArgumentSpec{dateArgument}, capabilities: []Capability{CapabilityDateTime}},
@@ -368,7 +369,7 @@ func TestPercentExactSelectionUsesScaledExactValue(t *testing.T) {
 }
 
 func TestPluralSelectionAndFormattingShareDigitOptions(t *testing.T) {
-	snapshot := localeSnapshot(t, "ru", ".input {$n :number select=cardinal maximumFractionDigits=0}\n.match $n\none {{one {$n}}}\nfew {{few {$n}}}\n* {{other {$n}}}", ArgumentSpec{Name: "n", Type: TypeDecimal, Required: true})
+	snapshot := localeSnapshot(t, "ru", ".input {$n :number select=plural maximumFractionDigits=0}\n.match $n\none {{one {$n}}}\nfew {{few {$n}}}\n* {{other {$n}}}", ArgumentSpec{Name: "n", Type: TypeDecimal, Required: true})
 	view := mustView(t, snapshot, "ru", "ru", "", PresentationNoIsolation)
 	for value, want := range map[string]string{"1.49": "one 1", "1.50": "few 2"} {
 		message, err := snapshot.Bind("app.m", Decimal("n", value))
@@ -594,13 +595,7 @@ func TestErrorMessagesPreferLocaleBeforeLadderSpecificity(t *testing.T) {
 	if got, ok := source.Message(context.Background(), violation, "ru"); !ok || got != "общее" {
 		t.Fatalf("locale-first error selection = %q/%v", got, ok)
 	}
-	localized, ok := source.(interface {
-		MessageWithLocale(context.Context, errs.Violation, string) (string, string, bool)
-	})
-	if !ok {
-		t.Fatal("error source does not expose actual template locale")
-	}
-	if got, actual, ok := localized.MessageWithLocale(context.Background(), violation, "ru-RU"); !ok || got != "общее" || actual != "ru" {
+	if got, actual, ok := source.MessageWithLocale(context.Background(), violation, "ru-RU"); !ok || got != "общее" || actual != "ru" {
 		t.Fatalf("actual template locale = %q/%q/%v", got, actual, ok)
 	}
 	if got, ok := source.Message(context.Background(), violation, "en"); !ok || got != "specific English" {

@@ -222,25 +222,32 @@ func validRFC3339UTC(encoded []byte) bool {
 }
 
 func describeCodec[P any](codec Codec[P]) (descriptor codecDescription, err error) {
+	completed := false
 	defer func() {
-		if recover() != nil {
+		_ = recover()
+		if !completed {
 			descriptor = codecDescription{}
 			err = fmt.Errorf("%w: codec descriptor panicked", ErrInvalid)
 		}
 	}()
 	if nilInterface(codec) {
+		completed = true
 		return codecDescription{}, fmt.Errorf("%w: codec is required", ErrInvalid)
 	}
 	if validator, ok := any(codec).(interface{ validateCodec() error }); ok {
 		if err := validator.validateCodec(); err != nil {
-			return codecDescription{}, normalizeDefinitionError(err)
+			normalized := normalizeDefinitionError(err)
+			completed = true
+			return codecDescription{}, normalized
 		}
 	}
 	id := codec.ID()
 	version := codec.Version()
 	if id.IsZero() || version.IsZero() {
+		completed = true
 		return codecDescription{}, fmt.Errorf("%w: codec id and version are required", ErrInvalid)
 	}
+	completed = true
 	return codecDescription{id: id, version: version}, nil
 }
 

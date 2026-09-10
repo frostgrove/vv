@@ -93,12 +93,16 @@ func (e *execution) Append(ctx context.Context, request audit.AppendRequest) (au
 	if requestView.Intent == (audit.AppendIntentDigest{}) || view.Header.RevisionID == (audit.RevisionID{}) || len(view.Items) == 0 {
 		return audit.AppendResult{}, audit.Failure(audit.Refused, errors.New("auditpg: append request is invalid"))
 	}
-	if requestView.Hold.Kind != 0 || requestView.Attempt.Chain != (audit.AttemptChainID{}) || len(requestView.Attempts) != 0 || len(requestView.HoldIDs) != 0 || len(requestView.HoldMatters) != 0 {
-		return audit.AppendResult{}, audit.Failure(audit.Refused, errors.New("auditpg: attempt and hold appends are not supported by this profile version"))
+	if requestView.Hold.Kind != 0 || len(requestView.HoldIDs) != 0 || len(requestView.HoldMatters) != 0 {
+		return audit.AppendResult{}, audit.Failure(audit.Refused, errors.New("auditpg: hold appends are not supported by this profile"))
+	}
+	attemptAppend := requestView.Attempt.Chain != (audit.AttemptChainID{})
+	if attemptAppend != (len(requestView.Attempts) == 1) || attemptAppend && len(requestView.Entities) != 0 {
+		return audit.AppendResult{}, audit.Failure(audit.Refused, errors.New("auditpg: attempt append shape is invalid"))
 	}
 	for _, item := range view.Items {
-		if item.Kind != audit.EventItem && item.Kind != audit.EntityItem {
-			return audit.AppendResult{}, audit.Failure(audit.Refused, errors.New("auditpg: this profile version accepts event and entity items only"))
+		if attemptAppend && item.Kind != audit.AttemptItem || !attemptAppend && item.Kind != audit.EventItem && item.Kind != audit.EntityItem {
+			return audit.AppendResult{}, audit.Failure(audit.Refused, errors.New("auditpg: append item kind does not match its request"))
 		}
 		if item.Leaf == (audit.LeafDigest{}) || item.Kind == audit.EntityItem && item.Chain == (audit.EntityChainID{}) {
 			return audit.AppendResult{}, audit.Failure(audit.Refused, errors.New("auditpg: item integrity identity is absent"))
@@ -112,10 +116,14 @@ func (e *execution) Append(ctx context.Context, request audit.AppendRequest) (au
 		return audit.AppendResult{}, audit.Failure(audit.Refused, err)
 	}
 	limits := e.store.value.configured.limits.View()
-	if uint64(len(wire)) > limits.RevisionBytes || uint64(len(wire))+uint64(len(requestView.Entities))*512 > limits.AppendRequestBytes {
+	requestBytes := uint64(len(wire)) + uint64(len(requestView.Entities))*512 + uint64(len(requestView.Attempts))*4096
+	if uint64(len(wire)) > limits.RevisionBytes || requestBytes > limits.AppendRequestBytes {
 		return audit.AppendResult{}, audit.Failure(audit.Refused, errors.New("auditpg: append exceeds configured byte limits"))
 	}
 	q := quoteIdentifier(e.store.value.configured.schema.Name)
+	if attemptAppend {
+		return e.appendAttempt(ctx, q, request, wire)
+	}
 	if view.Header.HasIdempotency {
 		stored, replay, err := e.claimIdempotency(ctx, q, view.Header)
 		if err != nil {

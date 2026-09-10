@@ -43,6 +43,651 @@ type Role string
 type Spec struct{ ... }
 ```
 
+## github.com/frostgrove/vv/audit
+```go
+const MaxNameBytes = 128 ...
+const HMACSHA256Algorithm = "hmac-sha256" ...
+const AES256GCMAlgorithm = "aes-256-gcm" ...
+var ErrDeclaration error = newAuditSentinel("audit: declaration is invalid", errs.KindValidation, errs.CodeCheck) ...
+func AESGCMProtection(keys ...AESGCMKey) (ProtectionKeyring, error)
+func AdmitPlaintext(reason PrivacyReason, classifications ...Classification) (PrivacyAdmission, error)
+func AllowAccess(request AccessRequest, grant AccessGrantSpec) (AccessDecision, error)
+func AttemptChainCandidate(log LogID, catalog CatalogID, operation OperationID) (AttemptChainID, error)
+func AttemptOwnerCommitmentOf(set IdentityCommitmentSet) (AttemptOwnerCommitment, error)
+func AttemptOwnerIdentityRequest(input AttemptOwnerIdentityInput) (IdentityCommitmentRequest, error)
+func AttemptReplayFingerprintOf(policy AttemptPolicyFingerprint, description SemanticDigestDescription) (AttemptReplayFingerprint, error)
+func AttemptSemanticDigestOf(ctx context.Context, digester SemanticDigester, ...) (SemanticDigest, error)
+func AttemptTargetCommitmentOf(set IdentityCommitmentSet) (AttemptTargetCommitment, error)
+func AttemptTargetIdentityRequest(catalog CatalogID, operation OperationName, target Reference) (IdentityCommitmentRequest, error)
+func AuthorityFor(source, transaction any) (Authority, error)
+func BackingFor(identity any) (Backing, error)
+func CatalogSetDigestOf(manifests []Manifest) (CatalogSetDigest, error)
+func CauseOf(err error) error
+func Compile(spec CatalogSpec, declarations ...Declaration) (*Catalog, error)
+func ComputeEventFixtureFingerprint[E any](eventType *EventType[E], name FixtureName, event E) (PolicyFixtureFingerprint, error)
+func ComputeSubjectFixtureFingerprint[M any, ID comparable](policy *ResourcePolicy[M, ID], name FixtureName, identifier ID) (PolicyFixtureFingerprint, error)
+func CryptoFailure(outcome CryptoOutcome, cause error) error
+func DenyAccess(request AccessRequest, reason Reason) (AccessDecision, error)
+func ExactScope(reference ScopedReference) (ScopeSelector, error)
+func Failure(outcome StoreOutcome, cause error) error
+func HMACIdentityKeyring(keys ...HMACIdentityKey) (IdentityKeyring, error)
+func HMACSemanticDigester(keyID string, key []byte) (SemanticDigester, error)
+func HMACSigner(key HMACSigningKey) (Signer, error)
+func HMACTokenizer(keys ...HMACTokenKey) (Tokenizer, error)
+func HMACVerifier(keys ...HMACVerificationKey) (Verifier, error)
+func Lineage(active *Catalog, retained ...HistoricalCatalog) (*CatalogSet, error)
+func New(config Config) (*Recorder, error)
+func NewAppendResult(request AppendRequest, stored StoredHeader, disposition AppendDisposition, ...) (AppendResult, error)
+func NewAttemptAppendResult(request AppendRequest, stored StoredHeader, disposition AppendDisposition, ...) (AppendResult, error)
+func NewCapabilities(spec CapabilitySpec) (Capabilities, error)
+func NewCatalogChangeRef(ledger DeploymentLedger, change DeploymentChange) (CatalogChangeRef, error)
+func NewCatalogMutationLog(backing BackingID, log LogID, mutations []CatalogMutationView) (CatalogMutationLog, error)
+func NewContextValue[T any](value T, provenance Provenance) (ContextValue[T], error)
+func NewEntityHeadResult(request EntityHeadRequest, data EntityHeadResultData) (EntityHeadResult, error)
+func NewExactResult(query ExactQuery, data ExactResultData) (ExactResult, error)
+func NewHistory(config HistoryConfig) (*History, error)
+func NewHoldAppendResult(request AppendRequest, stored StoredHeader, disposition AppendDisposition, ...) (AppendResult, error)
+func NewIdempotencyLookupResult(request IdempotencyLookupRequest, data IdempotencyLookupResultData) (IdempotencyLookupResult, error)
+func NewIdentityCommitment(description IdentityCommitmentDescription, value []byte) (IdentityCommitment, error)
+func NewIdentityCommitmentSet(request IdentityCommitmentRequest, commitments []IdentityCommitment) (IdentityCommitmentSet, error)
+func NewInactiveStoreCatalogState(digest CatalogSetDigest) (StoreCatalogState, error)
+func NewLimits(spec LimitSpec) (Limits, error)
+func NewLookupResult(request LookupRequest, data LookupResultData) (LookupResult, error)
+func NewProtectedValue(algorithm, profile, keyID string, nonce, ciphertext []byte) (ProtectedValue, error)
+func NewSeal(algorithm, profile, keyID string, value []byte) (Seal, error)
+func NewStoreCatalogState(active CatalogRef, digest CatalogSetDigest) (StoreCatalogState, error)
+func NewStorePosition(wire []byte) (StorePosition, error)
+func NewStoredHeader(data StoredHeaderData) (StoredHeader, error)
+func NewStoredIdentityCommitmentSet(data StoredIdentityCommitmentSetData) (IdentityCommitmentSet, error)
+func NewStoredPage(query StoreQuery, data StoredPageData) (StoredPage, error)
+func NewStoredRevision(data StoredRevisionData) (StoredRevision, error)
+func NewToken(algorithm, profile, keyID string, value []byte) (Token, error)
+func NewTokenQueryResult(query TokenQuery, tokens []Token) (TokenQueryResult, error)
+func NoAttemptCatalogActivation(expected, next CatalogRef) (CatalogActivationProof, error)
+func Observers(observers ...Observer) (Observer, error)
+func ParseCursor([]byte) (Cursor, error)
+func ParseReconcileKey(input []byte) (ReconcileKey, error)
+func SameAuthority(left, right Authority) bool
+func SameBacking(left, right Backing) bool
+func StaticContext(value Context) (ContextResolver, error)
+func TryAttemptCheckpointGolden(name FixtureName, checkpoint AttemptCheckpointCode, expected string) (SemanticGolden, error)
+func TryAttemptFinishGolden(name FixtureName, transition AttemptTransitionKind, reason Reason, ...) (SemanticGolden, error)
+func TryAttemptStartGolden(name FixtureName, expected string) (SemanticGolden, error)
+func TryContextFacts(facts ...ContextFactPolicy) (ContextPolicy, error)
+func TryDeclare[E any](policy EventPolicy[E]) (*EventType[E], error)
+func TryDeclareOperation(policy OperationPolicy) (*OperationType, error)
+func TryDefine[M any, ID comparable](policy Policy[M, ID]) (*ResourcePolicy[M, ID], error)
+func TryDefineCodec[V any](spec CodecSpec, engine CodecEngine[V]) (Codec[V], error)
+func TryGoldenWire(name FixtureName, version CodecVersion, wire, current []byte) (CodecWireFixture, error)
+func TryHoldMatter(codec Codec[Reference], classification Classification, mode StorageMode) (HoldMatterPolicy, error)
+func TryKeepFor(class RetentionClass, period CalendarPeriod) (RetentionRule, error)
+func TryKeepForever(class RetentionClass) (RetentionRule, error)
+func TryMember[M, F any](selector func(*M) *F) (ModelMember[M, F], error)
+func TryOnlyContext(facts ...ContextFactKind) (ContextProjection, error)
+func TryOnlyFields(fields ...FieldName) (FieldProjection, error)
+func TryOutcomes(values ...Outcome) (OutcomeCodes, error)
+func TryPolicyGolden(name FixtureName, expected string) (SemanticGolden, error)
+func TryReasons(values ...Reason) (ReasonCodes, error)
+func TryReasonsFor(action ControlAction, codes ReasonCodes) (ControlReasonPolicy, error)
+func TryRejectedWire(name FixtureName, version CodecVersion, wire []byte) (CodecWireFixture, error)
+func TrySemantics(version PolicyVersion, goldens ...SemanticGolden) (PolicySemantics, error)
+func VerifyCatalogMutations(origin StoreInfo, expected []CatalogMutationView, actual CatalogMutationLog) error
+type AESGCMKey struct{ ... }
+type AccessAuthority interface{ ... }
+type AccessAuthorityFunc func(context.Context, AccessRequest) (AccessDecision, error)
+type AccessContinuationDigest [32]byte
+type AccessDecision struct{ ... }
+type AccessDecisionView struct{ ... }
+type AccessGrantDigest [32]byte
+type AccessGrantSpec struct{ ... }
+type AccessIntent uint8
+    const HistoryDisclosureAccess AccessIntent = iota + 1 ...
+type AccessRequest struct{ ... }
+type AccessRequestDigest [32]byte
+type AccessRequestView struct{ ... }
+type AccessResultDigest [32]byte
+type AccessTargetKind uint8
+    const AccessSubjectTarget AccessTargetKind = iota + 1 ...
+type AccessTargetView struct{ ... }
+type AccessVerdict uint8
+    const AccessAllowed AccessVerdict = iota + 1 ...
+type Action string
+    const AttemptStartedAction Action = "attempt.started" ...
+type Actor struct{ ... }
+type ActorKind uint8
+    const HumanActor ActorKind = iota + 1 ...
+type ActorPosition uint8
+type ActorReadView struct{ ... }
+type AppendDisposition uint8
+    const Inserted AppendDisposition = iota + 1 ...
+type AppendIntentDigest [32]byte
+type AppendRequest struct{ ... }
+type AppendRequestView struct{ ... }
+type AppendResult struct{ ... }
+type AttemptAppendCandidateView struct{ ... }
+type AttemptChainID [32]byte
+type AttemptCheckpointCode string
+type AttemptConditionalAppendView struct{ ... }
+type AttemptDescription struct{ ... }
+type AttemptFinishPhaseDescription struct{ ... }
+type AttemptIdentityAliasBinding struct{ ... }
+type AttemptLog interface{}
+type AttemptOwnerCommitment [32]byte
+type AttemptOwnerFact uint8
+    const AttemptEffectiveActorOwner AttemptOwnerFact = iota + 1 ...
+type AttemptOwnerIdentityComponent struct{ ... }
+type AttemptOwnerIdentityInput struct{ ... }
+type AttemptPhaseDescription struct{ ... }
+type AttemptPolicyFingerprint [32]byte
+type AttemptProjectionNextView struct{ ... }
+type AttemptProjectionStateView struct{ ... }
+type AttemptReasonDescription struct{ ... }
+type AttemptReplayFingerprint [32]byte
+type AttemptSemanticDigestInput struct{ ... }
+type AttemptSemanticTargetView struct{ ... }
+type AttemptSemanticValueView struct{ ... }
+type AttemptState uint8
+    const AttemptOpenState AttemptState = iota + 1 ...
+type AttemptTargetCommitment [32]byte
+type AttemptTransitionKind uint8
+    const AttemptStartedTransition AttemptTransitionKind = iota + 1 ...
+type AttemptTransitionWireView struct{ ... }
+type AttemptTypeProjectionNextView struct{ ... }
+type AttemptTypeProjectionStateView struct{ ... }
+type AuditObservation struct{ ... }
+type AuditWorkView struct{ ... }
+type Authority struct{ ... }
+type Backing struct{ ... }
+type BackingID [16]byte
+type CalendarPeriod struct{ ... }
+type Capabilities struct{ ... }
+type CapabilitySpec struct{ ... }
+type CaptureResult struct{ ... }
+type Catalog struct{ ... }
+type CatalogActivationGateDigest [32]byte
+type CatalogActivationProof struct{ ... }
+type CatalogAdmin interface{ ... }
+type CatalogChangeRef struct{ ... }
+type CatalogChangeRefView struct{ ... }
+type CatalogDigest [32]byte
+type CatalogGeneration uint64
+type CatalogID string
+type CatalogMutationKind uint8
+    const CatalogInstallMutation CatalogMutationKind = iota + 1 ...
+type CatalogMutationLog struct{ ... }
+type CatalogMutationLogReader interface{ ... }
+type CatalogMutationView struct{ ... }
+    func CatalogActivated(expected, active CatalogRef, change CatalogChangeRef, ...) CatalogMutationView
+    func CatalogInstalled(catalog CatalogRef, change CatalogChangeRef) CatalogMutationView
+type CatalogRef struct{ ... }
+type CatalogSet struct{ ... }
+type CatalogSetDigest [32]byte
+type CatalogSpec struct{ ... }
+type ChangeReadView struct{ ... }
+type ChangedFieldFilter struct{ ... }
+type ChangedFieldFilterView struct{ ... }
+type ChangedFieldMatch uint8
+    const NoChangedFieldFilter ChangedFieldMatch = iota + 1 ...
+type Classification uint8
+    const Public Classification = iota + 1 ...
+type Clock interface{ ... }
+type Codec[V any] struct{ ... }
+    func Bool() Codec[bool]
+    func Bytes() Codec[[]byte]
+    func DecimalText() Codec[string]
+    func DefineCodec[V any](spec CodecSpec, engine CodecEngine[V]) Codec[V]
+    func Duration() Codec[time.Duration]
+    func Int64() Codec[int64]
+    func ReferenceText() Codec[Reference]
+    func Text() Codec[string]
+    func Time() Codec[time.Time]
+    func UUIDReference() Codec[Reference]
+    func Uint64() Codec[uint64]
+type CodecDescription struct{ ... }
+type CodecEngine[V any] interface{ ... }
+type CodecSemanticFingerprint [32]byte
+type CodecSpec struct{ ... }
+type CodecVersion uint32
+type CodecWireFixture struct{ ... }
+    func GoldenWire(name FixtureName, version CodecVersion, wire, current []byte) CodecWireFixture
+    func RejectedWire(name FixtureName, version CodecVersion, wire []byte) CodecWireFixture
+type Config struct{ ... }
+type Consequence uint8
+    const Required Consequence = iota + 1 ...
+type Context struct{ ... }
+type ContextFactDescription struct{ ... }
+type ContextFactKind uint8
+    const ActorChainContext ContextFactKind = iota + 1 ...
+type ContextFactPolicy struct{ ... }
+    func ActorChain(presence ContextPresence, allowed ProvenanceSet, classification Classification, ...) ContextFactPolicy
+    func CausationFact(presence ContextPresence, allowed ProvenanceSet, classification Classification, ...) ContextFactPolicy
+    func ClientFact(presence ContextPresence, allowed ProvenanceSet, classification Classification, ...) ContextFactPolicy
+    func CorrelationFact(presence ContextPresence, allowed ProvenanceSet, classification Classification, ...) ContextFactPolicy
+    func DeploymentFact(presence ContextPresence, allowed ProvenanceSet, classification Classification, ...) ContextFactPolicy
+    func GeneratedOperationFact(classification Classification, mode StorageMode) ContextFactPolicy
+    func OperationFact(presence ContextPresence, allowed ProvenanceSet, classification Classification, ...) ContextFactPolicy
+    func ScopeFact(presence ContextPresence, allowed ProvenanceSet, classification Classification, ...) ContextFactPolicy
+    func ServiceFact(presence ContextPresence, allowed ProvenanceSet, classification Classification, ...) ContextFactPolicy
+    func SourceFact(presence ContextPresence, allowed ProvenanceSet, classification Classification, ...) ContextFactPolicy
+    func TraceFact(presence ContextPresence, allowed ProvenanceSet, classification Classification, ...) ContextFactPolicy
+type ContextFactReadView struct{ ... }
+type ContextPolicy struct{ ... }
+    func ContextFacts(facts ...ContextFactPolicy) ContextPolicy
+type ContextPolicyDescription struct{ ... }
+type ContextPresence uint8
+    const ContextRequired ContextPresence = iota + 1 ...
+type ContextProjection struct{ ... }
+    func AllContext() ContextProjection
+    func NoContext() ContextProjection
+    func OnlyContext(facts ...ContextFactKind) ContextProjection
+type ContextProjectionView struct{ ... }
+type ContextResolver interface{ ... }
+type ContextResolverFunc func(context.Context) (Context, error)
+type ContextValue[T any] struct{ ... }
+type ContextView struct{ ... }
+type ControlAction Action
+    const HistoryRead ControlAction = "audit.history.read" ...
+    func ControlActions(actions ...ControlAction) []ControlAction
+type ControlContinuationDigest [32]byte
+type ControlGrantDigest [32]byte
+type ControlOutcomeDescription struct{ ... }
+type ControlPolicy struct{ ... }
+type ControlPolicyDescription struct{ ... }
+type ControlReasonDescription struct{ ... }
+type ControlReasonPolicy struct{ ... }
+    func ControlReasons(reasons ...ControlReasonPolicy) []ControlReasonPolicy
+    func ReasonsFor(action ControlAction, codes ReasonCodes) ControlReasonPolicy
+type ControlRequestDigest [32]byte
+type ControlResultDigest [32]byte
+type CorrectionProposalDigest [32]byte
+type CryptoOutcome uint8
+    const CryptoUnclassified CryptoOutcome = iota ...
+    func CryptoOutcomeOf(err error) (CryptoOutcome, bool)
+type Cursor struct{ ... }
+type CursorKeys interface{}
+type Declaration interface{ ... }
+type DeclarationDescription struct{ ... }
+type DeclarationKind uint8
+    const ResourceDeclaration DeclarationKind = iota + 1 ...
+type DenialEvidenceState uint8
+    const DenialEvidenceNotConfigured DenialEvidenceState = iota + 1 ...
+    func DenialEvidenceStateOf(err error) (DenialEvidenceState, bool)
+type DenialLimiter interface{}
+type DenialRequestDigest [32]byte
+type DeploymentChange string
+type DeploymentFingerprint [32]byte
+type DeploymentLedger string
+type Descriptor struct{ ... }
+type Draft struct{ ... }
+type EntityAction Action
+    const EntityCreated EntityAction = "entity.created" ...
+    func Actions(actions ...EntityAction) []EntityAction
+type EntityAliasBinding struct{ ... }
+type EntityChainID [32]byte
+type EntityChainKey [32]byte
+type EntityDraft struct{ ... }
+type EntityField[M any] interface{ ... }
+    func Fields[M any](fields ...EntityField[M]) []EntityField[M]
+    func Optional[M, V any](source string, name FieldName, codec Codec[V], classification Classification) EntityField[M]
+    func OptionalBy[M, F, V any](member ModelMember[M, F], name FieldName, codec Codec[V], ...) EntityField[M]
+    func Protected[M, V any](source string, name FieldName, codec Codec[V], classification Classification) EntityField[M]
+    func ProtectedBy[M, F, V any](member ModelMember[M, F], name FieldName, codec Codec[V], ...) EntityField[M]
+    func Redacted[M, V any](source string, name FieldName, codec Codec[V], classification Classification) EntityField[M]
+    func RedactedBy[M, F, V any](member ModelMember[M, F], name FieldName, codec Codec[V], ...) EntityField[M]
+    func Tokenized[M, V any](source string, name FieldName, codec Codec[V], classification Classification) EntityField[M]
+    func TokenizedBy[M, F, V any](member ModelMember[M, F], name FieldName, codec Codec[V], ...) EntityField[M]
+    func Value[M, V any](source string, name FieldName, codec Codec[V], classification Classification) EntityField[M]
+    func ValueBy[M, F, V any](member ModelMember[M, F], name FieldName, codec Codec[V], ...) EntityField[M]
+type EntityHeadRequest struct{ ... }
+type EntityHeadRequestView struct{ ... }
+type EntityHeadResult struct{ ... }
+type EntityHeadResultData struct{ ... }
+type EntityHeadState uint8
+    const EntityGenesis EntityHeadState = iota + 1 ...
+type EntityIndex[M, V any] struct{ ... }
+    func EntityIndexedProtectedIndex[M, V any](source string, name FieldName, codec Codec[V], classification Classification) EntityIndex[M, V]
+    func EntityIndexedProtectedIndexBy[M, F, V any](member ModelMember[M, F], name FieldName, codec Codec[V], ...) EntityIndex[M, V]
+    func EntityPlaintextIndex[M, V any](source string, name FieldName, codec Codec[V], classification Classification) EntityIndex[M, V]
+    func EntityPlaintextIndexBy[M, F, V any](member ModelMember[M, F], name FieldName, codec Codec[V], ...) EntityIndex[M, V]
+    func EntityTokenIndex[M, V any](source string, name FieldName, codec Codec[V], classification Classification) EntityIndex[M, V]
+    func EntityTokenIndexBy[M, F, V any](member ModelMember[M, F], name FieldName, codec Codec[V], ...) EntityIndex[M, V]
+type EntityIndexSide uint8
+type EntityStateKind uint8
+    const EntityDeltaState EntityStateKind = iota + 1 ...
+type EnvelopeDigest [32]byte
+type EventField[E any] struct{ ... }
+    func EventFields[E any](fields ...EventField[E]) []EventField[E]
+    func EventProtected[E, V any](name FieldName, extract func(E) V, codec Codec[V], ...) EventField[E]
+    func EventRedacted[E, V any](name FieldName, extract func(E) V, codec Codec[V], ...) EventField[E]
+    func EventTokenized[E, V any](name FieldName, extract func(E) V, codec Codec[V], ...) EventField[E]
+    func EventValue[E, V any](name FieldName, extract func(E) V, codec Codec[V], ...) EventField[E]
+type EventHistory[E any] struct{ ... }
+type EventIndex[E, V any] struct{ ... }
+    func EventIndexedProtectedIndex[E, V any](name FieldName, extract func(E) V, codec Codec[V], ...) EventIndex[E, V]
+    func EventPlaintextIndex[E, V any](name FieldName, extract func(E) V, codec Codec[V], ...) EventIndex[E, V]
+    func EventTokenIndex[E, V any](name FieldName, extract func(E) V, codec Codec[V], ...) EventIndex[E, V]
+type EventPolicy[E any] struct{ ... }
+type EventTargetRef struct{ ... }
+type EventTargetRefView struct{ ... }
+type EventType[E any] struct{ ... }
+    func Declare[E any](policy EventPolicy[E]) *EventType[E]
+type EvidenceScopeCommitment [32]byte
+type ExactAccessQuery struct{ ... }
+type ExactEntryData struct{ ... }
+type ExactEntryState uint8
+    const ExactFound ExactEntryState = iota + 1 ...
+type ExactLog interface{ ... }
+type ExactQuery struct{ ... }
+type ExactQueryView struct{ ... }
+type ExactResult struct{ ... }
+type ExactResultData struct{ ... }
+type ExactTargetKind uint8
+    const ExactRevisionTarget ExactTargetKind = iota + 1 ...
+type ExactTargetView struct{ ... }
+type Execution interface{ ... }
+type FailureClass uint8
+    const NoFailure FailureClass = iota ...
+type FenceDigest [32]byte
+type FieldDescription struct{ ... }
+type FieldKnowledge uint8
+    const FieldKnown FieldKnowledge = iota + 1 ...
+type FieldName string
+type FieldProjection struct{ ... }
+    func AllFields() FieldProjection
+    func NoFields() FieldProjection
+    func OnlyFields(fields ...FieldName) FieldProjection
+type FieldProjectionView struct{ ... }
+type FixtureName string
+type GroupResult struct{ ... }
+type GroupSpec struct{ ... }
+type HMACIdentityKey struct{ ... }
+type HMACSigningKey struct{ ... }
+type HMACTokenKey struct{ ... }
+type HMACVerificationKey struct{ ... }
+type HistoricalCatalog struct{ ... }
+    func Retain(catalog *Catalog) HistoricalCatalog
+type History struct{ ... }
+type HistoryConfig struct{ ... }
+type HistoryDirection uint8
+    const NewestFirst HistoryDirection = iota + 1 ...
+type HistoryProfile uint8
+    const PublicOnePageDevelopmentAlpha HistoryProfile = 1
+type HoldAppendCandidateView struct{ ... }
+type HoldCommandKind uint8
+    const HoldPlaceCommand HoldCommandKind = iota + 1 ...
+type HoldConditionalAppendView struct{ ... }
+type HoldID [16]byte
+type HoldIDAliasBinding struct{ ... }
+type HoldIDCommitment [32]byte
+type HoldIdentity [32]byte
+type HoldMatterAliasBinding struct{ ... }
+type HoldMatterCommitment [32]byte
+type HoldMatterDescription struct{ ... }
+type HoldMatterPolicy struct{ ... }
+    func HoldMatter(codec Codec[Reference], classification Classification, mode StorageMode) HoldMatterPolicy
+type HoldMembershipState uint8
+    const HoldMembershipAbsent HoldMembershipState = iota + 1 ...
+type HoldProjectionStateView struct{ ... }
+type HoldRequestDigest [32]byte
+type HoldSetDigest [32]byte
+type HoldTransitionDisposition uint8
+    const HoldActivated HoldTransitionDisposition = iota + 1 ...
+type HoldTransitionWireView struct{ ... }
+type IDSource interface{ ... }
+type IdempotencyDomain struct{ ... }
+type IdempotencyDomainKind uint8
+    const RecordIdempotencyDomain IdempotencyDomainKind = iota + 1 ...
+type IdempotencyKey string
+type IdempotencyLookupRequest struct{ ... }
+type IdempotencyLookupRequestView struct{ ... }
+type IdempotencyLookupResult struct{ ... }
+type IdempotencyLookupResultData struct{ ... }
+type IdempotencyToken [32]byte
+type IdentityCommitment struct{ ... }
+type IdentityCommitmentDescription struct{ ... }
+type IdentityCommitmentDomain uint8
+    const CommitIdempotency IdentityCommitmentDomain = iota + 1 ...
+type IdentityCommitmentRequest struct{ ... }
+type IdentityCommitmentSet struct{ ... }
+type IdentityKeyring interface{ ... }
+type IntegrityDigest [32]byte
+type IntegrityPolicy struct{ ... }
+    func IntegrityOnly() IntegrityPolicy
+    func RequireSignature(description SignatureDescription) IntegrityPolicy
+type IntegrityPolicyView struct{ ... }
+type ItemKind uint8
+    const EventItem ItemKind = iota + 1 ...
+type ItemReadView struct{ ... }
+type ItemRef struct{ ... }
+type ItemResult struct{ ... }
+type ItemWireView struct{ ... }
+type LeafDigest [32]byte
+type LimitSpec struct{ ... }
+type Limits struct{ ... }
+type Log interface{ ... }
+type LogID [16]byte
+type LookupRequest struct{ ... }
+type LookupRequestView struct{ ... }
+type LookupResult struct{ ... }
+type LookupResultData struct{ ... }
+type LookupState uint8
+    const Found LookupState = iota + 1 ...
+type Manifest struct{ ... }
+type ManifestView struct{ ... }
+type ModelMember[M, F any] struct{ ... }
+    func Member[M, F any](selector func(*M) *F) ModelMember[M, F]
+type NormalizedQueryView struct{ ... }
+type ObservationKind uint8
+    const ObservationRecord ObservationKind = iota + 1 ...
+type ObservationPhase uint8
+    const ObservationResolve ObservationPhase = iota + 1 ...
+type Observer interface{ ... }
+    func MustObservers(observers ...Observer) Observer
+type ObserverFunc func(AuditObservation)
+type OccurredAtPolicy[E any] struct{ ... }
+    func EventOccurredAt[E any](extract func(E) time.Time) OccurredAtPolicy[E]
+type OperationHistory struct{ ... }
+type OperationID [16]byte
+type OperationMember interface{ ... }
+    func OperationMembers(members ...OperationMember) []OperationMember
+type OperationName string
+type OperationPolicy struct{ ... }
+type OperationType struct{ ... }
+    func DeclareOperation(policy OperationPolicy) *OperationType
+type Outcome string
+type OutcomeCodes struct{ ... }
+    func Outcomes(values ...Outcome) OutcomeCodes
+type OutcomePolicy[E any] struct{ ... }
+    func EventOutcome[E any](codes OutcomeCodes, extract func(E) Outcome) OutcomePolicy[E]
+type Owner string
+type Page struct{ ... }
+type Policy[M any, ID comparable] struct{ ... }
+type PolicyFingerprint [32]byte
+type PolicyFixtureFingerprint [32]byte
+type PolicyFixtureKind uint8
+    const DeclarationPolicyFixture PolicyFixtureKind = iota + 1 ...
+type PolicyGoldenDescription struct{ ... }
+type PolicySemantics struct{ ... }
+    func Semantics(version PolicyVersion, goldens ...SemanticGolden) PolicySemantics
+type PolicySemanticsDescription struct{ ... }
+type PolicyVersion uint32
+type PrivacyAdmission struct{ ... }
+type PrivacyAdmissionView struct{ ... }
+type PrivacyReason string
+type ProjectionSelectionKind uint8
+    const ProjectionNone ProjectionSelectionKind = iota + 1 ...
+type ProtectedValue struct{ ... }
+type ProtectionDescription struct{ ... }
+type ProtectionKeyring interface{ ... }
+type ProtectionRequest struct{ ... }
+type Protector interface{ ... }
+type Provenance uint8
+    const UnstatedProvenance Provenance = iota ...
+type ProvenanceSet struct{ ... }
+    func Provenances(values ...Provenance) ProvenanceSet
+type Purpose string
+type Query struct{ ... }
+type QueryClass uint8
+    const SubjectHistoryQuery QueryClass = iota + 1 ...
+type QueryCoordinateAlternativeView struct{ ... }
+type QueryCoordinateKind uint8
+    const QueryScope QueryCoordinateKind = iota + 1 ...
+type QueryCoordinateMatch uint8
+    const QueryCoordinateExact QueryCoordinateMatch = iota + 1 ...
+type QueryCoordinateView struct{ ... }
+type RangeBounds uint8
+    const ClosedOpenRange RangeBounds = iota + 1 ...
+type ReadValueView struct{ ... }
+type Reason string
+type ReasonCodes struct{ ... }
+    func Reasons(values ...Reason) ReasonCodes
+type ReasonPolicy[E any] struct{ ... }
+    func EventReason[E any](codes ReasonCodes, extract func(E) Reason) ReasonPolicy[E]
+    func OptionalEventReason[E any](codes ReasonCodes, extract func(E) Reason) ReasonPolicy[E]
+type Receipt struct{ ... }
+type ReconcileKey struct{ ... }
+    func ReconcileKeyOf(err error) (ReconcileKey, bool)
+type ReconstructField[M, V any] struct{ ... }
+    func HistoricalReconstruct[M, V any](name FieldName, codec Codec[V], classification Classification) ReconstructField[M, V]
+    func Reconstruct[M, V any](source string, name FieldName, codec Codec[V], classification Classification) ReconstructField[M, V]
+    func ReconstructBy[M, F, V any](member ModelMember[M, F], name FieldName, codec Codec[V], ...) ReconstructField[M, V]
+type RecordOption interface{ ... }
+    func InOperation(operation *OperationType) RecordOption
+    func WithIdempotencyKey(key IdempotencyKey) RecordOption
+type RecordResult struct{ ... }
+type Recorder struct{ ... }
+type RecoveryMode uint8
+    const RetryStandalone RecoveryMode = iota + 1 ...
+type Reference string
+type RequesterCommitment [32]byte
+type Resource string
+type ResourceHistory[M any, ID comparable] struct{ ... }
+type ResourcePolicy[M any, ID comparable] struct{ ... }
+    func Define[M any, ID comparable](policy Policy[M, ID]) *ResourcePolicy[M, ID]
+type RetentionBasisDigest [32]byte
+type RetentionClass string
+type RetentionCohortID [32]byte
+type RetentionRule struct{ ... }
+    func KeepFor(class RetentionClass, period CalendarPeriod) RetentionRule
+    func KeepForever(class RetentionClass) RetentionRule
+    func RetentionRules(rules ...RetentionRule) []RetentionRule
+type RetentionRuleView struct{ ... }
+type RetryState uint8
+    const CertainlyNotWritten RetryState = iota + 1 ...
+type RetryToken struct{ ... }
+    func RetryTokenOf(err error) (RetryToken, bool)
+type RevealRequest struct{ ... }
+type Revealer interface{ ... }
+type Revision struct{ ... }
+type RevisionAuthorizationSummaryView struct{ ... }
+type RevisionHeaderView struct{ ... }
+type RevisionID [16]byte
+type RevisionRef struct{ ... }
+type RevisionResult struct{ ... }
+type RevisionView struct{ ... }
+type RevisionWireView struct{ ... }
+type ScopeSelector struct{ ... }
+    func CurrentScope() ScopeSelector
+type ScopeSelectorKind uint8
+    const ScopeCurrent ScopeSelectorKind = iota + 1 ...
+type ScopeSelectorView struct{ ... }
+type ScopedReference struct{ ... }
+type Seal struct{ ... }
+type SearchProgressView struct{ ... }
+type SelectionDigest [32]byte
+type SelectorSet struct{ ... }
+type SelectorSetView struct{}
+type SemanticDigest [32]byte
+type SemanticDigestDescription struct{ ... }
+type SemanticDigester interface{ ... }
+type SemanticGolden struct{ ... }
+    func AttemptCheckpointGolden(name FixtureName, checkpoint AttemptCheckpointCode, expected string) SemanticGolden
+    func AttemptFinishGolden(name FixtureName, transition AttemptTransitionKind, reason Reason, ...) SemanticGolden
+    func AttemptStartGolden(name FixtureName, expected string) SemanticGolden
+    func PolicyGolden(name FixtureName, expected string) SemanticGolden
+type Settlement uint8
+    const Committed Settlement = iota + 1 ...
+type SignatureDescription struct{ ... }
+type Signer interface{ ... }
+type Source string
+type StorageMode uint8
+    const AsPlaintext StorageMode = iota + 1 ...
+type StoreCatalogState struct{ ... }
+    func NewEmptyStoreCatalogState() StoreCatalogState
+type StoreInfo interface{ ... }
+type StoreOutcome uint8
+    const Unclassified StoreOutcome = iota ...
+type StorePosition struct{ ... }
+type StoreQuery struct{ ... }
+type StoreQueryView struct{ ... }
+type StoredActorView struct{ ... }
+type StoredChangeView struct{ ... }
+type StoredContextFactView struct{ ... }
+type StoredHeader struct{ ... }
+type StoredHeaderData struct{ ... }
+type StoredIdentityCommitmentSetData struct{ ... }
+type StoredPage struct{ ... }
+type StoredPageData struct{ ... }
+type StoredRevision struct{ ... }
+type StoredRevisionData struct{ ... }
+type StoredRevisionView struct{ ... }
+type StoredValueView struct{ ... }
+type SubjectDescription struct{ ... }
+type SubjectPolicy[ID comparable] struct{ ... }
+    func IndexedProtectedSubject[ID comparable](mapper func(ID) string, classification Classification) SubjectPolicy[ID]
+    func PlaintextSubject[ID comparable](mapper func(ID) string, classification Classification) SubjectPolicy[ID]
+    func TokenizedSubject[ID comparable](mapper func(ID) string, classification Classification) SubjectPolicy[ID]
+type SubjectRef struct{ ... }
+type SubjectRefView struct{ ... }
+type Support uint8
+    const SupportUnstated Support = iota ...
+type TargetPolicy[E any] struct{ ... }
+    func EventTarget[E any](extract func(E) Reference, classification Classification, mode StorageMode) TargetPolicy[E]
+    func NoEventTarget[E any]() TargetPolicy[E]
+type TimeAxis uint8
+    const ObservedTimeAxis TimeAxis = iota + 1 ...
+type TimeWindow struct{ ... }
+type TimeWindowView struct{ ... }
+type Token struct{ ... }
+type TokenDescription struct{ ... }
+type TokenQuery struct{ ... }
+type TokenQueryResult struct{ ... }
+type TokenizeRequest struct{ ... }
+type Tokenizer interface{ ... }
+type ValueState uint8
+    const ValueAbsent ValueState = iota + 1 ...
+type Verifier interface{ ... }
+type Writer interface{ ... }
+```
+
+## github.com/frostgrove/vv/audit/auditcrud
+```go
+func Secured[M any, ID comparable](recorder *audit.Recorder, resource *audit.ResourcePolicy[M, ID], ...) crud.Middleware[M, ID]
+```
+
+## github.com/frostgrove/vv/audit/auditmemory
+```go
+func WithTransaction(ctx context.Context, tx *Tx) context.Context
+type Deployment struct{ ... }
+    func NewDeployment(source *Log) (*Deployment, error)
+type Log struct{ ... }
+    func NewLog(spec LogSpec) (*Log, error)
+type LogSpec struct{ ... }
+type Spec struct{ ... }
+type Store struct{ ... }
+    func New(spec Spec) (*Store, error)
+type Tx struct{ ... }
+```
+
+## github.com/frostgrove/vv/audit/audittest
+```go
+func BasicHistory(t *testing.T, factory HistoryStoreFactory)
+func ExactHistory(t *testing.T, factory HistoryStoreFactory)
+type HistoryStore struct{ ... }
+type HistoryStoreFactory func(context.Context, HistoryStoreRequest) (HistoryStore, error)
+type HistoryStoreRequest struct{ ... }
+```
+
 ## github.com/frostgrove/vv/auth
 ```go
 const HeaderAuthorization = "Authorization"
@@ -418,6 +1063,7 @@ func ElemType(t reflect.Type) reflect.Type
 func ElemValue(v any) any
 func EncodeCursor(fields []string, values []any) (string, error)
 func EqualValues(a, b any) bool
+func ExecutorAs[T any](v any) (T, bool)
 func ExistsUnscopedOf[M any, ID comparable](c Core[M, ID], ctx context.Context, options ...Option) (bool, error, bool)
 func InAtomic(ctx context.Context, source Executor, fn func(context.Context) error) error
 func InNewTx(ctx context.Context, source Executor, fn func(context.Context) error) (err error)
@@ -486,10 +1132,13 @@ type Dialect interface{ ... }
 type Executor interface{ ... }
     func ExecutorFor(ctx context.Context, source any) (Executor, bool)
     func ExecutorFrom(ctx context.Context) (Executor, bool)
+    func FindExecutor(v any, matches func(Executor) bool) (Executor, bool)
     func OwnedExecutorFor(ctx context.Context, source any) (e Executor, found, owned bool)
+    func SourceBoundExecutorFor(ctx context.Context, source any) (Executor, bool, error)
 type ExecutorScopeError struct{ ... }
 type ExecutorScopeReason string
     const ExecutorScopeMismatch ExecutorScopeReason = "mismatch" ...
+type ExecutorUnwrapper interface{ ... }
 type Field struct{ ... }
 type Identified interface{ ... }
 type LikeEscaper interface{ ... }
@@ -578,6 +1227,7 @@ type Predicate interface{ ... }
 type PredicateError struct{ ... }
 type PreloadSpec struct{ ... }
 type ReadSourcer interface{ ... }
+    func ReadSourcerOf(v any) (ReadSourcer, bool)
 type RelKind uint8
     const BelongsTo RelKind = iota ...
 type Relation struct{ ... }
@@ -641,6 +1291,7 @@ type UpsertScope interface{ ... }
 ```go
 var ErrEngine = errors.New("crudsql: unknown engine")
 func Source(q Queryer, d crud.Dialect, options ...Option) crud.Source
+func TopLevelTransaction(executor crud.Executor) (*sql.Tx, bool)
 func Transaction(executor crud.Executor) (*sql.Tx, bool)
 func TransactionFor(ctx context.Context, source any) (*sql.Tx, bool)
 func Wired(ctx context.Context, engine Engine, database *sql.DB, options ...Option) (crud.Source, error)
@@ -804,6 +1455,7 @@ type RenderOption = porthttp.RenderOption
     func WithCodes(c *errs.Codes) RenderOption
     func WithMaxViolations(n int) RenderOption
     func WithMessages(m errs.MessageSource) RenderOption
+    func WithObserver(fn func(context.Context, error)) RenderOption
     func WithResolvers(rs ...errs.Resolver) RenderOption
     func WithRetryAfter(seconds int) RenderOption
 type Renderer = porthttp.Renderer
@@ -951,7 +1603,8 @@ type Presenter[M, R any] interface{ ... }
 
 ## github.com/frostgrove/vv/errs
 ```go
-const DefaultLocaleFile = "default"
+const DefaultLocaleFile = "default" ...
+const MaxMessageKeyBytes = 256 ...
 var ErrCodeRedeclared = errors.New("errs: the code is already declared with a different kind")
 var ErrMessageRedeclared = errors.New("errs: the message key is already declared with different text")
 func SortViolations(vs []Violation)
@@ -981,6 +1634,7 @@ type Fault struct{ ... }
 type FieldViolation interface{ ... }
 type Kind uint8
     const KindInternal Kind = iota ...
+type LocalizedMessageSource interface{ ... }
 type MessageSource interface{ ... }
 type Messages struct{ ... }
     func LoadMessages(codes *Codes, fsys fs.FS, dir string) (*Messages, error)
@@ -1198,6 +1852,7 @@ const MaxListLimit = 1000
 const MaxListOffset = 1_000_000
 const MaxPurgeLimit = 1000
 const MaxResourceUnits = 1 << 20
+const MaxScheduleObservers = 8
 const MaxWorkerObservers = 8
 const MaximumCollapseDelay = MaximumMaxElapsed
 const MaximumPriority = 1000
@@ -1593,6 +2248,11 @@ type ScheduleCadence struct{ ... }
 type ScheduleCadenceOption interface{ ... }
     func Anchor(value time.Time) ScheduleCadenceOption
 type ScheduleDescription struct{ ... }
+type ScheduleEvent struct{ ... }
+type ScheduleObserver interface{ ... }
+    func MustScheduleObservers(observers ...ScheduleObserver) ScheduleObserver
+    func ScheduleObservers(observers ...ScheduleObserver) (ScheduleObserver, error)
+type ScheduleObserverFunc func(context.Context, ScheduleEvent)
 type ScheduleRevision uint16
 type ScheduleRunResult struct{ ... }
 type ScheduleSpec[P any] struct{ ... }
@@ -1620,9 +2280,11 @@ type TransactionBinding struct{ ... }
 type TransactionContext struct{ ... }
     func NewTransactionContext(backend BackendID, binding TransactionBinding, durability DurabilityProfile) (TransactionContext, error)
 type TrustedContextProvider interface{ ... }
+    func SystemContextProvider() TrustedContextProvider
     func TrustTenantPartitioner(partitioner TenantPartitioner, provenance IdentityProvenance, ...) (TrustedContextProvider, error)
 type TrustedContextProviderFunc func(context.Context, ContextCaptureRequest) (ContextCapture, error)
 type TrustedIdentityRestorer interface{ ... }
+    func SystemIdentityRestorer() TrustedIdentityRestorer
 type TrustedIdentityRestorerFunc func(context.Context, IdentityRestoreRequest) (RestoredIdentity, error)
 type UntrustedTraceCarrier struct{ ... }
     func NewUntrustedTraceCarrier(spec TraceCarrierSpec) (UntrustedTraceCarrier, error)
@@ -1699,6 +2361,7 @@ func FaultOf(err error) *errs.Fault
 func FirstLanguageTag(list string) string
 func FormatID[ID comparable](id ID) string
 func Hops[M any, ID comparable, U any, In any](service Service[M, ID, U], mapper Mapper[In, M]) []errs.Resolver
+func HopsFrom(ctx context.Context) []errs.Resolver
 func KindOf(err error) errs.Kind
 func KindOfWith(err error, codes *errs.Codes) errs.Kind
 func LocaleFrom(ctx context.Context) string
@@ -1708,6 +2371,7 @@ func NarrowForCount(request *query.Request)
 func NarrowForEntity(request *query.Request)
 func Sanitize[M any](meta *crud.Meta, m *M, allowClientID bool) error
 func Violations(ctx context.Context, f *errs.Fault, o *ViolationOptions) []errs.Violation
+func WithHops(ctx context.Context, hops []errs.Resolver) context.Context
 func WithLocale(ctx context.Context, locale string) context.Context
 func WithLogger(ctx context.Context, l *slog.Logger) context.Context
 type BulkDeleteCommand[ID comparable] struct{ ... }
@@ -1785,6 +2449,7 @@ type RenderOption func(*EnvelopeRenderer)
     func WithCodes(c *errs.Codes) RenderOption
     func WithMaxViolations(n int) RenderOption
     func WithMessages(m errs.MessageSource) RenderOption
+    func WithObserver(fn func(context.Context, error)) RenderOption
     func WithResolvers(rs ...errs.Resolver) RenderOption
     func WithRetryAfter(seconds int) RenderOption
 type Renderer interface{ ... }
@@ -1821,7 +2486,9 @@ type TransportOption func(*transport)
 ## github.com/frostgrove/vv/runtime
 ```go
 const DefaultDrainGrace = 15 * time.Second
+const MaxObservers = 8
 var ErrDuplicateRunner = errors.New("runtime: two runners share a name") ...
+var ErrTooManyObservers = errors.New("runtime: too many observers")
 var PerReplicaTimer = Declaration{ ... }
 type Declaration struct{ ... }
     func DeclarationOf(runner Runner) Declaration
@@ -1829,10 +2496,19 @@ type Declaring interface{ ... }
 type Drainer interface{ ... }
 type Durability string
     const NonDurable Durability = "non-durable" ...
+type LifecycleEvent struct{ ... }
+type LifecycleObserver interface{ ... }
+type LifecycleObserverFunc func(context.Context, LifecycleEvent)
+type LifecycleOperation uint8
+    const LifecycleOperationRun LifecycleOperation = iota + 1 ...
+type LifecycleOutcome uint8
+    const LifecycleOutcomeOK LifecycleOutcome = iota + 1 ...
 type Loop struct{ ... }
     func NewLoop(spec LoopSpec) *Loop
 type LoopSpec struct{ ... }
 type Observer interface{ ... }
+    func MustObservers(observers ...Observer) Observer
+    func Observers(observers ...Observer) (Observer, error)
 type ObserverFunc func(state RunnerState)
 type PeriodicSpec struct{ ... }
 type Phase string
@@ -2105,6 +2781,22 @@ type Spec struct{ ... }
 type Unchecked struct{ ... }
 type UncheckedRule func(log *slog.Logger, unchecked []Unchecked) error
     func ExcusingUnchecked(reason string, contributors ...string) UncheckedRule
+```
+
+## github.com/frostgrove/vv/audit/auditpg
+```go
+const DefaultSchema = "frostgrove_audit" ...
+var ErrSpec = errors.New("auditpg: invalid store specification") ...
+func MigrationStatements(schema Schema) ([]string, error)
+type Deployment struct{ ... }
+    func NewDeployment(spec DeploymentSpec) (*Deployment, error)
+type DeploymentSpec struct{ ... }
+type Schema struct{ ... }
+type SchemaManagement uint8
+    const UnsetSchemaManagement SchemaManagement = iota ...
+type Spec struct{ ... }
+type Store struct{ ... }
+    func New(spec Spec) (*Store, error)
 ```
 
 ## github.com/frostgrove/vv/auth/access
@@ -2508,6 +3200,8 @@ type Undeclared string
 
 ## github.com/frostgrove/vv/crud/adapter/crudpgx
 ```go
+func Transaction(executor crud.Executor) (pgx.Tx, bool)
+func TransactionFor(ctx context.Context, source any) (pgx.Tx, bool)
 type Executor struct{ ... }
     func From(q Queryer, options ...Option) Executor
     func Open(q Queryer, options ...Option) Executor
@@ -2609,11 +3303,12 @@ const ErrorDomain = "vv"
 const MaxViolations = port.MaxViolations
 const PartialKey = "partial"
 const ServicePrefix = "vv.crud.v1."
-var LocaleKeys = []string{ ... }
 func Code(err error) codes.Code
 func CodeFor(k errs.Kind) codes.Code
+func ContextError(ctx context.Context, err error) error
 func Errors(options ...RenderOption) grpc.UnaryServerInterceptor
 func KindForCode(c codes.Code) errs.Kind
+func LocaleKeys() []string
 func ServiceName(name string) string
 func StreamErrors(options ...RenderOption) grpc.StreamServerInterceptor
 func Transport(conn grpc.ClientConnInterface, name string, options ...TransportOption) remote.Transport
@@ -2681,6 +3376,301 @@ func Auto() fx.Option
 func Checking(spec Spec) fx.Option
 type Registered struct{ ... }
 type Spec struct{ ... }
+```
+
+## github.com/frostgrove/vv/i18n
+```go
+const GrammarProfile = "frostgrove-mf2/v1" ...
+const PublicTypeScriptGenerator = "frostgrove.i18n.typescript/v1" ...
+const ArtifactVersion = "frostgrove.i18n.catalog/v1"
+const GoUsageAnalyzerV1 = "frostgrove.vv-i18n/go-ast/v1"
+const GoUsageAnalyzerV2 = "frostgrove.vv-i18n/go-list/v2"
+const PublicContractSchema = "frostgrove.i18n.public-contract/v1"
+const SourceVersion = "frostgrove.i18n.source/v1"
+var ErrInvalidArtifact = errors.New("i18n: invalid compiled artifact") ...
+var ErrConflict = errors.New("i18n: snapshot conflict") ...
+var ErrInvalidCatalog = errors.New("i18n: invalid catalog") ...
+var ErrInvalidSource = errors.New("i18n: invalid source") ...
+var ErrCheckFailed = errors.New("i18n: source check failed")
+var ErrFormatNotFound = errors.New("i18n: format not found")
+var ErrMergeWouldDiscard = errors.New("i18n: source merge would discard previous work")
+func Compile(spec CatalogSpec) ([]byte, error)
+func CompileContext(ctx context.Context, spec CatalogSpec) ([]byte, error)
+func Encode(snapshot *Snapshot) ([]byte, error)
+func EncodeContext(ctx context.Context, snapshot *Snapshot) ([]byte, error)
+func EncodeSource(spec CatalogSpec) ([]byte, error)
+func EncodeSourceContext(ctx context.Context, spec CatalogSpec) ([]byte, error)
+func ExpectedPublicExportAddress(manifest, typeScript []byte) string
+func ExpectedPublicExportAddressContext(ctx context.Context, manifest, typeScript []byte) (string, error)
+func ExpectedReviewDigest(sourceDigest, locale, text string) (string, error)
+func ExpectedSourceDigestForLocale(profile, sourceLocale, module string, message MessageSpec) (string, error)
+func ExpectedUsageManifestDigest(manifest UsageManifest) string
+func ExpectedUsageManifestDigestContext(ctx context.Context, manifest UsageManifest) (string, error)
+func ExpectedUsageSourceDigest(scope GoUsageScope) string
+func ExpectedUsageSourceDigestContext(ctx context.Context, scope GoUsageScope) (string, error)
+func GenerateGo(snapshot *Snapshot, spec GoGeneratorSpec) ([]byte, error)
+func GenerateGoContext(ctx context.Context, snapshot *Snapshot, spec GoGeneratorSpec) ([]byte, error)
+type Argument struct{ ... }
+    func BigInteger(name string, value *big.Int) Argument
+    func Bool(name string, value bool) Argument
+    func Date(name string, year int, month time.Month, day int) Argument
+    func Decimal(name, lexical string) Argument
+    func Enum(name, value string) Argument
+    func Instant(name string, value time.Time) Argument
+    func Integer(name string, value int64) Argument
+    func Money(name, lexical, currency string) Argument
+    func Null(name string) Argument
+    func Text(name, value string) Argument
+    func UnsignedInteger(name string, value uint64) Argument
+type ArgumentEncoder[A any] func(A) ([]Argument, error)
+type ArgumentSpec struct{ ... }
+type ArgumentType uint8
+    const TypeText ArgumentType = iota + 1 ...
+type ArtifactLimits struct{ ... }
+    func DefaultArtifactLimits() ArtifactLimits
+type BigIntegerNumber struct{ ... }
+    func NewBigIntegerNumber(value *big.Int) BigIntegerNumber
+type Capability uint8
+    const CapabilityDateTime Capability = iota + 1 ...
+type CatalogSpec struct{ ... }
+    func DecodeSource(ctx context.Context, source io.Reader) (CatalogSpec, error)
+    func MergeSource(source, previous CatalogSpec, policy SourceMergePolicy) (CatalogSpec, error)
+    func MergeSourceContext(ctx context.Context, source, previous CatalogSpec, policy SourceMergePolicy) (CatalogSpec, error)
+    func Pseudo(spec CatalogSpec, pseudo PseudoSpec) (result CatalogSpec, err error)
+    func PseudoContext(ctx context.Context, spec CatalogSpec, pseudo PseudoSpec) (result CatalogSpec, err error)
+type CheckPolicy struct{ ... }
+type CheckSeverity string
+    const SeverityError CheckSeverity = "error" ...
+type CheckStatus string
+    const CheckMissing CheckStatus = "missing" ...
+type Choice struct{ ... }
+    func AcceptLanguage(source ChoiceSource, values ...string) Choice
+    func Exact(source ChoiceSource, locale string) Choice
+type ChoiceSource uint8
+    const SourceExplicit ChoiceSource = iota + 1 ...
+type Clock func() time.Time
+type Compiler struct{ ... }
+type ContractRef struct{ ... }
+type Controller struct{ ... }
+    func NewController(spec ControllerSpec) (*Controller, error)
+type ControllerSpec struct{ ... }
+type CurrencyDisplay uint8
+    const CurrencyDisplayDefault CurrencyDisplay = iota ...
+type CurrencySign uint8
+    const CurrencySignDefault CurrencySign = iota ...
+type DateComponents struct{ ... }
+type DateFieldStyle uint8
+    const DateFieldDefault DateFieldStyle = iota ...
+type DateFormatSpec struct{ ... }
+type DateFractionalSecondDigits uint8
+    const DateFractionalSecondDigitsDefault DateFractionalSecondDigits = iota ...
+type DateHour12 uint8
+    const DateHour12Default DateHour12 = iota ...
+type DateMonthStyle uint8
+    const DateMonthDefault DateMonthStyle = iota ...
+type DateNumericStyle uint8
+    const DateNumericDefault DateNumericStyle = iota ...
+type DateTimeFormatMatcher uint8
+    const DateTimeMatcherDefault DateTimeFormatMatcher = iota ...
+type DateTimeFormatSpec struct{ ... }
+type DateTimeStyle uint8
+    const DateTimeStyleDefault DateTimeStyle = iota ...
+type DateTimeZoneNameStyle uint8
+    const DateTimeZoneNameDefault DateTimeZoneNameStyle = iota ...
+type DateValue struct{ ... }
+type DecimalNumber string
+type Definition[A any] struct{ ... }
+    func Define[A any](snapshot *Snapshot, spec DefinitionSpec[A]) (Definition[A], error)
+    func DefineStruct[A any](snapshot *Snapshot, contract ContractRef) (Definition[A], error)
+    func NewDefinition[A any](snapshot *Snapshot, key Key, encode ArgumentEncoder[A]) (Definition[A], error)
+    func NewStructDefinition[A any](snapshot *Snapshot, key Key) (Definition[A], error)
+type DefinitionSpec[A any] struct{ ... }
+type Descriptor struct{ ... }
+type DigitRange struct{ ... }
+    func Digits(minimum, maximum int) DigitRange
+    func MaximumDigits(maximum int) DigitRange
+    func MinimumDigits(minimum int) DigitRange
+type DisplayNameFallback uint8
+    const DisplayNameCode DisplayNameFallback = iota ...
+type DisplayNameSpec struct{ ... }
+type DisplayNameType uint8
+    const DisplayLanguage DisplayNameType = iota + 1 ...
+type DurationDisplay uint8
+    const DurationDisplayDefault DurationDisplay = iota ...
+type DurationFormatSpec struct{ ... }
+type DurationFractionalDigits uint8
+    const DurationFractionalDigitsDefault DurationFractionalDigits = iota ...
+type DurationStyle uint8
+    const DurationShort DurationStyle = iota ...
+type DurationUnitSpec struct{ ... }
+type DurationUnitStyle uint8
+    const DurationUnitDefault DurationUnitStyle = iota ...
+type DurationValue struct{ ... }
+type DynamicUsage struct{ ... }
+type ErrorMapping struct{ ... }
+type ErrorParam struct{ ... }
+type ErrorPlan struct{ ... }
+type ErrorPlanSpec struct{ ... }
+type ErrorSpec struct{ ... }
+type ExplainStep struct{ ... }
+type Explanation struct{ ... }
+type FieldLabel struct{ ... }
+type Finding struct{ ... }
+type FormatWidth uint8
+    const FormatWidthDefault FormatWidth = iota ...
+type Formats struct{ ... }
+type FormattedRange struct{ ... }
+type FormattedValue struct{ ... }
+type Formatter struct{ ... }
+    func NewFormatter(spec FormatterSpec) (*Formatter, error)
+type FormatterSpec struct{ ... }
+type GoGeneratorSpec struct{ ... }
+type GoUsageScope struct{ ... }
+type Head struct{ ... }
+type HourCycle uint8
+    const HourCycleDefault HourCycle = iota ...
+type Key string
+    func Qualify(module, id string) Key
+type LanguageDisplay uint8
+    const LanguageDialect LanguageDisplay = iota ...
+type Layer uint8
+    const LayerModule Layer = iota + 1 ...
+type Lease struct{ ... }
+type Limits struct{ ... }
+    func DefaultLimits() Limits
+type ListFormatSpec struct{ ... }
+type ListType uint8
+    const ListConjunction ListType = iota ...
+type Loader struct{ ... }
+type LocaleCoverage struct{ ... }
+type LocaleEdge struct{ ... }
+type LocaleLimits struct{ ... }
+type LocalePolicy struct{ ... }
+type LocalizedMessageSource interface{ ... }
+type MatchMode uint8
+    const MatchLookup MatchMode = iota ...
+type Message struct{ ... }
+type MessageSpec struct{ ... }
+type Module struct{ ... }
+type MoneyFormatSpec struct{ ... }
+type MoneyValue struct{ ... }
+type NamedDateFormat struct{ ... }
+type NamedDateTimeFormat struct{ ... }
+type NamedDisplayNameFormat struct{ ... }
+type NamedDurationFormat struct{ ... }
+type NamedListFormat struct{ ... }
+type NamedMoneyFormat struct{ ... }
+type NamedNumberFormat struct{ ... }
+type NamedPercentFormat struct{ ... }
+type NamedPluralFormat struct{ ... }
+type NamedRelativeFormat struct{ ... }
+type NamedTimeFormat struct{ ... }
+type NamedUnitFormat struct{ ... }
+type NumberCompactDisplay uint8
+    const NumberCompactDefault NumberCompactDisplay = iota ...
+type NumberFormatSpec struct{ ... }
+type NumberGrouping uint8
+    const NumberGroupingDefault NumberGrouping = iota ...
+type NumberNotation uint8
+    const NumberNotationDefault NumberNotation = iota ...
+type NumberRoundingIncrement uint16
+    const NumberRoundingIncrementDefault NumberRoundingIncrement = 0 ...
+type NumberRoundingMode uint8
+    const NumberRoundingModeDefault NumberRoundingMode = iota ...
+type NumberRoundingPriority uint8
+    const NumberRoundingPriorityDefault NumberRoundingPriority = iota ...
+type NumberSignDisplay uint8
+    const NumberSignDefault NumberSignDisplay = iota ...
+type NumberTrailingZeroDisplay uint8
+    const NumberTrailingZeroDefault NumberTrailingZeroDisplay = iota ...
+type NumericValue interface{ ... }
+type Observation struct{ ... }
+type Observer func(context.Context, Observation)
+type Operation uint8
+    const OperationResolve Operation = iota + 1 ...
+type Optional[T any] struct{ ... }
+    func NullValue[T any]() Optional[T]
+    func Some[T any](value T) Optional[T]
+type Outcome uint8
+    const OutcomeSuccess Outcome = iota + 1 ...
+type OutputKind uint8
+    const OutputPlain OutputKind = iota ...
+type OverlaySpec struct{ ... }
+    func ApplicationOverlay(revision string, overrides ...Override) OverlaySpec
+    func TenantOverlay(revision string, overrides ...Override) OverlaySpec
+type Override struct{ ... }
+type OverridePolicy uint8
+    const OverrideDenied OverridePolicy = 0 ...
+type Part struct{ ... }
+type PartKind uint8
+    const PartText PartKind = iota + 1 ...
+type PercentFormatSpec struct{ ... }
+type PluralCategory uint8
+    const PluralZero PluralCategory = iota ...
+type PluralFormatSpec struct{ ... }
+type PluralType uint8
+    const PluralCardinal PluralType = iota ...
+type PreferenceStep struct{ ... }
+type Presentation uint8
+    const PresentationDefault Presentation = iota ...
+type Problem struct{ ... }
+type ProblemCode string
+    const ProblemInvalid ProblemCode = "invalid" ...
+type Problems struct{ ... }
+type PseudoMode uint8
+    const PseudoAccent PseudoMode = iota + 1 ...
+type PseudoSpec struct{ ... }
+type PublicExport struct{ ... }
+    func ExportPublic(snapshot *Snapshot) (PublicExport, error)
+    func ExportPublicContext(ctx context.Context, snapshot *Snapshot, spec PublicExportSpec) (PublicExport, error)
+type PublicExportSpec struct{ ... }
+type RangePart struct{ ... }
+type RangeSource uint8
+    const RangeSourceStart RangeSource = iota + 1 ...
+type Reason uint8
+    const ReasonNone Reason = iota ...
+type RelativeFormatSpec struct{ ... }
+type RelativeNumeric uint8
+    const RelativeNumericAlways RelativeNumeric = iota ...
+type RelativeUnit uint8
+    const RelativeSecond RelativeUnit = iota + 1 ...
+type Rendered struct{ ... }
+type Report struct{ ... }
+    func Check(spec CatalogSpec, policy CheckPolicy) Report
+    func CheckContext(ctx context.Context, spec CatalogSpec, policy CheckPolicy) Report
+type Resolution struct{ ... }
+type Resolver struct{ ... }
+    func NewResolver(policy LocalePolicy) (*Resolver, error)
+type ReviewState uint8
+    const ReviewUnset ReviewState = iota ...
+type SignedNumber int64
+type Snapshot struct{ ... }
+    func Load(ctx context.Context, source io.Reader) (*Snapshot, error)
+    func LoadFS(ctx context.Context, filesystem fs.FS, name string) (*Snapshot, error)
+    func New(spec CatalogSpec) (*Snapshot, error)
+    func NewContext(ctx context.Context, spec CatalogSpec) (*Snapshot, error)
+type SnapshotRef struct{ ... }
+type SourceCodec struct{ ... }
+type SourceMergePolicy struct{ ... }
+type SourceMerger struct{ ... }
+type Subpart struct{ ... }
+type TimeComponents struct{ ... }
+type TimeFormatSpec struct{ ... }
+type Translation struct{ ... }
+type UnitFormatSpec struct{ ... }
+type UnsignedNumber uint64
+type UsageFile struct{ ... }
+type UsageLimits struct{ ... }
+    func DefaultUsageLimits() UsageLimits
+type UsageManifest struct{ ... }
+type UsageMetadata struct{ ... }
+type UsageOccurrence struct{ ... }
+type UsageRoot struct{ ... }
+type UsageRootKind string
+    const UsageRootDirectory UsageRootKind = "directory" ...
+type UsageSetting struct{ ... }
+type View struct{ ... }
+type ViewSpec struct{ ... }
 ```
 
 ## github.com/frostgrove/vv/jobs/jobsfx
@@ -2775,46 +3765,158 @@ type Spec struct{ ... }
 ## github.com/frostgrove/vv/otel
 ```go
 const ScopeName = "github.com/frostgrove/vv/otel" ...
-const MigrationStatus = "development" ...
-const AttrCacheLayer = attribute.Key("vv.cache.layer") ...
-const ComponentCommand = "command" ...
-const OpCacheLookup = "lookup" ...
-const OutcomeOk = "ok" ...
-const ErrorTypeInvalid = "invalid" ...
-const ErrorCodeUnique = "unique" ...
-const MetricCacheOperations = "vv.cache.operations" ...
+const AttrAdmissionSignal = attribute.Key("vv.jobs.admission.signal") ...
 const MaxCacheMemoryStatsBackends = 64
-const MaxResourceNameValues = 32
 var ErrInvalidRegistration = errors.New("vvotel: invalid registration") ...
 var ErrNilConfig = errors.New("vvotel: config is nil") ...
 var AttributeMetadataByKey = map[string]AttributeMetadata{ ... }
+var ErrInvalidApprovedName = errors.New("vvotel: invalid approved name")
 var MetricMetadataByKey = map[string]MetricMetadata{ ... }
 func AllowedErrorCode(value string) (string, bool)
+func Auth(t *Telemetry) auth.Observer
+func AuthEvents(t *Telemetry) auth.Observer
+func AuthRefusalReasonName(value string) (string, bool)
+func AuthenticationOperationsName(value string) (string, bool)
+func AuthenticationOutcomeName(value string) (string, bool)
+func Authenticator(t *Telemetry, next auth.Authenticator) auth.Authenticator
 func Cache(t *Telemetry, opts ...CacheOption) cache.Observer
 func CacheBackendOperationName(value string) (string, bool)
 func CacheBackendOutcomeName(value string) (string, bool)
+func CacheBackendReasonName(value string) (string, bool)
+func CacheMemoizedName(value string) (string, bool)
 func CacheMemory(t *Telemetry, opts ...CacheMemoryOption) cachememory.Observer
 func CacheOperationName(value string) (string, bool)
 func CacheOutcomeName(value string) (string, bool)
+func CacheReasonName(value string) (string, bool)
+func CommandFailureName(value string) (string, bool)
+func CommandOperationsName(value string) (string, bool)
 func CommandSpanName(op string) string
+func CrudSourceOperationsName(value string) (string, bool)
+func Enqueue[P any](ctx context.Context, t *Telemetry, queue *jobs.Queue, ...) (jobs.InvocationID, error)
+func EnqueueIn[P any](ctx context.Context, t *Telemetry, queue *jobs.Queue, stager jobs.Stager, ...) (jobs.Staged, error)
+func EnqueueOnce[P any](ctx context.Context, t *Telemetry, queue *jobs.Queue, ...) (jobs.InvocationID, jobs.EnqueueOnceOutcome, error)
+func EnqueueOnceIn[P any](ctx context.Context, t *Telemetry, queue *jobs.Queue, stager jobs.Stager, ...) (jobs.Staged, error)
+func Health(t *Telemetry, contribution health.Contribution, options ...HealthOption) health.Contribution
+func HealthImportanceName(value string) (string, bool)
+func HealthOperationsName(value string) (string, bool)
+func HealthStateName(value string) (string, bool)
+func Job[P any](t *Telemetry, definition jobs.DefinitionOf[P], handler jobs.Handler[P], ...) jobs.Consumer
+func JobAdapter[P any](t *Telemetry, adapter jobs.AdapterHandler[P], options ...JobAdapterOption) jobs.AdapterHandler[P]
+func JobContext(t *Telemetry, next jobs.TrustedContextProvider) jobs.TrustedContextProvider
+func JobIdentity(t *Telemetry, next jobs.TrustedIdentityRestorer) jobs.TrustedIdentityRestorer
+func JobsEnqueueOnceOutcomeName(value string) (string, bool)
+func JobsEnqueueOperationsName(value string) (string, bool)
+func JobsEnqueueOutcomeName(value string) (string, bool)
+func JobsOnceOutcomeName(value string) (string, bool)
+func JobsPlacementOutcomeName(value string) (string, bool)
+func JobsPropagationOperationName(value string) (string, bool)
+func JobsPropagationOutcomeName(value string) (string, bool)
+func JobsSchedulerOperationName(value string) (string, bool)
+func JobsSchedulerResultName(value string) (string, bool)
+func JobsWorkerAdmissionSignalName(value string) (string, bool)
+func JobsWorkerCommandKindName(value string) (string, bool)
+func JobsWorkerControlName(value string) (string, bool)
+func JobsWorkerDispositionName(value string) (string, bool)
+func JobsWorkerFailureName(value string) (string, bool)
+func JobsWorkerMutationName(value string) (string, bool)
+func JobsWorkerOperationName(value string) (string, bool)
+func JobsWorkerOutcomeName(value string) (string, bool)
+func JobsWorkerReasonName(value string) (string, bool)
+func MetricAuthenticationDurationBoundaries() []float64
+func MetricCacheChargedBytesBoundaries() []float64
+func MetricCacheEncodedBytesBoundaries() []float64
+func MetricCacheItemsBoundaries() []float64
+func MetricCachePayloadBytesBoundaries() []float64
+func MetricCacheValueBytesBoundaries() []float64
+func MetricCommandDurationBoundaries() []float64
+func MetricCrudSourceDurationBoundaries() []float64
+func MetricHealthDurationBoundaries() []float64
+func MetricJobsEnqueueDurationBoundaries() []float64
+func MetricJobsHandlerAttemptBoundaries() []float64
+func MetricJobsHandlerDurationBoundaries() []float64
+func MetricJobsQueueDelayBoundaries() []float64
+func MetricJobsSchedulerDurationBoundaries() []float64
+func MetricJobsSchedulerResultsBoundaries() []float64
+func MetricJobsWorkerBytesBoundaries() []float64
+func MetricJobsWorkerDurationBoundaries() []float64
+func MetricJobsWorkerItemsBoundaries() []float64
+func MetricJobsWorkerReleasedBoundaries() []float64
+func MetricRemoteDurationBoundaries() []float64
+func MetricRuntimeDurationBoundaries() []float64
+func MetricRuntimePeriodicDurationBoundaries() []float64
+func MetricStorageCleanupRemovedBoundaries() []float64
+func MetricStorageDurationBoundaries() []float64
+func MetricStorageOperationBytesBoundaries() []float64
+func MetricStorageStreamBytesBoundaries() []float64
+func MetricStorageStreamDurationBoundaries() []float64
+func MigrationWireChanges() []string
+func Periodic(t *Telemetry, pass func(context.Context) error, options ...PeriodicOption) func(context.Context) error
+func Remote(t *Telemetry, next remote.Transport) remote.Transport
+func RemoteOperationName(value string) (string, bool)
+func Runtime(t *Telemetry) vvruntime.Observer
+func RuntimeDurabilityName(value string) (string, bool)
+func RuntimeLifecycleOperationName(value string) (string, bool)
+func RuntimePhaseName(value string) (string, bool)
+func RuntimePlacementName(value string) (string, bool)
+func Scheduler(t *Telemetry) jobs.ScheduleObserver
 func Service[M any, ID comparable, U any](t *Telemetry, opts ...ServiceOption) port.ServiceMiddleware[M, ID, U]
+func Source(t *Telemetry, next crud.Source) crud.Source
+func SpanCommandName(value string) (string, bool)
+func SpanCrudSourceName(value string) (string, bool)
+func SpanJobsEnqueueName(value string) (string, bool)
+func SpanJobsEnqueueStagedName(value string) (string, bool)
+func SpanRemoteName(value string) (string, bool)
+func SpanStorageName(value string) (string, bool)
+func StorageFailureName(value string) (string, bool)
+func StorageOperationsName(value string) (string, bool)
 func StorageSpanName(op string) string
+func StorageStreamOutcomeName(value string) (string, bool)
 func Store(t *Telemetry, opts ...StorageOption) storage.Middleware
+func TraceHandler(next slog.Handler) slog.Handler
+func ValidResourceName(value string) bool
+func Workers(t *Telemetry) jobs.WorkerObserver
+func WrapService[M any, ID comparable, U any](t *Telemetry, next port.Service[M, ID, U], opts ...ServiceOption) port.Service[M, ID, U]
+type ApprovedName string
+    func ApproveName(value string) (ApprovedName, error)
+    func MustApproveName(value string) ApprovedName
+type AssemblyError struct{ ... }
 type AttributeMetadata struct{ ... }
 type CacheMemoryOption func(*cacheMemorySettings)
     func WithCacheMemorySpanEvents(enabled bool) CacheMemoryOption
 type CacheOption func(*cacheSettings)
     func WithCacheSpanEvents(enabled bool) CacheOption
 type Config struct{ ... }
+type HealthOption func(*healthSettings)
+    func WithHealthResource(name ApprovedName) HealthOption
+type JobAdapterOption interface{ ... }
+    func ParentChild() JobAdapterOption
 type MetricMetadata struct{ ... }
+type PeriodicOption func(*periodicSettings)
+    func WithPeriodicResource(name ApprovedName) PeriodicOption
 type Registration interface{ ... }
     func CacheMemoryStats(tel *Telemetry, backends ...*cachememory.Backend) (Registration, error)
     func MustCacheMemoryStats(tel *Telemetry, backends ...*cachememory.Backend) Registration
 type ServiceOption func(*serviceSettings)
-    func WithServiceResource(name string) ServiceOption
+    func WithServiceResource(name ApprovedName) ServiceOption
+type Signal uint16
+    const SignalAuthRefusalEvent Signal = 27 ...
+type SignalAttributeDescriptor struct{ ... }
+type SignalDescriptor struct{ ... }
+    func SignalDescriptors() []SignalDescriptor
+type SignalSourceFact uint16
+    const SourceFactCacheEncodedBytes SignalSourceFact = 1 ...
+type SignalSourceFacts []SignalSourceValue
+type SignalSourcePredicate struct{ ... }
+type SignalSourceValue struct{ ... }
+type SignalVariantDescriptor struct{ ... }
+type Signals []Signal
+    func AllSignals() Signals
 type StorageOption func(*storageSettings)
-    func WithStorageResource(name string) StorageOption
+    func WithStorageResource(name ApprovedName) StorageOption
+    func WithStorageStreams() StorageOption
+type StorageStream interface{ ... }
 type Telemetry struct{ ... }
+    func Must(config Config) *Telemetry
     func New(config Config) (*Telemetry, error)
 ```
 

@@ -81,12 +81,13 @@ binding: `remote` is in the root module and may not import grpc, so a
 
 ## The path — a refusal
 
-1. **Is this library speaking?** Over HTTP, `porthttp.ParseEnvelope` checks
-   `Envelope.Type == "error"`; over gRPC, the transport looks for an
-   `errdetails.ErrorInfo` whose domain is `crudgrpc.ErrorDomain`. A response that
-   fails the check is a `*remote.ProtocolError` and never a classified failure,
-   whatever the status said. **This is the trap the check exists for** — see
-   *Traps* below.
+1. **Is this library speaking?** Over HTTP, `porthttp.ParseEnvelope` requires
+   the complete owned envelope, group and violation grammar, including a
+   non-empty machine code, and refuses unknown or duplicate members. Over gRPC,
+   the transport requires one `errdetails.ErrorInfo` whose domain is
+   `crudgrpc.ErrorDomain` and one `BadRequest`. A response that fails the check
+   is a `*remote.ProtocolError` and never a classified failure, whatever the
+   status said. **This is the trap the check exists for** — see *Traps* below.
 
 2. **The kind** — `porthttp.KindForStatus` or `crudgrpc.KindForCode`, each in the
    package that holds the forward table it inverts.
@@ -101,7 +102,9 @@ binding: `remote` is in the root module and may not import grpc, so a
    The kind, the code, the violations, the partial marker. It wraps the sentinel
    — `sentinelFor` is `sentinelKind` read backwards — and derives
    `Violation.Origin` from the kind, because the wire does not carry it
-   ([[D-044]]) and its zero value would blame the payload for a collision.
+   ([[D-044]]) and its zero value would blame the payload for a collision. A
+   coherent, bounded per-message locale is retained; transport-private and
+   storage fields are not reconstructed.
 
 ## Where the decisions bite
 

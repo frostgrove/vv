@@ -89,6 +89,12 @@ func TestNativeBudgetScannerRejectsUnknownTuplesAttributesValuesAndDuplicates(t 
 			},
 		},
 		{
+			name: "no datapoints",
+			mutate: func(metrics *metricdata.ResourceMetrics) {
+				setNativeRuntimePoints(metrics)
+			},
+		},
+		{
 			name: "duplicate scope",
 			mutate: func(metrics *metricdata.ResourceMetrics) {
 				metrics.ScopeMetrics = append(metrics.ScopeMetrics, metrics.ScopeMetrics[0])
@@ -177,6 +183,58 @@ func TestNativeBudgetScannerRejectsAValidInstrumentUnderAnotherResource(t *testi
 	metrics.Resource = nativeBudgetResource(t, manifest, "database")
 	if err = scanner.Scan(metrics); !errors.Is(err, ErrNativeBudgetViolation) {
 		t.Fatalf("error=%v", err)
+	}
+}
+
+func TestNativeBudgetScannerOwnsTheCompleteManifestSnapshot(t *testing.T) {
+	manifest := loadNativeBudgetForTest(t)
+	metrics := nativeRuntimeMemoryFixture(t, manifest, attribute.String("go.memory.type", "other"))
+	scanner, err := NewNativeBudgetScanner(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, domain := range manifest.Domains {
+		if len(domain.StringValues) > 0 {
+			domain.StringValues[0] = "mutated"
+		}
+		if domain.Int64Range != nil {
+			domain.Int64Range.Maximum = domain.Int64Range.Minimum
+		}
+		manifest.Domains[name] = domain
+	}
+	for index := range manifest.Resources {
+		for key := range manifest.Resources[index].Attributes {
+			manifest.Resources[index].Attributes[key] = "mutated"
+		}
+	}
+	for index := range manifest.Scopes {
+		for key := range manifest.Scopes[index].Attributes {
+			manifest.Scopes[index].Attributes[key] = "mutated"
+		}
+	}
+	for index := range manifest.Instruments {
+		if len(manifest.Instruments[index].Attributes) > 0 {
+			manifest.Instruments[index].Attributes[0].Domain = "mutated"
+		}
+		if manifest.Instruments[index].Monotonic != nil {
+			*manifest.Instruments[index].Monotonic = !*manifest.Instruments[index].Monotonic
+		}
+	}
+	if err = scanner.Scan(metrics); err != nil {
+		t.Fatalf("scan after caller mutation=%v", err)
+	}
+}
+
+func TestNativeBudgetTupleFramingIsInjectiveForDelimiters(t *testing.T) {
+	left := nativeStringTuple("prefix", map[string]string{"a": "b=c"})
+	right := nativeStringTuple("prefix", map[string]string{"a=b": "c"})
+	if left == right {
+		t.Fatalf("attribute tuples collided: %q", left)
+	}
+	left = nativeTuple("a", "b\x00c", "d")
+	right = nativeTuple("a\x00b", "c", "d")
+	if left == right {
+		t.Fatalf("identity tuples collided: %q", left)
 	}
 }
 

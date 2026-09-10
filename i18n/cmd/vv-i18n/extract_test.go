@@ -1195,7 +1195,7 @@ func use(snapshot *i18n.Snapshot) { _, _ = snapshot.Bind("app.use") }
 	}
 }
 
-func TestExtractCommandEmitsIncompleteV4ForEmptyModule(t *testing.T) {
+func TestExtractCommandEmitsIncompleteUsageForEmptyModule(t *testing.T) {
 	directory := t.TempDir()
 	writeTestFile(t, filepath.Join(directory, "go.mod"), "module example.test/empty\n\ngo 1.26.5\n")
 	for _, arguments := range [][]string{
@@ -1800,33 +1800,16 @@ func TestUsageCodecIsDeterministicAndStrict(t *testing.T) {
 	if usage.Keys[0] != "app.two" || usage.Dynamic[0].Domain != "other" || usage.Occurrences[0].Line != 6 || usage.GoScope.Roots[0].Path != "example.test/app" {
 		t.Fatalf("encoding mutated caller slices: %+v", usage)
 	}
-	if !bytes.Contains(first, []byte(`"schema": "frostgrove.i18n.usage/v4"`)) || decoded.GoScope == nil || decoded.ManifestDigest == "" {
-		t.Fatalf("encoder did not emit v4 with provenance: %s", first)
+	if !bytes.Contains(first, []byte(`"schema": "frostgrove.i18n.usage/v1"`)) || decoded.GoScope == nil || decoded.ManifestDigest == "" {
+		t.Fatalf("encoder did not emit v1 with provenance: %s", first)
 	}
 
-	v1 := []byte(`{"schema":"frostgrove.i18n.usage/v1","keys":["app.one"],"dynamic":[{"domain":"app","prefix":"dynamic."}],"complete":true}`)
-	migrated, err := decodeUsage(v1)
-	if err != nil || !slices.Equal(migrated.Keys, []i18n.Key{"app.one"}) ||
-		!slices.Equal(migrated.Dynamic, []i18n.DynamicUsage{{Domain: "app", Prefix: "dynamic."}}) ||
-		migrated.Occurrences != nil || migrated.Complete {
-		t.Fatalf("v1 migration = %+v, %v", migrated, err)
-	}
-	v2 := []byte(`{"schema":"frostgrove.i18n.usage/v2","keys":["app.one"],"dynamic":[],"occurrences":[{"key":"app.one","path":"app/use.go","line":1,"column":1}],"complete":true}`)
-	migrated, err = decodeUsage(v2)
-	if err != nil || migrated.Complete || len(migrated.Occurrences) != 1 {
-		t.Fatalf("v2 migration = %+v, %v", migrated, err)
-	}
-	v3 := []byte(`{"schema":"frostgrove.i18n.usage/v3","keys":["app.one"],"dynamic":[],"occurrences":[{"key":"app.one","path":"app/use.go","line":1,"column":1}],"go_scope":{"analyzer":"frostgrove.vv-i18n/go-ast/v1","goos":"linux","goarch":"amd64","compiler":"gc","cgo_enabled":false,"build_tags":[],"tool_tags":[],"release_tags":[],"roots":[{"path":"app","kind":"directory"}],"source_digest":"0000000000000000000000000000000000000000000000000000000000000000","selected_files":1,"excluded_files":0},"complete":true}`)
-	migrated, err = decodeUsage(v3)
-	if err != nil || migrated.Complete || migrated.GoScope != nil || !slices.Equal(migrated.Keys, []i18n.Key{"app.one"}) || len(migrated.Occurrences) != 1 {
-		t.Fatalf("v3 migration = %+v, %v", migrated, err)
-	}
 	invalid := []string{
 		`{"schema":"wrong","keys":[],"dynamic":[],"complete":true}`,
-		`{"schema":"frostgrove.i18n.usage/v4","keys":[],"dynamic":[],"occurrences":[],"manifest_digest":"","complete":true}`,
-		`{"schema":"frostgrove.i18n.usage/v3","keys":[],"dynamic":[],"occurrences":[],"complete":false,"extra":1}`,
-		`{"schema":"frostgrove.i18n.usage/v2","keys":[],"keys":[],"dynamic":[],"occurrences":[],"complete":true}`,
-		`{"schema":"frostgrove.i18n.usage/v1","keys":[],"dynamic":[],"occurrences":[],"complete":true}`,
+		`{"schema":"frostgrove.i18n.usage/v1","keys":[],"dynamic":[],"occurrences":[],"manifest_digest":"","complete":true}`,
+		`{"schema":"frostgrove.i18n.usage/v1","keys":[],"dynamic":[],"occurrences":[],"manifest_digest":"","complete":false,"extra":1}`,
+		`{"schema":"frostgrove.i18n.usage/v1","keys":[],"keys":[],"dynamic":[],"occurrences":[],"manifest_digest":"","complete":false}`,
+		`{"schema":"frostgrove.i18n.usage/v2","keys":[],"dynamic":[],"occurrences":[],"manifest_digest":"","complete":false}`,
 	}
 	for _, raw := range invalid {
 		if _, err := decodeUsage([]byte(raw)); err == nil {
@@ -1926,7 +1909,7 @@ func testUsageDocumentManifest() i18n.UsageManifest {
 
 func testUsageDocumentScope() *i18n.GoUsageScope {
 	scope := &i18n.GoUsageScope{
-		Analyzer: i18n.GoUsageAnalyzerV2, GOOS: "linux", GOARCH: "amd64", Compiler: "gc", GoVersion: "go1.26.5", Toolchain: "go1.26.5", GoWork: "off", GoEnv: "off",
+		Analyzer: i18n.GoUsageAnalyzer, GOOS: "linux", GOARCH: "amd64", Compiler: "gc", GoVersion: "go1.26.5", Toolchain: "go1.26.5", GoWork: "off", GoEnv: "off",
 		Environment: []i18n.UsageSetting{{Name: "CGO_ENABLED", Value: "false"}, {Name: "GOARCH", Value: "amd64"}, {Name: "GOENV", Value: "off"}, {Name: "GOEXPERIMENT"}, {Name: "GOFLAGS"}, {Name: "GOOS", Value: "linux"}, {Name: "GOVERSION", Value: "go1.26.5"}, {Name: "GOWORK", Value: "off"}},
 		BuildTags:   []string{"feature"}, ToolTags: []string{"tool"}, ReleaseTags: []string{"go1.26"},
 		Roots:    []i18n.UsageRoot{{Path: "example.test/app", Kind: i18n.UsageRootDirectory}},
@@ -1950,7 +1933,7 @@ func TestCommandJSONBufferStopsBeforeExceedingItsLimit(t *testing.T) {
 func TestUsageJSONPreflightStopsBeforeMaterializingAnOversizedArray(t *testing.T) {
 	limits := defaultUsageJSONLimits()
 	limits.occurrences = 2
-	raw := []byte(`{"schema":"frostgrove.i18n.usage/v3","keys":[],"dynamic":[],"occurrences":[{},{},{}],"complete":false}`)
+	raw := []byte(`{"schema":"frostgrove.i18n.usage/v1","keys":[],"dynamic":[],"occurrences":[{},{},{}],"complete":false}`)
 	if err := preflightUsageJSON(context.Background(), raw, limits); err == nil || !strings.Contains(err.Error(), "occurrences exceeds 2 entries") {
 		t.Fatalf("preflight limit error = %v", err)
 	}

@@ -25,7 +25,7 @@ func safeStart(tracer trace.Tracer, ctx context.Context, name string, options ..
 		}
 		return ctx, nil, false
 	}
-	return next, span, true
+	return trace.ContextWithSpan(ctx, span), span, true
 }
 
 func safeSpanFromContext(ctx context.Context) (span trace.Span) {

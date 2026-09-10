@@ -2128,18 +2128,6 @@
       "type": "Config",
       "scope": "Complete current assembly configuration. Only the bounded ResourceName declaration can become a trace attribute; providers and disable controls remain local configuration.",
       "members": {
-        "CacheMetricsDisabled": {
-          "type": "bool",
-          "excluded": "Legacy assembly selection is not an emitted dimension."
-        },
-        "CommandMetricsDisabled": {
-          "type": "bool",
-          "excluded": "Legacy assembly selection is not an emitted dimension."
-        },
-        "CommandTracesDisabled": {
-          "type": "bool",
-          "excluded": "Legacy assembly selection is not an emitted dimension."
-        },
         "Disable": {
           "type": "Signals",
           "excluded": "Explicit assembly signal selection is copied and never emitted as signal data."
@@ -2163,10 +2151,6 @@
           "attributes": [
             "resource_name"
           ]
-        },
-        "StorageTracesDisabled": {
-          "type": "bool",
-          "excluded": "Legacy assembly selection is not an emitted dimension."
         },
         "TracerProvider": {
           "type": "trace.TracerProvider",
@@ -3082,12 +3066,12 @@
     "to": "vv-otel/v2",
     "status": "development",
     "since": "v0.1.0",
-    "policy": "Preserve v1 wire names and Go API; append-only integer signal IDs with independent history and explicit retirement. Signal uint16 and Signals []Signal have no 64-signal mask limit.",
+    "policy": "Preserve stable wire names; append-only integer signal IDs with independent history and explicit retirement. Signal uint16 and Signals []Signal have no 64-signal mask limit.",
     "note": "docs/release-notes/2026-09-09-otel-v1-v2.md",
     "wire_changes": [
-      "New signals are planned until their adapters ship; legacy command, storage and cache signal identities are unchanged.",
-      "Cardinality is derived from signal variants; metadata bounds may change as the admitted vocabulary expands.",
-      "A04 span wrappers gain a span-only goroutine_exit/Error terminal without error.type; duration/counter observations remain absent for this non-return path."
+      "All registered signals have emitting adapters.",
+      "Cardinality is derived from signal variants and bounded admitted vocabularies.",
+      "Span wrappers emit a span-only goroutine_exit/Error terminal without error.type; duration and counter observations remain absent for this non-return path."
     ],
     "signal_ids": {
       "auth_refusal_event": 27,

@@ -4,7 +4,6 @@ import (
 	"errors"
 
 	"go.opentelemetry.io/contrib/instrumentation/runtime"
-	"go.opentelemetry.io/otel/attribute"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 )
 
@@ -14,9 +13,9 @@ func NewRuntimeMetricExporter(next sdkmetric.Exporter, policy RuntimeProjectionP
 	if nilInterface(next) {
 		return nil, ErrInvalidRuntimeMetricExporter
 	}
-	resources := make(map[string]attribute.Value, len(policy.ResourceAttributes))
-	for _, item := range policy.ResourceAttributes {
-		resources[string(item.Key)] = item.Value
+	resources, err := compileNativeResources(policy.ResourceAttributes)
+	if err != nil {
+		return nil, err
 	}
 	return &boundedMetricExporter{
 		next:      next,

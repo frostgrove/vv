@@ -11,12 +11,14 @@ func NewPGXTracer(providers Providers) (*otelpgx.Tracer, error) {
 		scope:          pgxScopeName,
 		normalizeName:  normalizePGXSpanName,
 	}
-	return otelpgx.NewTracer(
-		otelpgx.WithTracerProvider(tracerProvider),
-		otelpgx.WithMeterProvider(providers.Meter),
-		otelpgx.WithDisableSQLStatementInAttributes(),
-		otelpgx.WithDisableConnectionDetailsInAttributes(),
-		otelpgx.WithTrimSQLInSpanName(),
-		otelpgx.WithSpanNameFunc(func(string) string { return "statement" }),
-	), nil
+	return runNativeAssembly(func() (*otelpgx.Tracer, error) {
+		return otelpgx.NewTracer(
+			otelpgx.WithTracerProvider(tracerProvider),
+			otelpgx.WithMeterProvider(providers.Meter),
+			otelpgx.WithDisableSQLStatementInAttributes(),
+			otelpgx.WithDisableConnectionDetailsInAttributes(),
+			otelpgx.WithTrimSQLInSpanName(),
+			otelpgx.WithSpanNameFunc(func(string) string { return "statement" }),
+		), nil
+	})
 }

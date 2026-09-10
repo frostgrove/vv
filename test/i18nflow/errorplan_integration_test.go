@@ -114,7 +114,7 @@ func assertNestedHTTPFailure(t testing.TB, result httpResult, wantMessage string
 	}
 	violation := violations[0]
 	wantPath := []any{"payload", "product", "label"}
-	if !slicesEqualAny(violation.Field, wantPath) || violation.Code != string(capacityCode) || violation.Message != wantMessage {
+	if !slicesEqualAny(violation.Field, wantPath) || violation.Code != string(capacityCode) || violation.Message != wantMessage || violation.MessageLocale != "fr" {
 		t.Fatalf("nested violation = %+v, want path %v, code %q, message %q", violation, wantPath, capacityCode, wantMessage)
 	}
 	assertNoFragments(t, string(result.body), append(secrets, "secret_column", "23505"))
@@ -210,7 +210,7 @@ func TestNetHTTPPostAuthLocaleSplitUsesTheFailureStageContext(t *testing.T) {
 			t.Fatalf("early refusal = auth/handler %d/%d, status %d, locale %q: %s", authenticatorCalls, handlerCalls, w.Code, w.Header().Get("Content-Language"), w.Body.Bytes())
 		}
 		violation := generalViolation(t, w.Body.Bytes())
-		if violation.Code != string(errs.CodeUnauthenticated) || violation.Message != "authentication is required" {
+		if violation.Code != string(errs.CodeUnauthenticated) || violation.Message != "authentication is required" || violation.Locale != "en" {
 			t.Fatalf("early refusal violation = %+v", violation)
 		}
 		assertNoFragments(t, w.Body.String(), []string{secret, "signature", "slot 91"})
@@ -307,7 +307,7 @@ func assertTwoRevisionMessages(t testing.TB, result httpResult, want map[string]
 	}
 	got := make(map[string]bool, len(violations))
 	for _, violation := range violations {
-		if !slicesEqualAny(violation.Field, []any{"name"}) || violation.Code != string(capacityCode) {
+		if !slicesEqualAny(violation.Field, []any{"name"}) || violation.Code != string(capacityCode) || violation.MessageLocale != "fr" {
 			t.Fatalf("revision violation = %+v", violation)
 		}
 		got[violation.Message] = true

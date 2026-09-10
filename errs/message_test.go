@@ -3,11 +3,33 @@ package errs_test
 import (
 	"context"
 	"errors"
+	"math"
 	"strings"
 	"testing"
 
 	"github.com/frostgrove/vv/errs"
 )
+
+type namedString string
+
+func (namedString) String() string { panic("String must not be called") }
+
+type namedBool bool
+type namedInt int32
+type namedUint uint16
+type namedFloat float32
+
+type panickingStringer struct{}
+
+func (panickingStringer) String() string { panic("String must not be called") }
+
+type panickingError struct{}
+
+func (panickingError) Error() string { panic("Error must not be called") }
+
+type panickingTextMarshaler struct{}
+
+func (panickingTextMarshaler) MarshalText() ([]byte, error) { panic("MarshalText must not be called") }
 
 func taken() errs.Violation {
 	return errs.Violation{
@@ -126,6 +148,152 @@ func TestAMessageExpandsByteIdenticallyEveryTime(t *testing.T) {
 		if strings.Contains(first, name) {
 			t.Fatalf("the message carries %q, which the template never named", name)
 		}
+	}
+}
+
+func TestMessageExpansionAcceptsOnlyDeterministicScalars(t *testing.T) {
+	m := errs.NewMessages(nil)
+	if err := m.Add("en", "check", "{text}|{flag}|{signed}|{unsigned}|{decimal}"); err != nil {
+		t.Fatal(err)
+	}
+	v := errs.Violation{Code: errs.CodeCheck, Params: errs.P{
+		"text":     namedString("ready"),
+		"flag":     namedBool(true),
+		"signed":   namedInt(-42),
+		"unsigned": namedUint(17),
+		"decimal":  namedFloat(1.5),
+	}}
+
+	got, ok := m.Message(context.Background(), v, "en")
+	if !ok || got != "ready|true|-42|17|1.5" {
+		t.Fatalf("named scalar expansion = (%q, %v)", got, ok)
+	}
+}
+
+func TestUnsafeMessageParametersDeclineToSafeWording(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		value any
+	}{
+		{"a Stringer", panickingStringer{}},
+		{"an error", panickingError{}},
+		{"a text marshaler", panickingTextMarshaler{}},
+		{"a map", map[string]string{"private": "value"}},
+		{"a slice", []string{"private"}},
+		{"a pointer", new(int)},
+		{"NaN", math.NaN()},
+		{"positive infinity", math.Inf(1)},
+		{"negative infinity", math.Inf(-1)},
+		{"invalid UTF-8", namedString(string([]byte{0xff}))},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := errs.NewMessages(nil)
+			if err := m.Add("en", "user.check", "unsafe {value}"); err != nil {
+				t.Fatal(err)
+			}
+			if err := m.Add("en", "check", "safe wording"); err != nil {
+				t.Fatal(err)
+			}
+			v := errs.Violation{Path: errs.Path{errs.Named("user")}, Code: errs.CodeCheck, Params: errs.P{"value": tc.value}}
+			if got, ok := m.Message(context.Background(), v, "en"); !ok || got != "safe wording" {
+				t.Fatalf("unsafe value resolved to (%q, %v)", got, ok)
+			}
+		})
+	}
+}
+
+func TestMessageExpansionHasAnExactHardByteBoundary(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		template string
+		value    string
+		want     int
+		ok       bool
+	}{
+		{"a value at N", "{value}", strings.Repeat("x", errs.MaxMessageOutputBytes), errs.MaxMessageOutputBytes, true},
+		{"a value at N minus one plus a literal", "!{value}", strings.Repeat("x", errs.MaxMessageOutputBytes-1), errs.MaxMessageOutputBytes, true},
+		{"one byte beyond N", "!{value}", strings.Repeat("x", errs.MaxMessageOutputBytes), 0, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := errs.NewMessages(nil)
+			if err := m.Add("en", "check", tc.template); err != nil {
+				t.Fatal(err)
+			}
+			got, ok := m.Message(context.Background(), errs.Violation{Code: errs.CodeCheck, Params: errs.P{"value": tc.value}}, "en")
+			if ok != tc.ok || len(got) != tc.want {
+				t.Fatalf("expansion = (%d bytes, %v), want (%d, %v)", len(got), ok, tc.want, tc.ok)
+			}
+		})
+	}
+
+	m := errs.NewMessages(nil)
+	if err := m.Add("en", "user.check", "!{value}"); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Add("en", "check", "bounded fallback"); err != nil {
+		t.Fatal(err)
+	}
+	v := errs.Violation{
+		Path:   errs.Path{errs.Named("user")},
+		Code:   errs.CodeCheck,
+		Params: errs.P{"value": strings.Repeat("x", errs.MaxMessageOutputBytes)},
+	}
+	if got, ok := m.Message(context.Background(), v, "en"); !ok || got != "bounded fallback" {
+		t.Fatalf("oversized narrow template resolved to (%q, %v)", got, ok)
+	}
+}
+
+func TestVocabularyExpansionUsesTheSameSafeOutputContract(t *testing.T) {
+	codes := errs.NewCodes()
+	if err := codes.Add("product_check", errs.KindValidation, "{value}"); err != nil {
+		t.Fatal(err)
+	}
+	v := errs.Violation{Code: "product_check"}
+
+	v.Params = errs.P{"value": namedString(strings.Repeat("x", errs.MaxMessageOutputBytes))}
+	if got, ok := codes.Message(context.Background(), v, ""); !ok || len(got) != errs.MaxMessageOutputBytes {
+		t.Fatalf("exact vocabulary output = (%d bytes, %v)", len(got), ok)
+	}
+	v.Params = errs.P{"value": strings.Repeat("x", errs.MaxMessageOutputBytes+1)}
+	if got, ok := codes.Message(context.Background(), v, ""); ok || got != "" {
+		t.Fatalf("oversized vocabulary output = (%d bytes, %v)", len(got), ok)
+	}
+	v.Params = errs.P{"value": panickingStringer{}}
+	if got, ok := codes.Message(context.Background(), v, ""); ok || got != "" {
+		t.Fatalf("Stringer vocabulary output = (%q, %v)", got, ok)
+	}
+}
+
+func TestCancelledMessageLookupsDeclineCatalogueAndVocabularyWording(t *testing.T) {
+	codes := errs.NewCodes()
+	if err := codes.Add("product_check", errs.KindValidation, "vocabulary wording"); err != nil {
+		t.Fatal(err)
+	}
+	messages := errs.NewMessages(codes)
+	if err := messages.Add("en", "product_check", "catalogue wording"); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	deadline, stop := context.WithTimeout(context.Background(), 0)
+	defer stop()
+	v := errs.Violation{Code: "product_check"}
+
+	for _, lookup := range []struct {
+		name string
+		ctx  context.Context
+	}{{"cancelled", ctx}, {"expired", deadline}} {
+		t.Run(lookup.name, func(t *testing.T) {
+			if got, ok := messages.Message(lookup.ctx, v, "en"); ok || got != "" {
+				t.Fatalf("catalogue lookup = (%q, %v)", got, ok)
+			}
+			if got, locale, ok := messages.MessageWithLocale(lookup.ctx, v, "en"); ok || got != "" || locale != "" {
+				t.Fatalf("localized lookup = (%q, %q, %v)", got, locale, ok)
+			}
+			if got, ok := codes.Message(lookup.ctx, v, "en"); ok || got != "" {
+				t.Fatalf("vocabulary lookup = (%q, %v)", got, ok)
+			}
+		})
 	}
 }
 

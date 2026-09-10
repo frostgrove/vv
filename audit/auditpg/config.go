@@ -122,7 +122,7 @@ func capabilities() audit.Capabilities {
 		Transactions: audit.SupportSupported, CrossSystemAtomic: audit.SupportSupported,
 		Persistence: audit.SupportSupported, Idempotency: audit.SupportSupported,
 		Reconciliation: audit.SupportSupported, StableSearch: audit.SupportUnsupported,
-		ExactInspection: audit.SupportSupported, AttemptLifecycle: audit.SupportUnsupported,
+		ExactInspection: audit.SupportSupported, AttemptLifecycle: audit.SupportSupported,
 		Holds: audit.SupportUnsupported, PurgePlanning: audit.SupportUnsupported,
 	})
 	return value

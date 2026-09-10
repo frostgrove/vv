@@ -83,21 +83,29 @@ func Classify(classifier ErrorClassifier) WorkerOption {
 // and written once, through the caller's own logger ([[D-062]]), which is the
 // only channel this library is allowed to use.
 func invokeHandlerContained(ctx context.Context, handler func() error) (result error) {
+	result = invokeHandlerBoundary(handler)
+	failure, panicked := result.(HandlerFailure)
+	if !panicked || !failure.Panicked() {
+		return result
+	}
+	port.Logger(ctx).ErrorContext(ctx, "jobs: handler panicked",
+		"panic_type", fmt.Sprintf("%T", failure.recovered),
+		"stack", string(failure.stack))
+	return result
+}
+
+func invokeHandlerBoundary(handler func() error) (result error) {
+	completed := false
 	defer func() {
-		if recovered := recover(); recovered != nil {
+		recovered := recover()
+		if !completed {
 			failure := HandlerFailure{panicked: true, initialized: true, recovered: recovered, stack: debug.Stack()}
-			// The type and the stack, never the value. Formatting a panic payload
-			// runs application code on a path that is already unwinding, and it
-			// is what puts application data into a log line nobody chose the
-			// destination of. A consumer who wants the value takes it from
-			// Recovered() and formats it under its own risk.
-			port.Logger(ctx).ErrorContext(ctx, "jobs: handler panicked",
-				"panic_type", fmt.Sprintf("%T", recovered),
-				"stack", string(failure.stack))
 			result = failure
 		}
 	}()
-	if err := handler(); err != nil {
+	err := handler()
+	completed = true
+	if err != nil {
 		return HandlerFailure{cause: err, initialized: true}
 	}
 	return nil
@@ -116,16 +124,20 @@ func classifyHandlerResult(classifier ErrorClassifier, result error) Disposition
 
 func classifyHandlerFailure(classifier ErrorClassifier, failure HandlerFailure) (result Disposition) {
 	result = classifierFailureDisposition()
+	completed := false
 	defer func() {
-		if recover() != nil || classifier != nil && !validClassifierDisposition(result, failure) {
+		_ = recover()
+		if !completed || classifier != nil && !validClassifierDisposition(result, failure) {
 			result = classifierFailureDisposition()
 		}
 	}()
 	if !failure.valid() {
+		completed = true
 		return result
 	}
 	if classifier == nil {
 		if disposition, ok := classifiedHandlerDisposition(failure); ok {
+			completed = true
 			return disposition
 		}
 		reason := ReasonHandlerFailure
@@ -133,9 +145,11 @@ func classifyHandlerFailure(classifier ErrorClassifier, failure HandlerFailure) 
 			reason = ReasonPanic
 		}
 		result, _ = RetryDisposition(reason, PublicFailure{}, 0, RetryCostCharged)
+		completed = true
 		return result
 	}
 	result = classifier(failure)
+	completed = true
 	return result
 }
 

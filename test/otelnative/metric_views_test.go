@@ -24,9 +24,17 @@ func TestTransportMetricViewsRejectValuesBeforeAggregation(t *testing.T) {
 		t.Fatal(err)
 	}
 	policy := TraceProjectionPolicy{RouterTables: []RouteTable{routes}, RPCMethods: rpcs}
-	reader := sdkmetric.NewManualReader()
+	reader := sdkmetric.NewManualReader(sdkmetric.WithAggregationSelector(exponentialHistogramSelector))
 	options := []sdkmetric.Option{sdkmetric.WithReader(reader)}
-	options = append(options, TransportMetricOptions(policy)...)
+	views, err := TransportMetricOptions(policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	compiled, err := compileTracePolicy(policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	options = append(options, views...)
 	provider := sdkmetric.NewMeterProvider(options...)
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
@@ -99,7 +107,7 @@ func TestTransportMetricViewsRejectValuesBeforeAggregation(t *testing.T) {
 	}
 	for _, point := range httpPoints {
 		for _, item := range point.Attributes.ToSlice() {
-			if !transportMetricFilter(otelhttp.ScopeName, httpServerMetricAttributes, compileTracePolicy(policy))(item) {
+			if !transportMetricFilter(otelhttp.ScopeName, httpServerMetricAttributes, compiled)(item) {
 				t.Fatalf("HTTP view retained invalid attribute %v", item)
 			}
 		}
@@ -110,11 +118,18 @@ func TestTransportMetricViewsRejectValuesBeforeAggregation(t *testing.T) {
 	}
 	for _, point := range rpcPoints {
 		for _, item := range point.Attributes.ToSlice() {
-			if !transportMetricFilter(otelgrpc.ScopeName, rpcMetricAttributes, compileTracePolicy(policy))(item) {
+			if !transportMetricFilter(otelgrpc.ScopeName, rpcMetricAttributes, compiled)(item) {
 				t.Fatalf("gRPC view retained invalid attribute %v", item)
 			}
 		}
 	}
+}
+
+func exponentialHistogramSelector(kind sdkmetric.InstrumentKind) sdkmetric.Aggregation {
+	if kind == sdkmetric.InstrumentKindHistogram {
+		return sdkmetric.AggregationBase2ExponentialHistogram{MaxSize: 160, MaxScale: 20}
+	}
+	return sdkmetric.DefaultAggregationSelector(kind)
 }
 
 func metricHistogramPoints(t *testing.T, exported metricdata.ResourceMetrics, scopeName, metricName string) []metricdata.HistogramDataPoint[float64] {

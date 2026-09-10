@@ -3,6 +3,7 @@ package audit
 import (
 	"encoding/binary"
 	"errors"
+	"slices"
 	"testing"
 	"time"
 )
@@ -141,6 +142,134 @@ func TestExactQueryRejectsDuplicateAndOverBoundTargets(t *testing.T) {
 	}
 	if _, err := newExactQuery(overBound); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("over-bound exact targets = %v", err)
+	}
+}
+
+func TestExactAuthorityCarriesRetainedScopeAndRejectsRetiredResourceActionPairs(t *testing.T) {
+	current := []DeclarationDescription{
+		{Kind: EventDeclaration, Resource: "resource.one", Action: "action.one", TargetPresent: true, Target: SubjectDescription{Classification: Public, Mode: AsPlaintext}},
+		{Kind: EventDeclaration, Resource: "resource.two", Action: "action.two", TargetPresent: true, Target: SubjectDescription{Classification: Public, Mode: AsPlaintext}},
+	}
+	ceiling, err := currentExactCeiling(current,
+		[]Resource{"resource.one", "resource.two"},
+		[]Action{"action.one", "action.two"},
+		[]Classification{Public},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	retained := cloneDeclarationDescription(current[0])
+	retained.Action = "action.two"
+	retained.Context = ContextPolicyDescription{Facts: []ContextFactDescription{{
+		Kind: ScopeContext, Presence: ContextRequired, Allowed: []Provenance{Verified}, Classification: Public, Mode: AsPlaintext,
+	}}}
+	mergeRetainedExactScope(&ceiling, []DeclarationDescription{retained},
+		[]Resource{"resource.one", "resource.two"},
+		[]Action{"action.one", "action.two"},
+	)
+	if !ceiling.scopeDeclared || ceiling.scopeMode != AsPlaintext {
+		t.Fatalf("retained scope boundary = (%v, %v)", ceiling.scopeDeclared, ceiling.scopeMode)
+	}
+
+	revision := RevisionWireView{Items: []ItemWireView{{Ordinal: 0, Kind: EventItem, Resource: "resource.one", Action: "action.two"}}}
+	target := ExactTargetView{Kind: ExactRevisionTarget}
+	grant := AccessGrantSpec{
+		Resources: []Resource{"resource.one", "resource.two"},
+		Actions:   []Action{"action.one", "action.two"},
+	}
+	if err := validateCurrentExactEvidence(current, target, grant, revision); !errors.Is(err, ErrRefused) {
+		t.Fatalf("retired cross-pair evidence = %v", err)
+	}
+	revision.Items[0].Action = "action.one"
+	if err := validateCurrentExactEvidence(current, target, grant, revision); err != nil {
+		t.Fatalf("current resource/action evidence = %v", err)
+	}
+}
+
+func TestExactAuthorityCannotBorrowFieldsOrContextAcrossCurrentPairs(t *testing.T) {
+	operation := ContextFactDescription{Kind: OperationContext, Presence: ContextRequired, Allowed: []Provenance{ServerDerived}, Classification: Public, Mode: AsPlaintext}
+	correlation := ContextFactDescription{Kind: CorrelationContext, Presence: ContextOptional, Allowed: []Provenance{Verified}, Classification: Public, Mode: AsPlaintext}
+	name := FieldDescription{Name: "name", Codec: Text().Description(), Classification: Public, Mode: AsPlaintext}
+	current := []DeclarationDescription{
+		{Kind: EventDeclaration, Resource: "resource.one", Action: "action.shared", TargetPresent: true, Target: SubjectDescription{Classification: Public, Mode: AsPlaintext}, Context: ContextPolicyDescription{Facts: []ContextFactDescription{operation}}},
+		{Kind: EventDeclaration, Resource: "resource.two", Action: "action.shared", TargetPresent: true, Target: SubjectDescription{Classification: Public, Mode: AsPlaintext}, Fields: []FieldDescription{name}, Context: ContextPolicyDescription{Facts: []ContextFactDescription{operation, correlation}}},
+	}
+	ceiling, err := currentExactCeiling(current,
+		[]Resource{"resource.one", "resource.two"},
+		[]Action{"action.shared"},
+		[]Classification{Public},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ceiling.fields) != 0 || !slices.Equal(ceiling.context, []ContextFactKind{OperationContext}) {
+		t.Fatalf("cross-pair projection ceiling = fields:%v context:%v", ceiling.fields, ceiling.context)
+	}
+
+	target := ExactTargetView{Kind: ExactRevisionTarget}
+	item := ItemWireView{Ordinal: 0, Kind: EventItem, Resource: "resource.one", Action: "action.shared"}
+	fieldGrant := AccessGrantSpec{
+		Resources: []Resource{"resource.one", "resource.two"}, Actions: []Action{"action.shared"},
+		Fields: []FieldName{"name"}, Classifications: []Classification{Public},
+	}
+	revision := RevisionWireView{Items: []ItemWireView{item}}
+	revision.Items[0].Values = []StoredValueView{{
+		Field: "name", Codec: Text().Description(), Classification: Public, Mode: AsPlaintext,
+		State: ValuePresent, Plaintext: []byte("retained"),
+	}}
+	if err := validateCurrentExactEvidence(current, target, fieldGrant, revision); !errors.Is(err, ErrRefused) {
+		t.Fatalf("borrowed current field = %v", err)
+	}
+
+	contextGrant := AccessGrantSpec{
+		Resources: []Resource{"resource.one", "resource.two"}, Actions: []Action{"action.shared"},
+		Context: []ContextFactKind{CorrelationContext}, Classifications: []Classification{Public},
+	}
+	revision.Items[0].Values = nil
+	revision.Context = []StoredContextFactView{{
+		Kind: CorrelationContext, Provenance: Verified, Classification: Public, Mode: AsPlaintext,
+		Plaintext: []byte("retained"),
+	}}
+	if err := validateCurrentExactEvidence(current, target, contextGrant, revision); !errors.Is(err, ErrRefused) {
+		t.Fatalf("borrowed current context = %v", err)
+	}
+}
+
+func TestExactAuthorityRejectsProvenanceRemovedByCurrentPair(t *testing.T) {
+	current := []DeclarationDescription{{
+		Kind: EventDeclaration, Resource: "resource.one", Action: "action.one",
+		TargetPresent: true, Target: SubjectDescription{Classification: Public, Mode: AsPlaintext},
+		Context: ContextPolicyDescription{Facts: []ContextFactDescription{
+			{Kind: ActorChainContext, Presence: ContextOptional, Allowed: []Provenance{ServerDerived}, Classification: Public, Mode: AsPlaintext},
+			{Kind: OperationContext, Presence: ContextOptional, Allowed: []Provenance{ServerDerived}, Classification: Public, Mode: AsPlaintext},
+		}},
+	}}
+	item := ItemWireView{Ordinal: 0, Kind: EventItem, Resource: "resource.one", Action: "action.one"}
+	grant := AccessGrantSpec{
+		Resources: []Resource{"resource.one"}, Actions: []Action{"action.one"},
+		Context: []ContextFactKind{ActorChainContext, OperationContext}, Classifications: []Classification{Public},
+	}
+	targets := []ExactTargetView{
+		{Kind: ExactRevisionTarget},
+		{Kind: ExactItemTarget, Item: ItemRef{Ordinal: 0}},
+	}
+	for _, target := range targets {
+		revision := RevisionWireView{
+			Items: []ItemWireView{item},
+			Context: []StoredContextFactView{{
+				Kind: OperationContext, Provenance: Verified, Classification: Public, Mode: AsPlaintext,
+			}},
+		}
+		if err := validateCurrentExactEvidence(current, target, grant, revision); !errors.Is(err, ErrRefused) {
+			t.Fatalf("removed context provenance for target %v = %v", target.Kind, err)
+		}
+		revision.Context = nil
+		revision.Actors = []StoredActorView{{
+			Ordinal: 0, Kind: HumanActor, Provenance: Verified, Classification: Public, Mode: AsPlaintext,
+		}}
+		if err := validateCurrentExactEvidence(current, target, grant, revision); !errors.Is(err, ErrRefused) {
+			t.Fatalf("removed actor provenance for target %v = %v", target.Kind, err)
+		}
 	}
 }
 

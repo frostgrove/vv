@@ -151,8 +151,10 @@ func claimedDeliveryRecordMatches(namespace Namespace, delivery ClaimedDelivery,
 }
 
 func decodeClaimedPayloadOwned(binding consumerBinding, payload EncodedPayload) (decoded any, err error) {
+	completed := false
 	defer func() {
-		if recover() != nil {
+		_ = recover()
+		if !completed {
 			decoded = nil
 			err = ErrInvalid
 		}
@@ -160,19 +162,24 @@ func decodeClaimedPayloadOwned(binding consumerBinding, payload EncodedPayload) 
 	decoded, err = binding.decodeOwned(payload)
 	if err == nil {
 		if decoded == nil {
+			completed = true
 			return nil, ErrInvalid
 		}
+		completed = true
 		return decoded, nil
 	}
 	decoded = nil
+	var normalized error
 	switch {
 	case errors.Is(err, ErrTooLarge):
-		return nil, ErrTooLarge
+		normalized = ErrTooLarge
 	case errors.Is(err, ErrUnsupported):
-		return nil, ErrUnsupported
+		normalized = ErrUnsupported
 	case errors.Is(err, ErrCorrupt):
-		return nil, ErrCorrupt
+		normalized = ErrCorrupt
 	default:
-		return nil, ErrInvalid
+		normalized = ErrInvalid
 	}
+	completed = true
+	return nil, normalized
 }

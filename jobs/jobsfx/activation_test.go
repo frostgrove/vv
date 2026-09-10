@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -312,4 +313,189 @@ func TestTheExplicitRunnersWaitForTheQueueTheModuleActivates(t *testing.T) {
 	if err = supervisor.Stop(stopContext); err != nil {
 		t.Fatal(err)
 	}
+	if err = supervisor.Start(context.Background()); err != nil {
+		t.Fatalf("restarting the workers supervisor: %v", err)
+	}
+	if err = waitReady(supervisor); err != nil {
+		t.Fatalf("the restarted pool never became ready: %v", err)
+	}
+	restartStopContext, cancelRestartStop := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancelRestartStop()
+	if err = supervisor.Stop(restartStopContext); err != nil {
+		t.Fatalf("stopping the restarted workers supervisor: %v", err)
+	}
+	for generation := 0; generation < 32; generation++ {
+		if err = supervisor.Start(context.Background()); err != nil {
+			t.Fatalf("quick generation %d start: %v", generation, err)
+		}
+		quickStopContext, cancelQuickStop := context.WithTimeout(context.Background(), 3*time.Second)
+		err = supervisor.Stop(quickStopContext)
+		cancelQuickStop()
+		if err != nil {
+			t.Fatalf("quick generation %d stop: %v", generation, err)
+		}
+		if state := runnerState(t, supervisor, jobsfx.WorkersRunnerName); state.Phase != vvruntime.PhaseStopped {
+			t.Fatalf("quick generation %d phase = %s", generation, state.Phase)
+		}
+	}
+}
+
+type schedulerRestartClock struct {
+	mu  sync.Mutex
+	now time.Time
+}
+
+func (clock *schedulerRestartClock) Now() time.Time {
+	clock.mu.Lock()
+	defer clock.mu.Unlock()
+	return clock.now
+}
+
+func (clock *schedulerRestartClock) NewTimerAt(time.Time) jobs.Timer {
+	return schedulerRestartTimer{ticks: make(chan time.Time)}
+}
+
+func (clock *schedulerRestartClock) advance(duration time.Duration) {
+	clock.mu.Lock()
+	clock.now = clock.now.Add(duration)
+	clock.mu.Unlock()
+}
+
+type schedulerRestartTimer struct{ ticks chan time.Time }
+
+func (timer schedulerRestartTimer) C() <-chan time.Time { return timer.ticks }
+func (schedulerRestartTimer) Stop() bool                { return true }
+
+func TestTheSameSupervisorRestartsItsSchedulerRunner(t *testing.T) {
+	definition := testDefinition(t, "jobsfx.scheduler-restart")
+	catalog := jobs.MustCatalog(definition)
+	backend, err := jobsmemory.NewDefault()
+	if err != nil {
+		t.Fatal(err)
+	}
+	queue, err := jobs.NewQueue(jobs.QueueSpec{
+		Namespace: mustJobsNamespace(t, "jobsfx", "scheduler-restart"),
+		Catalog:   catalog,
+		Sender:    backend,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	anchor := time.Date(2035, 1, 2, 3, 0, 0, 0, time.UTC)
+	runs := make(chan time.Time, 2)
+	schedule, err := jobs.DefineSchedule(jobs.ScheduleSpec[string]{
+		Name:     testName(t, "jobsfx.scheduler-restart.hourly"),
+		Revision: 1,
+		Cadence:  jobs.FixedEvery(time.Hour, jobs.Anchor(anchor)),
+		Job:      definition,
+		Payload: func(due time.Time) (string, error) {
+			runs <- due
+			return due.Format(time.RFC3339), nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	clock := &schedulerRestartClock{now: anchor}
+	scheduler, err := jobs.NewScheduler(jobs.SchedulerSpec{Queue: queue, Clock: clock}, schedule)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner, err := jobsfx.SchedulerRunner(scheduler, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	supervisor, err := vvruntime.Auto(runner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = supervisor.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if due := <-runs; !due.Equal(anchor) {
+		t.Fatalf("first due = %v", due)
+	}
+	stopContext, cancelStop := context.WithTimeout(context.Background(), 3*time.Second)
+	if err = supervisor.Stop(stopContext); err != nil {
+		cancelStop()
+		t.Fatal(err)
+	}
+	cancelStop()
+	clock.advance(time.Hour)
+	if err = supervisor.Start(context.Background()); err != nil {
+		t.Fatalf("restart = %v", err)
+	}
+	if due := <-runs; !due.Equal(anchor.Add(time.Hour)) {
+		t.Fatalf("restarted due = %v", due)
+	}
+	restartStopContext, cancelRestartStop := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancelRestartStop()
+	if err = supervisor.Stop(restartStopContext); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestAWorkersRestartDoesNotExposeThePreviousFailureWhileItsGateIsClosed(t *testing.T) {
+	automatic := testAutomatic(t, "jobsfx.failed-restart", func(context.Context, string) error { return nil })
+	catalog := jobs.MustCatalog(automatic)
+	backend, err := newPanickingBackend()
+	if err != nil {
+		t.Fatal(err)
+	}
+	build, err := jobs.ParseBuildID("jobsfx:failed-restart")
+	if err != nil {
+		t.Fatal(err)
+	}
+	workers, err := jobs.NewWorkers(jobs.WorkersSpec{
+		Namespace:    mustJobsNamespace(t, "jobsfx", "failed-restart"),
+		Catalog:      catalog,
+		Driver:       backend,
+		Build:        build,
+		Identity:     testIdentityRestorer(),
+		PollInterval: jobs.MinimumPollInterval,
+	}, catalog.AutomaticConsumers()...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gate := make(chan struct{}, 1)
+	gate <- struct{}{}
+	runner, err := jobsfx.WorkersRunner(workers, gate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	supervisor, err := vvruntime.Auto(runner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = supervisor.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for runnerState(t, supervisor, jobsfx.WorkersRunnerName).Phase != vvruntime.PhaseFailed && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if state := runnerState(t, supervisor, jobsfx.WorkersRunnerName); state.Phase != vvruntime.PhaseFailed || !errors.Is(state.Err, jobs.ErrDriver) {
+		t.Fatalf("first generation = %+v", state)
+	}
+	if err = supervisor.Stop(context.Background()); !errors.Is(err, jobs.ErrDriver) {
+		t.Fatalf("first stop = %v", err)
+	}
+	if err = supervisor.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err = supervisor.Ready(context.Background()); !errors.Is(err, jobs.ErrNotActivated) || errors.Is(err, jobs.ErrDriver) {
+		t.Fatalf("readiness inherited the prior generation: %v", err)
+	}
+	if err = supervisor.Stop(context.Background()); err != nil {
+		t.Fatalf("stopping gated restart = %v", err)
+	}
+}
+
+func mustJobsNamespace(t *testing.T, application, environment string) jobs.Namespace {
+	t.Helper()
+	namespace, err := jobs.NamespaceOf(application, environment)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return namespace
 }

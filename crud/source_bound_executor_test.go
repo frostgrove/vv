@@ -81,9 +81,9 @@ func TestSourceBoundExecutorForValidatesTheWholeBindingChain(t *testing.T) {
 	requireSourceBoundScopeReason(t, strict, source, crud.ExecutorScopeMismatch)
 }
 
-func TestSourceBoundExecutorForDoesNotChangeLegacyExecutorResolution(t *testing.T) {
+func TestSourceBoundExecutorForDoesNotChangeUnsafeExecutorResolution(t *testing.T) {
 	source := srcOn(dbA, "repository")
-	unsafe := fakeExec{name: "legacy unsafe"}
+	unsafe := fakeExec{name: "explicit unsafe"}
 	ctx := crud.WithUnsafeExecutor(context.Background(), unsafe)
 
 	executor, found := crud.ExecutorFor(ctx, source)

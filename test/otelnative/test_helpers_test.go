@@ -62,7 +62,11 @@ func newTelemetryFixture(t *testing.T, policy TraceProjectionPolicy, sampler sdk
 		metric.WithReader(reader),
 		metric.WithResource(traceResource),
 	}
-	metricOptions = append(metricOptions, TransportMetricOptions(policy)...)
+	metricViews, err := TransportMetricOptions(policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	metricOptions = append(metricOptions, metricViews...)
 	meterProvider := metric.NewMeterProvider(metricOptions...)
 	fixture := &telemetryFixture{
 		providers:  Providers{Tracer: tracerProvider, Meter: meterProvider},

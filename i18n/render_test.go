@@ -55,7 +55,7 @@ func TestExactPluralSelectionPreservesLexicalDecimalsAcrossCLDRLocales(t *testin
 	}
 	for _, tc := range tests {
 		t.Run(tc.locale, func(t *testing.T) {
-			template := ".input {$n :number select=cardinal}\n.match $n\n" + tc.branches
+			template := ".input {$n :number select=plural}\n.match $n\n" + tc.branches
 			snapshot := localeSnapshot(t, tc.locale, template, ArgumentSpec{Name: "n", Type: TypeDecimal, Required: true})
 			view := mustView(t, snapshot, tc.locale, "", "", PresentationDefault)
 			for value, want := range tc.want {
@@ -73,7 +73,7 @@ func TestExactPluralSelectionPreservesLexicalDecimalsAcrossCLDRLocales(t *testin
 
 func TestExactBigIntegerOrdinalNestedAndMultiSelector(t *testing.T) {
 	huge := "10000000000000000000000000000000000000000"
-	template := ".input {$n :number select=cardinal}\n.match $n\n" + huge + " {{exact}}\nmany {{many}}\n* {{other}}"
+	template := ".input {$n :number select=plural}\n.match $n\n" + huge + " {{exact}}\nmany {{many}}\n* {{other}}"
 	snapshot := localeSnapshot(t, "ru", template, ArgumentSpec{Name: "n", Type: TypeBigInteger, Required: true})
 	integer, _ := new(big.Int).SetString(huge, 10)
 	message, err := snapshot.Bind("app.m", BigInteger("n", integer))
@@ -96,7 +96,7 @@ func TestExactBigIntegerOrdinalNestedAndMultiSelector(t *testing.T) {
 		}
 	}
 
-	multiTemplate := ".input {$kind :string}\n.input {$n :number select=cardinal}\n.local $normalized = {$kind}\n.match $normalized $n\nfemale one {{female-one {|literal|}}}\nfemale * {{female-other {|literal|}}}\n* one {{other-one {|literal|}}}\n* * {{other-other {|literal|}}}"
+	multiTemplate := ".input {$kind :string}\n.input {$n :number select=plural}\n.local $normalized = {$kind}\n.match $normalized $n\nfemale one {{female-one {|literal|}}}\nfemale * {{female-other {|literal|}}}\n* one {{other-one {|literal|}}}\n* * {{other-other {|literal|}}}"
 	multi := localeSnapshot(t, "en", multiTemplate,
 		ArgumentSpec{Name: "kind", Type: TypeEnum, Required: true, Values: []string{"female", "male"}},
 		ArgumentSpec{Name: "n", Type: TypeInteger, Required: true},
@@ -275,7 +275,7 @@ func TestStableMF2NumberOptionsAndNFCStringSelection(t *testing.T) {
 }
 
 func TestPluralGrammarLocaleIsIndependentFromFormattingLocaleAndRounding(t *testing.T) {
-	template := ".input {$n :number select=cardinal maximumFractionDigits=0}\n.match $n\none {{one {$n}}}\nfew {{few {$n}}}\nmany {{many {$n}}}\n* {{other {$n}}}"
+	template := ".input {$n :number select=plural maximumFractionDigits=0}\n.match $n\none {{one {$n}}}\nfew {{few {$n}}}\nmany {{many {$n}}}\n* {{other {$n}}}"
 	snapshot := localeSnapshot(t, "ru", template, ArgumentSpec{Name: "n", Type: TypeDecimal, Required: true})
 	view := mustView(t, snapshot, "ru", "de", "", PresentationDefault)
 	message, err := snapshot.Bind("app.m", Decimal("n", "1234.5"))

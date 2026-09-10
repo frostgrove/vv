@@ -38,9 +38,22 @@ type PGXPoolStatsSource interface {
 }
 
 type MetricRegistration struct {
+	registration metric.Registration
+	gate         *metricCallbackGate
+	once         sync.Once
+	err          error
+}
+
+type providerMetricRegistration struct {
 	metric.Registration
-	once sync.Once
-	err  error
+	owner *MetricRegistration
+}
+
+func (r *providerMetricRegistration) Unregister() error {
+	if r == nil || r.owner == nil {
+		return nil
+	}
+	return r.owner.Unregister()
 }
 
 func (r *MetricRegistration) Unregister() error {
@@ -48,8 +61,15 @@ func (r *MetricRegistration) Unregister() error {
 		return nil
 	}
 	r.once.Do(func() {
-		if !nilInterface(r.Registration) {
-			r.err = r.Registration.Unregister()
+		r.err = ErrMetricRegistrationCleanup
+		registration := r.registration
+		gate := r.gate
+		r.registration = nil
+		r.gate = nil
+		if gate != nil {
+			r.err = gate.cleanup(registration)
+		} else {
+			r.err = safeMetricUnregister(registration)
 		}
 	})
 	return r.err
@@ -65,6 +85,12 @@ func RegisterPGXPoolStats(providers Providers, pool PGXPoolStatsSource, poolName
 	if !validDatabasePoolName(poolName.value) {
 		return nil, ErrInvalidDatabasePoolName
 	}
+	return runNativeAssembly(func() (*MetricRegistration, error) {
+		return registerPGXPoolStats(providers, pool, poolName)
+	})
+}
+
+func registerPGXPoolStats(providers Providers, pool PGXPoolStatsSource, poolName DatabasePoolName) (*MetricRegistration, error) {
 	meter := providers.Meter.Meter(
 		pgxPoolScopeName,
 		metric.WithInstrumentationVersion(pgxPoolVersion),
@@ -90,19 +116,36 @@ func RegisterPGXPoolStats(providers Providers, pool PGXPoolStatsSource, poolName
 		return nil, err
 	}
 	observe := metric.WithAttributeSet(attribute.NewSet(attribute.String(databasePoolKey, poolName.value)))
-	registration, err := meter.RegisterCallback(func(_ context.Context, observer metric.Observer) error {
+	return registerMetricCallback(meter, func(ctx context.Context, observer metric.Observer) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		stats := pool.Stat()
 		if stats == nil {
 			return nil
 		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		observer.ObserveInt64(acquired, int64(stats.AcquiredConns()), observe)
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		observer.ObserveInt64(idle, int64(stats.IdleConns()), observe)
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		observer.ObserveInt64(maximum, int64(stats.MaxConns()), observe)
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		observer.ObserveInt64(waits, stats.EmptyAcquireCount(), observe)
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		observer.ObserveFloat64(waitDuration, stats.EmptyAcquireWaitTime().Seconds(), observe)
 		return nil
 	}, acquired, idle, maximum, waits, waitDuration)
-	return guardMetricRegistration(registration, err)
 }
 
 func RegisterSQLDBStats(providers Providers, database *sql.DB, poolName DatabasePoolName) (*MetricRegistration, error) {
@@ -115,13 +158,15 @@ func RegisterSQLDBStats(providers Providers, database *sql.DB, poolName Database
 	if !validDatabasePoolName(poolName.value) {
 		return nil, ErrInvalidDatabasePoolName
 	}
-	registration, err := otelsql.RegisterDBStatsMetrics(
-		database,
-		otelsql.WithTracerProvider(providers.Tracer),
-		otelsql.WithMeterProvider(&sqlStatsMeterProvider{MeterProvider: providers.Meter}),
-		otelsql.WithAttributes(attribute.String(databasePoolKey, poolName.value)),
-	)
-	return guardMetricRegistration(registration, err)
+	return runNativeAssembly(func() (*MetricRegistration, error) {
+		registration, err := otelsql.RegisterDBStatsMetrics(
+			database,
+			otelsql.WithTracerProvider(providers.Tracer),
+			otelsql.WithMeterProvider(&sqlStatsMeterProvider{MeterProvider: providers.Meter}),
+			otelsql.WithAttributes(attribute.String(databasePoolKey, poolName.value)),
+		)
+		return guardMetricRegistration(registration, err, nil)
+	})
 }
 
 type sqlStatsMeterProvider struct {
@@ -141,24 +186,11 @@ type sqlStatsMeter struct {
 }
 
 func (meter *sqlStatsMeter) RegisterCallback(callback metric.Callback, instruments ...metric.Observable) (registration metric.Registration, err error) {
-	gate := newMetricCallbackGate(callback)
-	completed := false
-	defer func() {
-		if completed {
-			return
-		}
-		_ = recover()
-		cleanupErr := gate.cleanup(registration)
-		registration = nil
-		err = errors.Join(ErrInvalidMetricRegistration, cleanupErr)
-	}()
-	registration, err = meter.Meter.RegisterCallback(gate.call, instruments...)
-	completed = true
-	if err != nil || nilInterface(registration) {
-		cleanupErr := gate.cleanup(registration)
-		return nil, errors.Join(ErrInvalidMetricRegistration, cleanupErr)
+	owner, err := registerMetricCallback(meter.Meter, callback, instruments...)
+	if err != nil {
+		return nil, err
 	}
-	return &guardedMetricRegistration{Registration: registration, gate: gate}, nil
+	return &providerMetricRegistration{Registration: owner.registration, owner: owner}, nil
 }
 
 type metricCallbackGate struct {
@@ -184,6 +216,7 @@ func (gate *metricCallbackGate) call(ctx context.Context, observer metric.Observ
 	callback := gate.callback
 	gate.inFlight++
 	gate.mu.Unlock()
+	completed := false
 	defer func() {
 		gate.mu.Lock()
 		gate.inFlight--
@@ -191,44 +224,36 @@ func (gate *metricCallbackGate) call(ctx context.Context, observer metric.Observ
 			gate.cond.Broadcast()
 		}
 		gate.mu.Unlock()
-		if recover() != nil {
+		if !completed {
+			_ = recover()
 			err = ErrMetricCallback
 		}
 	}()
-	return callback(ctx, observer)
-}
-
-func (gate *metricCallbackGate) cleanup(registration metric.Registration) error {
-	gate.mu.Lock()
-	gate.active = false
-	gate.mu.Unlock()
-	err := safeMetricUnregister(registration)
-	gate.mu.Lock()
-	for gate.inFlight > 0 {
-		gate.cond.Wait()
-	}
-	gate.callback = nil
-	gate.mu.Unlock()
+	err = callback(ctx, observer)
+	completed = true
 	return err
 }
 
-type guardedMetricRegistration struct {
-	metric.Registration
-	gate *metricCallbackGate
-	once sync.Once
-	err  error
-}
-
-func (registration *guardedMetricRegistration) Unregister() error {
-	if registration == nil {
-		return nil
-	}
-	registration.once.Do(func() {
-		registration.err = registration.gate.cleanup(registration.Registration)
-		registration.Registration = nil
-		registration.gate = nil
-	})
-	return registration.err
+func (gate *metricCallbackGate) cleanup(registration metric.Registration) (err error) {
+	gate.mu.Lock()
+	gate.active = false
+	gate.mu.Unlock()
+	err = ErrMetricRegistrationCleanup
+	completed := false
+	defer func() {
+		if !completed {
+			_ = recover()
+		}
+		gate.mu.Lock()
+		for gate.inFlight > 0 {
+			gate.cond.Wait()
+		}
+		gate.callback = nil
+		gate.mu.Unlock()
+	}()
+	err = safeMetricUnregister(registration)
+	completed = true
+	return err
 }
 
 func safeMetricUnregister(registration metric.Registration) (err error) {
@@ -250,15 +275,39 @@ func safeMetricUnregister(registration metric.Registration) (err error) {
 	return err
 }
 
-func guardMetricRegistration(registration metric.Registration, err error) (*MetricRegistration, error) {
-	if err != nil {
-		if !nilInterface(registration) {
-			err = errors.Join(err, safeMetricUnregister(registration))
+func registerMetricCallback(meter metric.Meter, callback metric.Callback, instruments ...metric.Observable) (result *MetricRegistration, err error) {
+	gate := newMetricCallbackGate(callback)
+	var registration metric.Registration
+	completed := false
+	defer func() {
+		if completed {
+			return
 		}
-		return nil, err
+		_ = recover()
+		cleanupErr := gate.cleanup(registration)
+		result = nil
+		err = errors.Join(ErrInvalidMetricRegistration, cleanupErr)
+	}()
+	registration, err = meter.RegisterCallback(gate.call, instruments...)
+	completed = true
+	return guardMetricRegistration(registration, err, gate)
+}
+
+func guardMetricRegistration(registration metric.Registration, err error, gate *metricCallbackGate) (*MetricRegistration, error) {
+	if err != nil {
+		var cleanupErr error
+		if gate != nil {
+			cleanupErr = gate.cleanup(registration)
+		} else if !nilInterface(registration) {
+			cleanupErr = safeMetricUnregister(registration)
+		}
+		return nil, errors.Join(ErrInvalidMetricRegistration, cleanupErr)
 	}
 	if nilInterface(registration) {
+		if gate != nil {
+			_ = gate.cleanup(nil)
+		}
 		return nil, ErrInvalidMetricRegistration
 	}
-	return &MetricRegistration{Registration: registration}, nil
+	return &MetricRegistration{registration: registration, gate: gate}, nil
 }

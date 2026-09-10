@@ -114,13 +114,12 @@ func databaseScope(scope instrumentation.Scope) (instrumentation.Scope, bool) {
 	default:
 		return instrumentation.Scope{}, false
 	}
-	version := expectedVersion
 	if !databaseScopeVersionAllowed(scope.Name, scope.Version, expectedVersion) || scope.SchemaURL != "" {
-		version = "_OTHER"
+		return instrumentation.Scope{}, true
 	}
 	return instrumentation.Scope{
 		Name:       scope.Name,
-		Version:    version,
+		Version:    expectedVersion,
 		Attributes: attribute.NewSet(),
 	}, true
 }

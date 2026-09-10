@@ -110,6 +110,34 @@ type crudFullSource struct {
 	bulkTarget      crud.Executor
 }
 
+type crudNonComparableSource struct {
+	state   *crudNonComparableState
+	payload []byte
+}
+
+type crudNonComparableState struct {
+	id         any
+	tx         crud.Tx
+	beginCalls int
+}
+
+func (source crudNonComparableSource) Exec(context.Context, string, ...any) (crud.Result, error) {
+	return crud.Result{}, nil
+}
+
+func (source crudNonComparableSource) Query(context.Context, string, ...any) (crud.Rows, error) {
+	return nil, nil
+}
+
+func (source crudNonComparableSource) Dialect() crud.Dialect { return crud.Postgres{} }
+
+func (source crudNonComparableSource) DataSource() any { return source.state.id }
+
+func (source crudNonComparableSource) Begin(context.Context) (crud.Tx, error) {
+	source.state.beginCalls++
+	return source.state.tx, nil
+}
+
 func (s *crudFullSource) Begin(ctx context.Context) (crud.Tx, error) {
 	s.beginCalls++
 	s.lastCtx = ctx
@@ -142,6 +170,24 @@ func (w crudSourceOnlyWrapper) Dialect() crud.Dialect { return w.inner.Dialect()
 
 func (w crudSourceOnlyWrapper) UnwrapSource() crud.Source { return w.inner }
 
+type hostileCrudSourceWrapper struct {
+	crud.Source
+	panicValue any
+}
+
+func (wrapper *hostileCrudSourceWrapper) UnwrapSource() crud.Source {
+	panic(wrapper.panicValue)
+}
+
+type hostileCrudTransactionWrapper struct {
+	crud.Tx
+	panicValue any
+}
+
+func (wrapper *hostileCrudTransactionWrapper) UnwrapSource() crud.Source {
+	panic(wrapper.panicValue)
+}
+
 func TestCRUDSourceDirectCallsPreserveEffectsAndEmitClosedSignals(t *testing.T) {
 	tp := newTestTracerProvider()
 	mp := newTestMeterProvider()
@@ -170,7 +216,7 @@ func TestCRUDSourceDirectCallsPreserveEffectsAndEmitClosedSignals(t *testing.T) 
 	if source.execCalls != 1 || source.lastQuery != "secret exec statement" || !reflect.DeepEqual(source.lastArgs, []any{"secret-argument", 19}) {
 		t.Fatalf("Exec calls/query/args = %d/%q/%#v", source.execCalls, source.lastQuery, source.lastArgs)
 	}
-	if source.lastCtx.Value(crudContextKey{}) != "retained" || source.lastCtx.Value(spanKey{}) == nil {
+	if source.lastCtx.Value(crudContextKey{}) != "retained" || !hasTestSpan(source.lastCtx) {
 		t.Fatal("Exec did not receive the derived context with application values")
 	}
 
@@ -209,6 +255,74 @@ func TestCRUDSourceDirectCallsPreserveEffectsAndEmitClosedSignals(t *testing.T) 
 				t.Fatalf("private statement data reached metric attributes: %#v", metric.attributes)
 			}
 		}
+	}
+}
+
+func TestCRUDCapabilityDiscoveryPanicFallsBackWithoutChangingEffects(t *testing.T) {
+	tel := vvotel.Must(vvotel.Config{TracerProvider: newTestTracerProvider(), MeterProvider: newTestMeterProvider()})
+	base := &crudRecordingSource{execResult: crud.Result{RowsAffected: 7}}
+	hostile := &hostileCrudSourceWrapper{Source: base, panicValue: "unwrap source"}
+	wrapper := vvotel.Source(tel, hostile)
+	if wrapper == nil {
+		t.Fatal("hostile source was discarded")
+	}
+	result, err := wrapper.Exec(t.Context(), "statement")
+	if err != nil || result.RowsAffected != 7 || base.execCalls != 1 {
+		t.Fatalf("Exec = %#v, %v; calls = %d", result, err, base.execCalls)
+	}
+	if _, ok := wrapper.(crud.Beginner); ok {
+		t.Fatal("unproven Beginner capability was advertised")
+	}
+
+	transaction := &crudRecordingTx{}
+	hostileTransaction := &hostileCrudTransactionWrapper{Tx: transaction, panicValue: "unwrap transaction"}
+	source := &crudFullSource{
+		crudRecordingSource: &crudRecordingSource{},
+		tx:                  hostileTransaction,
+	}
+	beginner := vvotel.Source(tel, source).(crud.Beginner)
+	wrappedTransaction, err := beginner.Begin(t.Context())
+	if err != nil || wrappedTransaction == nil {
+		t.Fatalf("Begin = %#v, %v", wrappedTransaction, err)
+	}
+	if _, ok := wrappedTransaction.(crud.Beginner); ok {
+		t.Fatal("unproven nested Beginner capability was advertised")
+	}
+	if err := wrappedTransaction.Commit(t.Context()); err != nil || transaction.commitCalls != 1 {
+		t.Fatalf("Commit = %v; calls = %d", err, transaction.commitCalls)
+	}
+}
+
+func TestCRUDUnifiedNavigationPreservesNonComparableSourceTransactions(t *testing.T) {
+	tx := &crudRecordingTx{id: new(int)}
+	state := &crudNonComparableState{id: tx.id, tx: tx}
+	source := crudNonComparableSource{state: state, payload: []byte("value source")}
+	wrapper := vvotel.Source(vvotel.Must(vvotel.Config{
+		TracerProvider: newTestTracerProvider(),
+		MeterProvider:  newTestMeterProvider(),
+	}), source)
+	if _, ok := wrapper.(crud.SourceExecutorUnwrapper); !ok {
+		t.Fatal("source wrapper did not publish unified navigation")
+	}
+	if _, ok := wrapper.(crud.SourceUnwrapper); ok {
+		t.Fatal("source wrapper published ambiguous source navigation")
+	}
+	if _, ok := wrapper.(crud.ExecutorUnwrapper); ok {
+		t.Fatal("source wrapper published ambiguous executor navigation")
+	}
+	found, ok := crud.ExecutorAs[crudNonComparableSource](wrapper)
+	if !ok || found.state != state || string(found.payload) != "value source" {
+		t.Fatalf("executor navigation = %#v, %v", found, ok)
+	}
+	called := 0
+	if err := crud.InNewTx(t.Context(), wrapper, func(context.Context) error {
+		called++
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if called != 1 || state.beginCalls != 1 || tx.commitCalls != 1 || tx.rollbackCalls != 0 {
+		t.Fatalf("effects = callback:%d begin:%d commit:%d rollback:%d", called, state.beginCalls, tx.commitCalls, tx.rollbackCalls)
 	}
 }
 
@@ -281,7 +395,7 @@ func TestCRUDSourcePreservesPrimaryTransactionReplicaAndImmediateBulkCapabilitie
 	if inner.readSourceCalls != 1 {
 		t.Fatalf("ReadSource calls = %d", inner.readSourceCalls)
 	}
-	if unwrapped, ok := wrappedReplica.(crud.SourceUnwrapper); !ok || unwrapped.UnwrapSource() != replica {
+	if unwrapped, ok := wrappedReplica.(crud.SourceExecutorUnwrapper); !ok || unwrapped.UnwrapSourceExecutor() != replica {
 		t.Fatalf("replica wrapper = %#v", wrappedReplica)
 	}
 	if _, err := wrappedReplica.Exec(context.Background(), "replica exec"); err != nil || replica.execCalls != 1 {

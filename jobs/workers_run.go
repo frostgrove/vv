@@ -16,6 +16,7 @@ const (
 	workersRuntimeRunning
 	workersRuntimeDraining
 	workersRuntimeStopped
+	workersRuntimeSealed
 )
 
 type workersRuntime struct {
@@ -94,7 +95,12 @@ func (workers *Workers) Run(ctx context.Context) error {
 	if workers == nil || workers.runtime == nil || nilInterface(ctx) {
 		return ErrInvalid
 	}
+	workers.lifecycle.Lock()
 	session, err := workers.runtime.begin(ctx)
+	if err == nil {
+		workers.fatal = newWorkerFailureLatch()
+	}
+	workers.lifecycle.Unlock()
 	if err != nil {
 		return err
 	}
@@ -172,6 +178,16 @@ func (workers *Workers) Drain(ctx context.Context) error {
 func (runtime *workersRuntime) begin(parent context.Context) (*workerRunSession, error) {
 	runtime.mu.Lock()
 	defer runtime.mu.Unlock()
+	if runtime.state == workersRuntimeSealed {
+		runtime.state = workersRuntimeStopped
+		return nil, ErrConflict
+	}
+	if runtime.state == workersRuntimeStopped {
+		runtime.state = workersRuntimeFresh
+		runtime.done = make(chan struct{})
+		runtime.session = nil
+		runtime.err = nil
+	}
 	if runtime.state != workersRuntimeFresh {
 		return nil, ErrConflict
 	}
@@ -186,7 +202,7 @@ func (runtime *workersRuntime) drain() (<-chan struct{}, *workerRunSession, erro
 	defer runtime.mu.Unlock()
 	switch runtime.state {
 	case workersRuntimeFresh:
-		runtime.state = workersRuntimeStopped
+		runtime.state = workersRuntimeSealed
 		close(runtime.done)
 		return runtime.done, nil, nil
 	case workersRuntimeRunning:
@@ -195,6 +211,9 @@ func (runtime *workersRuntime) drain() (<-chan struct{}, *workerRunSession, erro
 	case workersRuntimeDraining:
 		return runtime.done, runtime.session, nil
 	case workersRuntimeStopped:
+		runtime.state = workersRuntimeSealed
+		return runtime.done, nil, nil
+	case workersRuntimeSealed:
 		return runtime.done, nil, nil
 	default:
 		return nil, nil, ErrInvalid
@@ -1057,6 +1076,10 @@ func (delivery *activeWorkerDelivery) runClaimed(claimed ClaimedDelivery) {
 		delivery.apply(ctx, func(LeaseRef) (DeliveryCommand, error) { return preparation.command, nil })
 		return
 	}
+	if !preparation.ready() {
+		delivery.pool.fail(ErrInvalid)
+		return
+	}
 	select {
 	case <-delivery.pool.session.drain:
 		delivery.apply(ctx, func(lease LeaseRef) (DeliveryCommand, error) {
@@ -1450,13 +1473,18 @@ func (delivery *activeWorkerDelivery) guard(ctx context.Context, fence LeaseFenc
 	if delivery.closed {
 		return ErrLeaseLost
 	}
+	completed := false
 	defer func() {
-		if recover() != nil {
+		_ = recover()
+		if !completed {
 			err = ErrDriver
 		}
 	}()
 	if err := ctx.Err(); err != nil {
+		completed = true
 		return err
 	}
-	return fence.Fence(ctx, delivery.lease)
+	err = fence.Fence(ctx, delivery.lease)
+	completed = true
+	return err
 }

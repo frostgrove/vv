@@ -212,7 +212,7 @@ phase 3 landed FL-014 and before phase 5 landed FL-015.
 | `otel/health.go` (**owed**) | FL-034 |
 | `otel/runtime.go` (**owed**) | FL-034 |
 | `scripts/checks.sh` | FL-034 |
-| `scripts/modules.sh` | FL-034 |
+| `scripts/modules.sh` | FL-034 · FL-039 |
 | `scripts/vv` | FL-034 |
 | `Makefile` | FL-034 |
 | `otel/slog.go` (**owed**) | FL-034 |
@@ -637,10 +637,19 @@ phase 3 landed FL-014 and before phase 5 landed FL-015.
 | `i18n/cmd/vv-i18n/limits.go` | FL-039 |
 | `i18n/cmd/vv-i18n/publication.go` | FL-039 |
 | `i18n/cmd/vv-i18n/atomic.go` | FL-039 |
+| `i18n/cmd/vv-i18n/directory_sync_nonwindows.go` | FL-039 |
+| `i18n/cmd/vv-i18n/directory_sync_windows.go` | FL-039 |
+| `i18n/cmd/vv-i18n/publisher_lock.go` | FL-039 |
+| `i18n/cmd/vv-i18n/publisher_lock_unix.go` | FL-039 |
+| `i18n/cmd/vv-i18n/publisher_lock_unsupported.go` | FL-039 |
+| `i18n/cmd/vv-i18n/publisher_lock_windows.go` | FL-039 |
 | `test/i18nflow/` | FL-039 |
 | `scripts/i18n-consumer.sh` | FL-039 |
 | `scripts/i18n_test.go` | FL-039 |
 | `scripts/i18n_release_test.go` | FL-039 |
+| `scripts/api-surface/main.go` | FL-039 |
+| `scripts/api-surface/main_test.go` | FL-039 |
+| `scripts/api_surface_test.go` | FL-039 |
 | `scripts/audit-trace.sh` | FL-040 |
 | `scripts/audit_trace_test.go` | FL-040 |
 | `scripts/audit_trace_model_test.go` | FL-040 |

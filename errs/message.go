@@ -4,6 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
+	"reflect"
+	"strconv"
 	"strings"
 	"sync"
 	"unicode/utf8"
@@ -14,6 +17,7 @@ var ErrMessageRedeclared = errors.New("errs: the message key is already declared
 const (
 	MaxMessageKeyBytes      = 256
 	MaxMessageTemplateBytes = 16 << 10
+	MaxMessageOutputBytes   = 16 << 10
 	MaxLocaleBytes          = 128
 )
 
@@ -73,8 +77,8 @@ func (this *Messages) Message(ctx context.Context, v Violation, locale string) (
 	return message, ok
 }
 
-func (this *Messages) MessageWithLocale(_ context.Context, v Violation, locale string) (string, string, bool) {
-	if this == nil {
+func (this *Messages) MessageWithLocale(ctx context.Context, v Violation, locale string) (string, string, bool) {
+	if this == nil || contextDone(ctx) {
 		return "", "", false
 	}
 	keys := ladder(v)
@@ -85,11 +89,19 @@ func (this *Messages) MessageWithLocale(_ context.Context, v Violation, locale s
 	this.mu.RLock()
 	templates := make([]candidate, 0, len(keys)*2)
 	for _, loc := range locales(locale) {
+		if contextDone(ctx) {
+			this.mu.RUnlock()
+			return "", "", false
+		}
 		byKey := this.templates[loc]
 		if byKey == nil {
 			continue
 		}
 		for _, k := range keys {
+			if contextDone(ctx) {
+				this.mu.RUnlock()
+				return "", "", false
+			}
 			tmpl, ok := byKey[k]
 			if !ok {
 				continue
@@ -99,12 +111,18 @@ func (this *Messages) MessageWithLocale(_ context.Context, v Violation, locale s
 	}
 	this.mu.RUnlock()
 	for _, template := range templates {
-		if message, ok := expand(template.text, v.Params); ok {
+		if contextDone(ctx) {
+			return "", "", false
+		}
+		if message, ok := expand(ctx, template.text, v.Params); ok {
 			return message, template.locale, true
 		}
 	}
+	if contextDone(ctx) {
+		return "", "", false
+	}
 	if tmpl, ok := this.codes.MessageFor(v.Code); ok {
-		if s, ok := expand(tmpl, v.Params); ok {
+		if s, ok := expand(ctx, tmpl, v.Params); ok {
 			return s, "", true
 		}
 	}
@@ -160,16 +178,26 @@ func locales(locale string) []string {
 	return append(out, "")
 }
 
-func expand(tmpl string, params map[string]any) (string, bool) {
+func expand(ctx context.Context, tmpl string, params map[string]any) (string, bool) {
+	if contextDone(ctx) || len(tmpl) > MaxMessageOutputBytes {
+		return "", false
+	}
 	if !strings.ContainsAny(tmpl, "{}") {
 		return tmpl, true
 	}
 	var b strings.Builder
+	b.Grow(len(tmpl))
 	for i := 0; i < len(tmpl); {
+		if contextDone(ctx) {
+			return "", false
+		}
 		if tmpl[i] == '}' {
 			return "", false
 		}
 		if tmpl[i] != '{' {
+			if b.Len() == MaxMessageOutputBytes {
+				return "", false
+			}
 			b.WriteByte(tmpl[i])
 			i++
 			continue
@@ -187,10 +215,47 @@ func expand(tmpl string, params map[string]any) (string, bool) {
 		if !ok {
 			return "", false
 		}
-		fmt.Fprint(&b, val)
+		text, ok := scalarText(val)
+		if !ok || len(text) > MaxMessageOutputBytes-b.Len() {
+			return "", false
+		}
+		b.WriteString(text)
 		i = end + 1
 	}
+	if contextDone(ctx) {
+		return "", false
+	}
 	return b.String(), true
+}
+
+func scalarText(value any) (string, bool) {
+	v := reflect.ValueOf(value)
+	if !v.IsValid() {
+		return "", false
+	}
+	switch v.Kind() {
+	case reflect.String:
+		text := v.String()
+		return text, utf8.ValidString(text)
+	case reflect.Bool:
+		return strconv.FormatBool(v.Bool()), true
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		return strconv.FormatInt(v.Int(), 10), true
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
+		return strconv.FormatUint(v.Uint(), 10), true
+	case reflect.Float32, reflect.Float64:
+		n := v.Float()
+		if math.IsInf(n, 0) || math.IsNaN(n) {
+			return "", false
+		}
+		return strconv.FormatFloat(n, 'g', -1, v.Type().Bits()), true
+	default:
+		return "", false
+	}
+}
+
+func contextDone(ctx context.Context) bool {
+	return ctx != nil && ctx.Err() != nil
 }
 
 func validateMessage(locale, key, template string) error {

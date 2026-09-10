@@ -126,6 +126,9 @@ func (workers *Workers) driverBoundary() workerDriverBoundary {
 	if workers == nil {
 		return workerDriverBoundary{}
 	}
+	workers.lifecycle.RLock()
+	fatal := workers.fatal
+	workers.lifecycle.RUnlock()
 	return workerDriverBoundary{
 		namespace:  workers.config.namespace,
 		driver:     workers.config.driver,
@@ -135,7 +138,7 @@ func (workers *Workers) driverBoundary() workerDriverBoundary {
 		leaseTTL:   workers.config.leaseTTL,
 		claimItems: workers.config.claimItems,
 		claimBytes: workers.config.claimBytes,
-		fatal:      workers.fatal,
+		fatal:      fatal,
 	}
 }
 
@@ -259,22 +262,18 @@ func (workers *Workers) callRecover(ctx context.Context, request RecoverRequest)
 }
 
 func invokeWorkerDriver[T any](boundary workerDriverBoundary, parent context.Context, invoke func(context.Context) (T, error), validate func(T) (T, error)) (value T, resultCall workerDriverCall) {
-	returned := false
+	completed := false
 	started := &atomic.Bool{}
 	defer func() {
-		if recover() != nil {
+		_ = recover()
+		if !completed {
 			var zero T
 			value = zero
 			resultCall = boundary.runtimeFailure(started.Load(), 0)
-			returned = true
-			return
-		}
-		if !returned {
-			boundary.fatal.fail(WorkerFailureRuntime, ErrInvalid)
 		}
 	}()
 	value, resultCall = invokeWorkerDriverCall(boundary, parent, invoke, validate, started)
-	returned = true
+	completed = true
 	return value, resultCall
 }
 
@@ -376,20 +375,31 @@ func invokeWorkerDriverCall[T any](boundary workerDriverBoundary, parent context
 func callWorkerDriver[T any](fatal *workerFailureLatch, ctx context.Context, invoke func(context.Context) (T, error)) (value T, err error, failure WorkerFailure) {
 	returned := false
 	defer func() {
-		if recovered := recover(); recovered != nil {
-			var zero T
-			value = zero
-			err = ErrDriver
-			failure = WorkerFailureDriverPanic
-			fatal.fail(failure, err)
-			return
-		}
 		if !returned {
 			fatal.fail(WorkerFailureDriverContract, ErrDriverContract)
 		}
 	}()
-	value, err = invoke(ctx)
+	value, err, failure = invokeWorkerDriverCallback(ctx, invoke)
 	returned = true
+	if failure != WorkerFailureNone {
+		fatal.fail(failure, err)
+	}
+	return value, err, failure
+}
+
+func invokeWorkerDriverCallback[T any](ctx context.Context, invoke func(context.Context) (T, error)) (value T, err error, failure WorkerFailure) {
+	completed := false
+	defer func() {
+		_ = recover()
+		if !completed {
+			var zero T
+			value = zero
+			err = ErrDriver
+			failure = WorkerFailureDriverPanic
+		}
+	}()
+	value, err = invoke(ctx)
+	completed = true
 	if err != nil {
 		var zero T
 		value = zero
@@ -402,25 +412,35 @@ func callWorkerDriver[T any](fatal *workerFailureLatch, ctx context.Context, inv
 func validateWorkerDriverResult[T any](fatal *workerFailureLatch, value T, validate func(T) (T, error)) (validated T, failure WorkerFailure) {
 	returned := false
 	defer func() {
-		if recover() != nil {
-			var zero T
-			validated = zero
-			failure = WorkerFailureRuntime
-			fatal.fail(failure, ErrInvalid)
-			return
-		}
 		if !returned {
 			fatal.fail(WorkerFailureRuntime, ErrInvalid)
 		}
 	}()
+	validated, failure = invokeWorkerDriverValidation(value, validate)
+	returned = true
+	if failure != WorkerFailureNone {
+		fatal.fail(failure, failureError(failure))
+	}
+	return validated, failure
+}
+
+func invokeWorkerDriverValidation[T any](value T, validate func(T) (T, error)) (validated T, failure WorkerFailure) {
+	completed := false
+	defer func() {
+		_ = recover()
+		if !completed {
+			var zero T
+			validated = zero
+			failure = WorkerFailureRuntime
+		}
+	}()
 	var err error
 	validated, err = validate(value)
-	returned = true
+	completed = true
 	if err != nil {
 		var zero T
 		validated = zero
 		failure = WorkerFailureDriverContract
-		fatal.fail(failure, ErrDriverContract)
 	}
 	return validated, failure
 }

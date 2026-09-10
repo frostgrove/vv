@@ -12,6 +12,23 @@ import (
 
 type scopedTracerContextKey struct{}
 
+type replacingNativeTracerProvider struct {
+	trace.TracerProvider
+}
+
+func (provider replacingNativeTracerProvider) Tracer(name string, options ...trace.TracerOption) trace.Tracer {
+	return replacingNativeTracer{Tracer: provider.TracerProvider.Tracer(name, options...)}
+}
+
+type replacingNativeTracer struct {
+	trace.Tracer
+}
+
+func (tracer replacingNativeTracer) Start(ctx context.Context, name string, options ...trace.SpanStartOption) (context.Context, trace.Span) {
+	_, span := tracer.Tracer.Start(ctx, name, options...)
+	return trace.ContextWithSpan(context.Background(), span), span
+}
+
 func TestScopedTracerForwardsBorrowedSpanProviderAndContextIdentity(t *testing.T) {
 	recorder := tracetest.NewSpanRecorder()
 	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
@@ -41,5 +58,19 @@ func TestScopedTracerForwardsBorrowedSpanProviderAndContextIdentity(t *testing.T
 	}
 	if len(ended[0].Attributes()) != 1 || ended[0].Attributes()[0].Key != "kept" || ended[0].Attributes()[0].Value.AsString() != "value" {
 		t.Fatalf("forwarded attributes = %v", ended[0].Attributes())
+	}
+}
+
+func TestScopedTracerIgnoresBorrowedContextReplacement(t *testing.T) {
+	provider := sdktrace.NewTracerProvider()
+	t.Cleanup(func() { _ = provider.Shutdown(context.Background()) })
+	delegate := scopedTracerProvider{TracerProvider: replacingNativeTracerProvider{TracerProvider: provider}, scope: "scoped"}
+	caller, cancel := context.WithCancel(context.WithValue(context.Background(), scopedTracerContextKey{}, "kept"))
+	defer cancel()
+
+	ctx, span := delegate.Tracer("scoped").Start(caller, "operation")
+	defer span.End()
+	if ctx.Value(scopedTracerContextKey{}) != "kept" || ctx.Done() != caller.Done() || !span.SpanContext().Equal(trace.SpanFromContext(ctx).SpanContext()) {
+		t.Fatal("borrowed tracer replaced caller context semantics")
 	}
 }

@@ -167,6 +167,11 @@ gRPC и не меняет HTTP-классификацию.
 `RetryInfo`**, а не JSON-конверт. Машинные коды в этих деталях пишутся так же,
 как HTTP `error_code`, так что клиенту нужна одна таблица ([[D-052]]).
 
+Стандартный renderer выдаёт не больше `MaxViolations` (100).
+`WithMaxViolations(n)` в диапазоне `1..100` сужает предел; неположительное или
+большее значение сохраняет жёсткий default. При усечении
+`ErrorInfo.Metadata` получает `partial=true`.
+
 `crudgrpc.Code(err)` экспортирован — на случай, если вы сами отвечаете на
 собственные вызовы. `crudgrpc.CodeFor(kind)` — сама таблица.
 
@@ -191,7 +196,7 @@ negotiation. Если важны weights, исключения или wildcard, 
 `crudgrpc.WithMessages`.
 Если подключённый source реализует `errs.LocalizedMessageSource`, каждое
 `LocalizedMessage.Locale` называет фактическую локаль использованного шаблона.
-Поэтому запрос `fr-CA` с fallback в `fr` сообщает `fr`; legacy source не
+Поэтому запрос `fr-CA` с fallback в `fr` сообщает `fr`; source без provenance не
 создаёт `LocalizedMessage`, вместо того чтобы выдавать запрос за доказательство.
 
 Установка `Errors` дважды рендерит один раз — маркер это уже несущая статус
@@ -215,6 +220,15 @@ articles := remote.New[Article, int64, ArticleInput](
 `name` — это то, что дальняя сторона передала в `Register`, и `ServiceName`
 превращает его в одно и то же полное имя сервиса на обоих концах одной и той же
 функцией.
+
+Помеченный framework удалённый сбой принимается только с одним framework
+`ErrorInfo` и одним detail `BadRequest`. Клиент восстанавливает не больше
+`MaxViolations` нарушений и помечает fault как partial, если пришло больше.
+Locale provenance поля сохраняется, только когда `LocalizedMessage` содержит
+валидную локаль и в точности совпадает с публичным description; недостоверный
+provenance отбрасывается. Description должен быть непустым валидным UTF-8 и не
+длиннее `errs.MaxMessageOutputBytes`; ответ вне этого контракта становится
+protocol error.
 
 | Опция | Что делает |
 |---|---|

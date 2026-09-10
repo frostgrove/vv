@@ -11,9 +11,11 @@ import (
 	"testing"
 	"time"
 
+	vvotel "github.com/frostgrove/vv/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/sdk/instrumentation"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 )
@@ -127,6 +129,31 @@ func TestTelemetryConfigRejectsHostileBounds(t *testing.T) {
 			config.BatchSize = maxBatchSize + 1
 			return config
 		}(),
+		"batch timeout upper bound": func() Config {
+			config := validTelemetryConfig()
+			config.BatchTimeout = maxBatchTimeout + time.Nanosecond
+			return config
+		}(),
+		"metric interval upper bound": func() Config {
+			config := validTelemetryConfig()
+			config.MetricInterval = maxMetricInterval + time.Nanosecond
+			return config
+		}(),
+		"metric export timeout upper bound": func() Config {
+			config := validTelemetryConfig()
+			config.MetricExportTimeout = maxMetricExportTimeout + time.Nanosecond
+			return config
+		}(),
+		"force flush timeout upper bound": func() Config {
+			config := validTelemetryConfig()
+			config.ForceFlushTimeout = maxForceFlushTimeout + time.Nanosecond
+			return config
+		}(),
+		"provider close timeout upper bound": func() Config {
+			config := validTelemetryConfig()
+			config.ProviderCloseTimeout = maxProviderCloseTimeout + time.Nanosecond
+			return config
+		}(),
 		"view upper bound": func() Config {
 			config := validTelemetryConfig()
 			config.Views = make([]sdkmetric.View, maxViews+1)
@@ -140,6 +167,14 @@ func TestTelemetryConfigRejectsHostileBounds(t *testing.T) {
 		"metric layer upper bound": func() Config {
 			config := validTelemetryConfig()
 			config.MetricProjectionLayers = make([]MetricProjectionLayer, maxProjectionLayers+1)
+			return config
+		}(),
+		"framework resource raw count": func() Config {
+			config := validTelemetryConfig()
+			config.FrameworkResources = make([]vvotel.ApprovedName, vvotel.MaxResourceNameValues+1)
+			for index := range config.FrameworkResources {
+				config.FrameworkResources[index] = config.FrameworkResource
+			}
 			return config
 		}(),
 		"scope upper bound": func() Config {
@@ -354,6 +389,240 @@ func TestNewTelemetryContainsRollbackPanic(t *testing.T) {
 	}
 }
 
+func TestNewTelemetryGoexitRollsBackOwnedAssembly(t *testing.T) {
+	t.Run("trace projection", func(t *testing.T) {
+		traceExporter := &spanExporterStub{}
+		metricCalled := false
+		config := validTelemetryConfig()
+		config.TraceProjectionLayers = []TraceProjectionLayer{{
+			Scopes: []instrumentation.Scope{{Name: "goexit.trace"}},
+			Wrap: func(sdktrace.SpanExporter) (sdktrace.SpanExporter, error) {
+				runtime.Goexit()
+				return nil, nil
+			},
+		}}
+		exited := make(chan struct{})
+		go func() {
+			defer close(exited)
+			_, _ = newTelemetry(context.Background(), config, telemetryFactories{
+				resource:      func(context.Context, Config) (*resource.Resource, error) { return resource.Empty(), nil },
+				traceExporter: func(context.Context) (sdktrace.SpanExporter, error) { return traceExporter, nil },
+				metricExporter: func(context.Context) (sdkmetric.Exporter, error) {
+					metricCalled = true
+					return &metricExporterStub{}, nil
+				},
+			})
+		}()
+		awaitGoexit(t, exited)
+		if traceExporter.shutdownCalls.Load() != 1 || metricCalled {
+			t.Fatalf("trace cleanup = %d; metric called = %t", traceExporter.shutdownCalls.Load(), metricCalled)
+		}
+	})
+
+	t.Run("metric projection", func(t *testing.T) {
+		traceExporter := &spanExporterStub{}
+		metricExporter := &metricExporterStub{}
+		config := validTelemetryConfig()
+		config.MetricProjectionLayers = []MetricProjectionLayer{{
+			Scopes: []instrumentation.Scope{{Name: "goexit.metric"}},
+			Wrap: func(sdkmetric.Exporter) (sdkmetric.Exporter, error) {
+				runtime.Goexit()
+				return nil, nil
+			},
+		}}
+		exited := make(chan struct{})
+		go func() {
+			defer close(exited)
+			_, _ = newTelemetry(context.Background(), config, telemetryFactories{
+				resource:       func(context.Context, Config) (*resource.Resource, error) { return resource.Empty(), nil },
+				traceExporter:  func(context.Context) (sdktrace.SpanExporter, error) { return traceExporter, nil },
+				metricExporter: func(context.Context) (sdkmetric.Exporter, error) { return metricExporter, nil },
+			})
+		}()
+		awaitGoexit(t, exited)
+		if traceExporter.shutdownCalls.Load() != 1 || metricExporter.shutdownCalls.Load() != 1 {
+			t.Fatalf("cleanup = %d/%d", traceExporter.shutdownCalls.Load(), metricExporter.shutdownCalls.Load())
+		}
+	})
+
+	t.Run("view", func(t *testing.T) {
+		traceExporter := &spanExporterStub{}
+		metricExporter := &metricExporterStub{}
+		config := validTelemetryConfig()
+		config.Views = []sdkmetric.View{func(sdkmetric.Instrument) (sdkmetric.Stream, bool) {
+			runtime.Goexit()
+			return sdkmetric.Stream{}, false
+		}}
+		exited := make(chan struct{})
+		go func() {
+			defer close(exited)
+			_, _ = newTelemetry(context.Background(), config, telemetryFactories{
+				resource:       func(context.Context, Config) (*resource.Resource, error) { return resource.Empty(), nil },
+				traceExporter:  func(context.Context) (sdktrace.SpanExporter, error) { return traceExporter, nil },
+				metricExporter: func(context.Context) (sdkmetric.Exporter, error) { return metricExporter, nil },
+			})
+		}()
+		awaitGoexit(t, exited)
+		if traceExporter.shutdownCalls.Load() != 1 || metricExporter.shutdownCalls.Load() != 1 {
+			t.Fatalf("cleanup = %d/%d", traceExporter.shutdownCalls.Load(), metricExporter.shutdownCalls.Load())
+		}
+	})
+}
+
+func awaitGoexit(t *testing.T, exited <-chan struct{}) {
+	t.Helper()
+	select {
+	case <-exited:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Goexit path did not unwind")
+	}
+}
+
+func TestMetricProjectionEnforcesDescriptorAggregation(t *testing.T) {
+	projection := newExportProjection(validTelemetryConfig())
+	descriptor := projection.metricSignals[vvotel.MetricJobsWorkerDeliveryResults][0]
+	attributes := attribute.NewSet(
+		vvotel.AttrComponent.String(vvotel.ComponentJobsWorker),
+		vvotel.AttrControl.String("none"),
+		vvotel.AttrMutation.String("applied"),
+		vvotel.AttrOperationName.String("renew"),
+	)
+	point := metricdata.DataPoint[int64]{Attributes: attributes, Value: 1024}
+	valid := metricdata.Sum[int64]{
+		DataPoints:  []metricdata.DataPoint[int64]{point},
+		Temporality: metricdata.CumulativeTemporality,
+		IsMonotonic: true,
+	}
+	projected, ok := projection.projectAggregation(valid, descriptor)
+	if !ok || projected.(metricdata.Sum[int64]).DataPoints[0].Value != 1024 {
+		t.Fatalf("valid cumulative aggregate = %#v, %t", projected, ok)
+	}
+	invalid := []metricdata.Aggregation{
+		metricdata.Gauge[int64]{DataPoints: []metricdata.DataPoint[int64]{point}},
+		metricdata.Sum[int64]{DataPoints: []metricdata.DataPoint[int64]{point}, Temporality: metricdata.CumulativeTemporality},
+		metricdata.Sum[int64]{DataPoints: []metricdata.DataPoint[int64]{point}, Temporality: metricdata.DeltaTemporality, IsMonotonic: true},
+		metricdata.Sum[int64]{DataPoints: []metricdata.DataPoint[int64]{point}, Temporality: metricdata.Temporality(255), IsMonotonic: true},
+		metricdata.Sum[int64]{DataPoints: []metricdata.DataPoint[int64]{{Attributes: attributes, Value: -1}}, Temporality: metricdata.CumulativeTemporality, IsMonotonic: true},
+		metricdata.Histogram[int64]{DataPoints: []metricdata.HistogramDataPoint[int64]{{Attributes: attributes, Count: 1, BucketCounts: []uint64{1}}}, Temporality: metricdata.CumulativeTemporality},
+	}
+	for index, candidate := range invalid {
+		if got, accepted := projection.projectAggregation(candidate, descriptor); accepted {
+			t.Fatalf("invalid aggregation %d = %#v, %t", index, got, accepted)
+		}
+	}
+}
+
+func TestMetricProjectionRejectsMalformedHistogramWireData(t *testing.T) {
+	projection := newExportProjection(validTelemetryConfig())
+	descriptor := projection.metricSignals[vvotel.MetricStorageOperationBytes][0]
+	attributes := attribute.NewSet(
+		vvotel.AttrComponent.String(vvotel.ComponentStorage),
+		vvotel.AttrOperationName.String(vvotel.OpStoragePut),
+		vvotel.AttrOperationOutcome.String(vvotel.OutcomeOk),
+	)
+	validPoint := metricdata.HistogramDataPoint[int64]{
+		Attributes:   attributes,
+		Count:        1,
+		Sum:          1,
+		BucketCounts: []uint64{1},
+		Min:          metricdata.NewExtrema[int64](1),
+		Max:          metricdata.NewExtrema[int64](1),
+	}
+	valid := metricdata.Histogram[int64]{DataPoints: []metricdata.HistogramDataPoint[int64]{validPoint}, Temporality: metricdata.CumulativeTemporality}
+	if _, ok := projection.projectAggregation(valid, descriptor); !ok {
+		t.Fatal("valid histogram was rejected")
+	}
+
+	badBucketLength := validPoint
+	badBucketLength.Bounds = []float64{1}
+	badCount := validPoint
+	badCount.Count = 2
+	badBounds := validPoint
+	badBounds.Bounds = []float64{2, 1}
+	badBounds.BucketCounts = []uint64{0, 0, 1}
+	badNaNBound := validPoint
+	badNaNBound.Bounds = []float64{math.NaN()}
+	badNaNBound.BucketCounts = []uint64{0, 1}
+	badExtrema := validPoint
+	badExtrema.Min = metricdata.NewExtrema[int64](2)
+	badExtrema.Max = metricdata.NewExtrema[int64](1)
+	badDomain := validPoint
+	badDomain.Min = metricdata.NewExtrema[int64](-1)
+	badSum := validPoint
+	badSum.Sum = -1
+	badSum.Min = metricdata.Extrema[int64]{}
+	badSum.Max = metricdata.Extrema[int64]{}
+	tooMany := make([]metricdata.HistogramDataPoint[int64], descriptor.SeriesBudget+1)
+	for index := range tooMany {
+		tooMany[index] = validPoint
+	}
+	invalid := []metricdata.Aggregation{
+		metricdata.Histogram[int64]{DataPoints: []metricdata.HistogramDataPoint[int64]{badBucketLength}, Temporality: metricdata.CumulativeTemporality},
+		metricdata.Histogram[int64]{DataPoints: []metricdata.HistogramDataPoint[int64]{badCount}, Temporality: metricdata.CumulativeTemporality},
+		metricdata.Histogram[int64]{DataPoints: []metricdata.HistogramDataPoint[int64]{badBounds}, Temporality: metricdata.CumulativeTemporality},
+		metricdata.Histogram[int64]{DataPoints: []metricdata.HistogramDataPoint[int64]{badNaNBound}, Temporality: metricdata.CumulativeTemporality},
+		metricdata.Histogram[int64]{DataPoints: []metricdata.HistogramDataPoint[int64]{badExtrema}, Temporality: metricdata.CumulativeTemporality},
+		metricdata.Histogram[int64]{DataPoints: []metricdata.HistogramDataPoint[int64]{badDomain}, Temporality: metricdata.CumulativeTemporality},
+		metricdata.Histogram[int64]{DataPoints: []metricdata.HistogramDataPoint[int64]{badSum}, Temporality: metricdata.CumulativeTemporality},
+		metricdata.Histogram[int64]{DataPoints: tooMany, Temporality: metricdata.CumulativeTemporality},
+		metricdata.ExponentialHistogram[int64]{DataPoints: []metricdata.ExponentialHistogramDataPoint[int64]{{Attributes: attributes, Count: 1, Sum: 1, PositiveBucket: metricdata.ExponentialBucket{Counts: []uint64{1}}}}, Temporality: metricdata.CumulativeTemporality},
+	}
+	for index, candidate := range invalid {
+		if value, ok := projection.projectAggregation(candidate, descriptor); ok {
+			t.Fatalf("invalid histogram %d = %#v", index, value)
+		}
+	}
+}
+
+func TestDefaultMetricExporterForcesStableMetricWireContract(t *testing.T) {
+	t.Setenv("OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE", "delta")
+	t.Setenv("OTEL_EXPORTER_OTLP_METRICS_DEFAULT_HISTOGRAM_AGGREGATION", "base2_exponential_bucket_histogram")
+	exporter, err := defaultTelemetryFactories().metricExporter(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = exporter.Shutdown(context.Background()) })
+	for kind := sdkmetric.InstrumentKindCounter; kind <= sdkmetric.InstrumentKindGauge; kind++ {
+		if got := exporter.Temporality(kind); got != metricdata.CumulativeTemporality {
+			t.Fatalf("temporality(%v) = %v", kind, got)
+		}
+	}
+	if _, ok := exporter.Aggregation(sdkmetric.InstrumentKindHistogram).(sdkmetric.AggregationExplicitBucketHistogram); !ok {
+		t.Fatalf("histogram aggregation = %T", exporter.Aggregation(sdkmetric.InstrumentKindHistogram))
+	}
+}
+
+func TestMetricProjectionFiltersMalformedExemplarsAndClonesNewAttributeTypes(t *testing.T) {
+	projection := newExportProjection(validTelemetryConfig())
+	descriptor := projection.metricSignals[vvotel.MetricStorageOperationBytes][0]
+	validTraceID := append([]byte{1}, make([]byte, 15)...)
+	validSpanID := append([]byte{2}, make([]byte, 7)...)
+	exemplars := []metricdata.Exemplar[int64]{
+		{Value: 1, TraceID: validTraceID, SpanID: validSpanID},
+		{Value: -1, TraceID: validTraceID, SpanID: validSpanID},
+		{Value: 1, TraceID: make([]byte, 16), SpanID: make([]byte, 8)},
+		{Value: 1, TraceID: []byte{1}, SpanID: []byte{2}},
+	}
+	projected := projectExemplars(projection, exemplars, descriptor)
+	if len(projected) != 1 || len(projected[0].TraceID) != 16 || len(projected[0].SpanID) != 8 {
+		t.Fatalf("projected exemplars=%#v", projected)
+	}
+	validTraceID[0] = 9
+	validSpanID[0] = 9
+	if projected[0].TraceID[0] != 1 || projected[0].SpanID[0] != 2 {
+		t.Fatal("projected exemplar retained identifier slices")
+	}
+
+	value := attribute.SliceValue(
+		attribute.ByteSliceValue([]byte{1, 2, 3}),
+		attribute.SliceValue(attribute.StringValue("nested")),
+	)
+	cloned := cloneAttribute(attribute.KeyValue{Key: "nested", Value: value})
+	if cloned.Value.Type() != attribute.SLICE || len(cloned.Value.AsSlice()) != 2 || cloned.Value.AsSlice()[0].Type() != attribute.BYTESLICE || cloned.Value.AsSlice()[1].Type() != attribute.SLICE {
+		t.Fatalf("cloned value=%#v", cloned.Value)
+	}
+}
+
 func TestTelemetryLifecycleContainsPanicsAndReleasesState(t *testing.T) {
 	t.Run("flush", func(t *testing.T) {
 		traceProvider := &hostileLifecycleProvider{panicFlush: true}
@@ -420,7 +689,7 @@ func TestTelemetryLifecycleGoexitCannotStrandState(t *testing.T) {
 		case <-time.After(2 * time.Second):
 			t.Fatal("Shutdown stranded after Goexit flush")
 		}
-		if metricProvider.flushCalls.Load() != 0 {
+		if metricProvider.flushCalls.Load() != 1 {
 			t.Fatalf("metric flush calls after trace Goexit = %d", metricProvider.flushCalls.Load())
 		}
 	})
@@ -442,7 +711,7 @@ func TestTelemetryLifecycleGoexitCannotStrandState(t *testing.T) {
 		if err := lifecycle.Shutdown(t.Context()); !errors.Is(err, ErrTelemetryLifecycle) {
 			t.Fatalf("cached Shutdown = %v", err)
 		}
-		if traceProvider.shutdownCalls.Load() != 1 || metricProvider.shutdownCalls.Load() != 0 {
+		if traceProvider.shutdownCalls.Load() != 1 || metricProvider.shutdownCalls.Load() != 1 {
 			t.Fatalf("shutdown calls = %d/%d", traceProvider.shutdownCalls.Load(), metricProvider.shutdownCalls.Load())
 		}
 	})

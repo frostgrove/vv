@@ -29,18 +29,35 @@ func NewTransportSpanExporter(next sdktrace.SpanExporter, policy TraceProjection
 	if nilInterface(next) {
 		return nil, ErrInvalidSpanExporter
 	}
-	return &projectingSpanExporter{next: next, policy: compileTracePolicy(policy)}, nil
+	compiled, err := compileTracePolicy(policy)
+	if err != nil {
+		return nil, err
+	}
+	return &projectingSpanExporter{next: next, policy: compiled}, nil
 }
 
-func compileTracePolicy(policy TraceProjectionPolicy) compiledTracePolicy {
+func compileTracePolicy(policy TraceProjectionPolicy) (compiledTracePolicy, error) {
+	if len(policy.RouterTables) > maxNativeProjectionTables {
+		return compiledTracePolicy{}, ErrInvalidProjectionPolicy
+	}
+	resources, err := compileNativeResources(policy.ResourceAttributes)
+	if err != nil {
+		return compiledTracePolicy{}, err
+	}
 	compiled := compiledTracePolicy{
 		httpNames:  map[string]struct{}{fallbackHTTPName: {}},
 		httpRoutes: make(map[string]struct{}),
 		rpcNames:   map[string]struct{}{fallbackRPCName: {}},
-		resources:  make(map[string]attribute.Value, len(policy.ResourceAttributes)),
+		resources:  resources,
 	}
+	routeCount := 0
 	if policy.HTTPRoutes != nil {
 		policy.HTTPRoutes.mu.Lock()
+		if len(policy.HTTPRoutes.entries) > maxNativeRoutes {
+			policy.HTTPRoutes.mu.Unlock()
+			return compiledTracePolicy{}, ErrInvalidProjectionPolicy
+		}
+		routeCount = len(policy.HTTPRoutes.entries)
 		for pattern := range policy.HTTPRoutes.entries {
 			compiled.httpNames[pattern] = struct{}{}
 			compiled.httpRoutes[pattern] = struct{}{}
@@ -51,6 +68,10 @@ func compileTracePolicy(policy TraceProjectionPolicy) compiledTracePolicy {
 		policy.HTTPRoutes.mu.Unlock()
 	}
 	for _, table := range policy.RouterTables {
+		if len(table.names) > maxNativeRoutes-routeCount {
+			return compiledTracePolicy{}, ErrInvalidProjectionPolicy
+		}
+		routeCount += len(table.names)
 		for _, name := range table.names {
 			compiled.httpNames[name] = struct{}{}
 		}
@@ -61,10 +82,7 @@ func compileTracePolicy(policy TraceProjectionPolicy) compiledTracePolicy {
 	for _, name := range policy.RPCMethods.methods {
 		compiled.rpcNames[name] = struct{}{}
 	}
-	for _, item := range policy.ResourceAttributes {
-		compiled.resources[string(item.Key)] = item.Value
-	}
-	return compiled
+	return compiled, nil
 }
 
 type compiledTracePolicy struct {
@@ -80,13 +98,16 @@ type projectingSpanExporter struct {
 }
 
 func (e *projectingSpanExporter) ExportSpans(ctx context.Context, spans []sdktrace.ReadOnlySpan) error {
-	projected := make([]sdktrace.ReadOnlySpan, len(spans))
-	for index, span := range spans {
-		if _, known := nativeScope(span.InstrumentationScope()); !known {
-			projected[index] = span
+	projected := make([]sdktrace.ReadOnlySpan, 0, len(spans))
+	for _, span := range spans {
+		scope, known := nativeScope(span.InstrumentationScope())
+		if !known {
+			projected = append(projected, span)
 			continue
 		}
-		projected[index] = newProjectedSpan(span, e.policy)
+		if scope.Name != "" {
+			projected = append(projected, newProjectedSpan(span, e.policy))
+		}
 	}
 	return e.next.ExportSpans(ctx, projected)
 }
@@ -193,13 +214,12 @@ func nativeScope(scope instrumentation.Scope) (instrumentation.Scope, bool) {
 	if !known {
 		return instrumentation.Scope{}, false
 	}
-	version := expectedVersion
 	if scope.Version != expectedVersion || scope.SchemaURL != "" {
-		version = "_OTHER"
+		return instrumentation.Scope{}, true
 	}
 	return instrumentation.Scope{
 		Name:       scope.Name,
-		Version:    version,
+		Version:    expectedVersion,
 		Attributes: attribute.NewSet(),
 	}, true
 }

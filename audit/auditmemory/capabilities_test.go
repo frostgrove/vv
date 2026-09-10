@@ -17,12 +17,12 @@ func TestMemoryStoreAdvertisesOnlyImplementedAlphaCapabilities(t *testing.T) {
 		t.Fatal(err)
 	}
 	view := store.Capabilities().View()
-	if view.Transactions != audit.SupportSupported || view.Idempotency != audit.SupportSupported || view.Reconciliation != audit.SupportSupported || view.ExactInspection != audit.SupportSupported {
+	if view.Transactions != audit.SupportSupported || view.Idempotency != audit.SupportSupported || view.Reconciliation != audit.SupportSupported || view.ExactInspection != audit.SupportSupported || view.AttemptLifecycle != audit.SupportSupported {
 		t.Fatalf("base capabilities = %+v", view)
 	}
 	if view.CrossSystemAtomic != audit.SupportUnsupported || view.Persistence != audit.SupportUnsupported ||
 		view.StableSearch != audit.SupportUnsupported ||
-		view.AttemptLifecycle != audit.SupportUnsupported || view.Holds != audit.SupportUnsupported || view.PurgePlanning != audit.SupportUnsupported {
+		view.Holds != audit.SupportUnsupported || view.PurgePlanning != audit.SupportUnsupported {
 		t.Fatalf("unimplemented capability advertised: %+v", view)
 	}
 }

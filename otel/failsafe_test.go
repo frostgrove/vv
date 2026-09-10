@@ -37,7 +37,7 @@ func TestTelemetry_TypedNilProviderIsRejected(t *testing.T) {
 	}
 }
 
-func TestLegacyPanicNilModePreservesPanicAndGoexitSemantics(t *testing.T) {
+func TestPanicNilWithNilRecoverPreservesPanicAndGoexitSemantics(t *testing.T) {
 	targets := []string{
 		"TestService_PanicNilIsNotSuppressed",
 		"TestStorage_PanicNilIsNotSuppressed",
@@ -65,12 +65,12 @@ func TestLegacyPanicNilModePreservesPanicAndGoexitSemantics(t *testing.T) {
 	command.Env = append(environment, "GODEBUG=panicnil=1")
 	output, err := command.CombinedOutput()
 	if err != nil {
-		t.Fatalf("legacy panicnil child failed: %v\n%s", err, output)
+		t.Fatalf("panic(nil) child failed: %v\n%s", err, output)
 	}
 	transcript := string(output)
 	for _, target := range targets {
 		if !strings.Contains(transcript, "=== RUN   "+target) || !strings.Contains(transcript, "--- PASS: "+target) {
-			t.Fatalf("legacy panicnil child did not execute and pass %s:\n%s", target, transcript)
+			t.Fatalf("panic(nil) child did not execute and pass %s:\n%s", target, transcript)
 		}
 	}
 }

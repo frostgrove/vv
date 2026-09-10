@@ -175,6 +175,25 @@ func appendIntentDigestOf(view RevisionWireView) AppendIntentDigest {
 	return output
 }
 
+func attemptAppendIntentDigestOf(view RevisionWireView, attempt AttemptConditionalAppendView) AppendIntentDigest {
+	digest := sha256.New()
+	writeFrame(digest, []byte("frostgrove.audit/attempt-append-intent/v1"))
+	writeRevisionHeader(digest, view.Header, true)
+	writeFrame(digest, view.Header.Integrity[:])
+	writeSeal(digest, view.Header.Seal)
+	envelope := envelopeDigestOf(view)
+	writeFrame(digest, envelope[:])
+	writeFrame(digest, attempt.Chain[:])
+	writeAttemptProjectionState(digest, attempt.Expected)
+	writeAttemptTypeProjectionState(digest, attempt.TypeExpected)
+	writeFrame(digest, attempt.ResumeAuthorization[:])
+	writeAttemptProjectionState(digest, attempt.Candidate.Result)
+	writeAttemptTypeProjectionState(digest, attempt.Candidate.TypeResult)
+	var output AppendIntentDigest
+	copy(output[:], digest.Sum(nil))
+	return output
+}
+
 func writeRevisionHeader(output interface{ Write([]byte) (int, error) }, header RevisionHeaderView, includeEnvelope bool) {
 	writeUint32(output, uint32(header.Format))
 	writeFrame(output, header.Log[:])
@@ -238,6 +257,100 @@ func writeItem(output interface{ Write([]byte) (int, error) }, item ItemWireView
 		writeStoredValue(output, change.Before)
 		writeStoredValue(output, change.After)
 	}
+	if item.Kind == AttemptItem {
+		writeAttemptTransition(output, item.Attempt)
+	}
+}
+
+func writeAttemptTransition(output interface{ Write([]byte) (int, error) }, value AttemptTransitionWireView) {
+	writeFrame(output, value.Chain[:])
+	writeFrame(output, value.Policy[:])
+	writeFrame(output, value.Replay[:])
+	writeFrame(output, []byte(value.Operation))
+	writeFrame(output, value.OperationID[:])
+	writeBool(output, value.ScopePresent)
+	writeFrame(output, value.Scope[:])
+	writeItemRef(output, value.Start)
+	writeUint32(output, uint32(value.Sequence))
+	writeUint32(output, uint32(value.CheckpointCount))
+	writeUint32(output, uint32(value.Kind))
+	writeFrame(output, []byte(value.Checkpoint))
+	writeTime(output, value.ExpiresAt)
+	writeAttemptProjectionState(output, value.Expected)
+	writeAttemptProjectionNext(output, value.Result)
+	writeAttemptTypeProjectionState(output, value.TypeExpected)
+	writeAttemptTypeProjectionNext(output, value.TypeResult)
+	writeFrame(output, value.ResumeAuthorization[:])
+}
+
+func writeAttemptProjectionState(output interface{ Write([]byte) (int, error) }, value AttemptProjectionStateView) {
+	writeBool(output, value.Present)
+	writeFrame(output, value.Chain[:])
+	writeFrame(output, value.Policy[:])
+	writeFrame(output, value.Replay[:])
+	writeFrame(output, []byte(value.Operation))
+	writeFrame(output, value.OperationID[:])
+	writeBool(output, value.TargetPresent)
+	writeFrame(output, value.Target[:])
+	writeBool(output, value.ScopePresent)
+	writeFrame(output, value.Scope[:])
+	writeFrame(output, value.Owner[:])
+	writeUint32(output, uint32(value.State))
+	writeUint32(output, uint32(value.Sequence))
+	writeUint32(output, uint32(value.CheckpointCount))
+	writeUint64(output, value.TransitionBytes)
+	writeItemRef(output, value.Start)
+	writeItemRef(output, value.Head)
+	writeFrame(output, value.Leaf[:])
+	writeTime(output, value.ExpiresAt)
+}
+
+func writeAttemptProjectionNext(output interface{ Write([]byte) (int, error) }, value AttemptProjectionNextView) {
+	writeBool(output, value.Present)
+	writeFrame(output, value.Chain[:])
+	writeFrame(output, value.Policy[:])
+	writeFrame(output, value.Replay[:])
+	writeFrame(output, []byte(value.Operation))
+	writeFrame(output, value.OperationID[:])
+	writeBool(output, value.TargetPresent)
+	writeFrame(output, value.Target[:])
+	writeBool(output, value.ScopePresent)
+	writeFrame(output, value.Scope[:])
+	writeFrame(output, value.Owner[:])
+	writeUint32(output, uint32(value.State))
+	writeUint32(output, uint32(value.Sequence))
+	writeUint32(output, uint32(value.CheckpointCount))
+	writeUint64(output, value.TransitionBytes)
+	writeItemRef(output, value.Start)
+	writeItemRef(output, value.Head)
+	writeTime(output, value.ExpiresAt)
+}
+
+func writeAttemptTypeProjectionState(output interface{ Write([]byte) (int, error) }, value AttemptTypeProjectionStateView) {
+	writeFrame(output, []byte(value.Catalog))
+	writeFrame(output, []byte(value.Operation))
+	writeFrame(output, value.Policy[:])
+	writeFrame(output, value.Replay[:])
+	writeFrame(output, value.Anchor[:])
+	writeUint64(output, value.Unsettled)
+	writeItemRef(output, value.Head)
+	writeFrame(output, value.Leaf[:])
+}
+
+func writeAttemptTypeProjectionNext(output interface{ Write([]byte) (int, error) }, value AttemptTypeProjectionNextView) {
+	writeFrame(output, []byte(value.Catalog))
+	writeFrame(output, []byte(value.Operation))
+	writeFrame(output, value.Policy[:])
+	writeFrame(output, value.Replay[:])
+	writeFrame(output, value.Anchor[:])
+	writeUint64(output, value.Unsettled)
+	writeItemRef(output, value.Head)
+}
+
+func writeItemRef(output interface{ Write([]byte) (int, error) }, value ItemRef) {
+	writeCatalogRef(output, value.Revision.Catalog)
+	writeFrame(output, value.Revision.Revision[:])
+	writeUint32(output, uint32(value.Ordinal))
 }
 
 func writeStoredValue(output interface{ Write([]byte) (int, error) }, value StoredValueView) {

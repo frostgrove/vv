@@ -180,8 +180,16 @@ func TestFullStackHTTPServiceCRUDSQLUsesOneTraceTree(t *testing.T) {
 		sdkmetric.WithReader(reader),
 		sdkmetric.WithResource(telemetryResource),
 	}
-	metricOptions = append(metricOptions, TransportMetricOptions(transportPolicy)...)
-	metricOptions = append(metricOptions, DatabaseMetricOptions()...)
+	transportViews, err := TransportMetricOptions(transportPolicy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	databaseViews, err := DatabaseMetricOptions()
+	if err != nil {
+		t.Fatal(err)
+	}
+	metricOptions = append(metricOptions, transportViews...)
+	metricOptions = append(metricOptions, databaseViews...)
 	meterProvider := sdkmetric.NewMeterProvider(metricOptions...)
 	t.Cleanup(func() {
 		_ = meterProvider.Shutdown(context.Background())

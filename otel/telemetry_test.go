@@ -30,13 +30,10 @@ func TestTelemetry_ConfigurationAndEagerInstruments(t *testing.T) {
 	mp := newTestMeterProvider()
 
 	_, err = vvotel.New(vvotel.Config{
-		TracerProvider:         tp,
-		MeterProvider:          mp,
-		ResourceName:           "inventory",
-		CommandTracesDisabled:  true,
-		StorageTracesDisabled:  false,
-		CommandMetricsDisabled: false,
-		CacheMetricsDisabled:   false,
+		TracerProvider: tp,
+		MeterProvider:  mp,
+		ResourceName:   "inventory",
+		Disable:        vvotel.Signals{vvotel.SignalCommandSpan},
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)

@@ -138,8 +138,9 @@ one line of code and it is the whole of the layering — a kind is not HTTP, and
 
    A source that also implements `errs.LocalizedMessageSource` returns the
    locale of the template that actually won. `port.Violations` keeps it in the
-   non-JSON `Violation.MessageLocale`; the HTTP renderer emits the sorted
-   proven set as `Content-Language`. A legacy source contributes wording but no
+   transport-neutral `Violation.MessageLocale`; the HTTP envelope projects it
+   beside that violation as `message_locale` and emits the sorted proven set as
+   `Content-Language`. A source with only `Message` contributes wording but no
    locale metadata, so a raw requested tag is never presented as proof.
 
    `crud/rpc/crudgrpc/status.go:StatusRenderer.Render` is the same five steps in the
@@ -275,7 +276,7 @@ out of the request's own words ([[D-044]], [[UC-015]] guarantee 11).
 | `errs/code.go` | `Code` and its constants; `Kind`, its nine constants and `Kind.String` |
 | `errs/codes.go` | `Codes` — the wired vocabulary — `StandardCodes`, `Add`, `KindOf`, `MessageFor`, the placeholder-expanding `MessageSource` method `Message`, and `ErrCodeRedeclared` |
 | `errs/path.go` | `Step`, `Path`, `Named`, `Indexed`, the three renderings (`MarshalJSON`, `String`, `Pointer`) and `ParsePath` |
-| `errs/violation.go` | `Origin`, `Source`, `Violation` and its public projection; `MessageLocale` is retained for transport metadata but deliberately omitted from the custom JSON form |
+| `errs/violation.go` | `Origin`, `Source`, `Violation` and its transport-neutral public projection; its general JSON form omits `MessageLocale`, while each transport owns the provenance field it emits |
 | `errs/fault.go` | `Detail`, `Fault`, `Fault.Error`, `Fault.Unwrap`, `Fault.MarshalJSON`, `AsFault` |
 | `errs/build.go` | `Builder` and `P` — the hand-built fault, and `Wrapping`, the only way a sentinel is attached. The rule that resolves the chain's ambiguity, which the plan was silent on: `Code`, `Params` and `Message` apply to the violation the most recent `Field`/`At`/`General` opened; with none open, `Code` and `Message` fall to the fault, and the four steps with no fault-level meaning — `Params`, `Origin`, `Source`, `Approximate` — open a general violation rather than dropping what they were given, so a misordered chain produces a visibly odd fault instead of a silently empty one ([[D-021]]). `Fault()` copies path, params and column lists deep, so a resolver rewriting a hop in place cannot reach a fault the builder already handed back |
 | `errs/spi.go` | `Classifier`, `Resolver`, `CodeMapper`, `MessageSource`, optional `LocalizedMessageSource`, and `Chain`. No `Renderer`: it is HTTP-shaped and lives in `port/porthttp` ([[D-045]], [[D-059]]) |

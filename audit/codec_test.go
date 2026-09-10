@@ -167,7 +167,7 @@ func TestCustomCodecFreezesItsManifestAndOutput(t *testing.T) {
 		WriteVersion: 2,
 		ReadVersions: versions,
 		Fixtures: []audit.CodecWireFixture{
-			audit.GoldenWire("legacy", 1, wire, current),
+			audit.GoldenWire("retained", 1, wire, current),
 			audit.GoldenWire("current", 2, current, current),
 			audit.RejectedWire("invalid", 1, []byte("bad")),
 		},
@@ -195,7 +195,7 @@ func (*strictVersionedTextEngine) Encode(value string) ([]byte, error) { return 
 func (*strictVersionedTextEngine) Decode(version audit.CodecVersion, wire []byte) (string, error) {
 	if version == 1 {
 		if !bytes.HasPrefix(wire, []byte("v1:")) {
-			return "", errors.New("invalid legacy wire")
+			return "", errors.New("invalid retained wire")
 		}
 		return string(wire[3:]), nil
 	}

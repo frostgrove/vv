@@ -309,7 +309,11 @@ func captureNativeRuntimeBudgetFixture(t *testing.T) (metricdata.ResourceMetrics
 	options = append(options, RuntimeMetricOptions()...)
 	provider := sdkmetric.NewMeterProvider(options...)
 	defer provider.Shutdown(context.Background())
-	if err = StartRuntimeMetrics(provider); err != nil {
+	runtimeMetrics, err := NewRuntimeMetrics(provider)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = runtimeMetrics.Start(); err != nil {
 		t.Fatal(err)
 	}
 	if err = provider.ForceFlush(context.Background()); err != nil {

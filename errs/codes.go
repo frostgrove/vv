@@ -123,12 +123,15 @@ func (this *Codes) MessageFor(code Code) (string, bool) {
 	return d.Message, true
 }
 
-func (this *Codes) Message(_ context.Context, violation Violation, _ string) (string, bool) {
+func (this *Codes) Message(ctx context.Context, violation Violation, _ string) (string, bool) {
+	if contextDone(ctx) {
+		return "", false
+	}
 	template, ok := this.MessageFor(violation.Code)
 	if !ok {
 		return "", false
 	}
-	return expand(template, violation.Params)
+	return expand(ctx, template, violation.Params)
 }
 
 func (this *Codes) all() []Code {

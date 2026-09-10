@@ -2,6 +2,7 @@ package port
 
 import (
 	"context"
+	"unicode/utf8"
 
 	"github.com/frostgrove/vv/errs"
 )
@@ -35,6 +36,15 @@ func Violations(ctx context.Context, f *errs.Fault, o *ViolationOptions) []errs.
 			code = CodeForKind(f.Kind)
 		}
 		vs = append(vs, errs.Violation{Code: code, Message: f.Message})
+	}
+	fallbackCode := f.Code
+	if !ValidErrorCode(fallbackCode) {
+		fallbackCode = CodeForKind(f.Kind)
+	}
+	for i := range vs {
+		if !ValidErrorCode(vs[i].Code) {
+			vs[i].Code = fallbackCode
+		}
 	}
 
 	resolvers := append(HopsFrom(ctx), o.Resolvers...)
@@ -77,33 +87,47 @@ func samePath(a, b errs.Path) bool {
 func message(ctx context.Context, v errs.Violation, locale string, o *ViolationOptions) (string, string) {
 	if o.Messages != nil {
 		if localized, ok := o.Messages.(errs.LocalizedMessageSource); ok {
-			if m, actual, found := localized.MessageWithLocale(ctx, v, locale); found && m != "" {
-				if !validMessageLocale(actual) {
+			if m, actual, found := localized.MessageWithLocale(ctx, v, locale); found && ValidMessageText(m) {
+				if !ValidMessageLocale(actual) {
 					actual = ""
 				}
 				return m, actual
 			}
-		} else if m, ok := o.Messages.Message(ctx, v, locale); ok && m != "" {
+		} else if m, ok := o.Messages.Message(ctx, v, locale); ok && ValidMessageText(m) {
 			return m, ""
 		}
 	}
-	if v.Message != "" {
+	if ValidMessageText(v.Message) {
 		return v.Message, ""
 	}
 	if o.Codes != nil {
-		if m, ok := o.Codes.Message(ctx, v, locale); ok && m != "" {
+		if m, ok := o.Codes.Message(ctx, v, locale); ok && ValidMessageText(m) {
 			return m, ""
 		}
-		return string(v.Code), ""
+		if ValidMessageText(string(v.Code)) {
+			return string(v.Code), ""
+		}
+		return "", ""
 	}
-	if m, ok := DefaultMessage(v.Code); ok {
+	if m, ok := DefaultMessage(v.Code); ok && ValidMessageText(m) {
 		return m, ""
 	}
-	return string(v.Code), ""
+	if ValidMessageText(string(v.Code)) {
+		return string(v.Code), ""
+	}
+	return "", ""
 }
 
-func validMessageLocale(locale string) bool {
-	if locale == "" || len(locale) > 128 {
+func ValidMessageText(message string) bool {
+	return message != "" && len(message) <= errs.MaxMessageOutputBytes && utf8.ValidString(message)
+}
+
+func ValidErrorCode(code errs.Code) bool {
+	return code != "" && len(code) <= errs.MaxMessageKeyBytes && utf8.ValidString(string(code))
+}
+
+func ValidMessageLocale(locale string) bool {
+	if locale == "" || len(locale) > errs.MaxLocaleBytes {
 		return false
 	}
 	previousHyphen := true

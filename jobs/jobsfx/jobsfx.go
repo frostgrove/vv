@@ -336,12 +336,16 @@ func (this *queueLifecycle) verifySupervision() error {
 }
 
 func prepareBackend(ctx context.Context, preparer backendPreparer) (err error) {
+	completed := false
 	defer func() {
-		if recover() != nil {
+		_ = recover()
+		if !completed {
 			err = jobs.ErrDriver
 		}
 	}()
-	return preparer.Prepare(ctx)
+	err = preparer.Prepare(ctx)
+	completed = true
+	return err
 }
 
 // stop asks the supervisor to stop before it closes the activation, because the

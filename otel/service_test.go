@@ -57,6 +57,13 @@ func fakeListResult() crud.PaginatedResponse[dummyModel] {
 	}
 }
 
+func TestServiceRejectsTypedNilDependency(t *testing.T) {
+	var next *fakePortService
+	if wrapped := vvotel.WrapService[dummyModel, string, dummyModel](nil, next); wrapped != nil {
+		t.Fatalf("typed-nil service wrapped as %#v", wrapped)
+	}
+}
+
 type fakePortService struct {
 	lastCtx            context.Context
 	calls              int
@@ -604,7 +611,7 @@ func TestService_AllTenCommandsPreserveOneCallAcrossOutcomes(t *testing.T) {
 					t.Fatalf("business calls=%d by_operation=%v, want only %s once", raw.calls, raw.operationCalls, operation)
 				}
 				fixture.assertCaptured(t, raw, operation)
-				if raw.lastCtx.Value(spanKey{}) == nil {
+				if !hasTestSpan(raw.lastCtx) {
 					t.Fatal("derived context not passed to the business operation")
 				}
 				if len(tp.spans) != 1 || tp.endCalls != 1 {
@@ -751,10 +758,9 @@ func TestService_NilAndDisabledPreservesBehavior(t *testing.T) {
 	tp := newTestTracerProvider()
 	mp := newTestMeterProvider()
 	telDisabled, _ := vvotel.New(vvotel.Config{
-		TracerProvider:         tp,
-		MeterProvider:          mp,
-		CommandTracesDisabled:  true,
-		CommandMetricsDisabled: true,
+		TracerProvider: tp,
+		MeterProvider:  mp,
+		Disable:        vvotel.Signals{vvotel.SignalCommandSpan, vvotel.SignalCommandDuration},
 	})
 	svcDisabled := vvotel.Service[dummyModel, string, dummyModel](telDisabled)(raw)
 	res, err = svcDisabled.Get(context.Background(), port.GetCommand[string]{ID: "xyz"})

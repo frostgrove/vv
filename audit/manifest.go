@@ -276,6 +276,7 @@ func writeContextDescription(output interface{ Write([]byte) (int, error) }, val
 func writeAttemptDescription(output interface{ Write([]byte) (int, error) }, value AttemptDescription) {
 	writeFrame(output, []byte(value.Operation))
 	writeFrame(output, value.Fingerprint[:])
+	writeFrame(output, value.Replay[:])
 	writeUint64(output, uint64(value.MaxOpen))
 	writeUint32(output, uint32(value.MaxCheckpoints))
 	writeUint64(output, value.MaxStateBytes)

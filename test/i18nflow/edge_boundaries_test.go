@@ -129,7 +129,7 @@ func TestFormattingFailureFallsBackToSafeHTTPWording(t *testing.T) {
 				t.Fatalf("fallback claimed template locale %q", language)
 			}
 			violation := validationViolation(t, result.body)
-			if violation.Field != "name" || violation.Code != string(capacityCode) || violation.Message != "capacity conflict" {
+			if violation.Field != "name" || violation.Code != string(capacityCode) || violation.Message != "capacity conflict" || violation.Locale != "" {
 				t.Fatalf("fallback violation = %+v", violation)
 			}
 			if bytes.Contains(result.body, []byte("do-not-leak")) {
@@ -150,7 +150,7 @@ func TestPartialFaultIsExplicitAcrossHTTPAndGRPCBoundaries(t *testing.T) {
 				t.Fatalf("partial response = %d in %q: %s", result.status, result.header.Get("Content-Language"), result.body)
 			}
 			isPartial, violations := strictHTTPValidation(t, result.body)
-			if !isPartial || len(violations) != 1 || violations[0].Message != "nom a 2 conflits" {
+			if !isPartial || len(violations) != 1 || violations[0].Message != "nom a 2 conflits" || violations[0].MessageLocale != "fr" {
 				t.Fatalf("partial envelope = %v %+v", isPartial, violations)
 			}
 		})
@@ -175,6 +175,7 @@ type wireViolation struct {
 	Field   string
 	Code    string
 	Message string
+	Locale  string
 }
 
 func validationViolation(t testing.TB, body []byte) wireViolation {
@@ -185,6 +186,7 @@ func validationViolation(t testing.TB, body []byte) wireViolation {
 				Field   []any  `json:"field"`
 				Code    string `json:"error_code"`
 				Message string `json:"message"`
+				Locale  string `json:"message_locale"`
 			} `json:"validation"`
 		} `json:"errors"`
 	}
@@ -199,7 +201,7 @@ func validationViolation(t testing.TB, body []byte) wireViolation {
 	if len(got.Field) == 1 {
 		field, _ = got.Field[0].(string)
 	}
-	return wireViolation{Field: field, Code: got.Code, Message: got.Message}
+	return wireViolation{Field: field, Code: got.Code, Message: got.Message, Locale: got.Locale}
 }
 
 type routingHTTPBinding struct {
@@ -292,7 +294,7 @@ func TestRouterNativeRefusalsUseNegotiatedMessagesWhereTheAdapterSupportsThem(t 
 						t.Fatalf("refusal = %d in %q, want %d in fr: %s", result.status, result.header.Get("Content-Language"), scenario.status, result.body)
 					}
 					violation := generalViolation(t, result.body)
-					if violation.Code != string(scenario.code) || violation.Message != scenario.message {
+					if violation.Code != string(scenario.code) || violation.Message != scenario.message || violation.Locale != "fr" {
 						t.Fatalf("refusal violation = %+v", violation)
 					}
 				})
@@ -333,7 +335,7 @@ func TestAppFiberRouteSetAccessRefusalUsesTheI18nSnapshot(t *testing.T) {
 		t.Fatalf("RouteSet refusal = calls %d, status %d, locale %q: %s", handlerCalls, response.StatusCode, response.Header.Get("Content-Language"), body)
 	}
 	violation := generalViolation(t, body)
-	if violation.Code != string(errs.CodeUnauthenticated) || violation.Message != "authentification requise" {
+	if violation.Code != string(errs.CodeUnauthenticated) || violation.Message != "authentification requise" || violation.Locale != "fr" {
 		t.Fatalf("RouteSet violation = %+v", violation)
 	}
 }
@@ -345,6 +347,7 @@ func generalViolation(t testing.TB, body []byte) wireViolation {
 			General []struct {
 				Code    string `json:"error_code"`
 				Message string `json:"message"`
+				Locale  string `json:"message_locale"`
 			} `json:"general"`
 		} `json:"errors"`
 	}
@@ -355,7 +358,7 @@ func generalViolation(t testing.TB, body []byte) wireViolation {
 		t.Fatalf("general violations = %d, want one: %s", len(envelope.Errors.General), body)
 	}
 	got := envelope.Errors.General[0]
-	return wireViolation{Code: got.Code, Message: got.Message}
+	return wireViolation{Code: got.Code, Message: got.Message, Locale: got.Locale}
 }
 
 type authHTTPResult struct {
@@ -458,7 +461,7 @@ func TestAuthGuardMiddlewareLocalizesRefusalsAcrossHTTPAdapters(t *testing.T) {
 				t.Fatalf("refusal = %d in %q: %s", result.status, result.header.Get("Content-Language"), result.body)
 			}
 			violation := generalViolation(t, result.body)
-			if violation.Code != string(errs.CodeUnauthenticated) || violation.Message != "authentification requise" {
+			if violation.Code != string(errs.CodeUnauthenticated) || violation.Message != "authentification requise" || violation.Locale != "fr" {
 				t.Fatalf("refusal violation = %+v", violation)
 			}
 			if bytes.Contains(result.body, []byte("signature")) || bytes.Contains(result.body, []byte("key id")) {

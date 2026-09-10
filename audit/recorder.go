@@ -593,6 +593,9 @@ func (r *Recorder) Retry(ctx context.Context, token RetryToken) (RecordResult, e
 
 func validateAppendResult(request AppendRequest, result AppendResult) error {
 	requestView := request.View()
+	if requestView.Attempt.Chain != (AttemptChainID{}) {
+		return validateAttemptAppendResult(requestView, result)
+	}
 	candidate := requestView.Revision.View().Header
 	actual := result.Stored().Revision()
 	if actual.Log != candidate.Log || actual.Catalog != candidate.Catalog || actual.CatalogSet != candidate.CatalogSet || actual.Deployment != candidate.Deployment || actual.Format != candidate.Format || actual.Operation != candidate.Operation || actual.OperationID != candidate.OperationID || actual.Semantic != candidate.Semantic || actual.Retention != candidate.Retention || actual.Consequence != candidate.Consequence || !reflect.DeepEqual(actual.Authorization, candidate.Authorization) {
@@ -608,6 +611,48 @@ func validateAppendResult(request AppendRequest, result AppendResult) error {
 		return auditErrorAt(ErrMalformedEvidence, "append_result")
 	}
 	return nil
+}
+
+func validateAttemptAppendResult(request AppendRequestView, result AppendResult) error {
+	revision := request.Revision.View()
+	candidate := revision.Header
+	actual := result.Stored().Revision()
+	transition, present := result.AttemptTransition()
+	projection, projected := result.AttemptProjection()
+	if len(revision.Items) != 1 || len(request.Attempts) != 1 || !present || !projected {
+		return auditErrorAt(ErrMalformedEvidence, "attempt.append_result")
+	}
+	expected := revision.Items[0].Attempt
+	if actual.RevisionID == candidate.RevisionID {
+		if actual.Log != candidate.Log || actual.Catalog != candidate.Catalog || actual.CatalogSet != candidate.CatalogSet || actual.Deployment != candidate.Deployment || !reflect.DeepEqual(actual, candidate) || result.Stored().Intent() != request.Intent || transition != expected || projection != request.Attempt.Candidate.Result {
+			return auditErrorAt(ErrMalformedEvidence, "attempt.append_result")
+		}
+		return nil
+	}
+	if result.Disposition() != Replayed || actual.Log != candidate.Log || actual.Catalog.ID != candidate.Catalog.ID || actual.Catalog.Generation == 0 || actual.Catalog.Generation > candidate.Catalog.Generation || actual.Deployment != candidate.Deployment || actual.Format != candidate.Format || actual.Operation != candidate.Operation || actual.OperationID != candidate.OperationID || actual.Semantic != candidate.Semantic || actual.Retention != candidate.Retention || actual.Consequence != candidate.Consequence || !candidate.HasIdempotency || !actual.HasIdempotency || !attemptIdempotencyAliasContains(request.Idempotency, actual.Idempotency) {
+		return auditErrorAt(ErrMalformedEvidence, "attempt.append_result")
+	}
+	if transition.Chain != request.Attempt.Chain || transition.Policy != expected.Policy || transition.Replay != expected.Replay || transition.Operation != expected.Operation || transition.OperationID != expected.OperationID || transition.Kind != expected.Kind || projection.Chain != transition.Chain || projection.Policy != transition.Policy || projection.Replay != transition.Replay || projection.Operation != transition.Operation || projection.OperationID != transition.OperationID || projection.Leaf == (LeafDigest{}) {
+		return auditErrorAt(ErrMalformedEvidence, "attempt.append_result")
+	}
+	binding := request.Attempts[0]
+	if binding.Chain() != projection.Chain || binding.Operation() != projection.Operation || binding.Policy() != projection.Policy || binding.Replay() != projection.Replay || binding.OperationID() != projection.OperationID || binding.TargetPresent() != projection.TargetPresent || binding.ScopePresent() != projection.ScopePresent || !identitySetContains(binding.OwnerCommitments(), projection.Owner) || projection.TargetPresent && !identitySetContains(binding.TargetCommitments(), projection.Target) || projection.ScopePresent && !identitySetContains(binding.ScopeCommitments(), projection.Scope) {
+		return auditErrorAt(ErrMalformedEvidence, "attempt.append_result")
+	}
+	return nil
+}
+
+func attemptIdempotencyAliasContains(set IdentityCommitmentSet, token IdempotencyToken) bool {
+	if set.Domain() != CommitIdempotency {
+		return false
+	}
+	for _, alias := range set.Aliases() {
+		value := alias.Bytes()
+		if len(value) == len(token) && bytes.Equal(value, token[:]) {
+			return true
+		}
+	}
+	return false
 }
 
 func (r *Recorder) Lookup(ctx context.Context, key ReconcileKey) (LookupResult, error) {

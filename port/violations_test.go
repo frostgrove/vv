@@ -211,14 +211,83 @@ func TestOnlyAResolvedMessageSourceCanNameTheMessagesActualLocale(t *testing.T) 
 		t.Fatalf("the resolved message locale is %q, want fr", got)
 	}
 
-	legacy := pipelineCtx(t, ctx, f, ViolationOptions{Messages: catalogue{"email.unique": "déjà pris"}})
-	if got := legacy[0].MessageLocale; got != "" {
-		t.Fatalf("a legacy source claimed %q from the requested locale", got)
+	withoutProvenance := pipelineCtx(t, ctx, f, ViolationOptions{Messages: catalogue{"email.unique": "déjà pris"}})
+	if got := withoutProvenance[0].MessageLocale; got != "" {
+		t.Fatalf("a source without provenance claimed %q from the requested locale", got)
 	}
 
 	unsafe := pipelineCtx(t, ctx, f, ViolationOptions{Messages: localizedCatalogue{message: "déjà pris", locale: "fr, private"}})
 	if got := unsafe[0].MessageLocale; got != "" {
 		t.Fatalf("an invalid actual locale survived as %q", got)
+	}
+}
+
+func TestPublicMessageAndLocaleBoundariesAreExact(t *testing.T) {
+	if !ValidMessageText(strings.Repeat("x", errs.MaxMessageOutputBytes)) {
+		t.Fatal("a message exactly at the public output limit was refused")
+	}
+	for name, message := range map[string]string{
+		"empty":         "",
+		"N plus one":    strings.Repeat("x", errs.MaxMessageOutputBytes+1),
+		"invalid UTF-8": string([]byte{0xff}),
+	} {
+		t.Run("message "+name, func(t *testing.T) {
+			if ValidMessageText(message) {
+				t.Fatalf("invalid public message %q was accepted", name)
+			}
+		})
+	}
+
+	if !ValidMessageLocale(strings.Repeat("a", errs.MaxLocaleBytes)) {
+		t.Fatal("a locale exactly at the provenance limit was refused")
+	}
+	for name, locale := range map[string]string{
+		"empty":          "",
+		"N plus one":     strings.Repeat("a", errs.MaxLocaleBytes+1),
+		"leading hyphen": "-fr",
+		"double hyphen":  "fr--CA",
+		"underscore":     "fr_CA",
+		"invalid UTF-8":  string([]byte{0xff}),
+	} {
+		t.Run("locale "+name, func(t *testing.T) {
+			if ValidMessageLocale(locale) {
+				t.Fatalf("invalid message locale %q was accepted", locale)
+			}
+		})
+	}
+}
+
+func TestEveryProjectedViolationGetsABoundedMachineCode(t *testing.T) {
+	f := &errs.Fault{
+		Kind: errs.KindValidation,
+		Violations: []errs.Violation{
+			{Path: errs.Path{errs.Named("missing")}},
+			{Path: errs.Path{errs.Named("oversized")}, Code: errs.Code(strings.Repeat("x", errs.MaxMessageKeyBytes+1))},
+		},
+	}
+	violations := pipeline(t, f, ViolationOptions{})
+	if len(violations) != 2 {
+		t.Fatalf("projected %d violations, want two", len(violations))
+	}
+	for _, violation := range violations {
+		if violation.Code != errs.CodeCheck || violation.Message != "this value is not allowed" {
+			t.Fatalf("unbounded or missing code projected as %+v", violation)
+		}
+	}
+}
+
+func TestAnUnsafeSourceFallsThroughToTheBoundedDefaultMessage(t *testing.T) {
+	f := errs.Conflict().Code(errs.CodeUnique).Field("email").Code(errs.CodeUnique).Fault()
+	for name, message := range map[string]string{
+		"too large":     strings.Repeat("x", errs.MaxMessageOutputBytes+1),
+		"invalid UTF-8": string([]byte{0xff}),
+	} {
+		t.Run(name, func(t *testing.T) {
+			got := pipeline(t, f, ViolationOptions{Messages: localizedCatalogue{message: message, locale: "fr"}})[0]
+			if got.Message != "this value is already taken" || got.MessageLocale != "" {
+				t.Fatalf("unsafe source produced %q at %q", got.Message, got.MessageLocale)
+			}
+		})
 	}
 }
 

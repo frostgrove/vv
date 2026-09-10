@@ -10,7 +10,7 @@ import (
 	"github.com/frostgrove/vv/i18n"
 )
 
-func TestUsageV4CodecRejectsUnsafeScopeStrings(t *testing.T) {
+func TestUsageCodecRejectsUnsafeScopeStrings(t *testing.T) {
 	tests := []struct {
 		name   string
 		field  string
@@ -79,7 +79,7 @@ func TestUsageV4CodecRejectsUnsafeScopeStrings(t *testing.T) {
 			if _, err := encodeUsage(manifest); err == nil || !strings.Contains(err.Error(), test.field) {
 				t.Fatalf("unsafe scope encoding error = %v", err)
 			}
-			raw := forgeUsageV4Document(t, manifest)
+			raw := forgeUsageDocument(t, manifest)
 			if _, err := decodeUsage(raw); err == nil || !strings.Contains(err.Error(), test.field) {
 				t.Fatalf("unsafe scope decoding error = %v", err)
 			}
@@ -87,7 +87,7 @@ func TestUsageV4CodecRejectsUnsafeScopeStrings(t *testing.T) {
 	}
 }
 
-func TestUsageV4ScopeValidationRejectsInvalidUTF8(t *testing.T) {
+func TestUsageScopeValidationRejectsInvalidUTF8(t *testing.T) {
 	invalid := string([]byte{'v', 0xff})
 	tests := []struct {
 		name   string
@@ -128,7 +128,7 @@ func TestUsageV4ScopeValidationRejectsInvalidUTF8(t *testing.T) {
 	manifest := testUsageDocumentManifest()
 	manifest.GoScope.GoFlags = "vv-invalid-marker"
 	setUsageScopeEnvironment(manifest.GoScope, "GOFLAGS", manifest.GoScope.GoFlags)
-	raw := forgeUsageV4Document(t, manifest)
+	raw := forgeUsageDocument(t, manifest)
 	invalidMarker := append([]byte(nil), []byte("vv-invalid-marker")...)
 	invalidMarker[2] = 0xff
 	raw = bytes.ReplaceAll(raw, []byte("vv-invalid-marker"), invalidMarker)
@@ -137,7 +137,7 @@ func TestUsageV4ScopeValidationRejectsInvalidUTF8(t *testing.T) {
 	}
 }
 
-func TestUsageV4CodecPreservesSafeFreeFormScopeStrings(t *testing.T) {
+func TestUsageCodecPreservesSafeFreeFormScopeStrings(t *testing.T) {
 	manifest := testUsageDocumentManifest()
 	scope := manifest.GoScope
 	scope.GoVersion = "devel go1.27-abcdef"
@@ -176,7 +176,7 @@ func TestUsageV4CodecPreservesSafeFreeFormScopeStrings(t *testing.T) {
 	}
 }
 
-func forgeUsageV4Document(t *testing.T, manifest i18n.UsageManifest) []byte {
+func forgeUsageDocument(t *testing.T, manifest i18n.UsageManifest) []byte {
 	t.Helper()
 	manifest.GoScope.SourceDigest = i18n.ExpectedUsageSourceDigest(*manifest.GoScope)
 	manifest.ManifestDigest = i18n.ExpectedUsageManifestDigest(manifest)

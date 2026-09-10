@@ -108,38 +108,6 @@ func validateDisabledSignals(signals Signals, descriptors []SignalDescriptor) (m
 	return disabled, nil
 }
 
-func applyLegacyDisable(disabled map[Signal]struct{}, config Config) {
-	if config.CommandTracesDisabled {
-		disabled[SignalCommandSpan] = struct{}{}
-	}
-	if config.CommandMetricsDisabled {
-		disabled[SignalCommandDuration] = struct{}{}
-	}
-	if config.StorageTracesDisabled {
-		disabled[SignalStorageSpan] = struct{}{}
-		disabled[SignalStorageStreamSpan] = struct{}{}
-	}
-	if config.CacheMetricsDisabled {
-		for _, signal := range (Signals{
-			SignalCacheOperations,
-			SignalCacheEvents,
-			SignalCacheItems,
-			SignalCacheEncodedBytes,
-			SignalCachePayloadBytes,
-			SignalCacheValueBytes,
-			SignalCacheChargedBytes,
-			SignalCacheMemoryEntries,
-			SignalCacheMemoryBytes,
-			SignalCacheMemoryEntryLimit,
-			SignalCacheMemoryByteLimit,
-			SignalCacheMemoryActive,
-			SignalCacheMemoryClosed,
-		}) {
-			disabled[signal] = struct{}{}
-		}
-	}
-}
-
 func descriptorsBySignalID() []SignalDescriptor {
 	descriptors := SignalDescriptors()
 	sort.Slice(descriptors, func(i, j int) bool {

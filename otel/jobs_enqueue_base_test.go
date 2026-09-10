@@ -86,7 +86,7 @@ func TestJobsEnqueueWrappersPreserveFourCallContractsAndSpanSemantics(t *testing
 		t.Fatalf("calls/forwarded option = %d/%d/%s", sender.calls, stager.calls, sender.placements[0].Delay())
 	}
 	for _, ctx := range append(append([]context.Context(nil), sender.contexts...), stager.contexts...) {
-		if ctx.Value(jobsEnqueueContextKey{}) != "application-value" || ctx.Value(spanKey{}) == nil {
+		if ctx.Value(jobsEnqueueContextKey{}) != "application-value" || !hasTestSpan(ctx) {
 			t.Fatal("enqueue boundary did not receive the derived span context with application values")
 		}
 	}
@@ -112,6 +112,26 @@ func TestJobsEnqueueWrappersPreserveFourCallContractsAndSpanSemantics(t *testing
 		}
 	}
 	assertJobsEnqueueTelemetryExcludes(t, tp.spans, mp.metrics, "secret-payload", "secret-once", "secret-intent", "secret-staged", "secret-staged-intent", "committed", "published")
+}
+
+func TestJobsEnqueueIgnoresTracerContextReplacement(t *testing.T) {
+	tp := newTestTracerProvider()
+	tp.replaceContext = true
+	tel := vvotel.Must(vvotel.Config{TracerProvider: tp})
+	queue, definition, sender, _ := jobsEnqueueTestFixture(t)
+	base, cancel := context.WithCancel(context.WithValue(context.Background(), jobsEnqueueContextKey{}, "application-value"))
+	defer cancel()
+
+	if _, err := vvotel.Enqueue(base, tel, queue, definition, "payload"); err != nil {
+		t.Fatal(err)
+	}
+	if len(sender.contexts) != 1 {
+		t.Fatalf("contexts = %d", len(sender.contexts))
+	}
+	received := sender.contexts[0]
+	if received.Value(jobsEnqueueContextKey{}) != "application-value" || received.Done() != base.Done() || !hasTestSpan(received) {
+		t.Fatal("tracer replaced application context semantics")
+	}
 }
 
 func TestJobsEnqueueWrapperClassifiesBaseFailureWithoutReplacingIt(t *testing.T) {

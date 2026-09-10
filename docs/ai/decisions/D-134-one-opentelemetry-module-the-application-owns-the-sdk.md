@@ -263,7 +263,7 @@ the logical INTERNAL/PRODUCER/CONSUMER spans named above.
   `TestCacheMemory_CounterRecordingAndSpanEvents` pin current adapter effects
   and optional capabilities. `TestTelemetryFaultsNeverChangeBusinessResults`
   and `TestCacheAndCacheMemory_FaultsKeepSignalsIndependent` pin runtime
-  failure isolation. `TestLegacyPanicNilModePreservesPanicAndGoexitSemantics`
+  failure isolation. `TestPanicNilWithNilRecoverPreservesPanicAndGoexitSemantics`
   re-executes the current test binary with `GODEBUG=panicnil=1` and requires the
   service/storage panic(nil) and Goexit contracts to execute and pass.
 - `TestJobContextInjectsTheCurrentW3CContextWithoutChangingTheCapture`,

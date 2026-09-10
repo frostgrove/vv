@@ -22,16 +22,20 @@ func ValidateDeliveryDriver(driver DeliveryDriver) (description BackendDescripti
 	if nilInterface(driver) {
 		return BackendDescription{}, invalid("delivery driver")
 	}
+	completed := false
 	defer func() {
-		if recover() != nil {
+		_ = recover()
+		if !completed {
 			description = BackendDescription{}
 			err = invalid("delivery driver description")
 		}
 	}()
 	description = driver.Description()
 	if !description.valid() {
+		completed = true
 		return BackendDescription{}, invalid("delivery driver description")
 	}
+	completed = true
 	return description, nil
 }
 

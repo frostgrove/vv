@@ -12,7 +12,7 @@ import (
 )
 
 func TestPseudoTransformsOnlyPatternTextAndRequiresReview(t *testing.T) {
-	source := ".input {$count :number select=cardinal}\n.match $count\none {{{#strong}One item for {$name}{/strong}}}\n* {{{#strong}{$count} items for {$name}{/strong}}}"
+	source := ".input {$count :number select=plural}\n.match $count\none {{{#strong}One item for {$name}{/strong}}}\n* {{{#strong}{$count} items for {$name}{/strong}}}"
 	spec := CatalogSpec{
 		Revision:      "catalog-1",
 		SourceLocale:  "en",

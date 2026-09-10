@@ -279,10 +279,13 @@ exactly that rather than hiding it.
   are `port.Violations`, called by both renderers ([[D-045]], and the follow-up
   it discharged at phase 9).
 - **Only an actual template locale becomes protocol metadata.**
-  `errs.LocalizedMessageSource` extends the old wording seam without replacing
-  it. `port.Violations` records its validated actual locale; gRPC creates
+  `errs.LocalizedMessageSource` adds locale provenance to the wording seam.
+  `port.Violations` records its validated actual locale; gRPC creates
   `LocalizedMessage` from that value, so `fr-CA → fr` reports `fr`, while a
-  legacy source creates no localization detail.
+  source without locale provenance creates no localization detail. The client
+  accepts one framework `ErrorInfo` and one `BadRequest`, reconstructs at most
+  100 violations, and retains that locale only when the localized wording
+  exactly matches the public description.
 - **Two codes collapse on gRPC, and that is a cost rather than a bug.**
   `KindValidation` and `KindBadRequest` both answer `InvalidArgument`, so 422 and
   400 are one code; every conflict answers `AlreadyExists`, including `restrict`
@@ -473,6 +476,12 @@ And the `crudgrpc` half:
   `TestAClassifiedConflictReachesAGrpcClientWithNothingInternal` —
   `crud/rpc/crudgrpc/status_test.go` — the second vocabulary and what it may say.
   The last runs over every entry of the captured corpus on all four engines.
+- `TestTheClientPreservesOnlyProvenLocalizedMessageDetails`,
+  `TestLocalizedMessageProvenanceSurvivesTheStatusRoundTrip`,
+  `TestTheClientBoundsRemoteViolationsAtTheExactBoundary` and
+  `TestDuplicateOrIncompleteFrameworkDetailsAreProtocolErrors` —
+  `crud/rpc/crudgrpc/client_test.go` — the bounded, provenance-preserving client
+  reconstruction contract.
 - `TestInstallingTheInterceptorTwiceRendersOnce`,
   `TestTheInterceptorRendersAMethodOfYourOwn`,
   `TestTheRequestLocaleReachesTheMessageLadder` and

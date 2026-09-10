@@ -211,7 +211,7 @@ func TestSecuredCommitsCreateUpdateAndHardDeleteWithTheirAuditRevision(t *testin
 
 func TestSecuredClassifiesAssignedSaveAndCapturesAFirstTouchBaseline(t *testing.T) {
 	fixture := newAlphaFixture(t)
-	fixture.core.seed(alphaRow{ID: 41, Name: "legacy"})
+	fixture.core.seed(alphaRow{ID: 41, Name: "preexisting"})
 
 	updated, err := fixture.secured.Save(context.Background(), &alphaRow{ID: 41, Name: "adopted"})
 	if err != nil || updated.Name != "adopted" {

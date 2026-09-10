@@ -158,6 +158,43 @@ func TestACappedListSaysItIsPartial(t *testing.T) {
 	}
 }
 
+func TestTheDefaultViolationLimitHasAnExactBoundary(t *testing.T) {
+	for _, tc := range []struct {
+		count   int
+		partial bool
+	}{
+		{MaxViolations, false},
+		{MaxViolations + 1, true},
+	} {
+		_, _, env := render(t, faultWithViolations(tc.count))
+		if got := len(env.Errors.Validation); got != MaxViolations {
+			t.Fatalf("%d input violations rendered %d, want %d", tc.count, got, MaxViolations)
+		}
+		if env.Partial != tc.partial {
+			t.Fatalf("%d input violations produced partial=%v, want %v", tc.count, env.Partial, tc.partial)
+		}
+	}
+}
+
+func TestInvalidViolationLimitsCannotRemoveTheHardCap(t *testing.T) {
+	for _, limit := range []int{-1, 0, MaxViolations + 1, MaxViolations * 10} {
+		t.Run(strconv.Itoa(limit), func(t *testing.T) {
+			_, _, env := render(t, faultWithViolations(MaxViolations+1), WithMaxViolations(limit))
+			if got := len(env.Errors.Validation); got != MaxViolations || !env.Partial {
+				t.Fatalf("limit %d rendered %d violations with partial=%v", limit, got, env.Partial)
+			}
+		})
+	}
+}
+
+func faultWithViolations(count int) error {
+	b := errs.Validation().Code(errs.CodeCheck)
+	for i := 0; i < count; i++ {
+		b = b.At(errs.Path{errs.Named("f" + strconv.Itoa(i))}).Code(errs.CodeCheck)
+	}
+	return b.Fault()
+}
+
 type catalogue map[string]string
 
 func (this catalogue) Message(_ context.Context, v errs.Violation, _ string) (string, bool) {

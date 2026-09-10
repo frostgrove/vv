@@ -1702,9 +1702,6 @@ func validateFunctionConfiguration(locale, name string, argumentType ArgumentTyp
 	case "offset":
 		return validateOffsetConfiguration(options)
 	case "string":
-		if selectMode, ok := optionString(options, "select"); ok && selectMode != "exact" {
-			return fmt.Errorf("string select option %q is invalid", selectMode)
-		}
 		return nil
 	case "date", "time", "datetime":
 		return validateDateConfiguration(locale, name, argumentType, options)
@@ -1750,7 +1747,7 @@ func functionOptionAllowed(function, option string) bool {
 			"minimumSignificantDigits", "maximumSignificantDigits", "roundingMode", "roundingPriority",
 			"trailingZeroDisplay", "useGrouping", "signDisplay", "numberingSystem", "localeMatcher")
 	case "string":
-		return oneOf(option, "select")
+		return false
 	case "date":
 		return oneOf(option,
 			"calendar", "numberingSystem", "localeMatcher", "formatMatcher", "weekday", "era",
@@ -2228,7 +2225,7 @@ func defaultInt(target *int, value int) {
 
 func descriptorDigest(descriptor Descriptor) string {
 	hash := sha256.New()
-	writeDigestField(hash.Write, "domain", "frostgrove.i18n.contract-digest/v2")
+	writeDigestField(hash.Write, "domain", "frostgrove.i18n.contract-digest/v1")
 	writeDigestField(hash.Write, "key", string(descriptor.Key))
 	writeDigestField(hash.Write, "revision", descriptor.Revision)
 	writeDigestField(hash.Write, "output", descriptor.Output.String())
@@ -2253,7 +2250,7 @@ func descriptorDigest(descriptor Descriptor) string {
 
 func sourceReviewDigest(profile, sourceLocale string, key Key, contractHash, source, description string) string {
 	hash := sha256.New()
-	writeDigestField(hash.Write, "domain", "frostgrove.i18n.source-review-digest/v3")
+	writeDigestField(hash.Write, "domain", "frostgrove.i18n.source-review-digest/v1")
 	writeDigestField(hash.Write, "profile", profile)
 	writeDigestField(hash.Write, "source_locale", sourceLocale)
 	writeDigestField(hash.Write, "key", string(key))
@@ -2270,7 +2267,7 @@ func snapshotDigest(snapshot *Snapshot) string {
 
 func snapshotDigestContext(ctx context.Context, snapshot *Snapshot) (string, error) {
 	hash := sha256.New()
-	writeDigestField(hash.Write, "domain", "frostgrove.i18n.snapshot-digest/v2")
+	writeDigestField(hash.Write, "domain", "frostgrove.i18n.snapshot-digest/v1")
 	writeDigestField(hash.Write, "profile", snapshot.profile)
 	writeDigestField(hash.Write, "engine", EngineVersion)
 	writeDigestField(hash.Write, "locale_data", LocaleDataVersion)

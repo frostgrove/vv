@@ -20,6 +20,7 @@ import (
 	"go.opentelemetry.io/otel/sdk/instrumentation"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/exemplar"
+	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.41.0"
@@ -47,6 +48,11 @@ const (
 	maxProjectionAttributeSliceItems = 32
 	maxProjectionAttributeDepth      = 4
 	maxProjectionScopeAttributeBytes = 16 << 10
+	maxBatchTimeout                  = time.Hour
+	maxMetricInterval                = 24 * time.Hour
+	maxMetricExportTimeout           = 10 * time.Minute
+	maxForceFlushTimeout             = 10 * time.Minute
+	maxProviderCloseTimeout          = 10 * time.Minute
 )
 
 type Config struct {
@@ -118,6 +124,14 @@ type telemetryFactories struct {
 	metricExporter func(context.Context) (sdkmetric.Exporter, error)
 }
 
+type telemetryAssemblyOwners struct {
+	ctx       context.Context
+	timeout   time.Duration
+	trace     interface{ Shutdown(context.Context) error }
+	metric    interface{ Shutdown(context.Context) error }
+	dismissed bool
+}
+
 func defaultTelemetryFactories() telemetryFactories {
 	return telemetryFactories{
 		resource: func(ctx context.Context, config Config) (*resource.Resource, error) {
@@ -134,16 +148,46 @@ func defaultTelemetryFactories() telemetryFactories {
 			return otlptracegrpc.New(ctx)
 		},
 		metricExporter: func(ctx context.Context) (sdkmetric.Exporter, error) {
-			return otlpmetricgrpc.New(ctx)
+			return otlpmetricgrpc.New(ctx,
+				otlpmetricgrpc.WithTemporalitySelector(cumulativeTemporality),
+				otlpmetricgrpc.WithAggregationSelector(sdkmetric.DefaultAggregationSelector),
+			)
 		},
 	}
 }
 
-func newTelemetry(ctx context.Context, config Config, factories telemetryFactories) (*Telemetry, error) {
+func cumulativeTemporality(sdkmetric.InstrumentKind) metricdata.Temporality {
+	return metricdata.CumulativeTemporality
+}
+
+func newTelemetry(ctx context.Context, config Config, factories telemetryFactories) (telemetry *Telemetry, err error) {
+	owners := &telemetryAssemblyOwners{}
+	completed := false
+	defer func() {
+		if completed {
+			return
+		}
+		_ = recover()
+		telemetry = nil
+		err = errors.Join(ErrTelemetryAssembly, owners.cleanup())
+	}()
+	telemetry, err = assembleTelemetry(ctx, config, factories, owners)
+	if err != nil {
+		err = errors.Join(err, owners.cleanup())
+	} else {
+		owners.dismiss()
+	}
+	completed = true
+	return telemetry, err
+}
+
+func assembleTelemetry(ctx context.Context, config Config, factories telemetryFactories, owners *telemetryAssemblyOwners) (*Telemetry, error) {
 	config, err := normalizeTelemetryConfig(config)
 	if err != nil || nilInterfaceValue(ctx) || factories.resource == nil || factories.traceExporter == nil || factories.metricExporter == nil {
 		return nil, ErrInvalidTelemetryConfig
 	}
+	owners.ctx = ctx
+	owners.timeout = config.ProviderCloseTimeout
 	res, err := callResourceFactory(factories.resource, ctx, config)
 	if err != nil {
 		return nil, fmt.Errorf("resource: %w", err)
@@ -152,33 +196,31 @@ func newTelemetry(ctx context.Context, config Config, factories telemetryFactori
 		return nil, ErrInvalidTelemetryConfig
 	}
 	traceExporter, err := callTraceExporterFactory(factories.traceExporter, ctx)
+	owners.trace = traceExporter
 	if err != nil {
-		cleanupErr := shutdownDetachedOptional(ctx, config.ProviderCloseTimeout, traceExporter)
-		return nil, errors.Join(fmt.Errorf("trace exporter: %w", err), cleanupErr)
+		return nil, fmt.Errorf("trace exporter: %w", err)
 	}
 	if nilInterfaceValue(traceExporter) {
 		return nil, ErrInvalidTelemetryConfig
 	}
 	projection := newExportProjection(config)
 	traceExporter, err = composeTraceExporter(traceExporter, config.TraceProjectionLayers, projection)
+	owners.trace = traceExporter
 	if err != nil {
-		cleanupErr := shutdownDetached(ctx, config.ProviderCloseTimeout, traceExporter)
-		return nil, errors.Join(err, cleanupErr)
+		return nil, err
 	}
 	metricExporter, err := callMetricExporterFactory(factories.metricExporter, ctx)
+	owners.metric = metricExporter
 	if err != nil {
-		traceCleanupErr := shutdownDetached(ctx, config.ProviderCloseTimeout, traceExporter)
-		metricCleanupErr := shutdownDetachedOptional(ctx, config.ProviderCloseTimeout, metricExporter)
-		return nil, errors.Join(fmt.Errorf("metric exporter: %w", err), traceCleanupErr, metricCleanupErr)
+		return nil, fmt.Errorf("metric exporter: %w", err)
 	}
 	if nilInterfaceValue(metricExporter) {
-		return nil, errors.Join(ErrInvalidTelemetryConfig, shutdownDetached(ctx, config.ProviderCloseTimeout, traceExporter))
+		return nil, ErrInvalidTelemetryConfig
 	}
 	metricExporter, err = composeMetricExporter(metricExporter, config.MetricProjectionLayers, projection)
+	owners.metric = metricExporter
 	if err != nil {
-		traceCleanupErr := shutdownDetached(ctx, config.ProviderCloseTimeout, traceExporter)
-		metricCleanupErr := shutdownDetached(ctx, config.ProviderCloseTimeout, metricExporter)
-		return nil, errors.Join(err, traceCleanupErr, metricCleanupErr)
+		return nil, err
 	}
 
 	sampler := config.Sampler
@@ -194,10 +236,12 @@ func newTelemetry(ctx context.Context, config Config, factories telemetryFactori
 			sdktrace.WithBatchTimeout(config.BatchTimeout),
 		),
 	)
+	owners.trace = traceProvider
 	reader := sdkmetric.NewPeriodicReader(metricExporter,
 		sdkmetric.WithInterval(config.MetricInterval),
 		sdkmetric.WithTimeout(config.MetricExportTimeout),
 	)
+	owners.metric = reader
 	meterOptions := []sdkmetric.Option{
 		sdkmetric.WithResource(res),
 		sdkmetric.WithReader(reader),
@@ -212,6 +256,7 @@ func newTelemetry(ctx context.Context, config Config, factories telemetryFactori
 		meterOptions = append(meterOptions, sdkmetric.WithView(view))
 	}
 	meterProvider := sdkmetric.NewMeterProvider(meterOptions...)
+	owners.metric = meterProvider
 	lifecycle := newTelemetryLifecycle(
 		traceProvider,
 		meterProvider,
@@ -224,7 +269,7 @@ func newTelemetry(ctx context.Context, config Config, factories telemetryFactori
 		ResourceName:   config.FrameworkResource,
 	})
 	if err != nil {
-		return nil, errors.Join(err, lifecycle.Shutdown(ctx))
+		return nil, err
 	}
 	return &Telemetry{
 		TracerProvider: traceProvider,
@@ -235,10 +280,44 @@ func newTelemetry(ctx context.Context, config Config, factories telemetryFactori
 	}, nil
 }
 
+func (owners *telemetryAssemblyOwners) dismiss() {
+	if owners == nil {
+		return
+	}
+	owners.dismissed = true
+	owners.trace = nil
+	owners.metric = nil
+}
+
+func (owners *telemetryAssemblyOwners) cleanup() (result error) {
+	if owners == nil || owners.dismissed {
+		return nil
+	}
+	owners.dismissed = true
+	traceOwner := owners.trace
+	metricOwner := owners.metric
+	owners.trace = nil
+	owners.metric = nil
+	metricAttempted := false
+	defer func() {
+		if metricAttempted {
+			return
+		}
+		metricAttempted = true
+		metricErr := shutdownDetachedOptional(owners.ctx, owners.timeout, metricOwner)
+		result = errors.Join(result, metricErr)
+	}()
+	traceErr := shutdownDetachedOptional(owners.ctx, owners.timeout, traceOwner)
+	metricAttempted = true
+	metricErr := shutdownDetachedOptional(owners.ctx, owners.timeout, metricOwner)
+	return errors.Join(traceErr, metricErr)
+}
+
 func normalizeTelemetryConfig(config Config) (Config, error) {
 	if !vvotel.ValidResourceName(config.ServiceName) || !vvotel.ValidResourceName(config.ServiceVersion) ||
 		!vvotel.ValidResourceName(config.ServiceNamespace) || config.FrameworkResource != "" && !config.FrameworkResource.Valid() ||
-		math.IsNaN(config.SampleRatio) || config.SampleRatio < 0 || config.SampleRatio > 1 {
+		math.IsNaN(config.SampleRatio) || config.SampleRatio < 0 || config.SampleRatio > 1 ||
+		len(config.FrameworkResources) > vvotel.MaxResourceNameValues {
 		return Config{}, ErrInvalidTelemetryConfig
 	}
 	config.FrameworkResources = append([]vvotel.ApprovedName(nil), config.FrameworkResources...)
@@ -303,9 +382,11 @@ func normalizeTelemetryConfig(config Config) (Config, error) {
 	}
 	if config.BatchQueueSize < 1 || config.BatchQueueSize > maxBatchQueueSize ||
 		config.BatchSize < 1 || config.BatchSize > maxBatchSize || config.BatchSize > config.BatchQueueSize ||
-		config.BatchTimeout < time.Millisecond || config.MetricInterval < time.Millisecond ||
-		config.MetricExportTimeout < time.Millisecond || config.ForceFlushTimeout < time.Millisecond ||
-		config.ProviderCloseTimeout < time.Millisecond {
+		config.BatchTimeout < time.Millisecond || config.BatchTimeout > maxBatchTimeout ||
+		config.MetricInterval < time.Millisecond || config.MetricInterval > maxMetricInterval ||
+		config.MetricExportTimeout < time.Millisecond || config.MetricExportTimeout > maxMetricExportTimeout ||
+		config.ForceFlushTimeout < time.Millisecond || config.ForceFlushTimeout > maxForceFlushTimeout ||
+		config.ProviderCloseTimeout < time.Millisecond || config.ProviderCloseTimeout > maxProviderCloseTimeout {
 		return Config{}, ErrInvalidTelemetryConfig
 	}
 	return config, nil
@@ -321,12 +402,12 @@ func normalizeTraceProjectionLayers(input []TraceProjectionLayer) ([]TraceProjec
 		if layer.Wrap == nil || len(layer.Scopes) == 0 {
 			return nil, ErrInvalidTelemetryConfig
 		}
+		if len(layer.Scopes) > maxProjectionScopes+1-len(seen) {
+			return nil, ErrInvalidTelemetryConfig
+		}
 		result[index] = TraceProjectionLayer{
 			Scopes: append([]instrumentation.Scope(nil), layer.Scopes...),
 			Wrap:   layer.Wrap,
-		}
-		if len(seen)+len(result[index].Scopes) > maxProjectionScopes+1 {
-			return nil, ErrInvalidTelemetryConfig
 		}
 		for _, scope := range result[index].Scopes {
 			if !validInstrumentationScope(scope) || containsInstrumentationScope(seen, scope) {
@@ -348,12 +429,12 @@ func normalizeMetricProjectionLayers(input []MetricProjectionLayer) ([]MetricPro
 		if layer.Wrap == nil || len(layer.Scopes) == 0 {
 			return nil, ErrInvalidTelemetryConfig
 		}
+		if len(layer.Scopes) > maxProjectionScopes+1-len(seen) {
+			return nil, ErrInvalidTelemetryConfig
+		}
 		result[index] = MetricProjectionLayer{
 			Scopes: append([]instrumentation.Scope(nil), layer.Scopes...),
 			Wrap:   layer.Wrap,
-		}
-		if len(seen)+len(result[index].Scopes) > maxProjectionScopes+1 {
-			return nil, ErrInvalidTelemetryConfig
 		}
 		for _, scope := range result[index].Scopes {
 			if !validInstrumentationScope(scope) || containsInstrumentationScope(seen, scope) {
@@ -583,10 +664,20 @@ func (lifecycle *telemetryLifecycle) ForceFlush(ctx context.Context) error {
 	lifecycle.inFlight++
 	lifecycle.mu.Unlock()
 	defer lifecycle.releaseFlush()
+	metricAttempted := false
+	defer func() {
+		if metricAttempted {
+			return
+		}
+		_ = callWithTimeout(ctx, lifecycle.flushTimeout, func(callCtx context.Context) error {
+			return lifecycle.metric.ForceFlush(callCtx)
+		})
+	}()
 
 	traceErr := callWithTimeout(ctx, lifecycle.flushTimeout, func(callCtx context.Context) error {
 		return lifecycle.trace.ForceFlush(callCtx)
 	})
+	metricAttempted = true
 	metricErr := callWithTimeout(ctx, lifecycle.flushTimeout, func(callCtx context.Context) error {
 		return lifecycle.metric.ForceFlush(callCtx)
 	})
@@ -623,20 +714,44 @@ func (lifecycle *telemetryLifecycle) Shutdown(ctx context.Context) error {
 		}
 		lifecycle.mu.Unlock()
 	}
+	ownerCtx := context.WithoutCancel(ctx)
+	var traceErr error
+	var metricErr error
+	traceReturned := false
+	metricAttempted := false
+	metricReturned := false
 	completed := false
 	defer func() {
 		if !completed {
-			lifecycle.completeShutdown(ErrTelemetryLifecycle)
+			if !traceReturned {
+				traceErr = errors.Join(traceErr, ErrTelemetryLifecycle)
+			}
+			if !metricReturned {
+				metricErr = errors.Join(metricErr, ErrTelemetryLifecycle)
+			}
+			lifecycle.completeShutdown(errors.Join(traceErr, metricErr))
 		}
 	}()
+	defer func() {
+		if metricAttempted {
+			return
+		}
+		metricAttempted = true
+		metricErr = callWithTimeout(ownerCtx, lifecycle.shutdownTimeout, func(callCtx context.Context) error {
+			return lifecycle.metric.Shutdown(callCtx)
+		})
+		metricReturned = true
+	}()
 
-	ownerCtx := context.WithoutCancel(ctx)
-	traceErr := callWithTimeout(ownerCtx, lifecycle.shutdownTimeout, func(callCtx context.Context) error {
+	traceErr = callWithTimeout(ownerCtx, lifecycle.shutdownTimeout, func(callCtx context.Context) error {
 		return lifecycle.trace.Shutdown(callCtx)
 	})
-	metricErr := callWithTimeout(ownerCtx, lifecycle.shutdownTimeout, func(callCtx context.Context) error {
+	traceReturned = true
+	metricAttempted = true
+	metricErr = callWithTimeout(ownerCtx, lifecycle.shutdownTimeout, func(callCtx context.Context) error {
 		return lifecycle.metric.Shutdown(callCtx)
 	})
+	metricReturned = true
 	result := errors.Join(traceErr, metricErr)
 	lifecycle.completeShutdown(result)
 	completed = true

@@ -7,17 +7,13 @@ exact revision/item inspection now has memory and PostgreSQL parity. Protected
 disclosure and the advanced lifecycle/control surface remain in delivery and
 are not credited as complete below.
 
-**Supersedes:** the one-module, PostgreSQL-first topology and provisional wrapper
-examples previously carried by this document. The 2026-08-26 snapshot remains a
-historical research source, not current architecture.
-
 **Contract:** [[D-136]], [[UC-034]] and [[FL-040]].
 
 ## Baseline checked on 2026-09-09
 
-The repository now contains the dependency-light audit kernel, a concurrent
-memory writer, the sealed CRUD adapter and a nested PostgreSQL writer/deployment
-module. The prior no-runtime baseline is obsolete. The current vertical slice
+The repository contains the dependency-light audit kernel, a concurrent memory
+writer, the sealed CRUD adapter and a nested PostgreSQL writer/deployment
+module. The current vertical slice
 can compile catalogues, capture declared events and entity revisions, protect
 evidence before the store boundary, append/reconcile standalone records, group
 work under a proven source-bound transaction, and co-commit supported CRUD
@@ -168,6 +164,13 @@ prove its answers.
 - Broad type/target investigation returns transitions; exact status requires a
   complete authenticated chain.
 
+Delivery is profile-explicit: `RunOnlyAlpha` first supplies Begin/Run/direct
+Finish and refuses every continuation door before downstream work. Memory proves
+only BestEffort development behavior; the first durability claim belongs to the
+PostgreSQL Required profile. Checkpoints, Within, Resume/Resolve/Abandon and broad
+stable search remain a later additive profile rather than being implied by one
+store capability bit.
+
 ### Investigation and reconstruction
 
 - Protected bounded history by exact resource/scope and subject, declared entity
@@ -292,7 +295,7 @@ The release gate includes:
 
 ## Production follow-up
 
-- Explicit bounded legacy backfill and relationship/M2M policies.
+- Explicit bounded backfill for pre-existing rows and relationship/M2M policies.
 - Resource-wide point-in-time entity sets with a population snapshot and
   completeness watermark.
 - Derived reconstruction checkpoints that never replace immutable predecessor

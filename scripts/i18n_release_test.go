@@ -88,14 +88,14 @@ func TestI18nPublicationReaderVerifiesTheCompleteWireContract(t *testing.T) {
 	}
 }
 
-func TestI18nConsumerUsesTheNestedModuleProvenanceSeam(t *testing.T) {
+func TestI18nConsumerUsesTheSharedLocaleProvenanceSeam(t *testing.T) {
 	content, err := os.ReadFile("i18n-consumer-fixture/main.go.txt")
 	if err != nil {
 		t.Fatal(err)
 	}
 	source := string(content)
-	if !strings.Contains(source, "i18n.LocalizedMessageSource") {
-		t.Fatal("consumer fixture does not exercise the nested-module provenance seam")
+	if !strings.Contains(source, "errs.LocalizedMessageSource") {
+		t.Fatal("consumer fixture does not exercise the shared locale provenance seam")
 	}
 	if !strings.Contains(source, "snapshot.ErrorPlan") || !strings.Contains(source, "view.ErrorMessages") {
 		t.Fatal("consumer fixture does not exercise the one-view error plan seam")
@@ -113,7 +113,7 @@ func TestI18nConsumerUsesTheNestedModuleProvenanceSeam(t *testing.T) {
 			t.Fatalf("consumer fixture does not exercise %q", fragment)
 		}
 	}
-	if strings.Contains(source, "errs.LocalizedMessageSource") {
-		t.Fatal("consumer fixture must consume the public localized source through the shared errs contract")
+	if strings.Contains(source, "i18n.LocalizedMessageSource") {
+		t.Fatal("consumer fixture uses a duplicate localized source contract")
 	}
 }

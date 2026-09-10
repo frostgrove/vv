@@ -221,12 +221,12 @@ const (
 	MigrationTo     = "vv-otel/v2"
 	MigrationStatus = "development"
 	MigrationSince  = "v0.1.0"
-	MigrationPolicy = "Preserve v1 wire names and Go API; append-only integer signal IDs with independent history and explicit retirement. Signal uint16 and Signals []Signal have no 64-signal mask limit."
+	MigrationPolicy = "Preserve stable wire names; append-only integer signal IDs with independent history and explicit retirement. Signal uint16 and Signals []Signal have no 64-signal mask limit."
 	MigrationNote   = "docs/release-notes/2026-09-09-otel-v1-v2.md"
 )
 
 func MigrationWireChanges() []string {
-	return []string{"New signals are planned until their adapters ship; legacy command, storage and cache signal identities are unchanged.", "Cardinality is derived from signal variants; metadata bounds may change as the admitted vocabulary expands.", "A04 span wrappers gain a span-only goroutine_exit/Error terminal without error.type; duration/counter observations remain absent for this non-return path."}
+	return []string{"All registered signals have emitting adapters.", "Cardinality is derived from signal variants and bounded admitted vocabularies.", "Span wrappers emit a span-only goroutine_exit/Error terminal without error.type; duration and counter observations remain absent for this non-return path."}
 }
 
 type AttributeMetadata struct {

@@ -1342,9 +1342,11 @@ leaves it.
 **Setup:** An environment-derived setting produces `porthttp.WithMaxViolations(0)` for a public endpoint with thousands of validation failures.
 **What the consumer does:** They expect the documented default cap of 100 to remain in force, or a bad setting to fail loudly.
 **What must happen:** Zero must preserve the default or be rejected; a configuration typo must not silently make the response unbounded.
-**Today:** ❌ wrong or unhandled
-**Evidence:** `port/porthttp/render.go:68-86` initializes `max` to `MaxViolations` and then overwrites it with zero, while `port/violations.go:29-30` and `:90-93` define zero or less as no cap. `port/violations_test.go:160-164` pins the uncapped pipeline zero value; no renderer-level test covers `WithMaxViolations(0)`.
-**Blast radius:** crash
+**Today:** ✅ handled
+**Evidence:** `porthttp.WithMaxViolations` only accepts a narrowing value in
+`1..MaxViolations`; zero, negative and oversized values preserve the hard
+default. Renderer tests pin the exact 100/101 boundary and every invalid option.
+**Blast radius:** none
 
 ### E-PORT-11 — A gateway happens to use `"type":"error"`
 **Shape:** seam

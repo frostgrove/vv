@@ -198,14 +198,18 @@ func (schedule *typedSchedule[P]) scheduleEntry() scheduleEntry {
 }
 
 func invokeSchedulePayload[P any](payload func(time.Time) (P, error), due time.Time) (value P, err error) {
+	completed := false
 	defer func() {
-		if recover() != nil {
+		_ = recover()
+		if !completed {
 			var zero P
 			value = zero
 			err = fmt.Errorf("%w: schedule payload panicked", ErrInvalid)
 		}
 	}()
-	return payload(due)
+	value, err = payload(due)
+	completed = true
+	return value, err
 }
 
 func scheduleIntent(description ScheduleDescription, due time.Time) string {
@@ -336,7 +340,7 @@ func (scheduler *Scheduler) runDue(ctx context.Context, now time.Time) (Schedule
 }
 
 func (scheduler *Scheduler) Run(ctx context.Context) error {
-	if scheduler == nil || nilInterface(ctx) || !scheduler.state.CompareAndSwap(schedulerFresh, schedulerRunning) {
+	if scheduler == nil || nilInterface(ctx) || !scheduler.beginRun() {
 		return ErrConflict
 	}
 	defer scheduler.state.Store(schedulerStopped)
@@ -367,6 +371,18 @@ func (scheduler *Scheduler) Run(ctx context.Context) error {
 			return ctx.Err()
 		case <-timer.C():
 			timer.Stop()
+		}
+	}
+}
+
+func (scheduler *Scheduler) beginRun() bool {
+	for {
+		state := scheduler.state.Load()
+		if state != schedulerFresh && state != schedulerStopped {
+			return false
+		}
+		if scheduler.state.CompareAndSwap(state, schedulerRunning) {
+			return true
 		}
 	}
 }

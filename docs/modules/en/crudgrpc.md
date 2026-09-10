@@ -167,6 +167,11 @@ A failure arrives as a status code plus **`BadRequest` / `ErrorInfo` /
 details are spelled identically to the HTTP `error_code`, so a client needs one
 table ([[D-052]]).
 
+The standard renderer emits at most `MaxViolations` (100). A
+`WithMaxViolations(n)` value in `1..100` narrows that limit; non-positive or
+larger values retain the hard default. Truncation sets `partial=true` in
+`ErrorInfo.Metadata`.
+
 `crudgrpc.Code(err)` is exported if you answer your own calls.
 `crudgrpc.CodeFor(kind)` is the table itself.
 
@@ -191,8 +196,9 @@ wildcards matter. `snapshot.ErrorMessages(errorSpec)` can be passed directly to
 `crudgrpc.WithMessages`.
 When the installed source implements `errs.LocalizedMessageSource`, each
 `LocalizedMessage.Locale` names the template locale it actually used. A
-request for `fr-CA` that falls back to `fr` therefore reports `fr`; a legacy
-source emits no `LocalizedMessage` rather than presenting the request as proof.
+request for `fr-CA` that falls back to `fr` therefore reports `fr`; a source
+without locale provenance emits no `LocalizedMessage` rather than presenting
+the request as proof.
 
 Installing `Errors` twice renders once — the marker is the error already carrying
 a status, so the interceptor never overrides a method that answered for itself.
@@ -213,6 +219,15 @@ articles := remote.New[Article, int64, ArticleInput](
 
 `name` is what the far side passed to `Register`, and `ServiceName` turns it
 into the same full service name on both ends from the same function.
+
+Framework-marked remote failures are accepted only with one framework
+`ErrorInfo` and one `BadRequest` detail. The client reconstructs at most
+`MaxViolations` violations and marks the fault partial when more arrive. A
+field's locale provenance is retained only when its `LocalizedMessage` has a
+valid locale and exactly matches the public description; malformed provenance
+is discarded rather than trusted. A description must be non-empty, valid UTF-8
+and no larger than `errs.MaxMessageOutputBytes`; an answer outside that contract
+is a protocol error.
 
 | Option | Does |
 |---|---|

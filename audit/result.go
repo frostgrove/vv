@@ -29,14 +29,6 @@ func (Receipt) HoldProjection() (HoldProjectionStateView, bool) {
 	return HoldProjectionStateView{}, false
 }
 
-func (Receipt) AttemptTransition() (AttemptTransitionWireView, bool) {
-	return AttemptTransitionWireView{}, false
-}
-
-func (Receipt) AttemptProjection() (AttemptProjectionStateView, bool) {
-	return AttemptProjectionStateView{}, false
-}
-
 func receiptFromAppend(result AppendResult, settlement Settlement, reconcile ReconcileKey) Receipt {
 	header := result.Stored().Revision()
 	return Receipt{value: receipt{

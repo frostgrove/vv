@@ -132,8 +132,12 @@ generate() {
 	(cd _examples && GOWORK=off "$GO" generate ./...)
 }
 
-api() {
-	mkdir -p docs/api
+generate_api() (
+	local destination=$1 temporary tool module output emitted=0
+	temporary=$(mktemp -d)
+	trap 'rm -rf -- "$temporary"' EXIT
+	tool="$temporary/api-surface"
+	"$GO" build -o "$tool" ./scripts/api-surface
 	{
 		echo '# Exported surface at the first tag'
 		echo
@@ -141,21 +145,25 @@ api() {
 		echo 'line that disappears from this file is a breaking change, and a line that'
 		echo 'changes shape is one too. Regenerate and read the diff before every release.'
 		echo
-		local module package output
 		while IFS= read -r module; do
-			while IFS= read -r package; do
-				output=$("$GO" doc -short "$package" 2>/dev/null | grep -v '^$' || true)
-				[[ -n $output ]] || continue
-				echo "## $package"
-				echo '```go'
-				echo "$output"
-				echo '```'
-				echo
-			done < <(cd "$module" && "$GO" list ./... 2>/dev/null | grep -v '/internal/' || true)
+			output=$(cd "$module" && "$tool")
+			[[ -n $output ]] || continue
+			(( emitted == 0 )) || echo
+			printf '%s\n' "$output"
+			emitted=1
 		done < <({ printf '.\n'; satellites; })
-	} > docs/api/surface.md
+	} >"$destination"
+)
+
+api() (
+	local temporary
+	mkdir -p docs/api
+	temporary=$(mktemp docs/api/.surface.md.XXXXXX)
+	trap 'rm -f -- "$temporary"' EXIT
+	generate_api "$temporary"
+	mv -- "$temporary" docs/api/surface.md
 	echo 'api: docs/api/surface.md regenerated — read the diff'
-}
+)
 
 vuln() {
 	local module environment output failed=0

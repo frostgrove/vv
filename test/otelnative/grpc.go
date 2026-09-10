@@ -23,24 +23,28 @@ func GRPCServerStats(providers Providers, methods RPCTable, mode IngressMode) (s
 	if mode == PublicIngress {
 		options = append(options, otelgrpc.WithPublicEndpoint())
 	}
-	return boundedStatsHandler{
-		Handler: otelgrpc.NewServerHandler(options...),
-		methods: methods,
-	}, nil
+	return runNativeAssembly(func() (stats.Handler, error) {
+		return boundedStatsHandler{
+			Handler: otelgrpc.NewServerHandler(options...),
+			methods: methods,
+		}, nil
+	})
 }
 
 func GRPCClientStats(providers Providers, methods RPCTable) (stats.Handler, error) {
 	if err := providers.validate(); err != nil {
 		return nil, err
 	}
-	return boundedStatsHandler{
-		Handler: otelgrpc.NewClientHandler(
-			otelgrpc.WithTracerProvider(providers.Tracer),
-			otelgrpc.WithMeterProvider(providers.Meter),
-			otelgrpc.WithPropagators(propagation.TraceContext{}),
-		),
-		methods: methods,
-	}, nil
+	return runNativeAssembly(func() (stats.Handler, error) {
+		return boundedStatsHandler{
+			Handler: otelgrpc.NewClientHandler(
+				otelgrpc.WithTracerProvider(providers.Tracer),
+				otelgrpc.WithMeterProvider(providers.Meter),
+				otelgrpc.WithPropagators(propagation.TraceContext{}),
+			),
+			methods: methods,
+		}, nil
+	})
 }
 
 type boundedStatsHandler struct {

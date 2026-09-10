@@ -189,7 +189,9 @@ func Compile(spec CatalogSpec, declarations ...Declaration) (*Catalog, error) {
 	itemIdentities := make(map[string]struct{})
 	resourceIdentities := make(map[Resource]struct{})
 	operationIdentities := make(map[OperationName]struct{})
+	attemptOperations := make(map[OperationName]*OperationType)
 	seals := make([]*declarationSeal, len(declarations))
+	hasAttempts := false
 	for index, declaration := range declarations {
 		if nilByReflection(declaration) {
 			return nil, auditErrorAt(ErrDeclaration, "declarations")
@@ -220,6 +222,18 @@ func Compile(spec CatalogSpec, declarations ...Declaration) (*Catalog, error) {
 			}
 			operationIdentities[seal.description.Operation] = struct{}{}
 		}
+		if seal.description.Kind == AttemptDeclaration {
+			operation := seal.attemptOperation
+			name := seal.description.Attempt.Operation
+			if operation == nil || operation.value == nil || name == "" || operation.value.seal.description.Operation != name {
+				return nil, auditErrorAt(ErrDeclaration, "declarations.attempt.operation")
+			}
+			if _, duplicate := attemptOperations[name]; duplicate {
+				return nil, auditErrorAt(ErrDeclaration, "declarations.attempt.operation")
+			}
+			attemptOperations[name] = operation
+			hasAttempts = true
+		}
 		for _, member := range seal.members {
 			if member.resource == "" {
 				continue
@@ -231,8 +245,23 @@ func Compile(spec CatalogSpec, declarations ...Declaration) (*Catalog, error) {
 		}
 		fingerprint := seal.description.Semantics.Fingerprint
 		declarationSet[declaration] = fingerprint
-		descriptions[index] = cloneDeclarationDescription(seal.description)
+		description := cloneDeclarationDescription(seal.description)
+		if description.Kind == AttemptDeclaration {
+			description.Attempt.Replay, err = AttemptReplayFingerprintOf(description.Attempt.Fingerprint, spec.Semantics)
+			if err != nil {
+				return nil, err
+			}
+		}
+		descriptions[index] = description
 		seals[index] = seal
+	}
+	for name, operation := range attemptOperations {
+		if _, found := declarationSet[operation]; !found || operation.value.seal.description.Operation != name {
+			return nil, auditErrorAt(ErrDeclaration, "declarations.attempt.operation")
+		}
+	}
+	if hasAttempts && !spec.Integrity.value.requiresSignature {
+		return nil, auditErrorAt(ErrDeclaration, "catalog.attempt.signature")
 	}
 	if err := validateOperationMembership(seals, declarationSet); err != nil {
 		return nil, err
@@ -430,6 +459,22 @@ func validateManifestProviders(view ManifestView) error {
 		for _, field := range declaration.Fields {
 			inspectMode(field.Mode)
 		}
+		if declaration.Kind == AttemptDeclaration {
+			if declaration.Attempt.Start.TargetPresent {
+				inspectMode(declaration.Attempt.Start.Target.Mode)
+			}
+			for _, field := range declaration.Attempt.Start.Fields {
+				inspectMode(field.Mode)
+			}
+			for _, field := range declaration.Attempt.Checkpoint.Fields {
+				inspectMode(field.Mode)
+			}
+			for _, phase := range declaration.Attempt.Finish {
+				for _, field := range phase.Fields {
+					inspectMode(field.Mode)
+				}
+			}
+		}
 		for _, fact := range declaration.Context.Facts {
 			inspectMode(fact.Mode)
 		}
@@ -559,6 +604,25 @@ func collectCodecDescriptions(declarations []DeclarationDescription, control Con
 		for _, field := range declaration.Fields {
 			if err := add(field.Codec); err != nil {
 				return nil, err
+			}
+		}
+		if declaration.Kind == AttemptDeclaration {
+			for _, field := range declaration.Attempt.Start.Fields {
+				if err := add(field.Codec); err != nil {
+					return nil, err
+				}
+			}
+			for _, field := range declaration.Attempt.Checkpoint.Fields {
+				if err := add(field.Codec); err != nil {
+					return nil, err
+				}
+			}
+			for _, phase := range declaration.Attempt.Finish {
+				for _, field := range phase.Fields {
+					if err := add(field.Codec); err != nil {
+						return nil, err
+					}
+				}
 			}
 		}
 	}
@@ -786,6 +850,15 @@ func CatalogSetDigestOf(manifests []Manifest) (CatalogSetDigest, error) {
 }
 
 func validateLineageCompatibility(manifests []Manifest) error {
+	if len(manifests) > 1 {
+		for _, manifest := range manifests {
+			for _, declaration := range manifest.value.view.Declarations {
+				if declaration.Kind == AttemptDeclaration {
+					return auditErrorAt(ErrUnsupported, "catalogs.attempt_activation")
+				}
+			}
+		}
+	}
 	fingerprints := make(map[PolicyFingerprint][]byte)
 	policyVersions := make(map[string]PolicyFingerprint)
 	codecVersions := make(map[string]CodecSemanticFingerprint)
@@ -919,6 +992,9 @@ func rejectPrivacyWeakening(previous, current ManifestView) error {
 func stableDeclarationKey(value DeclarationDescription) string {
 	if value.Kind == OperationDeclaration {
 		return operationDeclarationKey(value.Operation)
+	}
+	if value.Kind == AttemptDeclaration {
+		return "attempt:" + string(value.Attempt.Operation)
 	}
 	return fmt.Sprintf("%d:%s:%s", value.Kind, value.Resource, value.Action)
 }

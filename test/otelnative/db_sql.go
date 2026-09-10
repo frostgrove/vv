@@ -38,7 +38,9 @@ func OpenSQL(providers Providers, driverName, dataSourceName string) (*sql.DB, e
 	if err != nil {
 		return nil, err
 	}
-	return otelsql.Open(driverName, dataSourceName, options...)
+	return runNativeAssembly(func() (*sql.DB, error) {
+		return otelsql.Open(driverName, dataSourceName, options...)
+	})
 }
 
 func OpenSQLDB(providers Providers, connector driver.Connector) (*sql.DB, error) {
@@ -49,5 +51,7 @@ func OpenSQLDB(providers Providers, connector driver.Connector) (*sql.DB, error)
 	if err != nil {
 		return nil, err
 	}
-	return otelsql.OpenDB(connector, options...), nil
+	return runNativeAssembly(func() (*sql.DB, error) {
+		return otelsql.OpenDB(connector, options...), nil
+	})
 }

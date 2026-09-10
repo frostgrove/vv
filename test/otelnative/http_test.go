@@ -16,6 +16,12 @@ import (
 
 type httpContextKey struct{}
 
+type typedNilHTTPTransport struct{}
+
+func (*typedNilHTTPTransport) RoundTrip(*http.Request) (*http.Response, error) {
+	panic("typed nil transport invoked")
+}
+
 func TestHTTPTrustedServerAndClientComposeOnce(t *testing.T) {
 	routes := NewHTTPRoutes()
 	var handlerSpan trace.SpanContext
@@ -88,6 +94,41 @@ func TestHTTPTrustedServerAndClientComposeOnce(t *testing.T) {
 	assertNativePrivacy(t, spans, metrics, secretResource, "secret-id-4815", "secret-query-4815", "secret-header-4815")
 }
 
+func TestHTTPTransportTreatsTypedNilAsDefault(t *testing.T) {
+	telemetry := newTelemetryFixture(t, TraceProjectionPolicy{}, nil)
+	var base *typedNilHTTPTransport
+	transport, err := HTTPTransport(telemetry.providers, base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, err := http.NewRequest(http.MethodGet, "typed-nil://example", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := transport.RoundTrip(request); err == nil {
+		t.Fatal("default transport accepted unsupported protocol")
+	}
+}
+
+func TestHTTPRoutesZeroValueIsUsable(t *testing.T) {
+	telemetry := newTelemetryFixture(t, TraceProjectionPolicy{}, nil)
+	routes := &HTTPRoutes{}
+	if err := routes.HandleFunc("GET /ready", func(writer http.ResponseWriter, _ *http.Request) {
+		writer.WriteHeader(http.StatusNoContent)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	handler, err := HTTPServer(telemetry.providers, routes, TrustedIngress)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/ready", nil))
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("status = %d", response.Code)
+	}
+}
+
 func TestHTTPPublicIngressSanitizesAndBoundsFailures(t *testing.T) {
 	routes := NewHTTPRoutes()
 	marker := &struct{}{}
@@ -126,6 +167,7 @@ func TestHTTPPublicIngressSanitizesAndBoundsFailures(t *testing.T) {
 		t.Fatalf("response=%d calls=%d", response.Code, handlerCalls)
 	}
 	unmatched := httptest.NewRequest(http.MethodGet, "http://public.example/missing/secret-missing-id", nil)
+	unmatched.Pattern = "GET /items/{id}"
 	remoteHeaders(t, propagation.HeaderCarrier(unmatched.Header))
 	unmatchedResponse := httptest.NewRecorder()
 	handler.ServeHTTP(unmatchedResponse, unmatched)

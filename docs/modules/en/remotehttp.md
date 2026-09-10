@@ -49,9 +49,16 @@ either would agree with the server until the first time one of them gained a
 row, and the disagreement would be a status silently reclassified ([[D-045]]).
 
 `ParseEnvelope` answering **false** is what keeps a router's or a gateway's own
-`404 page not found` — text/plain, from `http.ServeMux` — from arriving as
-`crud.ErrNotFound`. A body that is not an envelope is a `*remote.ProtocolError`,
-whatever the status said.
+404 from arriving as `crud.ErrNotFound`, even when that peer happens to return
+`{"type":"error"}`. Recognition requires this framework's complete group and
+violation grammar, rejects unknown and duplicate members, and enforces the
+envelope, path and global 100-violation bounds. A body that is not that envelope
+is a `*remote.ProtocolError`, whatever the status said.
+
+Localized messages retain their validated per-violation `MessageLocale` on the
+reconstructed fault. If more than 100 violations arrive across both groups, the
+first 100 in canonical validation-then-general wire order survive and the fault
+is marked `Partial`.
 
 ## Why it is here and not in `crudgrpc`'s neighbourhood
 

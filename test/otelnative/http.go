@@ -48,21 +48,37 @@ func NewHTTPRoutes() *HTTPRoutes {
 	}
 }
 
-func (r *HTTPRoutes) Handle(pattern string, handler http.Handler) error {
+func (r *HTTPRoutes) Handle(pattern string, handler http.Handler) (err error) {
 	if r == nil {
 		return ErrNilRoutes
+	}
+	if !validNativeRoutePattern(pattern) || nilInterface(handler) {
+		return ErrInvalidRoute
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.sealed {
 		return ErrRoutesSealed
 	}
+	r.initialize()
+	if len(r.entries) >= maxNativeRoutes {
+		return ErrInvalidRoute
+	}
 	registered := &registeredHTTPHandler{
 		handler: handler,
 		token:   &routeToken{},
 	}
+	completed := false
+	defer func() {
+		if completed {
+			return
+		}
+		_ = recover()
+		err = ErrInvalidRoute
+	}()
 	r.mux.Handle(pattern, registered)
 	r.entries[pattern] = registered
+	completed = true
 	return nil
 }
 
@@ -77,43 +93,76 @@ func HTTPServer(providers Providers, routes *HTTPRoutes, mode IngressMode, optio
 	if err := mode.validate(); err != nil {
 		return nil, err
 	}
-	policy, err := routes.seal()
-	if err != nil {
-		return nil, err
+	if routes == nil {
+		return nil, ErrNilRoutes
 	}
-	settings := httpServerSettings{}
-	for _, option := range options {
-		if option != nil {
-			option(&settings)
+	return runNativeAssembly(func() (http.Handler, error) {
+		settings := httpServerSettings{}
+		for _, option := range options {
+			if option != nil {
+				option(&settings)
+			}
 		}
+		routes.mu.Lock()
+		defer routes.mu.Unlock()
+		if routes.sealed {
+			return nil, ErrRoutesSealed
+		}
+		routes.initialize()
+		entries := make(map[string]*registeredHTTPHandler, len(routes.entries))
+		names := make(map[string]string, len(routes.entries))
+		for pattern, handler := range routes.entries {
+			entries[pattern] = handler
+			names[pattern] = pattern
+		}
+		policy := &httpRoutePolicy{mux: routes.mux, entries: entries, names: names}
+		serverOptions := []otelhttp.Option{
+			otelhttp.WithTracerProvider(providers.Tracer),
+			otelhttp.WithMeterProvider(providers.Meter),
+			otelhttp.WithPropagators(propagatorFor(mode)),
+			otelhttp.WithPublicEndpointFn(func(*http.Request) bool { return mode == PublicIngress }),
+			otelhttp.WithSpanNameFormatter(policy.spanName),
+			otelhttp.WithMetricAttributesFn(policy.metricAttributes),
+		}
+		if settings.excludeManagementSignals {
+			serverOptions = append(serverOptions, otelhttp.WithFilter(policy.includeSignals))
+		}
+		handler := otelhttp.NewHandler(policy, fallbackHTTPName, serverOptions...)
+		if nilInterface(handler) {
+			return nil, ErrNativeAssembly
+		}
+		routes.sealed = true
+		return handler, nil
+	})
+}
+
+func (r *HTTPRoutes) initialize() {
+	if r.mux == nil {
+		r.mux = http.NewServeMux()
 	}
-	serverOptions := []otelhttp.Option{
-		otelhttp.WithTracerProvider(providers.Tracer),
-		otelhttp.WithMeterProvider(providers.Meter),
-		otelhttp.WithPropagators(propagatorFor(mode)),
-		otelhttp.WithPublicEndpointFn(func(*http.Request) bool { return mode == PublicIngress }),
-		otelhttp.WithSpanNameFormatter(policy.spanName),
-		otelhttp.WithMetricAttributesFn(policy.metricAttributes),
+	if r.entries == nil {
+		r.entries = make(map[string]*registeredHTTPHandler)
 	}
-	if settings.excludeManagementSignals {
-		serverOptions = append(serverOptions, otelhttp.WithFilter(policy.includeSignals))
-	}
-	return otelhttp.NewHandler(policy, fallbackHTTPName, serverOptions...), nil
 }
 
 func HTTPTransport(providers Providers, base http.RoundTripper) (http.RoundTripper, error) {
 	if err := providers.validate(); err != nil {
 		return nil, err
 	}
-	return otelhttp.NewTransport(
-		base,
-		otelhttp.WithTracerProvider(providers.Tracer),
-		otelhttp.WithMeterProvider(providers.Meter),
-		otelhttp.WithPropagators(propagation.TraceContext{}),
-		otelhttp.WithSpanNameFormatter(func(_ string, request *http.Request) string {
-			return "HTTP " + normalizeHTTPMethod(request.Method)
-		}),
-	), nil
+	if nilInterface(base) {
+		base = nil
+	}
+	return runNativeAssembly(func() (http.RoundTripper, error) {
+		return otelhttp.NewTransport(
+			base,
+			otelhttp.WithTracerProvider(providers.Tracer),
+			otelhttp.WithMeterProvider(providers.Meter),
+			otelhttp.WithPropagators(propagation.TraceContext{}),
+			otelhttp.WithSpanNameFormatter(func(_ string, request *http.Request) string {
+				return "HTTP " + normalizeHTTPMethod(request.Method)
+			}),
+		), nil
+	})
 }
 
 type routeToken struct{}
@@ -143,22 +192,6 @@ type httpRoutePolicy struct {
 	names   map[string]string
 }
 
-func (r *HTTPRoutes) seal() (*httpRoutePolicy, error) {
-	if r == nil {
-		return nil, ErrNilRoutes
-	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.sealed = true
-	entries := make(map[string]*registeredHTTPHandler, len(r.entries))
-	names := make(map[string]string, len(r.entries))
-	for pattern, handler := range r.entries {
-		entries[pattern] = handler
-		names[pattern] = pattern
-	}
-	return &httpRoutePolicy{mux: r.mux, entries: entries, names: names}, nil
-}
-
 func (p *httpRoutePolicy) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 	selected, pattern := p.mux.Handler(request)
 	registered, declared := p.entries[pattern]
@@ -176,6 +209,10 @@ func (p *httpRoutePolicy) ServeHTTP(writer http.ResponseWriter, request *http.Re
 }
 
 func (p *httpRoutePolicy) spanName(_ string, request *http.Request) string {
+	state, _ := request.Context().Value(dispatchStateKey{}).(*dispatchState)
+	if state == nil || state.executed == nil {
+		return fallbackHTTPName
+	}
 	name, ok := p.names[request.Pattern]
 	if !ok {
 		return fallbackHTTPName

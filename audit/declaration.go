@@ -54,6 +54,7 @@ type AttemptFinishPhaseDescription struct {
 type AttemptDescription struct {
 	Operation             OperationName
 	Fingerprint           AttemptPolicyFingerprint
+	Replay                AttemptReplayFingerprint
 	MaxOpen               time.Duration
 	MaxCheckpoints        uint16
 	MaxStateBytes         uint64
@@ -94,6 +95,7 @@ type declarationSeal struct {
 	description      DeclarationDescription
 	members          []declarationMember
 	operationMembers []declarationMember
+	attemptOperation *OperationType
 }
 
 type declarationMember struct {

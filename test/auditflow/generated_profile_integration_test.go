@@ -19,7 +19,7 @@ import (
 
 func TestGeneratedAuditProfilesSeparateServingRuntimeFromDeploymentAuthority(t *testing.T) {
 	runtime := newApplicationJobAuditRuntime(t)
-	assertGeneratedAuditDefinition(t, auditserving.VVModule, "audit", 2, 1)
+	assertGeneratedAuditDefinition(t, auditserving.VVModule, "audit", 3, 1)
 	assertGeneratedAuditDefinition(t, auditdeployment.VVModule, "audit-deployment", 1, 0)
 
 	servingCatalog := module.MustCatalog(auditserving.VVModule)
@@ -29,30 +29,37 @@ func TestGeneratedAuditProfilesSeparateServingRuntimeFromDeploymentAuthority(t *
 	inputs := auditserving.Inputs{
 		Recorder: runtime.recorder,
 		History:  runtime.history,
+		Attempts: runtime.attempts,
 		Store:    runtime.store,
 		Active:   runtime.catalogs.Active(),
 	}
 	var recorder *audit.Recorder
 	var history *audit.History
+	var attempts *audit.Attempts
 	var selected health.Contribution
 	serving := fx.New(
 		fx.NopLogger,
 		fx.Supply(inputs),
 		fx.Provide(auditserving.VVModule.Active(module.Serving)...),
-		fx.Populate(&recorder, &history, &selected),
+		fx.Populate(&recorder, &history, &attempts, &selected),
 	)
 	if err := serving.Err(); err != nil {
 		t.Fatalf("build generated audit serving graph: %v", err)
 	}
 	startAndStopAuditGraph(t, serving)
-	if recorder != runtime.recorder || history != runtime.history || history.Profile() != audit.PublicOnePageDevelopmentAlpha {
-		t.Fatal("generated serving graph did not expose the selected Recorder and History")
+	if recorder != runtime.recorder || history != runtime.history || attempts != runtime.attempts || history.Profile() != audit.PublicOnePageDevelopmentAlpha {
+		t.Fatal("generated serving graph did not expose the selected Recorder, History and Attempts")
 	}
 	if selected.Name != "audit" || selected.Code != "audit_unready" || selected.Importance != health.Required || selected.Probe == nil {
 		t.Fatalf("generated serving health = %+v", selected)
 	}
 	if err := selected.Probe.Check(t.Context()); err != nil {
 		t.Fatalf("generated serving health check: %v", err)
+	}
+	withoutAttempts := inputs
+	withoutAttempts.Attempts = nil
+	if err := auditserving.NewHealth(withoutAttempts).Probe.Check(t.Context()); err == nil {
+		t.Fatal("generated serving health accepted a missing Attempts runtime")
 	}
 
 	var forbidden audit.CatalogAdmin
