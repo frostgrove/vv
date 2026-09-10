@@ -94,7 +94,7 @@ phase 3 paid that.
 | [D-037](D-037-app-never-resolves-a-component-by-type.md) | No component is ever resolved by type; `app` holds no `map[reflect.Type]any` | accepted | philosophy |
 | [D-038](D-038-a-fault-is-additive.md) | A fault wraps and never replaces; the `crud` sentinel underneath stays reachable with `errors.Is` | accepted | errors |
 | [D-039](D-039-message-text-is-not-an-interface.md) | No classification and no field path comes from a driver's message text | accepted | errors |
-| [D-040](D-040-a-retryable-class-is-not-a-client-error.md) | A lock timeout, deadlock or serialisation failure is never a 4xx, and the framework does not retry | accepted | errors |
+| [D-040](D-040-a-retryable-class-is-not-a-client-error.md) | A lock timeout, deadlock or serialisation failure is never a 4xx, and the framework does not retry | **accepted — narrowed by D-139 for code that owns the transaction it replays** | errors |
 | [D-041](D-041-the-catalog-is-per-physical-handle.md) | The catalog is keyed on the database handle, never global, and its absence fails at start-up | accepted | errors |
 | [D-042](D-042-the-probe-is-advisory.md) | The probe may only narrow the truth; it never suppresses the driver's own violation | accepted | errors |
 | [D-043](D-043-a-path-is-translated-one-hop-per-layer.md) | Each layer translates only the hop it owns; an unresolvable path is marked approximate, never guessed | accepted | errors |
@@ -111,7 +111,7 @@ phase 3 paid that.
 | [D-054](D-054-the-closed-ast-gets-one-marshaller.md) | The closed predicate AST gets one marshaller inside `crud`; `Raw`, `EqField` and `False` are refused by name | accepted | client, query |
 | [D-055](D-055-a-principal-is-a-value-in-the-context.md) | A principal is a value in the context and the library never puts it there; `auth` is a package, not a manifest entry | accepted | auth, security |
 | [D-056](D-056-an-authentication-failure-is-a-fault-that-wraps-a-sentinel.md) | A 401 is a fault wrapping `auth.ErrUnauthenticated`, and its reason never leaves the process | accepted | auth, errors |
-| [D-057](D-057-the-application-opens-the-connection.md) | The application opens the connection and hands it over; `vvdb` imports nothing of vv and nothing in the seam reaches it | accepted | process & tooling |
+| [D-057](D-057-the-application-opens-the-connection.md) | The application opens the connection and hands it over; `vvdb` imports nothing of vv and nothing in the seam reaches it | **accepted — scoped to the `vvdb` package by D-139** | process & tooling |
 | [D-058](D-058-the-layout-axis-is-the-subsystem.md) | The top-level directory is the subsystem and the transport is the second level; `repo/basic` becomes `crud/sqlrepo`, and `utils/` may not import a subsystem | accepted | process & tooling |
 | [D-059](D-059-the-http-projection-of-the-error-contract-belongs-to-port.md) | The status table, the envelope, the `Renderer` seam and the body decode are `port/porthttp`'s, so an auth middleware does not import the repository | accepted | transports, errors |
 | [D-060](D-060-a-request-may-not-choose-how-much-comes-back.md) | `query.Config` is open by default about what a request may *name* and closed about how much comes back; `unpaged` is declared per endpoint | accepted | querying, transports |
@@ -191,6 +191,9 @@ phase 3 paid that.
 | [D-134](D-134-one-opentelemetry-module-the-application-owns-the-sdk.md) | One optional `vvotel` module observes explicit neutral seams with borrowed OTel API providers; it narrows D-062 only for context-bearing log calls; the application owns SDK/native instrumentation/export/shutdown and telemetry never changes an operation | **in force from OTel O1–O3; v2 schema current** | process & tooling, composition, operations |
 | [D-135](D-135-one-optional-i18n-module-owns-deterministic-presentation.md) | One optional `i18n` module owns the versioned MessageFormat profile, locale policy, immutable catalogues and offline tooling; the root error seam stays stdlib-only and transports keep protocol projection | accepted | i18n, process & tooling, composition, errors |
 | [D-136](D-136-audit-evidence-is-explicit-protected-and-transaction-honest.md) | Audit records only declared evidence, protects it before any store or observer sees it, and calls a business mutation atomic with its evidence only when both share one exact proven transaction authority. Correlation, telemetry, event history, ORM hooks and matching datasource configuration are not substitutes for that proof. | **in force from audit S1; the S0 contract and trace authority are current, while runtime proof is owed by the sections that implement it** | audit, security, transactions & datasources, composition |
+| [D-137](D-137-a-wired-source-carries-the-layers-the-graph-declared.md) | `crudsqlfx` hands out the composed source: the deployment writes the chain as `Layers`, a `Wrapping` carries a name and a function and no place of its own, the wired source stays addressable as the base so an offline harness keeps the chain, and a declared layer nobody contributed, a contributed layer nobody declared, one name twice or a layer answering with no source fails the graph before anything is wrapped (extends D-111) | accepted | composition, transactions & datasources |
+| [D-138](D-138-a-declared-index-is-created-by-a-version-step.md) | Every declared index is created by a `SchemaVersion` step and by nothing else, and a declaration that changes without one fails the build rather than somebody's start-up; a missing index is created by the upgrade, a wrong-definition operational index is refused where a drifted retention index is rebuilt, and a `VerifySchema` start-up creates nothing; a refused schema is repaired by a migration or a person and never by dropping the schema or the delivery tables, whose rows no rerun reconstructs | accepted | jobs, operations |
+| [D-139](D-139-a-lock-that-owns-its-transaction-may-retry-and-refuses-what-it-cannot-take.md) | `lock` may replay a transaction it opened itself, because nobody else can see it to replay it — `Guarded` and `Retry` retry, `Take` and `TryTake` classify and hand back as before (narrows D-040); an engine that cannot give the semantics asked for is refused at `For` with a typed error rather than answered with a weaker lock or none; guards are taken in one deterministic order; and `KeyOf`'s numbers are frozen, because changing them un-locks a rolling deploy silently | accepted | errors, transactions & datasources, concurrency |
 
 ## By area
 
@@ -288,7 +291,9 @@ differences), D-077 (bounded detached rollback), D-079 (atomic write chunks),
 D-083 (native effects resolve the same source-bound executor), D-041 (what else
 keys on datasource identity), D-042 (why the ownership flag exists at all),
 D-118 (what a job placement does with a transaction it finds in the context,
-and the two things it refuses instead of guessing).
+and the two things it refuses instead of guessing), D-137 (what the fx binding
+hands out when a deployment declared a chain around its source, and what it
+refuses instead of handing out a shorter one).
 D-009 and D-027 retain the superseded argument.
 
 **HTTP** — D-063 (the body cap, and why all three bindings share one number),
@@ -305,7 +310,10 @@ shell over, and the phase-9 measurement that adding it changed nothing shared),
 D-049 (why one `codes.Code` per kind and never per code), D-051 (why three
 requires are one decision).
 
-**Composition** — D-135 (one independently removable i18n module over the
+**Composition** — D-137 (why a layer around the wired source is contributed to
+the binding that builds it rather than decorated in the composition root, why
+the chain is one list the root writes, and why a layer that did not arrive stops
+the start), D-135 (one independently removable i18n module over the
 existing error seam, with no transport or extension-intersection packages),
 D-134 (one independently removable OTel adapter per neutral
 seam, with no bootstrap or combination packages), D-074 (why an fx binding is a satellite and what that does not
@@ -321,7 +329,9 @@ transaction is shared), D-018 (`-types`, `-into`, `-import`).
 **Errors** — D-135 (why localization changes wording but never the machine
 failure contract, public path, status or redaction), D-015 (the sentinel list and the HTTP mapping), D-049 (which of the two decides a status), D-046 (how a driver
 error is classified, and why the class alone is not a gate), D-039 (message text
-is not an interface), D-040 (retryable is not a client error), D-044 (a body
+is not an interface), D-040 (retryable is not a client error), D-139 (the one
+place that may retry it anyway, and why owning the transaction is the whole
+difference), D-044 (a body
 names nothing internal), D-047 (and neither does a fault's `Error()` text),
 D-038 (a fault is additive), D-043 (one hop per layer), D-050 (which of those
 hops may decline, and why only a generated one may), D-071 (deriving that hop
@@ -374,7 +384,11 @@ resource carries documents), D-049 (the kind decides the status), D-013
 lifecycle, durable Trace Context boundary and application-owned SDK), D-090 (why liveness asks nothing and why degraded keeps its
 traffic), D-091 (importance as a composition decision, the opt-in public code,
 and why there is no package per checked subsystem), D-101 (why nothing migrates
-a jobs schema by default, and what a production profile refuses), D-118 (why a
+a jobs schema by default, and what a production profile refuses), D-138 (why a
+declared index is created by a version step rather than reconciled on every
+start, why changing the declaration without one is a failed build, which kind
+of drift is repaired and which is refused, and why a refused schema is never
+answered by dropping it), D-118 (why a
 transactional enqueue is the outbox, why the broker relay is the application's
 and what delivery does not promise), D-096 (the neutral probe
 and observer fan-out that give D-091 something to wrap), D-092 (contributing a runner

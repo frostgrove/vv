@@ -9,6 +9,8 @@ import (
 	"sync/atomic"
 
 	"github.com/frostgrove/vv/audit"
+	"github.com/frostgrove/vv/vvdb/lock"
+	"github.com/frostgrove/vv/vvdb/lock/locksql"
 )
 
 type deployment struct {
@@ -127,7 +129,8 @@ func (d *Deployment) Migrate(ctx context.Context) error {
 		return fmt.Errorf("auditpg: begin migration: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
-	if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock($1)`, migrationLock(d.value.configured.schema.Name)); err != nil {
+	if err := locksql.Take(ctx, tx, lock.Policy{},
+		lock.Exclusively(lock.KeyFrom(migrationLock(d.value.configured.schema.Name)))); err != nil {
 		return fmt.Errorf("auditpg: lock migration: %w", err)
 	}
 	for index, statement := range statements {

@@ -304,9 +304,12 @@ utils/                      the SHARED tier and the consumer's application helpe
 ├── optional.go             MODEL PRIMITIVE — Opt[T]: absent, null and set are three states
 ├── vvflag/                 one typed flag, without owning the command line
 ├── vvcfg/                  MODULE — a config struct, loaded and validated at start-up
-├── vvgoose/                MODULE — Goose CLI and SQL generation from Go models
-└── vvdb/                   one config -> a DSN or a *sql.DB, four engines; who opens the connection
-    └── dbpgx/              MODULE — the same config, a pgx pool
+└── vvgoose/                MODULE — Goose CLI and SQL generation from Go models
+
+vvdb/                       the database below the repository: who opens the connection, and what
+│                           can be locked on it once it is open
+├── dbpgx/                  MODULE — the same config, a pgx pool
+└── lock/                   advisory locks on a key you choose; locksql/ for a database/sql driver
 
 cmd/vv/                     generates the update DTO and the metamodel from your model
 internal/codegen/           what cmd/vv is a front end for
@@ -328,10 +331,13 @@ boundary is a single line — **nothing under `utils/` imports `crud/`, `auth/`,
 the subsystem it belongs to. Without that line `utils/` collects half the
 repository inside a year. `make check-utils` is what holds it.
 
-`vvdb` is there despite carrying a satellite module beneath it, and that is the line working
-rather than bending: [[D-057]] already forbids it `crud`, `errs`, and any call
-from inside the repository path. What the boundary measures is the import graph,
-not the package count.
+`vvdb/` is the database as infrastructure, and it sits at the top level rather
+than under `utils/` because half of it is not a utility: `vvdb` itself turns one
+config into a handle and imports nothing of vv ([[D-057]]), while `vvdb/lock`
+takes advisory locks on that handle and is reached from the repository path by
+three drivers. The invariant that used to be spelled for the whole subtree is now
+spelled for the root package, which is what [[D-057]] says and what
+`make check-deps` measures — the import graph, not the package count.
 
 `_examples/` starts with an underscore, so the Go toolchain ignores it at the
 root: `make unit` does not build it and `make examples` does.

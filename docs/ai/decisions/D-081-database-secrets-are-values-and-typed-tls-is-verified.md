@@ -65,7 +65,7 @@ who deliberately own lower-level behavior.
 
 ## Proven by
 
-- `utils/vvdb/secret_test.go`
+- `vvdb/secret_test.go`
 - `utils/vvcfg/vvcfg_test.go:TestVVDBSecretsLoadNormallyAndRenderRedacted`
 - `test/dsn/dsn_test.go`
 

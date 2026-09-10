@@ -6,11 +6,12 @@ import (
 	"database/sql"
 	"encoding/binary"
 	"fmt"
-	"sort"
 	"strings"
 	"time"
 
 	"github.com/frostgrove/vv/jobs"
+	"github.com/frostgrove/vv/vvdb/lock"
+	"github.com/frostgrove/vv/vvdb/lock/locksql"
 )
 
 type deliveryInsert struct {
@@ -31,20 +32,11 @@ type deliveryInsert struct {
 }
 
 func (r repository) lockIntentKeys(ctx context.Context, tx *sql.Tx, namespace jobs.Namespace, keys []jobs.IntentKey) error {
-	locks := make([]int64, len(keys))
+	guards := make([]lock.Guard, len(keys))
 	for index, key := range keys {
-		locks[index] = intentAdvisoryLock(namespace, key)
+		guards[index] = lock.Exclusively(lock.KeyFrom(intentAdvisoryLock(namespace, key)))
 	}
-	sort.Slice(locks, func(left, right int) bool { return locks[left] < locks[right] })
-	for index, lock := range locks {
-		if index > 0 && lock == locks[index-1] {
-			continue
-		}
-		if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock($1)`, lock); err != nil {
-			return err
-		}
-	}
-	return nil
+	return locksql.Take(ctx, tx, lock.Policy{}, guards...)
 }
 
 func intentAdvisoryLock(namespace jobs.Namespace, key jobs.IntentKey) int64 {

@@ -17,7 +17,6 @@ exists.
 | 4 | `retract` in the release vocabulary | a published tag to retract | **yes** |
 | 5 | More engines | live servers in compose | no |
 | 6 | `CodeExclusion` is reachable from no engine | somebody provoking an `EXCLUDE` | no |
-| 7 | Whether the framework retries a retryable class | a decision, not code | no |
 | 8 | The tag-name helper, and generated wiring for Fiber and Gin | a decision each | no |
 | 9 | Remaining documentation citations to two deleted documents | classification and a mechanical sweep | no |
 | 10 | [Maximal optional OpenTelemetry integration](2026-09-08-opentelemetry-maximal-roadmap.md) | the accepted OTel roadmap implementation and green evidence | no |
@@ -130,15 +129,6 @@ Two gaps in `errs/sqlerr`, both left open on purpose:
   `(dialect, sqlstate, native)` and no arm of it is a SQLSTATE-class test,
   because three of the four engines break that assumption in three different
   ways ([[D-046]]).
-
-## 7. Whether the framework retries a retryable class
-
-[[D-040]] says no, and is in force.
-
-The argument for yes is recorded rather than dismissed: a serialisation failure
-inside a repository-**owned** transaction is the framework's own to retry, and
-nobody else can see it. If that argument wins, D-040 is superseded rather than
-bent.
 
 ## 8. Two shapes left undecided
 

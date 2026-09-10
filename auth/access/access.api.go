@@ -144,6 +144,7 @@ func RequirePrincipal(ctx context.Context) (*Principal, error) {
 	return principal, nil
 }
 
+// TODO: Add comment. Add prefix |||
 func Require(ctx context.Context, permissions ...auth.Permission) (*Principal, error) {
 	principal, err := RequirePrincipal(ctx)
 	if err != nil {

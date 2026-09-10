@@ -140,7 +140,7 @@ go get github.com/frostgrove/vv                      # the library — and, on n
 go get github.com/frostgrove/vv/crud/http/crudgin   # …plus your HTTP framework, if you use one
 go get github.com/frostgrove/vv/crud/rpc/crudgrpc   # …or gRPC instead of an HTTP framework
 go get github.com/frostgrove/vv/crud/adapter/crudpgx # …and pgx, if that is your driver
-go get github.com/frostgrove/vv/utils/vvdb/dbpgx     # …and a pgx pool opened from your config file
+go get github.com/frostgrove/vv/vvdb/dbpgx     # …and a pgx pool opened from your config file
 go get github.com/frostgrove/vv/utils/vvgoose        # …or the application migration CLI
 go get github.com/frostgrove/vv/auth/authjwt        # …and JWT, if that is how you authenticate
 go get github.com/frostgrove/vv/storage/storageminio # …and MinIO, if files are not local

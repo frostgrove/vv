@@ -669,8 +669,8 @@ and all of them are cheaper before a tag than after.
 | 26 | Neither package owns a use case, a running example or any integration coverage — **the flow half is closed**: [[FL-026]] | sharp edge | The only stated guarantee about this loader lives in [[UC-021]], another module's use case, where nobody changing `vvcfg` will look; `grep -rn vvcfg docs/ai/flows/` is empty and `_examples` names it in one comment |
 
 **Housekeeping found on the way, not a blocker:** `gofmt -l` is not silent, and
-it was five files, not three (`utils/vvcfg/vvcfg.go` is clean since [[D-086]]): `utils/vvdb/dbpgx/dbpgx.go`,
-`utils/vvdb/dbpgx/dbpgx_test.go`, `test/bridge/fieldviolation_test.go` and
+it was five files, not three (`utils/vvcfg/vvcfg.go` is clean since [[D-086]]): `vvdb/dbpgx/dbpgx.go`,
+`vvdb/dbpgx/dbpgx_test.go`, `test/bridge/fieldviolation_test.go` and
 `test/dsn/dsn_test.go`. All five have two `github.com/…` import specs with no
 blank line between them, in the wrong order, so gofmt reorders them; the
 crudfiber and crudgin blocks that look similar are separated by a blank line and

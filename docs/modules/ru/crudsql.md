@@ -202,6 +202,51 @@ fx.Options(crudsqlfx.Module(&configuration.Db))
 ваше решение и всегда им было ([[D-057]]): импортируйте его ради side effect
 рядом с этим.
 
+### Слои вокруг источника
+
+Источник, который отдаёт этот модуль, — составленный, а цепочку вокруг него
+пишет развёртывание:
+
+```go
+fx.Options(
+    crudsqlfx.Module(&configuration.Db, crudsqlfx.Layers("otel.source")),
+
+    fx.Provide(crudsqlfx.AsWrapping(func(telemetry *vvotel.Telemetry) crudsqlfx.Wrapping {
+        return crudsqlfx.Wrapping{
+            Name: "otel.source",
+            Wrap: func(next crud.Source) crud.Source { return vvotel.Source(telemetry, next) },
+        }
+    })),
+)
+```
+
+`Layers` — это цепочка снаружи внутрь: первое имя первым видит вызов и последним
+его результат. У `Wrapping` своего места нет: что рядом стоит второй слой и кто
+из них снаружи, знает только композиционный корень. Пустое объявление — это сам
+источник.
+
+Отказы работают в обе стороны и роняют граф до того, как хоть что-то обёрнуто:
+объявленный слой, который никто не контрибьютил — а именно так выглядит забытый
+`AsWrapping` — это `ErrWrappingMissing`; контрибьюченный слой, которого никто не
+объявлял, — `ErrWrappingUndeclared`; остальные — `ErrWrappingTwice`,
+`ErrWrappingUnnamed`, `ErrWrappingEmpty` и `ErrWrappingDropped` ([[D-137]]).
+
+Контрибьюченный слой отвечает за то, что обернул: обёртка, спрятавшая `Begin`,
+уносит с собой транзакции ([[D-061]]). `AsWrapping` — это написание тега группы
+`group:"vv.crud.source.wrappings"`, который контрибьютор может написать сам и не
+импортировать этот модуль вовсе.
+
+Источник, который собрал этот модуль, адресуется отдельно — под именем
+`name:"vv.crudsql.base"`. Граф, которому база недоступна, передаёт свой и
+сохраняет цепочку:
+
+```go
+fx.Options(boot.Deployment(configuration), crudsqlfx.Base(crudsql.Postgres(offlinePool)))
+```
+
+Подмена самого `crud.Source` — другой жест и значит другое: этот объект и есть
+источник, вместе со слоями.
+
 ## Смотрите также
 
 - [crudpgx](crudpgx.md) — pgx v5, с массовой вставкой через `COPY`

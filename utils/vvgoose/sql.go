@@ -6,8 +6,8 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/frostgrove/vv/utils/vvdb"
 	"github.com/frostgrove/vv/utils/vvgoose/internal/modelscan"
+	"github.com/frostgrove/vv/vvdb"
 )
 
 func renderMigration(engine vvdb.Engine, table string, model *modelscan.Model) ([]byte, error) {

@@ -60,6 +60,7 @@ through it.
 | a projection, a checkpoint store, a router, the retry and quarantine passes, or how a settled cursor becomes a durable row | [[FL-038]] |
 | an i18n declaration, locale resolver, MF2 template, typed message, usage extraction, catalogue artifact, overlay, render, error source or publication controller | [[FL-039]] |
 | the audit trace registry, semantic or completeness authority, tagged design import, or section checkpoint | [[FL-040]] |
+| an advisory lock, a guard, a lock key, a retry on a deadlock, or a schema-migration lock | [[FL-041]] |
 
 **A code change that alters a path must update its flow document in the same
 change.** Not afterwards, not in a follow-up. A flow that describes a path the
@@ -96,7 +97,7 @@ phase 3 landed FL-014 and before phase 5 landed FL-015.
 | [FL-018](FL-018-a-call-through-the-client.md) | A call through the client | `remote/resource.go:Resource.Get` | [[UC-018]] [[UC-015]] |
 | [FL-019](FL-019-a-token-becomes-a-principal.md) | A token becomes a principal | `auth/guard.go:Guard.Authenticate` | [[UC-019]] |
 | [FL-020](FL-020-a-principal-becomes-a-policy-decision.md) | A principal becomes a policy decision | `crud/decorators/security/principal.go:ScopeAttr` | [[UC-020]] [[UC-004]] |
-| [FL-021](FL-021-a-configuration-becomes-a-connection.md) | A configuration becomes a connection | `utils/vvdb/dsn.go:DSN` / `utils/vvdb/open.go:Open` | [[UC-021]] |
+| [FL-021](FL-021-a-configuration-becomes-a-connection.md) | A configuration becomes a connection | `vvdb/dsn.go:DSN` / `vvdb/open.go:Open` | [[UC-021]] |
 | [FL-022](FL-022-a-migration-command-becomes-sql-and-schema.md) | A migration command becomes SQL and schema | `utils/vvgoose/vvgoose.go:Execute` | [[UC-022]] |
 | [FL-023](FL-023-a-sign-in-becomes-a-session.md) | A sign-in becomes a session | `auth/access/access.runtime.go` | [[UC-023]] |
 | [FL-024](FL-024-a-modules-routes-become-a-verified-api.md) | A module's routes become a verified API | `app/http/appfiber/appfiber.go:Mount` | — |
@@ -116,6 +117,7 @@ phase 3 landed FL-014 and before phase 5 landed FL-015.
 | [FL-038](FL-038-a-settled-cursor-becomes-a-durable-checkpoint.md) | A settled cursor becomes a durable checkpoint | `projection.New` / `projection.Projection.Run` / `event.Track` / `eventtest.RunCheckpoints` | [[UC-032]] |
 | [FL-039](FL-039-a-message-declaration-becomes-rendered-presentation.md) | A message declaration becomes rendered presentation | `i18n.New` / `vv-i18n extract|merge` / `Snapshot.Resolve` / `Snapshot.Bind` / `DefineStruct` / `View.Render` / `NewFormatter` / `Controller.Activate` | [[UC-033]] |
 | [FL-040](FL-040-an-audit-contract-becomes-an-executable-checkpoint.md) | An audit contract becomes an executable checkpoint | `scripts/audit-trace.sh` / `scripts/audit_trace_test.go:TestAuditTraceRegistry` / `scripts/audit_trace_import_test.go:TestAuditTraceDesignImport` | [[UC-034]] |
+| [FL-041](FL-041-a-key-becomes-a-held-critical-section.md) | A key becomes a held critical section | `vvdb/lock/lock.go:For` / `vvdb/lock/lock.go:Take` / `vvdb/lock/lock.go:Guarded` / `vvdb/lock/locksql/locksql.go:Hold` | [[UC-035]] |
 
 ## By file — which flows touch this file
 
@@ -253,6 +255,7 @@ phase 3 landed FL-014 and before phase 5 landed FL-015.
 | `crud/http/crudhttp/table.go` | FL-024, FL-013, FL-020 |
 | `crud/adapter/crudsql/wire.go` | FL-016, FL-014, FL-021 |
 | `crud/adapter/crudsql/crudsqlfx/crudsqlfx.go` | FL-021 |
+| `crud/adapter/crudsql/crudsqlfx/wrapping.go` | FL-021 |
 | `storage/storageminio/storageminiofx/storageminiofx.go` | FL-024 |
 | `auth/doc.go` | FL-019 |
 | `auth/principal.go` | FL-019, FL-020 |
@@ -338,6 +341,13 @@ phase 3 landed FL-014 and before phase 5 landed FL-015.
 | `errs/sqlerr/testdata/corpus/` | FL-011, FL-014 |
 | `crud/action.go` | FL-020, FL-024 |
 | `crud/meta.go` | FL-002, FL-003, FL-004, FL-010, FL-012 |
+| `vvdb/lock/key.go` | FL-041 |
+| `vvdb/lock/lock.go` | FL-041 |
+| `vvdb/lock/postgres.go` | FL-041 |
+| `vvdb/lock/retryable.go` | FL-041 |
+| `vvdb/lock/errors.go` | FL-041 |
+| `vvdb/lock/locksql/locksql.go` | FL-041 |
+| `vvdb/lock/locksql/tx.go` | FL-041 |
 | `crud/options.go` | FL-001, FL-007, FL-008, FL-018 |
 | `crud/optiongroup.go` | FL-001, FL-002, FL-006, FL-008 |
 | `crud/opt.go` | FL-002 |
@@ -471,11 +481,11 @@ phase 3 landed FL-014 and before phase 5 landed FL-015.
 | `utils/vvcfg/report.go` | FL-026 |
 | `utils/vvcfg/bytes.go` | FL-026 |
 | `utils/vvflag/vvflag.go` | FL-026 |
-| `utils/vvdb/config.go` | FL-021, FL-022 |
-| `utils/vvdb/dsn.go` | FL-021 |
-| `utils/vvdb/open.go` | FL-021 |
-| `utils/vvdb/doc.go` | FL-021 |
-| `utils/vvdb/dbpgx/dbpgx.go` | FL-021 |
+| `vvdb/config.go` | FL-021, FL-022 |
+| `vvdb/dsn.go` | FL-021 |
+| `vvdb/open.go` | FL-021 |
+| `vvdb/doc.go` | FL-021 |
+| `vvdb/dbpgx/dbpgx.go` | FL-021 |
 | `utils/vvgoose/vvgoose.go` | FL-022 |
 | `utils/vvgoose/migration.go` | FL-022 |
 | `utils/vvgoose/sql.go` | FL-022 |
@@ -576,7 +586,12 @@ phase 3 landed FL-014 and before phase 5 landed FL-015.
 | `event/eventpg/doc.go` | FL-037 |
 | `event/eventpg/schema.go` | FL-037 |
 | `event/eventpg/config.go` | FL-037 |
-| `event/eventpg/migration.go` | FL-037 |
+| `event/eventpg/migration.go` | FL-037, FL-041 |
+| `jobs/jobspg/repo_ops.go` | FL-041 |
+| `jobs/jobspg/retention_repo.go` | FL-041 |
+| `jobs/jobspg/retention_migration.go` | FL-041 |
+| `audit/auditpg/deployment.go` | FL-041 |
+| `audit/auditpg/attempt_lock.go` | FL-041 |
 | `event/eventpg/verify.go` | FL-037 |
 | `event/eventpg/catalog.go` | FL-037 |
 | `event/eventpg/executor.go` | FL-037 |

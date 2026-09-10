@@ -10,18 +10,28 @@ import (
 
 	"github.com/frostgrove/vv/crud"
 	"github.com/frostgrove/vv/crud/adapter/crudsql"
-	"github.com/frostgrove/vv/utils/vvdb"
+	"github.com/frostgrove/vv/vvdb"
 )
 
-func Module(configuration *vvdb.Config) fx.Option {
+func Module(configuration *vvdb.Config, options ...Option) fx.Option {
+	var declared declaration
+	for _, option := range options {
+		option(&declared)
+	}
+
 	return fx.Module("vv.crudsql",
 		fx.Provide(
 			func(lifecycle fx.Lifecycle) (*sql.DB, error) { return Open(lifecycle, configuration) },
-			func(database *sql.DB) (crud.Source, error) {
+
+			fx.Annotate(func(database *sql.DB) (crud.Source, error) {
 				ctx, cancel := context.WithTimeout(context.Background(), schemaDeadline(configuration))
 				defer cancel()
 				return crudsql.Wired(ctx, crudsql.Engine(configuration.Engine), database)
-			},
+			}, fx.ResultTags(baseTag)),
+
+			fx.Annotate(func(base crud.Source, contributed []Wrapping) (crud.Source, error) {
+				return chain(base, declared.layers, contributed)
+			}, fx.ParamTags(baseTag, wrappingGroup)),
 		),
 
 		fx.Invoke(verify),

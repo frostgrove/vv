@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/frostgrove/vv/utils/vvdb"
-	"github.com/frostgrove/vv/utils/vvdb/dbpgx"
+	"github.com/frostgrove/vv/vvdb"
+	"github.com/frostgrove/vv/vvdb/dbpgx"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )

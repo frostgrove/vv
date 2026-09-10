@@ -54,7 +54,7 @@ forward.
 
 ## Configuration path
 
-`utils/vvdb/config.go:Migration` stores path, model roots and history table next
+`vvdb/config.go:Migration` stores path, model roots and history table next
 to the database facts but outside the DSN. Its validation never stats a source
 directory and `ReadReplica` clears it. `utils/vvcfg/vvcfg_test.go` proves YAML,
 defaults, environment prefixes and raw-DSN overlay preserve that metadata.

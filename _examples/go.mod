@@ -103,7 +103,7 @@ require (
 	github.com/frostgrove/vv/crud/http/crudfiber v0.0.0
 	github.com/frostgrove/vv/crud/http/crudgin v0.0.0
 	github.com/frostgrove/vv/crud/rpc/crudgrpc v0.0.0
-	github.com/frostgrove/vv/utils/vvdb/dbpgx v0.0.0
+	github.com/frostgrove/vv/vvdb/dbpgx v0.0.0
 	github.com/gin-gonic/gin v1.12.0
 	github.com/go-openapi/inflect v0.19.0 // indirect
 	github.com/go-sql-driver/mysql v1.10.0 // indirect
@@ -135,4 +135,4 @@ replace github.com/frostgrove/vv/auth/http/authfiber => ../auth/http/authfiber
 
 replace github.com/frostgrove/vv/auth/rpc/authgrpc => ../auth/rpc/authgrpc
 
-replace github.com/frostgrove/vv/utils/vvdb/dbpgx => ../utils/vvdb/dbpgx
+replace github.com/frostgrove/vv/vvdb/dbpgx => ../vvdb/dbpgx

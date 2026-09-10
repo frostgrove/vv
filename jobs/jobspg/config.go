@@ -16,7 +16,14 @@ import (
 )
 
 const DefaultSchema = "frostgrove_jobs"
-const SchemaVersion = 5
+const SchemaVersion = 6
+
+// Every index this package declares is created by a version step, so growing
+// operationalIndexes or retentionIndexes without raising SchemaVersion leaves
+// databases that are already current with an object nothing will ever create.
+// TestDeclaredIndexesCarryTheSchemaVersionThatCreatesThem holds this digest
+// against the declarations and fails until both are updated together.
+const declaredIndexDigest = "sha256:4d5159153bc0cdfc496ae57c18c9e7ab873e0ae84c022504219d54ea98e10031"
 
 var ErrNotReady = errors.New("jobspg: driver is not ready")
 var ErrSchemaMismatch = errors.New("jobspg: schema mismatch")

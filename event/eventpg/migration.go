@@ -4,17 +4,15 @@ import (
 	"context"
 	"crypto/sha256"
 	"database/sql"
-	"database/sql/driver"
 	"encoding/binary"
-	"errors"
 	"fmt"
-	"math/rand/v2"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/frostgrove/vv/crud/sqlfault"
 	"github.com/frostgrove/vv/event"
+	"github.com/frostgrove/vv/vvdb/lock"
+	"github.com/frostgrove/vv/vvdb/lock/locksql"
 )
 
 // The SQLSTATE the assertion raises. PostgreSQL defines no code for "this
@@ -195,49 +193,11 @@ func migrateSchema(ctx context.Context, db *sql.DB, schema Schema) error {
 // replicas race CREATE TABLE into a 23505 on pg_type_typname_nsp_index. An
 // unlock that answers false is therefore an error and the connection is
 // discarded rather than returned to the pool holding a lock nobody will release.
-func withMigrationLock(ctx context.Context, db *sql.DB, schema Schema, work func(*sql.Conn) error) (resultErr error) {
-	conn, err := db.Conn(ctx)
-	if err != nil {
-		return fmt.Errorf("eventpg: migrating %q could not check a connection out of the pool: %w", schema.Name, err)
+func withMigrationLock(ctx context.Context, db *sql.DB, schema Schema, work func(*sql.Conn) error) error {
+	if err := locksql.Hold(ctx, db, lock.KeyFrom(migrationLock(schema.Name)), work); err != nil {
+		return fmt.Errorf("eventpg: migrating %q: %w", schema.Name, err)
 	}
-	locked := false
-	discard := false
-	defer func() {
-		if locked {
-			unlocking, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-			var unlocked bool
-			err := conn.QueryRowContext(unlocking, `SELECT pg_advisory_unlock($1)`, migrationLock(schema.Name)).Scan(&unlocked)
-			cancel()
-			if err == nil && !unlocked {
-				err = errors.New("this session did not hold it, so the lock never serialised anything")
-			}
-			if err != nil {
-				discard = true
-				resultErr = errors.Join(resultErr, fmt.Errorf("eventpg: releasing the migration lock on %q: %w", schema.Name, err))
-			}
-		}
-		if discard {
-			_ = conn.Raw(func(any) error { return driver.ErrBadConn })
-		}
-		resultErr = errors.Join(resultErr, conn.Close())
-	}()
-	for !locked {
-		if err := conn.QueryRowContext(ctx, `SELECT pg_try_advisory_lock($1)`, migrationLock(schema.Name)).Scan(&locked); err != nil {
-			discard = true
-			return fmt.Errorf("eventpg: taking the migration lock on %q: %w", schema.Name, err)
-		}
-		if locked {
-			break
-		}
-		waiting := time.NewTimer(250*time.Millisecond + time.Duration(rand.Int64N(int64(250*time.Millisecond))))
-		select {
-		case <-ctx.Done():
-			waiting.Stop()
-			return ctx.Err()
-		case <-waiting.C:
-		}
-	}
-	return work(conn)
+	return nil
 }
 
 func migrateOn(ctx context.Context, conn *sql.Conn, schema Schema, statements []string) error {

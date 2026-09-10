@@ -9,7 +9,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/frostgrove/vv/utils/vvdb"
+	"github.com/frostgrove/vv/vvdb"
 	mysql "github.com/go-sql-driver/mysql"
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/pressly/goose/v3"
@@ -188,49 +188,187 @@ func runFresh(ctx context.Context, config vvdb.Config) (results []*goose.Migrati
 	return results, err
 }
 
-func runFlush(ctx context.Context, raw vvdb.Config) (err error) {
+// flushScope narrows what a flush drops. The zero value is every schema the
+// connected user owns; the two fields are alternatives, never combined.
+type flushScope struct {
+	defaultOnly bool
+	schemas     []string
+}
+
+func (scope flushScope) selective() bool {
+	return scope.defaultOnly || len(scope.schemas) > 0
+}
+
+// flushConfirmer is shown what the flush resolved to and answers whether it may
+// proceed. Naming the targets before anything is dropped is the whole point:
+// the default scope reaches schemas the caller never mentioned.
+type flushConfirmer func(ctx context.Context, targets []string) (bool, error)
+
+// flushResult separates the three ways a flush ends: it dropped what it named,
+// it was declined, or the scope matched nothing at all. A caller that cannot
+// tell them apart has to stay silent about two of them.
+type flushResult struct {
+	targets []string
+	flushed bool
+}
+
+func runFlush(ctx context.Context, raw vvdb.Config, scope flushScope, confirm flushConfirmer) (result flushResult, err error) {
 	config := normalizeConfig(&raw)
 	if err := config.Validate(); err != nil {
-		return fmt.Errorf("vvgoose: invalid database config: %w", err)
+		return result, fmt.Errorf("vvgoose: invalid database config: %w", err)
+	}
+	if config.Engine != vvdb.Postgres && scope.selective() {
+		return result, fmt.Errorf("vvgoose: --schema and --public select PostgreSQL schemas, and %q flushes the database it is connected to", config.Engine)
 	}
 
 	primary := config
 	primary.Replica = nil
 	database, err := vvdb.Open(&primary)
 	if err != nil {
-		return fmt.Errorf("vvgoose: open primary database: %w", err)
+		return result, fmt.Errorf("vvgoose: open primary database: %w", err)
 	}
 	defer joinCloseError(database, &err)
 
 	switch config.Engine {
 	case vvdb.Postgres:
-		return flushPostgres(ctx, database)
+		return flushPostgres(ctx, database, scope, confirm)
 	case vvdb.MySQL, vvdb.MariaDB:
-		return flushMySQL(ctx, database)
+		return flushConnectedDatabase(ctx, database, confirm, flushMySQL)
 	case vvdb.SQLite:
-		return flushSQLite(ctx, database)
+		return flushConnectedDatabase(ctx, database, confirm, flushSQLite)
 	default:
-		return fmt.Errorf("vvgoose: %w: %q", vvdb.ErrEngine, config.Engine)
+		return false, fmt.Errorf("vvgoose: %w: %q", vvdb.ErrEngine, config.Engine)
 	}
 }
 
-func flushPostgres(ctx context.Context, database *sql.DB) error {
-	var schema string
-	if err := database.QueryRowContext(ctx, "SELECT current_schema()").Scan(&schema); err != nil {
-		return fmt.Errorf("vvgoose: find PostgreSQL schema to flush: %w", err)
+func flushConnectedDatabase(ctx context.Context, database *sql.DB, confirm flushConfirmer, flush func(context.Context, *sql.DB) error) (bool, error) {
+	proceed, err := confirm(ctx, []string{"every object in the connected database"})
+	if err != nil || !proceed {
+		return false, err
 	}
-	if schema == "" || schema == "information_schema" || strings.HasPrefix(schema, "pg_") {
-		return fmt.Errorf("vvgoose: refusing to flush PostgreSQL system schema %q", schema)
+	if err := flush(ctx, database); err != nil {
+		return false, err
 	}
+	return true, nil
+}
 
-	quoted := quoteRuntimeIdentifier(vvdb.Postgres, schema)
-	if _, err := database.ExecContext(ctx, "DROP SCHEMA "+quoted+" CASCADE"); err != nil {
-		return fmt.Errorf("vvgoose: drop PostgreSQL schema %q: %w", schema, err)
+func flushPostgres(ctx context.Context, database *sql.DB, scope flushScope, confirm flushConfirmer) (bool, error) {
+	defaultSchema, err := postgresDefaultSchema(ctx, database)
+	if err != nil {
+		return false, err
 	}
-	if _, err := database.ExecContext(ctx, "CREATE SCHEMA "+quoted); err != nil {
-		return fmt.Errorf("vvgoose: recreate PostgreSQL schema %q: %w", schema, err)
+	targets, err := postgresFlushTargets(ctx, database, scope, defaultSchema)
+	if err != nil {
+		return false, err
 	}
-	return nil
+	if len(targets) == 0 {
+		return false, nil
+	}
+	proceed, err := confirm(ctx, targets)
+	if err != nil || !proceed {
+		return false, err
+	}
+	for _, schema := range targets {
+		quoted := quoteRuntimeIdentifier(vvdb.Postgres, schema)
+		if _, err := database.ExecContext(ctx, "DROP SCHEMA "+quoted+" CASCADE"); err != nil {
+			return false, fmt.Errorf("vvgoose: drop PostgreSQL schema %q: %w", schema, err)
+		}
+		if schema != defaultSchema {
+			continue
+		}
+		if _, err := database.ExecContext(ctx, "CREATE SCHEMA "+quoted); err != nil {
+			return false, fmt.Errorf("vvgoose: recreate PostgreSQL schema %q: %w", schema, err)
+		}
+	}
+	return true, nil
+}
+
+func postgresDefaultSchema(ctx context.Context, database *sql.DB) (string, error) {
+	var schema string
+	if err := database.QueryRowContext(ctx, "SELECT COALESCE(current_schema(), '')").Scan(&schema); err != nil {
+		return "", fmt.Errorf("vvgoose: find the PostgreSQL schema to flush: %w", err)
+	}
+	if schema == "" || postgresSystemSchema(schema) {
+		return "", fmt.Errorf("vvgoose: refusing to flush PostgreSQL system schema %q", schema)
+	}
+	return schema, nil
+}
+
+func postgresSystemSchema(name string) bool {
+	return name == "information_schema" || strings.HasPrefix(name, "pg_")
+}
+
+// postgresFlushTargets resolves the scope against what the database actually
+// holds. A schema an extension owns is refused rather than dropped: PostGIS and
+// TimescaleDB keep catalogues in schemas of their own, and dropping one breaks
+// the extension in a way no migration puts back. Extension ownership is read
+// from pg_depend rather than guessed from the name.
+func postgresFlushTargets(ctx context.Context, database *sql.DB, scope flushScope, defaultSchema string) ([]string, error) {
+	rows, err := database.QueryContext(ctx, `
+		SELECT namespace.nspname,
+		       EXISTS (
+		           SELECT 1
+		           FROM pg_depend AS dependency
+		           WHERE dependency.classid = 'pg_namespace'::regclass
+		             AND dependency.objid = namespace.oid
+		             AND dependency.deptype = 'e'
+		       )
+		FROM pg_namespace AS namespace
+		WHERE namespace.nspname <> 'information_schema'
+		  AND namespace.nspname NOT LIKE 'pg\_%'
+		ORDER BY namespace.nspname`)
+	if err != nil {
+		return nil, fmt.Errorf("vvgoose: list PostgreSQL schemas to flush: %w", err)
+	}
+	defer rows.Close()
+	var schemas []postgresSchema
+	for rows.Next() {
+		var schema postgresSchema
+		if err := rows.Scan(&schema.name, &schema.extensionOwned); err != nil {
+			return nil, fmt.Errorf("vvgoose: read PostgreSQL schemas to flush: %w", err)
+		}
+		schemas = append(schemas, schema)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("vvgoose: read PostgreSQL schemas to flush: %w", err)
+	}
+	return resolveFlushTargets(scope, schemas, defaultSchema)
+}
+
+type postgresSchema struct {
+	name           string
+	extensionOwned bool
+}
+
+func resolveFlushTargets(scope flushScope, schemas []postgresSchema, defaultSchema string) ([]string, error) {
+	if scope.defaultOnly {
+		return []string{defaultSchema}, nil
+	}
+	owned := make(map[string]bool, len(schemas))
+	var droppable []string
+	for _, schema := range schemas {
+		owned[schema.name] = schema.extensionOwned
+		if !schema.extensionOwned {
+			droppable = append(droppable, schema.name)
+		}
+	}
+	if len(scope.schemas) == 0 {
+		return droppable, nil
+	}
+	var targets []string
+	for _, name := range scope.schemas {
+		if postgresSystemSchema(name) {
+			return nil, fmt.Errorf("vvgoose: refusing to flush PostgreSQL system schema %q", name)
+		}
+		extensionOwned, exists := owned[name]
+		if extensionOwned {
+			return nil, fmt.Errorf("vvgoose: schema %q belongs to an extension, and dropping it would break that extension", name)
+		}
+		if exists {
+			targets = append(targets, name)
+		}
+	}
+	return targets, nil
 }
 
 func flushMySQL(ctx context.Context, database *sql.DB) (err error) {

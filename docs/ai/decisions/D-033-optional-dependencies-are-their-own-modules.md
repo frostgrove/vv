@@ -29,7 +29,7 @@ auth/http/authgin                            + gin
 auth/rpc/authgrpc                            + grpc
 
 utils/vvcfg                                  + a config loader
-utils/vvdb/dbpgx                             + pgx/v5
+vvdb/dbpgx                             + pgx/v5
 utils/vvgoose                                + Goose, CLI UI, registered SQL drivers (D-064)
 
 test                                         unpublished, replace ../

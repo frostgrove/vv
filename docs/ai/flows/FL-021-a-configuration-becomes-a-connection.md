@@ -1,6 +1,6 @@
 # FL-021 — A configuration becomes a connection
 
-**Entry point:** `utils/vvdb/dsn.go:DSN`, and `utils/vvdb/open.go:Open` above it
+**Entry point:** `vvdb/dsn.go:DSN`, and `vvdb/open.go:Open` above it
 **Implements:** [[UC-021]]
 
 One struct, four engines, two syntaxes. Nothing on this path runs during a
@@ -16,21 +16,21 @@ that has to still exist.
 
 ## The path
 
-1. **`Open`** — `utils/vvdb/open.go:Open`
+1. **`Open`** — `vvdb/open.go:Open`
    Calls `DSN`, then `DriverName`, then `sql.Open`. It registers no driver: the
    consumer's blank import did that, which is what keeps this package free of a
    dependency and out of a module of its own ([[D-033]]).
 
-2. **`DSN`** — `utils/vvdb/dsn.go:DSN`
+2. **`DSN`** — `vvdb/dsn.go:DSN`
    Dispatches on `Config.Engine` to one of four builders. An engine outside the
    closed set is `ErrEngine` here, before anything is assembled ([[D-013]]).
 
-3. **`prepare`** — `utils/vvdb/dsn.go:prepare`
+3. **`prepare`** — `vvdb/dsn.go:prepare`
    The two questions every builder asks first. A `Config.DSN` set beside the
    fields it would override is `ErrConflict`; a `Config.DSN` on its own is
    returned as it arrived and the builder has nothing left to do.
 
-4. **`Config.validateFields`** — `utils/vvdb/config.go:validateFields`
+4. **`Config.validateFields`** — `vvdb/config.go:validateFields`
    What the engine cannot do without, and what belongs to another engine. This
    is where `path` on a server engine, `host` on SQLite and a `:` in a MySQL
    user name are refused. The last one is not a style rule: the driver splits
@@ -43,12 +43,12 @@ that has to still exist.
 
    | engine | function | shape |
    |---|---|---|
-   | PostgreSQL | `utils/vvdb/dsn.go:PostgresDSN` | a URI, assembled by `net/url` |
-   | MySQL | `utils/vvdb/dsn.go:MySQLDSN` | `user:pass@tcp(host:port)/name?…`, which is not a URI |
-   | MariaDB | `utils/vvdb/dsn.go:MariaDBDSN` | the same shape, its own declaration |
-   | SQLite | `utils/vvdb/dsn.go:SQLiteDSN` | `file:path?…` |
+   | PostgreSQL | `vvdb/dsn.go:PostgresDSN` | a URI, assembled by `net/url` |
+   | MySQL | `vvdb/dsn.go:MySQLDSN` | `user:pass@tcp(host:port)/name?…`, which is not a URI |
+   | MariaDB | `vvdb/dsn.go:MariaDBDSN` | the same shape, its own declaration |
+   | SQLite | `vvdb/dsn.go:SQLiteDSN` | `file:path?…` |
 
-6. **`tlsParam`** — `utils/vvdb/dsn.go:tlsParam`
+6. **`tlsParam`** — `vvdb/dsn.go:tlsParam`
    `sslmode` is spelled in PostgreSQL's vocabulary for every engine, because one
    configuration has to spell it one way. PostgreSQL reads it directly; the
    MySQL family gets `tls=false|preferred|skip-verify|true`. `verify-ca` has no
@@ -61,21 +61,21 @@ that has to still exist.
    so its typed configuration must state that waiver rather than silently
    defeating the default.
 
-7. **`seconds`** — `utils/vvdb/dsn.go:seconds`
+7. **`seconds`** — `vvdb/dsn.go:seconds`
    `connect_timeout` is whole seconds and `0` there means no timeout at all, so
    a sub-second duration rounds **up**.
 
-8. **`Pool.apply`** — `utils/vvdb/open.go:apply`
+8. **`Pool.apply`** — `vvdb/open.go:apply`
    The four limits onto `database/sql`'s setters. A zero is left alone: writing
    it would be a pool that can open nothing rather than one with no limit.
 
-9. **`Config.ReadReplica`** — `utils/vvdb/config.go:ReadReplica`
+9. **`Config.ReadReplica`** — `vvdb/config.go:ReadReplica`
    The replica as it will be opened: the primary with the replica's non-empty
-   fields laid over it. `utils/vvdb/open.go:OpenReadWrite` opens both, and closes the
+   fields laid over it. `vvdb/open.go:OpenReadWrite` opens both, and closes the
    primary if the second fails. The pair is what `crud.ReadWrite` takes
    ([[D-032]]).
 
-10. **`dbpgx.Connect`** — `utils/vvdb/dbpgx/dbpgx.go:Connect`
+10. **`dbpgx.Connect`** — `vvdb/dbpgx/dbpgx.go:Connect`
     The same first three steps, then `pgxpool.ParseConfig`, then the pool
     section onto pgx's names and the caller's `Option`s. Unlike `sql.Open` this
     dials, so an absent server fails here. The pair helper accepts only
@@ -84,7 +84,7 @@ that has to still exist.
     so a side-specific option has final say. Credential and IAM hooks belong
     to a side; a common credential hook is an explicit and dangerous choice.
 
-11. **Display boundary** — `utils/vvdb/secret.go`
+11. **Display boundary** — `vvdb/secret.go`
     `Password` and a raw `DSN` are `Secret`; `Params` redacts every value.
     Value-rendering `fmt` verbs, JSON, YAML, TOML and `slog` therefore cannot turn a
     boot diagnostic into a credential leak. `RedactedDSN` renders the useful
@@ -115,41 +115,80 @@ It is the one default here that changes what the database returns, and it is a
 default because without it a `DATETIME` arrives as bytes and the failure names a
 column rather than the missing parameter.
 
+## What the fx binding hands out
+
+`crudsqlfx.Module` is where this path ends for a graph rather than for a call:
+it opens the pool, reads the schema under a deadline, checks the connection on
+the start hook, and provides the `crud.Source` every repository in the graph
+depends on.
+
+That source is the composed one. The deployment writes the chain around it —
+`crudsqlfx.Module(&configuration.Db, crudsqlfx.Layers("otel.source", "slow-query"))`,
+outside in — and each layer is contributed as a `crudsqlfx.Wrapping` through
+`crudsqlfx.AsWrapping` or the group tag `group:"vv.crud.source.wrappings"`
+written out. A `Wrapping` carries a name and a function and no place of its own:
+the root is the only thing that knows what the other layer is.
+
+Both directions are refusals, and each fails the graph before anything is
+wrapped: a declared layer nobody contributed (a forgotten `AsWrapping` is
+exactly this), a contributed layer nobody declared, one name twice, a nameless
+or functionless layer, and a layer that answers with no source ([[D-137]]). An
+empty declaration is the source itself. What a layer forwards is the
+contributor's obligation ([[D-061]]).
+
+The source this module wires is also addressable on its own, under
+`name:"vv.crudsql.base"`. A graph that cannot reach a database supplies one with
+`crudsqlfx.Base(source)` and keeps the declared chain around it; replacing
+`crud.Source` itself still means the other thing — this value is the source,
+layers included.
+
+The layers are contributed rather than decorated because `fx.Replace` is itself
+a decorator: a composition root that decorated this source would collide with
+every harness that replaces it, and a decorator declared in a neighbouring
+module would wrap nobody in silence.
+
 ## Files
 
 | File | What it holds |
 |---|---|
-| `utils/vvdb/config.go` | `Config`, `Pool`, `Engine`, the sentinels, `Validate`, `ReadReplica`, `DriverName` |
-| `utils/vvdb/secret.go` | `Secret`, redacted `Params`, and `RedactedDSN` |
-| `utils/vvdb/redacted_error.go` | cause-preserving display boundary for driver/parser failures |
-| `utils/vvdb/dsn.go` | the four builders, `DSN`, `prepare`, `tlsParam`, `seconds` |
-| `utils/vvdb/open.go` | `Open`, `MustOpen`, `OpenReadWrite`, `Pool.apply` |
-| `utils/vvdb/doc.go` | the boundary: who opens the connection |
-| `utils/vvdb/dbpgx/dbpgx.go` | `Connect`, `MustConnect`, `ConnectReadWrite`, `Option`, and the scoped `Common`/`Primary`/`Replica` declarations |
+| `vvdb/config.go` | `Config`, `Pool`, `Engine`, the sentinels, `Validate`, `ReadReplica`, `DriverName` |
+| `vvdb/secret.go` | `Secret`, redacted `Params`, and `RedactedDSN` |
+| `vvdb/redacted_error.go` | cause-preserving display boundary for driver/parser failures |
+| `vvdb/dsn.go` | the four builders, `DSN`, `prepare`, `tlsParam`, `seconds` |
+| `vvdb/open.go` | `Open`, `MustOpen`, `OpenReadWrite`, `Pool.apply` |
+| `vvdb/doc.go` | the boundary: who opens the connection |
+| `vvdb/dbpgx/dbpgx.go` | `Connect`, `MustConnect`, `ConnectReadWrite`, `Option`, and the scoped `Common`/`Primary`/`Replica` declarations |
+| `crud/adapter/crudsql/crudsqlfx/crudsqlfx.go` | `Module`, `Open`, the bounded schema read, the start-hook connection check |
+| `crud/adapter/crudsql/crudsqlfx/wrapping.go` | `Wrapping`, `AsWrapping`, `Layers`, `Base`, the group, the base name, the sentinels, the composition |
 
 ## Tests that walk this flow
 
 | Test | What it pins |
 |---|---|
-| `utils/vvdb/dsn_test.go:TestEachEngineIsBuiltInItsOwnSyntax` | the four shapes |
-| `utils/vvdb/dsn_test.go:TestAPasswordSurvivesEveryPunctuationMark` | escaped for one engine, deliberately not for the other |
-| `utils/vvdb/dsn_test.go:TestAParameterHoldingASlashIsEscapedForMySQL` | the `Europe/Moscow` failure |
-| `utils/vvdb/dsn_test.go:TestWhatAnEngineCannotExpressIsRefusedRatherThanDowngraded` | `verify-ca` on MySQL |
-| `utils/vvdb/dsn_test.go:TestADSNIsUsedAsGivenAndRefusesToShareTheJob` | the escape hatch, and that it is whole or absent |
-| `utils/vvdb/dsn_test.go:TestASubSecondConnectTimeoutDoesNotBecomeForever` | rounding up |
-| `utils/vvdb/config_test.go:TestAReplicaInheritsEverythingItDoesNotRestate` | inheritance |
-| `utils/vvdb/config_test.go:TestAReplicaIsValidatedAsItWillBeOpened` | the merge is what is checked, with the control case beside it |
-| `utils/vvdb/open_test.go:TestOpenSizesThePool` | the pool section reaches the handle |
-| `utils/vvdb/open_test.go:TestAnUnsetPoolLimitIsLeftAlone` | the control: zero is not a limit |
-| `utils/vvdb/open_test.go:TestAFailureToOpenDoesNotPrintThePassword` | the DSN never reaches an error message |
-| `utils/vvdb/secret_test.go` | formatter/logger redaction, support-safe DSN and verified-TLS default |
+| `vvdb/dsn_test.go:TestEachEngineIsBuiltInItsOwnSyntax` | the four shapes |
+| `vvdb/dsn_test.go:TestAPasswordSurvivesEveryPunctuationMark` | escaped for one engine, deliberately not for the other |
+| `vvdb/dsn_test.go:TestAParameterHoldingASlashIsEscapedForMySQL` | the `Europe/Moscow` failure |
+| `vvdb/dsn_test.go:TestWhatAnEngineCannotExpressIsRefusedRatherThanDowngraded` | `verify-ca` on MySQL |
+| `vvdb/dsn_test.go:TestADSNIsUsedAsGivenAndRefusesToShareTheJob` | the escape hatch, and that it is whole or absent |
+| `vvdb/dsn_test.go:TestASubSecondConnectTimeoutDoesNotBecomeForever` | rounding up |
+| `vvdb/config_test.go:TestAReplicaInheritsEverythingItDoesNotRestate` | inheritance |
+| `vvdb/config_test.go:TestAReplicaIsValidatedAsItWillBeOpened` | the merge is what is checked, with the control case beside it |
+| `vvdb/open_test.go:TestOpenSizesThePool` | the pool section reaches the handle |
+| `vvdb/open_test.go:TestAnUnsetPoolLimitIsLeftAlone` | the control: zero is not a limit |
+| `vvdb/open_test.go:TestAFailureToOpenDoesNotPrintThePassword` | the DSN never reaches an error message |
+| `vvdb/secret_test.go` | formatter/logger redaction, support-safe DSN and verified-TLS default |
 | `utils/vvcfg/vvcfg_test.go:TestVVDBSecretsLoadNormallyAndRenderRedacted` | YAML/env input remains usable while JSON/YAML/TOML output is redacted |
-| `utils/vvdb/dbpgx/dbpgx_test.go:TestTheConfigReachesPgx` | the pool section onto pgx's names |
-| `utils/vvdb/dbpgx/readwrite_options_test.go` | common hooks reach both configurations while credentials stay on their declared side; caller slices are snapshotted |
+| `vvdb/dbpgx/dbpgx_test.go:TestTheConfigReachesPgx` | the pool section onto pgx's names |
+| `vvdb/dbpgx/readwrite_options_test.go` | common hooks reach both configurations while credentials stay on their declared side; caller slices are snapshotted |
 | `test/dsn/dsn_test.go` | **the real parsers read back what was written** — pgx and go-sql-driver, which `vvdb` cannot import |
 | `test/dsn/dsn_test.go:TestAnUnescapedParameterIsWhyTheEscapingExists` | the control: the driver does reject the unescaped form |
 | `test/integration/vvdb_test.go:TestOneConfigShapeOpensEveryEngine` | three live servers from one shape of config |
 | `test/integration/vvdb_test.go:TestAWrongPasswordIsRefusedByTheServer` | the control: the credentials are actually travelling |
+| `crud/adapter/crudsql/crudsqlfx/activation_test.go:TestTheSchemaTheGraphReadsIsAskedForUnderADeadline` | the one read that cannot leave a constructor is bounded |
+| `crud/adapter/crudsql/crudsqlfx/wrapping_test.go:TestTheSourceTheGraphHandsOutCarriesTheDeclaredChain` | the graph hands out the composed source, in declared order |
+| `crud/adapter/crudsql/crudsqlfx/wrapping_test.go:TestASourceNoDeploymentWrappedIsTheSourceTheModuleWired` | the control: no declaration wraps nothing |
+| `crud/adapter/crudsql/crudsqlfx/wrapping_test.go:TestAContributionThatNeverReachedTheGroupStopsTheStart` | a forgotten `AsWrapping` stops the start instead of measuring nothing |
+| `crud/adapter/crudsql/crudsqlfx/wrapping_test.go:TestAReplacedBaseStillCarriesTheDeclaredChain` | an offline harness keeps the chain |
 
 `test/dsn` exists because `vvdb` is in the root module and may not import a
 driver ([[D-036]]). On its own it can only compare strings against a rule this

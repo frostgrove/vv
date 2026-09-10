@@ -171,8 +171,9 @@ the exception ([[D-048]], [[D-055]]).
 
 | Module | Import | What it is |
 |---|---|---|
-| [vvdb](vvdb.md) | `vv/utils/vvdb` | One configuration → a DSN, or a `*sql.DB` with the pool sized. Four engines, stdlib only |
-| [dbpgx](dbpgx.md) | `vv/utils/vvdb/dbpgx` | **Module** — the same configuration, a `*pgxpool.Pool` |
+| [vvdb](vvdb.md) | `vv/vvdb` | One configuration → a DSN, or a `*sql.DB` with the pool sized. Four engines, stdlib only |
+| [dbpgx](dbpgx.md) | `vv/vvdb/dbpgx` | **Module** — the same configuration, a `*pgxpool.Pool` |
+| [lock](lock.md) | `vv/vvdb/lock` | Advisory locks on a key you choose: shared and exclusive guards, one deterministic order, a retry for what a second attempt fixes, and a typed refusal for an engine that cannot do it. `locksql` beside it for a driver holding `database/sql` |
 
 Nothing here is reachable from the repository seam: the application opens the
 connection and hands it to an adapter below ([[D-057]]). Both live under

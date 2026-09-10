@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/frostgrove/vv/utils/vvdb"
 	"github.com/frostgrove/vv/utils/vvgoose/internal/modelscan"
+	"github.com/frostgrove/vv/vvdb"
 )
 
 func TestMigrationCommandCreatesAnEditableFileWithoutOpeningTheDatabase(t *testing.T) {

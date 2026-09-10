@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/frostgrove/vv/utils/vvdb"
+	"github.com/frostgrove/vv/vvdb"
 )
 
 type provenanceConf struct {

@@ -20,7 +20,7 @@ require (
 	github.com/frostgrove/vv/auth/rpc/authgrpc v0.0.0-00010101000000-000000000000
 	github.com/frostgrove/vv/i18n v0.0.0-00010101000000-000000000000
 	github.com/frostgrove/vv/otel v0.0.0-00010101000000-000000000000
-	github.com/frostgrove/vv/utils/vvdb/dbpgx v0.0.0-00010101000000-000000000000
+	github.com/frostgrove/vv/vvdb/dbpgx v0.0.0-00010101000000-000000000000
 	github.com/gin-gonic/gin v1.12.0
 	github.com/go-playground/validator/v10 v10.30.2
 	github.com/go-sql-driver/mysql v1.10.0
@@ -172,4 +172,4 @@ replace github.com/frostgrove/vv/auth/http/authfiber => ../auth/http/authfiber
 
 replace github.com/frostgrove/vv/auth/rpc/authgrpc => ../auth/rpc/authgrpc
 
-replace github.com/frostgrove/vv/utils/vvdb/dbpgx => ../utils/vvdb/dbpgx
+replace github.com/frostgrove/vv/vvdb/dbpgx => ../vvdb/dbpgx

@@ -99,6 +99,13 @@ OpenTelemetry SDK and be able to omit or replace every adapter.
 20. Native OpenTelemetry APIs remain available at every layer. Omitting an
     adapter removes that semantic layer without replacing the underlying
     operation or native instrumentation.
+21. Where the framework's own composition binding constructs a seam, an adapter
+    is put around it by contributing the layer to that binding, not by taking
+    the binding apart or by decorating its output. Two layers around one seam
+    compose in the order the application wrote down, and an adapter the
+    application asked for that never arrived — or one that arrived without being
+    asked for — stops the start instead of leaving a deployment that quietly
+    measures nothing.
 
 ## Out of scope
 

@@ -15,7 +15,7 @@ import (
 	"github.com/frostgrove/vv/crud/http/crudgin"
 	"github.com/frostgrove/vv/crud/query"
 	"github.com/frostgrove/vv/crud/sqlrepo"
-	"github.com/frostgrove/vv/utils/vvdb"
+	"github.com/frostgrove/vv/vvdb"
 )
 
 //go:generate go run github.com/frostgrove/vv/cmd/vv -readonly CreatedAt

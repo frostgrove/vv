@@ -1,6 +1,7 @@
 package jobspg
 
 import (
+	"crypto/sha256"
 	"fmt"
 	"math"
 	"slices"
@@ -53,7 +54,7 @@ func TestSchemaHardeningMigrationPinsCoreContracts(t *testing.T) {
 		t.Fatal(err)
 	}
 	manualJoined := strings.Join(manual, "\n")
-	versionAt := strings.LastIndex(manualJoined, `SET version = 5`)
+	versionAt := strings.LastIndex(manualJoined, fmt.Sprintf(`SET version = %d`, SchemaVersion))
 	columnAt := strings.Index(manualJoined, `ADD COLUMN IF NOT EXISTS intent_keys bytea`)
 	columnValidationAt := strings.Index(manualJoined, `intent_keys column contract mismatch`)
 	if columnAt < 0 || columnValidationAt <= columnAt || versionAt <= columnValidationAt {
@@ -115,7 +116,7 @@ func TestOperationalIndexesHaveExactFailClosedContracts(t *testing.T) {
 		t.Fatal(err)
 	}
 	joined := strings.Join(statements, "\n")
-	versionAt := strings.LastIndex(joined, `SET version = 5`)
+	versionAt := strings.LastIndex(joined, fmt.Sprintf(`SET version = %d`, SchemaVersion))
 	for _, spec := range operationalIndexes {
 		create := `CREATE INDEX IF NOT EXISTS ` + quoteIdentifier(spec.name)
 		validation := `operational index ` + spec.name + ` schema mismatch`
@@ -136,4 +137,52 @@ func TestOperationalIndexesHaveExactFailClosedContracts(t *testing.T) {
 			t.Fatalf("operational validation is missing %q", fragment)
 		}
 	}
+}
+
+// An index is only ever created by a version step, so a declaration that grows
+// without SchemaVersion growing with it leaves every already-current database
+// with an object nothing will create and validation will refuse forever. That
+// is how deliveries_recent_idx reached a running deployment. This digest is
+// what makes the omission a failed build instead of a failed start-up.
+func TestDeclaredIndexesCarryTheSchemaVersionThatCreatesThem(t *testing.T) {
+	repo := newRepository("jobspg_declared_indexes")
+	var declaration strings.Builder
+	for _, spec := range operationalIndexes {
+		fmt.Fprintf(&declaration, "operational\x00%s\x00%s\x00%s\x00%s\x00%s\n", spec.name, spec.table, strings.Join(spec.columns, ","), spec.predicate, spec.predicateDefinition)
+	}
+	for _, spec := range retentionIndexes {
+		fmt.Fprintf(&declaration, "retention\x00%s\x00%s\x00%s\x00%s\x00%s\n", spec.name, spec.columns, spec.predicate, spec.expressionDefinition, spec.predicateDefinition)
+	}
+	digest := fmt.Sprintf("sha256:%x", sha256.Sum256([]byte(declaration.String())))
+	if digest != declaredIndexDigest {
+		t.Fatalf(`the declared index set changed but SchemaVersion is still %d.
+An index is created only by a version step, so a database already on %d would never get this change and would fail validation on every start.
+Raise SchemaVersion, let migrateLocked's upgrade branch create the index, widen the version list in finalizeMigration and MigrationStatements, then set declaredIndexDigest to %q.`, SchemaVersion, SchemaVersion, digest)
+	}
+	statements, err := MigrationStatements(repo.rawSchema)
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(statements, "\n")
+	stampAt := strings.LastIndex(joined, fmt.Sprintf(`SET version = %d`, SchemaVersion))
+	if stampAt < 0 {
+		t.Fatalf("the operator migration never stamps version %d, so a database it migrates stays behind this build", SchemaVersion)
+	}
+	for _, name := range declaredIndexNames() {
+		createAt := strings.Index(joined, `IF NOT EXISTS `+quoteIdentifier(name))
+		if createAt < 0 || stampAt <= createAt {
+			t.Fatalf("the operator migration stamps version %d without creating declared index %q first: create=%d stamp=%d", SchemaVersion, name, createAt, stampAt)
+		}
+	}
+}
+
+func declaredIndexNames() []string {
+	names := make([]string, 0, len(operationalIndexes)+len(retentionIndexes))
+	for _, spec := range operationalIndexes {
+		names = append(names, spec.name)
+	}
+	for _, spec := range retentionIndexes {
+		names = append(names, spec.name)
+	}
+	return names
 }

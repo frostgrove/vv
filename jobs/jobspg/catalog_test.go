@@ -3,6 +3,7 @@ package jobspg
 import (
 	"database/sql"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -117,7 +118,7 @@ func TestMigrationIncludesCatalogDefinitionBindingsAndV1Upgrade(t *testing.T) {
 		t.Fatal(err)
 	}
 	joined := strings.Join(statements, "\n")
-	for _, required := range []string{`"jobspg_catalog_test".catalog_definitions`, `codec_revisions`, `catalog_definitions_contract_check`, `VALUES (true, 2)`, `SET version = 2`, `version = 1`, `SET version = 5`, `version IN (1, 2, 3, 4)`, `deliveries_retention_idx`, `intent_keys`} {
+	for _, required := range []string{`"jobspg_catalog_test".catalog_definitions`, `codec_revisions`, `catalog_definitions_contract_check`, `VALUES (true, 2)`, `SET version = 2`, `version = 1`, fmt.Sprintf(`SET version = %d`, SchemaVersion), `version IN (1, 2, 3, 4, 5)`, `deliveries_retention_idx`, `intent_keys`} {
 		if !strings.Contains(joined, required) {
 			t.Fatalf("migration is missing %q", required)
 		}

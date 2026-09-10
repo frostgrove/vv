@@ -2693,7 +2693,7 @@ type Opt[T any] struct{ ... }
 type Optional interface{ ... }
 ```
 
-## github.com/frostgrove/vv/utils/vvdb
+## github.com/frostgrove/vv/vvdb
 ```go
 var ErrEngine = errors.New("vvdb: unknown engine") ...
 func DSN(c *Config) (string, error)
@@ -3987,7 +3987,7 @@ type ValidationError struct{ ... }
 type Validator interface{ ... }
 ```
 
-## github.com/frostgrove/vv/utils/vvdb/dbpgx
+## github.com/frostgrove/vv/vvdb/dbpgx
 ```go
 func Apply(pc *pgxpool.Config, p *vvdb.Pool) error
 func Connect(ctx context.Context, c *vvdb.Config, options ...Option) (*pgxpool.Pool, error)

@@ -12,7 +12,7 @@ import (
 
 	"go.uber.org/fx"
 
-	"github.com/frostgrove/vv/utils/vvdb"
+	"github.com/frostgrove/vv/vvdb"
 )
 
 // pinger is a database/sql connector that answers a ping with the context it was

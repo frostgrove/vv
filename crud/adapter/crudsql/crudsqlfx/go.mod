@@ -9,7 +9,7 @@ module github.com/frostgrove/vv/crud/adapter/crudsql/crudsqlfx
 go 1.26
 
 require (
-	github.com/frostgrove/vv v0.0.0-20260829132449-bc1e4c0b1038
+	github.com/frostgrove/vv v0.0.0-00010101000000-000000000000
 	go.uber.org/fx v1.24.0
 )
 

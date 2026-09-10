@@ -12,8 +12,8 @@ import (
 	"unicode"
 
 	"github.com/charmbracelet/huh"
-	"github.com/frostgrove/vv/utils/vvdb"
 	"github.com/frostgrove/vv/utils/vvgoose/internal/modelscan"
+	"github.com/frostgrove/vv/vvdb"
 )
 
 type createOptions struct {

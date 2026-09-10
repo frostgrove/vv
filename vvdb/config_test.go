@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/frostgrove/vv/utils/vvdb"
+	"github.com/frostgrove/vv/vvdb"
 )
 
 func primary() vvdb.Config {

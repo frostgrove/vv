@@ -1,6 +1,6 @@
-# utils/vvdb · utils/vvdb/dbpgx — one configuration file becomes the handle the application owns
+# vvdb · vvdb/dbpgx — one configuration file becomes the handle the application owns
 
-**Covers:** `github.com/frostgrove/vv/utils/vvdb`, `github.com/frostgrove/vv/utils/vvdb/dbpgx`
+**Covers:** `github.com/frostgrove/vv/vvdb`, `github.com/frostgrove/vv/vvdb/dbpgx`
 **Sweep:** happy paths · edge cases · release readiness
 **Verdict:** not ready — the original sweep still contains unresolved connection-lifecycle and portability cases, while its secret-rendering and typed-TLS blockers are now closed by [[D-081]]. The detailed cases and blocker table below distinguish resolved rows from remaining work; they, rather than the historical source line numbers, are the current status.
 
@@ -73,19 +73,19 @@ edit rather than start.
 4. Nothing is guessed: an engine spelled `postgresql` is a refusal, not a default.
 5. A field left out is not filled in with a guess that connects. What is required is required.
 **Today:** 🟡 partial — (2), (3) and (4) hold; (1) is unproven; (5) fails on `host`
-**Evidence:** (2) `utils/vvdb/open.go:20` is `Open` and `:43` is `MustOpen`. (4)
-`TestAnUnknownEngineIsRefused` (`utils/vvdb/dsn_test.go:245`) pins that
+**Evidence:** (2) `vvdb/open.go:20` is `Open` and `:43` is `MustOpen`. (4)
+`TestAnUnknownEngineIsRefused` (`vvdb/dsn_test.go:245`) pins that
 `postgresql`, `PostgreSQL` and `""` are all refusals, driving `vvdb.DSN` — the
 function the consumer's path actually reaches.
 (3) holds, and the evidence has to be named carefully. The route a consumer
 takes is `Open`→`DSN`→`prepare`→`validateFields`, pinned by
-`TestOpenRefusesBeforeItReachesTheDriver` (`utils/vvdb/open_test.go:83`) — which
+`TestOpenRefusesBeforeItReachesTheDriver` (`vvdb/open_test.go:83`) — which
 asserts the sentinel and never reads the message. The test that proves the field
 is *named*, `TestValidateNamesTheFieldThatIsWrong`
-(`utils/vvdb/config_test.go:114`), drives `cfg.Validate()`, and nothing on a
+(`vvdb/config_test.go:114`), drives `cfg.Validate()`, and nothing on a
 consumer's path calls it (blocker 3). The refusal does name the field, because
 `validateFields` is the same function; the proof runs on a path nobody executes.
-(1) rests on struct tags and nothing else. `utils/vvdb/config.go:46-94` carries
+(1) rests on struct tags and nothing else. `vvdb/config.go:46-94` carries
 `yaml` and `env` tags, and **nothing in this repository ever decodes a `db:`
 block into a `vvdb.Config`.** `grep -rn vvcfg --include="*.go" .` reaches only
 `utils/vvcfg/*` and one comment at `_examples/pgx-fiber/main.go:62`; there is no
@@ -97,8 +97,8 @@ named string type and env-over-file precedence are all decoder behaviour, and
 this is the same standard H-VVDB-08 refuses for SQLite: a rule this repository
 wrote, agreeing with itself.
 (5) fails on the field that costs the most. `validateFields` requires `name` and
-nothing else for a server engine (`utils/vvdb/config.go:205-207`); `PostgresDSN`
-substitutes `localhost` (`utils/vvdb/dsn.go:70-72`) and `mysqlish` does the same
+nothing else for a server engine (`vvdb/config.go:205-207`); `PostgresDSN`
+substitutes `localhost` (`vvdb/dsn.go:70-72`) and `mysqlish` does the same
 (`:121-123`). A `db:` block with no `host` starts and connects to whatever is
 listening inside the pod. Read with the sibling sweep's blocker 8 — an exported
 `DB_HOST=` blanks what the file said
@@ -133,19 +133,19 @@ store.
 5. A deployment that has no file at all still starts.
 **Today:** 🟡 partial — (3) and (4) hold; (1) fails three ways; (2) fails once; (5) is another module's and is broken there
 **Evidence:** (3) `prepare` refuses a DSN set beside a field it would override
-(`utils/vvdb/dsn.go:179-191`), pinned by
-`TestADSNIsUsedAsGivenAndRefusesToShareTheJob` (`utils/vvdb/dsn_test.go:228`).
+(`vvdb/dsn.go:179-191`), pinned by
+`TestADSNIsUsedAsGivenAndRefusesToShareTheJob` (`vvdb/dsn_test.go:228`).
 (4) is cleanenv's: the file pass runs first and the environment pass after
 (`.../cleanenv@v1.5.0/cleanenv.go:97-104`).
 (1) fails in three separate places, and they are three separate fixes:
-- `Params` has **no** `env` tag (`utils/vvdb/config.go:69`), so `application_name`, `sslrootcert`, `search_path` and `statement_timeout` are file-only.
+- `Params` has **no** `env` tag (`vvdb/config.go:69`), so `application_name`, `sslrootcert`, `search_path` and `statement_timeout` are file-only.
 - `Replica` is a `*Config` and cleanenv walks struct fields but not pointer fields (`.../cleanenv@v1.5.0/cleanenv.go:337`). This is worse than "a replica cannot be declared from the environment": there is no environment name for the replica's host **even for a replica the YAML already declares**, so an operator rotating that hostname or its read-only credential through the platform's secret store has no route at all.
 - The `env` names are fixed strings, which is H-VVDB-09's problem and is listed there.
 
 (2) fails once and it is the kind of thing found by typing: four pool fields are
 `DB_POOL_MAX_OPEN`, `DB_POOL_MAX_IDLE`, `DB_POOL_MAX_LIFETIME`,
 `DB_POOL_MAX_IDLE_TIME` and the fifth is `DB_CONNECT_TIMEOUT`
-(`utils/vvdb/config.go:89-93`). One field in the same struct breaking the prefix
+(`vvdb/config.go:89-93`). One field in the same struct breaking the prefix
 means a manifest that sets `DB_POOL_CONNECT_TIMEOUT` is ignored in silence,
 which is the failure shape everything else here is built to refuse.
 (5) does not hold, and it is not this module's to hold: `vvdb` loads nothing.
@@ -184,11 +184,11 @@ libraries never reach: `TestPgxReadsBackWhatVvdbWrote` and
 parse the string back with the parsers that decide — not with a rule this
 repository wrote — with `TestAnUnescapedParameterIsWhyTheEscapingExists`
 (`:125`) as the control that the naive form really is rejected. The MySQL colon
-rule is `utils/vvdb/config.go:214-218`, pinned by `TestAMySQLUserCannotHoldAColon`
-(`utils/vvdb/dsn_test.go:274`). This half is the strongest thing in the module.
+rule is `vvdb/config.go:214-218`, pinned by `TestAMySQLUserCannotHoldAColon`
+(`vvdb/dsn_test.go:274`). This half is the strongest thing in the module.
 Two holes:
-- (2) is not proven for SQLite. `SQLiteDSN` concatenates `"file:" + c.Path` with no escaping at all (`utils/vvdb/dsn.go:161-174`) — `url.Values.Encode` is applied to `params` and nothing is applied to the path — so a path holding `?`, `#` or a space is handled by no rule. `grep -n sqlite test/dsn/dsn_test.go` is empty: no real parser has ever read a SQLite string back. The control at `:125` is MySQL-only; there is no pgx twin.
-- (3) fails on a shape both syntaxes share, **on PostgreSQL and MySQL**: a password with no `user` is silently dropped. `PostgresDSN` writes userinfo only inside `if c.User != ""` (`utils/vvdb/dsn.go:51-56`) and `mysqlish` writes the password only inside the same guard (`:104-113`). `validateFields` requires `name` and `path` and never mentions `User` except for the colon rule (`utils/vvdb/config.go:192-220`). With `user` unset, libpq falls back to the process's OS user and may well connect. Worse with H-VVDB-19: the config's password is dropped, `~/.pgpass` supplies a different one, and the process connects successfully as somebody else. `grep -rn 'User: ""' utils/vvdb/ test/dsn/` is empty.
+- (2) is not proven for SQLite. `SQLiteDSN` concatenates `"file:" + c.Path` with no escaping at all (`vvdb/dsn.go:161-174`) — `url.Values.Encode` is applied to `params` and nothing is applied to the path — so a path holding `?`, `#` or a space is handled by no rule. `grep -n sqlite test/dsn/dsn_test.go` is empty: no real parser has ever read a SQLite string back. The control at `:125` is MySQL-only; there is no pgx twin.
+- (3) fails on a shape both syntaxes share, **on PostgreSQL and MySQL**: a password with no `user` is silently dropped. `PostgresDSN` writes userinfo only inside `if c.User != ""` (`vvdb/dsn.go:51-56`) and `mysqlish` writes the password only inside the same guard (`:104-113`). `validateFields` requires `name` and `path` and never mentions `User` except for the colon rule (`vvdb/config.go:192-220`). With `user` unset, libpq falls back to the process's OS user and may well connect. Worse with H-VVDB-19: the config's password is dropped, `~/.pgpass` supplies a different one, and the process connects successfully as somebody else. `grep -rn 'User: ""' vvdb/ test/dsn/` is empty.
 **If not ready:** the escaping needs nothing on the two engines that carry the
 traffic. The SQLite path wants either `url.URL{Scheme:"file", Opaque:…}` or an
 explicit sentence saying the path is written verbatim, plus one `test/dsn` case
@@ -211,22 +211,22 @@ know what the fleet costs the server.
 4. A pool section that cannot mean what it says — an idle floor above the open ceiling — is refused at start-up like any other field.
 5. What the deployment costs a server is computable from the file: pods times handles times `max_open` is a number, and the multiplications are named.
 **Today:** 🟡 partial
-**Evidence:** (1) `utils/vvdb/open.go:82-95`, pinned by `TestOpenSizesThePool`
-(`utils/vvdb/open_test.go:51`) and end to end by
+**Evidence:** (1) `vvdb/open.go:82-95`, pinned by `TestOpenSizesThePool`
+(`vvdb/open_test.go:51`) and end to end by
 `TestOneConfigShapeOpensEveryEngine` (`test/integration/vvdb_test.go:74-76`). (2)
-`TestAnUnsetPoolLimitIsLeftAlone` (`utils/vvdb/open_test.go:70`) is the control
+`TestAnUnsetPoolLimitIsLeftAlone` (`vvdb/open_test.go:70`) is the control
 and it holds.
 (3) does not hold, and `max_idle` is where it bites: `SetMaxIdleConns(-1)` is a
 real setting meaning "retain no idle connections"
 (`$GOROOT/src/database/sql/sql.go:962-973`, `n < 0` returns 0), which is exactly
 what a PgBouncer or serverless deployment asks for. The `> 0` guard
-(`utils/vvdb/open.go:86-88`) drops it, and `database/sql` then applies its
+(`vvdb/open.go:86-88`) drops it, and `database/sql` then applies its
 default of **2** — the operator gets the opposite of what they wrote, in silence.
-On pgx the same guard (`utils/vvdb/dbpgx/dbpgx.go:97`) leaves `MinConns` at
+On pgx the same guard (`vvdb/dbpgx/dbpgx.go:97`) leaves `MinConns` at
 pgx's default of 0 (`.../pgxpool/pool.go:20`), so `-1` has a third meaning
 depending on the opener.
 (4) does not hold: nothing validates `Pool` at all. `Validate`
-(`utils/vvdb/config.go:142-167`) never looks at it, so `max_idle: 50` beside
+(`vvdb/config.go:142-167`) never looks at it, so `max_idle: 50` beside
 `max_open: 10` is accepted; `database/sql` clamps it, and pgx does not — see
 H-VVDB-07.
 (5) has no answer here at all, and one is not obviously this module's: `Pool` is
@@ -270,11 +270,11 @@ heavier than the API.
 6. A replica the file declares is either opened or refused. It is never ignored.
 7. What the second handle costs the server is visible: adding a replica states its own pool, or says whose it inherits.
 **Today:** 🟡 partial — (6) is the largest hole in the module
-**Evidence:** (1) and (4) hold: `ReadReplica` (`utils/vvdb/config.go:229-287`),
+**Evidence:** (1) and (4) hold: `ReadReplica` (`vvdb/config.go:229-287`),
 pinned by `TestAReplicaInheritsEverythingItDoesNotRestate`
-(`utils/vvdb/config_test.go:20`) and `TestNoReplicaIsNotAnEmptyReplica` (`:83`).
+(`vvdb/config_test.go:20`) and `TestNoReplicaIsNotAnEmptyReplica` (`:83`).
 (6) does **not** hold, and this repository's own front page is where a consumer
-meets it. `Open` never calls `ReadReplica` (`utils/vvdb/open.go:20-36`), so a
+meets it. `Open` never calls `ReadReplica` (`vvdb/open.go:20-36`), so a
 declared `replica:` produces no second handle, no error and no log line — every
 read keeps going to the primary and the dashboard keeps hurting it. It is not
 hypothetical: `README.md:179` is `replica: { host: replica.internal }` inside a
@@ -284,23 +284,23 @@ hypothetical: `README.md:179` is `replica: { host: replica.internal }` inside a
 `OpenReadWrite` appears eleven lines later at `:75`. Must-hold (4) covers the
 inverse and is tested; this direction is covered by nothing.
 (2) does **not** hold: the pool is copied whole or not at all —
-`if r.Pool != (Pool{}) { base.Pool = r.Pool }` (`utils/vvdb/config.go:273-275`) —
+`if r.Pool != (Pool{}) { base.Pool = r.Pool }` (`vvdb/config.go:273-275`) —
 so a replica that states only `max_open` silently loses the primary's
 `max_lifetime`, `max_idle_time` and `connect_timeout`. Every other field
 inherits per field; this one does not, and no test covers it. A replica given a
 whole `dsn:` inherits no pool either (`:236-242`), and the pool is not part of
 the string, so those settings vanish with nothing to carry them.
 (3) is **unproven**. `TestOpenReadWriteOpensBothOrNeither`
-(`utils/vvdb/open_test.go:103-133`) makes two calls — a valid replica, then
+(`vvdb/open_test.go:103-133`) makes two calls — a valid replica, then
 `cfg.Replica = nil` — and never drives `Open(r)` to an error. The
 `_ = primary.Close()` and the `"replica: %w"` prefix at
-`utils/vvdb/open.go:72-76` can both be deleted and that test still passes, which
+`vvdb/open.go:72-76` can both be deleted and that test still passes, which
 is the vacuous proof [[D-020]] rules out. The `"replica:"` prefix is exercised
-only on the `Validate` path (`utils/vvdb/config_test.go:97-111`), which
+only on the `Validate` path (`vvdb/config_test.go:97-111`), which
 `OpenReadWrite` does not take.
 (5) holds only if somebody calls `Validate`, and on this path nobody does — see
 H-VVDB-21 and blocker 3. `dbpgx.ConnectReadWrite` does not have this hole,
-because `Connect` re-checks the engine (`utils/vvdb/dbpgx/dbpgx.go:34-36`).
+because `Connect` re-checks the engine (`vvdb/dbpgx/dbpgx.go:34-36`).
 (7) does not hold, and the inheritance is what hides it: a replica that states
 no pool takes the primary's whole `Pool` by construction (`config.go:273-275`),
 so `replica: { host: replica.internal }` doubles what one pod costs a server
@@ -362,7 +362,7 @@ keep meaning what it meant.
 2. Anything the shared config cannot describe is reachable without abandoning it.
 3. A config naming another engine is refused rather than coerced.
 **Today:** 🟡 partial — (2) and (3) hold; (1) reaches pgx and changes meaning on the way
-**Evidence:** (2) `Option` (`utils/vvdb/dbpgx/dbpgx.go:27`) runs after vvdb's
+**Evidence:** (2) `Option` (`vvdb/dbpgx/dbpgx.go:27`) runs after vvdb's
 fields and before the dial — the right shape, and it covers the tracer and the
 exec mode exactly. (3) `dbpgx.go:34-36`, pinned by
 `TestAnotherEnginesConfigIsRefused` (`dbpgx_test.go:69`).
@@ -370,7 +370,7 @@ exec mode exactly. (3) `dbpgx.go:34-36`, pinned by
 (`dbpgx.go:93-113`, `TestTheConfigReachesPgx` at `dbpgx_test.go:24`, with
 `TestAnUnsetPoolLeavesPgxsDefaults` at `:53` as the control) — but **`max_idle`
 inverts.** On `database/sql` it is a ceiling on retained idle connections
-(`utils/vvdb/open.go:86-88`); on pgx it becomes `MinConns`, a floor pgx actively
+(`vvdb/open.go:86-88`); on pgx it becomes `MinConns`, a floor pgx actively
 dials up to at start-up in a goroutine
 (`dbpgx.go:97-103`; `.../pgx/v5@v5.10.0/pgxpool/pool.go:333-337`,
 `createIdleResources` at `:568-595`). A team that moves the same YAML from
@@ -413,12 +413,12 @@ because concurrent writers on SQLite return "database is locked".
 4. The driver name is the consumer's, because two SQLite drivers register two different names.
 **Today:** 🟡 partial — (4) holds; (1) is two fields short; (2) is false for the default driver; (3) is unverified
 **Evidence:** (4) holds: `DriverName` defaults to `sqlite` and the `driver:`
-field covers mattn's `sqlite3` (`utils/vvdb/config.go:114-127`), pinned by
+field covers mattn's `sqlite3` (`vvdb/config.go:114-127`), pinned by
 `TestDriverNameDefaultsPerEngineAndIsOverridable` (`config_test.go:133`).
 (1) is nearly true and the exception is exactly where a reader assumes the list
-is exhaustive. `validateFields` (`utils/vvdb/config.go:193-203`) refuses `host`,
+is exhaustive. `validateFields` (`vvdb/config.go:193-203`) refuses `host`,
 `user`, `password`, `name` and `sslmode` and requires `path`, pinned by
-`TestAFieldThatBelongsToAnotherEngineIsRefused` (`utils/vvdb/dsn_test.go:253`) —
+`TestAFieldThatBelongsToAnotherEngineIsRefused` (`vvdb/dsn_test.go:253`) —
 which asserts `err != nil` and never reads the message. **`Port` is never
 checked**, so `engine: sqlite` with `port: 5432` is accepted and ignored, and
 `SQLiteDSN` (`dsn.go:161-174`) never reads `c.Pool`, so a `connect_timeout`
@@ -464,7 +464,7 @@ environment.
 3. Getting it wrong is loud rather than a second handle quietly on the first server.
 **Today:** 🟡 partial
 **Evidence:** (1) holds — `Config` is a value struct with no global state
-(`utils/vvdb/config.go:46`). (2) does not, by default: the `env` names are fixed
+(`vvdb/config.go:46`). (2) does not, by default: the `env` names are fixed
 strings (`DB_HOST`, `DB_USER`, …, `:47-82`), so both nested copies read the same
 variables and `DB_HOST` fills both. cleanenv supports an `env-prefix` tag on the
 nested field (`.../cleanenv@v1.5.0/cleanenv.go:53`, applied at `:345` as
@@ -495,7 +495,7 @@ support asks somebody to paste the connection string the pod built.
 **Today:** ✅ holds
 **Evidence:** `Config.Password` and `Config.DSN` are `Secret`; their `fmt`, JSON,
 YAML/TOML text and `slog` projections return `[REDACTED]` while an explicit string
-conversion still gives the connector its value (`utils/vvdb/secret.go`). The
+conversion still gives the connector its value (`vvdb/secret.go`). The
 named `Params` type redacts every display value because its open driver
 vocabulary cannot prove which keys are public. `RedactedDSN` keeps the engine
 target useful while removing userinfo and
@@ -522,14 +522,14 @@ still has no connector/apply seam, and (3) remains partial there
 **Evidence:** on pgx (1) and (2) are exactly what `Option` is for:
 `pc.BeforeConnect` (`.../pgx/v5@v5.10.0/pgxpool/pool.go:123-125`, honoured at
 `:236`) is reachable through `dbpgx.Connect(ctx, cfg, func(pc *pgxpool.Config) { … })`
-(`utils/vvdb/dbpgx/dbpgx.go:33`). On `database/sql` there is no seam at all:
+(`vvdb/dbpgx/dbpgx.go:33`). On `database/sql` there is no seam at all:
 `Open` takes no options and builds one static string
-(`utils/vvdb/open.go:20-36`), and the pool applier is unexported
+(`vvdb/open.go:20-36`), and the pool applier is unexported
 (`:82`, lower-case `apply`). The consumer who needs a `driver.Connector` calls
 `vvdb.DSN`, opens the handle themselves, and then has no supported way to apply
 the `pool:` section they still have in their file.
 (3) is not free either: `apply` covers four of `Pool`'s five fields, because
-`ConnectTimeout` travels in the connection string (`utils/vvdb/dsn.go:78-80` and
+`ConnectTimeout` travels in the connection string (`vvdb/dsn.go:78-80` and
 `:143-145`), and a hand-built connector never saw a vvdb DSN. That is one
 sentence, not three: **`connect_timeout` is the only pool field applied through
 the string, so it is lost on every path where the string is not the one vvdb
@@ -537,7 +537,7 @@ built** — which is also why H-VVDB-15 loses it beside a supplied `dsn:`.
 (4) now holds on pgx. `ConnectReadWrite` accepts only scoped
 `ReadWriteOption`s: `Common(...)` is copied to the two independently parsed
 configs first, then `Primary(...)` and `Replica(...)` are applied to their own
-side (`utils/vvdb/dbpgx/dbpgx.go`). This lets tracing stay common while IAM or
+side (`vvdb/dbpgx/dbpgx.go`). This lets tracing stay common while IAM or
 role-changing hooks remain side-specific; a side-specific option deliberately
 wins when both touch the same field. The declaration constructors snapshot the
 caller's option slices, so later slice mutation cannot reconfigure either
@@ -566,7 +566,7 @@ and the config cannot describe that at all: that is H-VVDB-17.)
 2. Deriving two hundred of them is a number the operator can compute before the server refuses the two hundred and first.
 **Today:** 🟡 partial
 **Evidence:** (1) holds for every scalar and fails for one field: `Params` is a
-map (`utils/vvdb/config.go:69`), so `c2 := cfg; c2.Params["application_name"] = tenant`
+map (`vvdb/config.go:69`), so `c2 := cfg; c2.Params["application_name"] = tenant`
 writes through to the original, and to every DSN built afterwards from either.
 It does not reach handles already open — `sql.Open` freezes the string in a
 `dsnConnector` value (`$GOROOT/src/database/sql/sql.go:879`, used at `:808-813`)
@@ -597,7 +597,7 @@ was written a year ago and nothing points at it.
 **Evidence:** the engine is named twice and nothing cross-checks the two.
 `crudsql` writes its four engine strings as literals
 (`crud/adapter/crudsql/crudsql.go:155-162`), the config writes its own
-(`utils/vvdb/config.go:16-21`), and no code path sees both. This repository's own
+(`vvdb/config.go:16-21`), and no code path sees both. This repository's own
 integration test picks the constructor by hand beside the `vvdb.Engine` in the
 same table literal (`test/integration/vvdb_test.go:47-49`), which is the
 arrangement, not a slip.
@@ -637,13 +637,13 @@ seconds during a patch window and they need the pods to survive it.
 5. Which of "fail fast" and "wait with backoff" the module supports is stated, because the wrong one turns a ten-second restart into a crash-loop.
 **Today:** ❌ missing, and on pgx it is worse than missing — see blocker 1
 **Evidence:** on `database/sql` there is no helper: `Open` is documented as lazy
-and points at `PingContext` (`utils/vvdb/open.go:17-19`). On pgx the opposite is
+and points at `PingContext` (`vvdb/open.go:17-19`). On pgx the opposite is
 promised and is false. `pgxpool.NewWithConfig` creates the pool and starts
 dialling in a **goroutine** — `.../pgx/v5@v5.10.0/pgxpool/pool.go:333-337`, with
 `return p, nil` at `:339`; the same code in v5.7.6 at `:326` and `:332`, so it
 has never been true in either version this repository can build. (The workspace
 resolves v5.10.0, because `./test` requires it and `go.work` includes both;
-`utils/vvdb/dbpgx/go.mod:8` pins v5.7.6 for a standalone consumer.) `Connect`
+`vvdb/dbpgx/go.mod:8` pins v5.7.6 for a standalone consumer.) `Connect`
 therefore returns a healthy-looking pool against a dead host, while
 `dbpgx.go:31`, `docs/modules/en/dbpgx.md:26` and `:30`,
 `docs/modules/ru/dbpgx.md:30-31` and [[FL-021]] (step 10 at `:75`, Traps at
@@ -692,12 +692,12 @@ from "decide between a behaviour change and four document corrections" into
 3. The same YAML means the same thing on both openers.
 **Today:** 🟡 partial — (1) holds, and it is what makes (2) and (3) fail quietly
 **Evidence:** (1) is deliberate: `fieldsBesideDSN`
-(`utils/vvdb/config.go:170-190`) lists the eight fields that contradict a DSN and
+(`vvdb/config.go:170-190`) lists the eight fields that contradict a DSN and
 does **not** list `Pool`, so `dsn:` beside `pool:` is accepted by design. (2)
 does not hold for the fifth pool field, for the reason stated once in
 H-VVDB-11(3): `connect_timeout` is the only pool field carried by the string, and
 `prepare` returns the supplied string before `seconds(c.Pool.ConnectTimeout)` is
-ever reached (`utils/vvdb/dsn.go:179-191` against `:78-80`), so on `database/sql`
+ever reached (`vvdb/dsn.go:179-191` against `:78-80`), so on `database/sql`
 a `connect_timeout: 5s` written beside a `dsn:` **vanishes**, unrefused. (3)
 follows: `dbpgx` re-applies it onto the parsed config after the fact
 (`dbpgx.go:110-112`), so the identical YAML has a five-second dial timeout on pgx
@@ -724,9 +724,9 @@ string vvdb builds and it works. On MySQL they paste it and the tool refuses it.
 **Today:** ❌ missing — not wrong, unaddressed
 **Evidence:** the module never mentions migrations, and the two syntaxes are not
 equally portable. `PostgresDSN` builds a URL
-(`utils/vvdb/dsn.go:44-81`), which golang-migrate, `psql` and an ops runbook all
+(`vvdb/dsn.go:44-81`), which golang-migrate, `psql` and an ops runbook all
 take. `mysqlish` builds go-sql-driver's own DSN — `user:pass@tcp(host:3306)/db?…`
-(`utils/vvdb/dsn.go:97-155`) — which is not a URL, has no scheme, and is not what
+(`vvdb/dsn.go:97-155`) — which is not a URL, has no scheme, and is not what
 the `mysql` client accepts at all: golang-migrate wants `mysql://` prefixed and
 goose wants it bare. `test/dsn/dsn_test.go` proves the string against the two Go
 drivers (`:24`, `:70`) and nothing else, so "the connection string every driver
@@ -761,7 +761,7 @@ claim as a startup runtime parameter
 (`.../pgx/v5@v5.10.0/pgconn/config.go:399-423` and `:433-438`), and lib/pq does
 the same, so it does reach every connection the pool opens. Nothing says so —
 `docs/modules/en/vvdb.md:35-56` shows `params` with `application_name` and stops
-— and `params` has no `env` tag (`utils/vvdb/config.go:69`), so on the
+— and `params` has no `env` tag (`vvdb/config.go:69`), so on the
 environment-only deployment of H-VVDB-02 the schema cannot be set at all.
 Schema-per-tenant is the more common multi-tenant shape and is the one the
 config cannot describe.
@@ -791,7 +791,7 @@ each, and ships. There is no replica in the file yet.
 **Evidence:** no must-hold in the seventeen cases before this one says closing is
 *safe*, and the introduction stakes the module on "the handle is theirs. They
 open it, they close it". `OpenReadWrite` returns a nil `*sql.DB` when no replica
-is declared (`utils/vvdb/open.go:68-71`) and `ConnectReadWrite` a nil
+is declared (`vvdb/open.go:68-71`) and `ConnectReadWrite` a nil
 `*pgxpool.Pool` (`dbpgx.go:79-81`). The obvious
 `defer primary.Close(); defer replica.Close()` panics on both: `(*sql.DB).Close`
 dereferences `db.mu` and `(*pgxpool.Pool).Close` dereferences `p.closeOnce`. The
@@ -886,7 +886,7 @@ method at all, and `docs/modules/en/vvcfg.md:29-34` shows a `Validate` on a
 top-level struct that checks its own field and forwards to nothing.
 `grep -rn "Validate() error"` outside `vvcfg` and `vvdb` finds only those two
 docs. The second half is blocker 3: `Config.Validate` is called by nothing inside
-the package either (`utils/vvdb/config.go:162` is its own recursion and the only
+the package either (`vvdb/config.go:162` is its own recursion and the only
 call site), so with no forwarder the replica engine cross-check runs nowhere at
 all. The sibling sweep owns the loader half —
 `docs/ai/usecases/modules/utils/Utils.md`, blockers row 6, "Nested
@@ -913,7 +913,7 @@ that point at something that no longer exists.
 3. A consumer can tell from the file what the recovery time after a failover will be.
 **Today:** ❌ missing
 **Evidence:** `max_lifetime` and `max_idle_time` both exist and both reach the
-handle (`utils/vvdb/open.go:89-94`, `dbpgx.go:104-109`). Neither is set unless
+handle (`vvdb/open.go:89-94`, `dbpgx.go:104-109`). Neither is set unless
 the file sets it: the `> 0` guards leave `database/sql`'s default, which is no
 limit at all — a connection lives until it errors. All three templates set
 `max_open` alone (`README.md:178`, `docs/usage-guides/ent.md:783`,
@@ -953,7 +953,7 @@ is empty and `sslrootcert` appears only in this file's own text. (2) is a direct
 hit on [[UC-021]]'s first guarantee — "moving engines is an edit to the
 configuration file, not to the program" — and nothing says the guarantee has an
 exception. (3) fails on SQLite, where `Params map[string]string`
-(`utils/vvdb/config.go:69`) written through `url.Values.Set` (`dsn.go:166-169`)
+(`vvdb/config.go:69`) written through `url.Values.Set` (`dsn.go:166-169`)
 cannot express the repeated `_pragma=` the default driver requires; H-VVDB-08 has
 the driver evidence. `params` is also the one field with no `env` tag, which is
 blocker 20.
@@ -976,7 +976,7 @@ copy the guide's `db:` block, which has a `pool:` section, paste the guide's
 3. A consumer at that level can still apply the pool section to the handle their ORM opened.
 **Today:** 🟡 partial — (1) holds, (2) and (3) do not
 **Evidence:** (1) is the module's design and it is right: `PostgresDSN` and the
-other three open nothing (`utils/vvdb/dsn.go:44`, `:89`, `:95`, `:161`), and
+other three open nothing (`vvdb/dsn.go:44`, `:89`, `:95`, `:161`), and
 `docs/modules/en/vvdb.md:141-152` says an ORM needs no module because "each takes
 either a `*sql.DB` or a string, and both already exist".
 (2) fails in the guide itself. `docs/usage-guides/gorm.md:712-720` prints a `db:`
@@ -989,7 +989,7 @@ survive the trip is `connect_timeout`, because it is in the string
 module doc has the same silence: it says both handles exist and does not say
 which of the two loses the pool.
 (3) has no answer: `apply` is unexported on both transports
-(`utils/vvdb/open.go:82`, `dbpgx.go:93`), so a consumer holding the `*sql.DB`
+(`vvdb/open.go:82`, `dbpgx.go:93`), so a consumer holding the `*sql.DB`
 gorm opened has to re-implement four `SetMax…` calls with the zero-means-default
 rule remembered rather than inherited.
 **If not ready:** the guide teaches a snippet where a block does nothing, which
@@ -1011,9 +1011,9 @@ and TLS mode stay in the config file.
 3. Whether a rotated file is re-read, or the process must restart, is stated.
 **Today:** ❌ missing on both transports
 **Evidence:** `Config` has `Password string` and nothing else
-(`utils/vvdb/config.go:58`); there is no `password_file`, no
+(`vvdb/config.go:58`); there is no `password_file`, no
 `Password func() (string, error)`, and no hook on the `database/sql` side at all
-(`Open` takes no options, `utils/vvdb/open.go:20`). `grep -rn password_file .`
+(`Open` takes no options, `vvdb/open.go:20`). `grep -rn password_file .`
 is empty. The password can come from YAML — which is the ConfigMap this module's
 opening paragraph exists to get it out of — or from `DB_PASSWORD`, which is the
 variable the policy forbids.
@@ -1128,7 +1128,7 @@ defer replica.Close()
 The required implementation is a presence/emptiness check in `Config.Validate`,
 called by `OpenReadWrite` and `ConnectReadWrite` before either pool is opened.
 The current `ReadReplica` contract distinguishes only nil from non-nil
-(`utils/vvdb/config.go:229-233`), so this is a pre-tag behaviour change, not a
+(`vvdb/config.go:229-233`), so this is a pre-tag behaviour change, not a
 claim about current code.
 
 ```go
@@ -1301,7 +1301,7 @@ who calls `Open`.
   opened a line earlier, or leak it. `type Secret string` changes an exported
   field's type, so every `cfg.DB.Password = os.Getenv("PW")` in a consumer becomes
   `vvdb.Secret(...)`, and it adds a second named string type to a decode path
-  nothing has ever executed (`Engine` is the first, `utils/vvdb/config.go:47`) —
+  nothing has ever executed (`Engine` is the first, `vvdb/config.go:47`) —
   which is one more reason the temp-YAML test H-VVDB-01 asks for should cover it.
   All three are free now and expensive after the first tag.
 - **Two deliberate challenges, neither implemented:**
@@ -1397,7 +1397,7 @@ above close rather than pave.
 | 8 | A replica that states any pool field loses the primary's whole pool section (`config.go:273-275`) | serious | Breaks UC-021.9 ("inherits everything it does not restate"); silently drops `connect_timeout` and `max_lifetime` on the replica, and no test covers it |
 | 9 | `host` is optional for a server engine and becomes `localhost` (`dsn.go:70-72`, `:121-123`); only `name` is required | serious | With the sibling sweep's row 8 (`DB_HOST=` blanks the file), a Helm template that renders empty produces a pod that boots and connects to itself. The "connection that succeeds and is wrong" this module opens on |
 | 10 | **Closed:** typed pgx URIs render portable owned/empty defaults, fail loud on undeclared version-specific ambient policy, and document the raw-DSN boundary | resolved | Real pgx controls prove ambient values cannot fill typed facts; an isolated `GOWORK=off` unit gate asserts pgx `v5.7.6` is selected and receives no version-specific server runtime parameter |
-| 11 | The engine is named twice — in the file and in `crudsql.<Engine>(db)` — and nothing cross-checks them; `crudsql.MySQL` against MariaDB connects, runs, and misclassifies a failed CHECK and a bad column value | serious | Breaks UC-021.1 one line past this module's boundary. **Fix site: `crud/adapter/crudsql`** — this row cannot be closed from `utils/vvdb`, and it challenges the reasoning beside its four constructors |
+| 11 | The engine is named twice — in the file and in `crudsql.<Engine>(db)` — and nothing cross-checks them; `crudsql.MySQL` against MariaDB connects, runs, and misclassifies a failed CHECK and a bad column value | serious | Breaks UC-021.1 one line past this module's boundary. **Fix site: `crud/adapter/crudsql`** — this row cannot be closed from `vvdb`, and it challenges the reasoning beside its four constructors |
 | 12 | `docs/ai/usecases/Index.md:92` marks UC-021 "covered" and lists no vvdb gap, while rows 1–11 above each contradict a numbered "What must hold" | serious | An index that does not name a gap is trusted and stops the next agent looking. **Shared with the `utils/vvcfg` sweep** (`Utils.md`, row 6), so it is one Index row and should be edited once |
 | 13 | Nothing validates the `pool:` section: `max_idle` above `max_open` is accepted (clamped on `database/sql`; on pgx a health check retries a top-up it can never reach, once a minute, forever), and `max_idle: -1` — a real setting — becomes 2 on one transport and pgx's 0 on the other | sharp edge | Every other field is refused by name at start-up; this one silently does the opposite of what the operator wrote. Must land *after* row 3, or it ships inert |
 | 14 | `Pool.apply` is unexported on both transports, so a handle opened by gorm, an instrumented driver or an IAM connector cannot be sized from the config — and there is no connector rung at all | sharp edge | The ORM consumer is the majority path and loses the whole `pool:` block; reaching one step further means `DSN` + `sql.Open` + a hand-copied `apply` |
@@ -1435,7 +1435,7 @@ above close rather than pave.
 **What the consumer does:** They call `Open` (or hand the same config to `dbpgx.Connect`) expecting the configuration boundary to name the bad port before a handle is returned.
 **What must happen:** A port that cannot identify a TCP endpoint is refused at start-up with the `port` field named; it must not become a lazy driver failure or a retry against an impossible address.
 **Today:** ❌ wrong or unhandled
-**Evidence:** `validateFields` checks only engine-specific names, path, TLS and the MySQL user colon (`utils/vvdb/config.go:192-220`); it never bounds `Port`. Both builders pass any integer through `strconv.Itoa` and `net.JoinHostPort` (`utils/vvdb/dsn.go:59-74`, `:114-125`), and `Open` hands the resulting string to lazy `sql.Open` (`utils/vvdb/open.go:20-35`). `TestAPortLeftUnsetIsTheEnginesOwn` exercises only zero/defaulting (`utils/vvdb/dsn_test.go:55-74`); no out-of-range-port test exists.
+**Evidence:** `validateFields` checks only engine-specific names, path, TLS and the MySQL user colon (`vvdb/config.go:192-220`); it never bounds `Port`. Both builders pass any integer through `strconv.Itoa` and `net.JoinHostPort` (`vvdb/dsn.go:59-74`, `:114-125`), and `Open` hands the resulting string to lazy `sql.Open` (`vvdb/open.go:20-35`). `TestAPortLeftUnsetIsTheEnginesOwn` exercises only zero/defaulting (`vvdb/dsn_test.go:55-74`); no out-of-range-port test exists.
 **Blast radius:** confusing error
 
 ### E-VVDB-02 — An already-bracketed IPv6 literal is not a valid host field
@@ -1444,7 +1444,7 @@ above close rather than pave.
 **What the consumer does:** They generate a PostgreSQL or MySQL DSN and start the service.
 **What must happen:** The configuration either accepts both conventional spellings or refuses the bracketed one with an actionable `host` error before it reaches a driver.
 **Today:** ❌ wrong or unhandled
-**Evidence:** Both server builders pass `Host` directly to `net.JoinHostPort` without normalising or rejecting brackets (`utils/vvdb/dsn.go:59-74`, `:114-125`); `validateFields` has no host syntax check (`utils/vvdb/config.go:192-220`). The sole IPv6 test covers the bare spelling only (`utils/vvdb/dsn_test.go:169-179`), so it cannot pin the pasted-URL boundary.
+**Evidence:** Both server builders pass `Host` directly to `net.JoinHostPort` without normalising or rejecting brackets (`vvdb/dsn.go:59-74`, `:114-125`); `validateFields` has no host syntax check (`vvdb/config.go:192-220`). The sole IPv6 test covers the bare spelling only (`vvdb/dsn_test.go:169-179`), so it cannot pin the pasted-URL boundary.
 **Blast radius:** confusing error
 
 ### E-VVDB-03 — A passthrough parameter replaces a PostgreSQL Unix socket
@@ -1453,7 +1453,7 @@ above close rather than pave.
 **What the consumer does:** They expect the explicit `host` field to select the local socket and `params` to carry only driver extras.
 **What must happen:** A parameter that duplicates a connection-address field is refused as two sources of truth; it must never silently reroute the connection.
 **Today:** ❌ wrong or unhandled
-**Evidence:** The PostgreSQL builder first writes a socket directory as query `host` (`utils/vvdb/dsn.go:63-68`) and then lets every `Params` entry overwrite it via `q.Set` (`:81-83`). pgx parses the URI authority first and then overwrites settings from query parameters (`.../pgx/v5@v5.10.0/pgconn/config.go:619-677`), finally taking the endpoint from `settings["host"]` (`:442-481`). `fieldsBesideDSN` protects a whole DSN but does not inspect `Params` keys (`utils/vvdb/config.go:169-190`), and no local test combines a socket with `params.host`.
+**Evidence:** The PostgreSQL builder first writes a socket directory as query `host` (`vvdb/dsn.go:63-68`) and then lets every `Params` entry overwrite it via `q.Set` (`:81-83`). pgx parses the URI authority first and then overwrites settings from query parameters (`.../pgx/v5@v5.10.0/pgconn/config.go:619-677`), finally taking the endpoint from `settings["host"]` (`:442-481`). `fieldsBesideDSN` protects a whole DSN but does not inspect `Params` keys (`vvdb/config.go:169-190`), and no local test combines a socket with `params.host`.
 **Blast radius:** silent wrong answer
 
 ### E-VVDB-04 — A chart's empty `replica: {}` opens the primary twice
@@ -1462,7 +1462,7 @@ above close rather than pave.
 **What the consumer does:** They call `OpenReadWrite` and wire its second result into `crud.ReadWrite` only when non-nil.
 **What must happen:** An empty replica declaration is either treated as absent or refused as incomplete; it must not quietly create an independent second pool against the primary.
 **Today:** ❌ wrong or unhandled
-**Evidence:** Any non-nil pointer is a replica (`utils/vvdb/config.go:229-233`). With no fields to overlay, `ReadReplica` returns the copied primary unchanged (`:243-286`), and `OpenReadWrite` calls `Open` a second time whenever that result is present (`utils/vvdb/open.go:63-77`). `TestNoReplicaIsNotAnEmptyReplica` tests only a nil pointer (`utils/vvdb/config_test.go:83-87`), not `&vvdb.Config{}`.
+**Evidence:** Any non-nil pointer is a replica (`vvdb/config.go:229-233`). With no fields to overlay, `ReadReplica` returns the copied primary unchanged (`:243-286`), and `OpenReadWrite` calls `Open` a second time whenever that result is present (`vvdb/open.go:63-77`). `TestNoReplicaIsNotAnEmptyReplica` tests only a nil pointer (`vvdb/config_test.go:83-87`), not `&vvdb.Config{}`.
 **Blast radius:** silent wrong answer
 
 ### E-VVDB-05 — A replica of a replica is silently discarded
@@ -1471,7 +1471,7 @@ above close rather than pave.
 **What the consumer does:** They start from the one configuration file and expect unsupported topology to stop start-up rather than be partially applied.
 **What must happen:** The module must refuse a nested replica and name it, because its API describes one primary and one stale-read server.
 **Today:** ❌ wrong or unhandled
-**Evidence:** `ReadReplica` copies the first fragment and then clears `r.Replica` in both the DSN and field-merge paths (`utils/vvdb/config.go:233-241`, `:243-286`); `Validate` validates that already-flattened value (`:153-164`). The existing test explicitly says "a replica of a replica is not a thing this describes" but only asserts the result is nil (`utils/vvdb/config_test.go:20-41`), proving discard rather than refusal. No nested-declaration rejection test exists.
+**Evidence:** `ReadReplica` copies the first fragment and then clears `r.Replica` in both the DSN and field-merge paths (`vvdb/config.go:233-241`, `:243-286`); `Validate` validates that already-flattened value (`:153-164`). The existing test explicitly says "a replica of a replica is not a thing this describes" but only asserts the result is nil (`vvdb/config_test.go:20-41`), proving discard rather than refusal. No nested-declaration rejection test exists.
 **Blast radius:** silent wrong answer
 
 ### E-VVDB-06 — A derived replica aliases the primary's parameters
@@ -1480,7 +1480,7 @@ above close rather than pave.
 **What the consumer does:** They reasonably treat `ReadReplica` as a derived configuration, independent of the primary it came from.
 **What must happen:** Mutating the returned configuration must not mutate the primary; configuration derivation must copy the map regardless of whether the overlay has parameters.
 **Today:** ❌ wrong or unhandled
-**Evidence:** `base := c` copies the map header, not its backing map (`utils/vvdb/config.go:243-245`). A new map is allocated only when `len(r.Params) > 0` (`:276-285`), so the normal host-only replica returns the primary's `Params` map unchanged. `TestAReplicaOverridesRatherThanMerges` covers only the allocating branch (`utils/vvdb/config_test.go:44-60`); no test mutates `Params` on a host-only derived replica.
+**Evidence:** `base := c` copies the map header, not its backing map (`vvdb/config.go:243-245`). A new map is allocated only when `len(r.Params) > 0` (`:276-285`), so the normal host-only replica returns the primary's `Params` map unchanged. `TestAReplicaOverridesRatherThanMerges` covers only the allocating branch (`vvdb/config_test.go:44-60`); no test mutates `Params` on a host-only derived replica.
 **Blast radius:** silent wrong answer
 
 ### E-VVDB-07 — An in-memory SQLite test obtains two databases from one handle
@@ -1489,7 +1489,7 @@ above close rather than pave.
 **What the consumer does:** It creates schema and data through one request, then a concurrent request acquires another connection and expects the same test database.
 **What must happen:** The module must either make this shape share the store, restrict it to one connection, or document and refuse the unsafe combination; a test database must not fragment when it becomes concurrent.
 **Today:** ❓ unverified
-**Evidence:** `SQLiteDSN` produces `file::memory:` verbatim (`utils/vvdb/dsn.go:161-173`), while `Open` permits any positive `MaxOpen` (`utils/vvdb/open.go:20-35`, `:82-95`). The SQLite package has examples/tests using a shared-cache spelling and restricted connections, but this repository has no `vvdb` SQLite opener test (`utils/vvdb/open_test.go:32-142`). That external behaviour is a risk hypothesis, not a release claim until a local two-connection control measures it.
+**Evidence:** `SQLiteDSN` produces `file::memory:` verbatim (`vvdb/dsn.go:161-173`), while `Open` permits any positive `MaxOpen` (`vvdb/open.go:20-35`, `:82-95`). The SQLite package has examples/tests using a shared-cache spelling and restricted connections, but this repository has no `vvdb` SQLite opener test (`vvdb/open_test.go:32-142`). That external behaviour is a risk hypothesis, not a release claim until a local two-connection control measures it.
 **Blast radius:** confusing error
 
 ### E-VVDB-08 — A SQLite read replica cannot read the primary's in-memory store
@@ -1498,7 +1498,7 @@ above close rather than pave.
 **What the consumer does:** They pass the two handles to `crud.ReadWrite` and expect reads to see a table a write just created.
 **What must happen:** SQLite must reject replica topology, or the module must explicitly construct a safely shared in-memory URI; two independently opened in-memory handles cannot impersonate primary and replica.
 **Today:** ❓ unverified
-**Evidence:** A non-nil empty replica merges back to the primary configuration (`utils/vvdb/config.go:229-286`), and `OpenReadWrite` separately calls `Open` for primary and replica (`utils/vvdb/open.go:63-77`). Both receive the same `SQLiteDSN` result (`utils/vvdb/dsn.go:161-173`), but there is no SQLite `OpenReadWrite` control in this repository. Whether those two external-driver handles share the in-memory store is therefore unverified here.
+**Evidence:** A non-nil empty replica merges back to the primary configuration (`vvdb/config.go:229-286`), and `OpenReadWrite` separately calls `Open` for primary and replica (`vvdb/open.go:63-77`). Both receive the same `SQLiteDSN` result (`vvdb/dsn.go:161-173`), but there is no SQLite `OpenReadWrite` control in this repository. Whether those two external-driver handles share the in-memory store is therefore unverified here.
 **Blast radius:** silent wrong answer
 
 ### E-VVDB-09 — A cancelled pgx start-up context still yields a pool
@@ -1507,7 +1507,7 @@ above close rather than pave.
 **What the consumer does:** It expects cancellation to return `context.Canceled` and no handle whose background work it must now remember to close.
 **What must happen:** `Connect` must honour an already-cancelled context before transferring ownership of a pool, or document the deliberately different contract and make the caller check it.
 **Today:** ❌ wrong or unhandled
-**Evidence:** `Connect` forwards `ctx` directly to `pgxpool.NewWithConfig` and returns any pool it receives (`utils/vvdb/dbpgx/dbpgx.go:33-56`). `NewWithConfig` constructs the pool then starts initial resource creation in a goroutine before returning it (`.../pgx/v5@v5.10.0/pgxpool/pool.go:220-339`); its later health checks use `context.Background()` to create replacement connections (`:554-595`). The local pgx tests use only `context.Background()` (`utils/vvdb/dbpgx/dbpgx_test.go:24-83`), so cancellation ownership is untested.
+**Evidence:** `Connect` forwards `ctx` directly to `pgxpool.NewWithConfig` and returns any pool it receives (`vvdb/dbpgx/dbpgx.go:33-56`). `NewWithConfig` constructs the pool then starts initial resource creation in a goroutine before returning it (`.../pgx/v5@v5.10.0/pgxpool/pool.go:220-339`); its later health checks use `context.Background()` to create replacement connections (`:554-595`). The local pgx tests use only `context.Background()` (`vvdb/dbpgx/dbpgx_test.go:24-83`), so cancellation ownership is untested.
 **Blast radius:** confusing error
 
 ### E-VVDB-10 — A 64-bit pool limit overflows pgx's 32-bit configuration
@@ -1516,7 +1516,7 @@ above close rather than pave.
 **What the consumer does:** It chooses `dbpgx.Connect` for a PostgreSQL service and expects invalid capacity to be refused as a named config error.
 **What must happen:** Limits outside pgx's `int32` range must be rejected before pool construction, with the offending field named.
 **Today:** ❓ unverified
-**Evidence:** `Pool.MaxOpen` is a machine-sized `int` (`utils/vvdb/config.go:88-94`) but `dbpgx.apply` narrows it without bounds checking (`utils/vvdb/dbpgx/dbpgx.go:93-102`). The downstream pgx/puddle source suggests an overflow can become a generic pool error, but `TestTheConfigReachesPgx` covers only `MaxOpen: 7` (`utils/vvdb/dbpgx/dbpgx_test.go:16-48`). A local overflow control is needed before asserting the exact failure or ownership outcome.
+**Evidence:** `Pool.MaxOpen` is a machine-sized `int` (`vvdb/config.go:88-94`) but `dbpgx.apply` narrows it without bounds checking (`vvdb/dbpgx/dbpgx.go:93-102`). The downstream pgx/puddle source suggests an overflow can become a generic pool error, but `TestTheConfigReachesPgx` covers only `MaxOpen: 7` (`vvdb/dbpgx/dbpgx_test.go:16-48`). A local overflow control is needed before asserting the exact failure or ownership outcome.
 **Blast radius:** confusing error
 
 ### E-VVDB-11 — A bad second pgx configuration must not leak the first pool
@@ -1525,7 +1525,7 @@ above close rather than pave.
 **What the consumer does:** It retries `ConnectReadWrite` during startup and expects either both pools or no pool to remain owned by the failed attempt.
 **What must happen:** The first pool must be closed, the returned pair must be nil, and the error must identify the replica; this needs a non-vacuous test that drives the second `Connect` failure.
 **Today:** ❓ unverified
-**Evidence:** The intended cleanup exists: `ConnectReadWrite` closes `primary` and returns `nil, nil` after its second `Connect` fails (`utils/vvdb/dbpgx/dbpgx.go:73-87`). There is no `ConnectReadWrite` test at all (`utils/vvdb/dbpgx/dbpgx_test.go:1-84`), and `TestConnectRefusesBeforeItDials` covers only a single malformed primary config (`:78-83`), so it would not fail if the pair cleanup disappeared.
+**Evidence:** The intended cleanup exists: `ConnectReadWrite` closes `primary` and returns `nil, nil` after its second `Connect` fails (`vvdb/dbpgx/dbpgx.go:73-87`). There is no `ConnectReadWrite` test at all (`vvdb/dbpgx/dbpgx_test.go:1-84`), and `TestConnectRefusesBeforeItDials` covers only a single malformed primary config (`:78-83`), so it would not fail if the pair cleanup disappeared.
 **Blast radius:** crash
 
 ### E-VVDB-12 — A complete DSN disagrees with named credentials, TLS, or params
@@ -1544,11 +1544,11 @@ sizes a handle rather than changes its endpoint.
 **Today:** 🟡 partial — deterministic implementation, but only the `host`
 conflict has a focused control
 **Evidence:** `fieldsBesideDSN` implements that exact ordered list
-(`utils/vvdb/config.go:169-190`); both `prepare`, which every DSN builder uses,
-and `Config.Validate` return its `ErrConflict` (`utils/vvdb/dsn.go:176-190`,
-`utils/vvdb/config.go:142-151`); and `Open` reaches `DSN` before `sql.Open`
-(`utils/vvdb/open.go:20-35`). `TestADSNIsUsedAsGivenAndRefusesToShareTheJob`
-(`utils/vvdb/dsn_test.go:239-242`) pins only a `host` disagreement, not the
+(`vvdb/config.go:169-190`); both `prepare`, which every DSN builder uses,
+and `Config.Validate` return its `ErrConflict` (`vvdb/dsn.go:176-190`,
+`vvdb/config.go:142-151`); and `Open` reaches `DSN` before `sql.Open`
+(`vvdb/open.go:20-35`). `TestADSNIsUsedAsGivenAndRefusesToShareTheJob`
+(`vvdb/dsn_test.go:239-242`) pins only a `host` disagreement, not the
 named credential/TLS/params arms.
 **Blast radius:** silent wrong endpoint or security policy if the deterministic
 refusal regresses

@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/frostgrove/vv/utils/vvdb"
+	"github.com/frostgrove/vv/vvdb"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 

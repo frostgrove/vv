@@ -34,5 +34,5 @@ adapters, tooling, utilities.
 | crudtest | `github.com/frostgrove/vv/crud/crudtest` | [Crudtest](crudtest/Crudtest.md) | [UC-011](crudtest/UC-011-test-repository-behaviour-without-a-database.md) | not ready |
 | codegen | `github.com/frostgrove/vv/cmd/vv` · `github.com/frostgrove/vv/internal/codegen` | [Codegen](codegen/Codegen.md) | [UC-014](codegen/UC-014-keep-generated-artefacts-in-sync.md) | not ready |
 | utils | `github.com/frostgrove/vv/utils/{vvflag,vvcfg}` | [Utils](utils/Utils.md) | — | not ready |
-| vvdb | `github.com/frostgrove/vv/utils/vvdb` · `github.com/frostgrove/vv/utils/vvdb/dbpgx` | [Vvdb](vvdb/Vvdb.md) | [UC-021](vvdb/UC-021-configure-a-database-once-in-one-file.md) | not ready |
+| vvdb | `github.com/frostgrove/vv/vvdb` · `github.com/frostgrove/vv/vvdb/dbpgx` | [Vvdb](vvdb/Vvdb.md) | [UC-021](vvdb/UC-021-configure-a-database-once-in-one-file.md) | not ready |
 | vvgoose | `github.com/frostgrove/vv/utils/vvgoose` | [Vvgoose](vvgoose/Vvgoose.md) | [UC-022](vvgoose/UC-022-run-and-generate-database-migrations.md) | ready |

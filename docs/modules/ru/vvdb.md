@@ -1,7 +1,7 @@
 # vvdb — одна конфигурация, четыре движка, соединение
 
 ```go
-import "github.com/frostgrove/vv/utils/vvdb"
+import "github.com/frostgrove/vv/vvdb"
 ```
 
 **Модуль:** корневой · **Зависит от:** стандартной библиотеки

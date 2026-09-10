@@ -61,7 +61,7 @@ very serialization guards they carry.
   `crud/decorators/specs/executor.go` — repository composition.
 - `remote/transport.go`, `crud/probe/probe.go` and `crud/executor.go` —
   operation contexts.
-- `utils/vvdb`, `utils/vvdb/dbpgx`, `storage`, `storagefs`, `storageminio`,
+- `vvdb`, `vvdb/dbpgx`, `storage`, `storagefs`, `storageminio`,
   `internal/codegen` and `utils/vvgoose` — configuration and constructors.
 - `crud/adapter/crudsql.DB.WithTxOptions` — `sql.TxOptions` is copied at the
   construction boundary.

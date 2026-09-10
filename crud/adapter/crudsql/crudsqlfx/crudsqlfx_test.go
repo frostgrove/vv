@@ -8,7 +8,7 @@ import (
 
 	"github.com/frostgrove/vv/crud"
 	"github.com/frostgrove/vv/crud/adapter/crudsql/crudsqlfx"
-	"github.com/frostgrove/vv/utils/vvdb"
+	"github.com/frostgrove/vv/vvdb"
 )
 
 func TestTheSourceAndThePoolAreBothResolvable(t *testing.T) {

@@ -198,6 +198,51 @@ configuration states one, and by `DefaultSchemaTimeout` (15s) otherwise.
 It registers **no driver**. Which driver answers `sql.Open("pgx", …)` is yours
 and always was ([[D-057]]) — import it for its side effect beside this.
 
+### Layers around the source
+
+The source this module provides is the composed one, and the deployment writes
+the chain around it:
+
+```go
+fx.Options(
+    crudsqlfx.Module(&configuration.Db, crudsqlfx.Layers("otel.source")),
+
+    fx.Provide(crudsqlfx.AsWrapping(func(telemetry *vvotel.Telemetry) crudsqlfx.Wrapping {
+        return crudsqlfx.Wrapping{
+            Name: "otel.source",
+            Wrap: func(next crud.Source) crud.Source { return vvotel.Source(telemetry, next) },
+        }
+    })),
+)
+```
+
+`Layers` is the chain outside in: the first name sees a call first and its
+result last. A `Wrapping` carries no place of its own, because the composition
+root is the only thing that knows what the other layer is. An empty declaration
+is the source itself.
+
+Both directions are refusals that fail the graph before anything is wrapped: a
+declared layer nobody contributed — which is what a forgotten `AsWrapping` looks
+like — is `ErrWrappingMissing`, a contributed layer nobody declared is
+`ErrWrappingUndeclared`, and the rest are `ErrWrappingTwice`,
+`ErrWrappingUnnamed`, `ErrWrappingEmpty` and `ErrWrappingDropped` ([[D-137]]).
+
+A contributed layer answers for what it wrapped — a wrapper that hides `Begin`
+takes transactions with it ([[D-061]]). `AsWrapping` is a spelling of the group
+tag `group:"vv.crud.source.wrappings"`, which a contributor can write out
+instead and take no import of this module.
+
+The source this module wires is addressable on its own, under
+`name:"vv.crudsql.base"`. A graph that cannot reach a database supplies one and
+keeps the chain:
+
+```go
+fx.Options(boot.Deployment(configuration), crudsqlfx.Base(crudsql.Postgres(offlinePool)))
+```
+
+Replacing `crud.Source` itself is the other gesture and means the other thing:
+that value is the source, layers included.
+
 ## See also
 
 - [crudpgx](crudpgx.md) — pgx v5, with `COPY` bulk insert

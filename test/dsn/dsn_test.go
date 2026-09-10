@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/frostgrove/vv/utils/vvdb"
+	"github.com/frostgrove/vv/vvdb"
 	"github.com/go-sql-driver/mysql"
 	"github.com/jackc/pgx/v5"
 	_ "modernc.org/sqlite"

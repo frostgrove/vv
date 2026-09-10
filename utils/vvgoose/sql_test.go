@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/frostgrove/vv/utils/vvdb"
 	"github.com/frostgrove/vv/utils/vvgoose/internal/modelscan"
+	"github.com/frostgrove/vv/vvdb"
 )
 
 func TestRenderMigrationUsesEachEngineDialect(t *testing.T) {

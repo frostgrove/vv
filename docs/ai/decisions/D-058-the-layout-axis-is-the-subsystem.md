@@ -111,7 +111,7 @@ two words for one thing. `crud/middleware/` would be truer to the code;
 
 ## `utils/` is the one name chosen for what it is not
 
-`utils/vvflag` reads a flag, `utils/vvcfg` loads a config file, `utils/vvdb`
+`utils/vvflag` reads a flag, `utils/vvcfg` loads a config file, `vvdb`
 turns that config into a DSN or a `*sql.DB`, and `utils/vvgoose` runs the
 application's migration command. All four are the consumer's
 application plumbing. None is a subsystem of this library, so none has a row in
@@ -129,7 +129,7 @@ both halves separately because they need different commands — `vvflag` and
 
 `vvdb` is the case that shows the line is a test rather than a size limit. It has
 its own name argument, its own flow and a satellite module of its own
-(`utils/vvdb/dbpgx`), which is more apparatus than either of its neighbours — and
+(`vvdb/dbpgx`), which is more apparatus than either of its neighbours — and
 it still belongs here, because [[D-057]]'s forbid list already says it may not
 import `crud` or `errs`, may not be called from anywhere inside the repository
 path, and may not return a `crud.Source`. A package forbidden all of that is not
@@ -184,8 +184,8 @@ The whole tree, and `CLAUDE.md`'s *Layout* section is the reader's copy of it:
 
 - `make check-utils` — no package under `utils/` reaches `crud`, `auth`, `port`
   or `remote`, which is what lets `vvdb` sit there. Verified in both halves:
-  importing `crud` from `utils/vvdb` (root module) and `port` from
-  `utils/vvdb/dbpgx` (its own module) each fail with the offender named. The
+  importing `crud` from `vvdb` (root module) and `port` from
+  `vvdb/dbpgx` (its own module) each fail with the offender named. The
   second is the one worth checking — an arm that listed only `./utils/...` would
   have passed it.
 - `make check-tiers`, and the thing that matters is that it can still fail.

@@ -15,8 +15,8 @@ import (
 	"github.com/frostgrove/vv/crud/http/crudfiber"
 	"github.com/frostgrove/vv/crud/query"
 	"github.com/frostgrove/vv/crud/sqlrepo"
-	"github.com/frostgrove/vv/utils/vvdb"
-	"github.com/frostgrove/vv/utils/vvdb/dbpgx"
+	"github.com/frostgrove/vv/vvdb"
+	"github.com/frostgrove/vv/vvdb/dbpgx"
 )
 
 //go:generate go run github.com/frostgrove/vv/cmd/vv -readonly CreatedAt

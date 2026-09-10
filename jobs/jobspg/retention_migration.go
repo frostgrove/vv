@@ -4,15 +4,14 @@ import (
 	"context"
 	"crypto/sha256"
 	"database/sql"
-	"database/sql/driver"
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"math/rand/v2"
 	"strings"
-	"time"
 
 	"github.com/frostgrove/vv/jobs"
+	"github.com/frostgrove/vv/vvdb/lock"
+	"github.com/frostgrove/vv/vvdb/lock/locksql"
 )
 
 type retentionIndex struct {
@@ -112,50 +111,15 @@ func quoteStringLiteral(value string) string {
 	return `'` + strings.ReplaceAll(value, `'`, `''`) + `'`
 }
 
-func (r repository) withMigrationLock(ctx context.Context, db *sql.DB, work func(*sql.Conn) error) (resultErr error) {
-	conn, err := db.Conn(ctx)
-	if err != nil {
-		return fmt.Errorf("jobspg: retention migration connection: %w", err)
+func (r repository) withMigrationLock(ctx context.Context, db *sql.DB, work func(*sql.Conn) error) error {
+	err := locksql.Hold(ctx, db, lock.KeyFrom(retentionMigrationLock(r.rawSchema)), work)
+	if err == nil {
+		return nil
 	}
-	locked := false
-	discard := false
-	defer func() {
-		if locked {
-			unlockContext, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-			var unlocked bool
-			unlockErr := conn.QueryRowContext(unlockContext, `SELECT pg_advisory_unlock($1)`, retentionMigrationLock(r.rawSchema)).Scan(&unlocked)
-			cancel()
-			if unlockErr == nil && !unlocked {
-				unlockErr = jobs.ErrDriver
-			}
-			if unlockErr != nil {
-				discard = true
-				resultErr = errors.Join(resultErr, fmt.Errorf("jobspg: retention migration unlock: %w", unlockErr))
-			}
-		}
-		if discard {
-			_ = conn.Raw(func(any) error { return driver.ErrBadConn })
-		}
-		resultErr = errors.Join(resultErr, conn.Close())
-	}()
-	for !locked {
-		if err := conn.QueryRowContext(ctx, `SELECT pg_try_advisory_lock($1)`, retentionMigrationLock(r.rawSchema)).Scan(&locked); err != nil {
-			discard = true
-			return fmt.Errorf("jobspg: retention migration lock: %w", err)
-		}
-		if locked {
-			break
-		}
-		delay := 250*time.Millisecond + time.Duration(rand.Int64N(int64(250*time.Millisecond)))
-		timer := time.NewTimer(delay)
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-			return ctx.Err()
-		case <-timer.C:
-		}
+	if errors.Is(err, locksql.ErrNotHeld) {
+		err = errors.Join(err, jobs.ErrDriver)
 	}
-	return work(conn)
+	return fmt.Errorf("jobspg: retention migration: %w", err)
 }
 
 func (r repository) buildRetentionIndexes(ctx context.Context, conn *sql.Conn) error {
@@ -283,7 +247,7 @@ func (r repository) finalizeMigration(ctx context.Context, conn *sql.Conn) error
 	if err := r.validateRetentionIndexes(ctx, tx); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE `+r.meta+` SET version = $1 WHERE singleton = true AND version IN (1, 2, 3, 4)`, SchemaVersion); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE `+r.meta+` SET version = $1 WHERE singleton = true AND version IN (1, 2, 3, 4, 5)`, SchemaVersion); err != nil {
 		return fmt.Errorf("jobspg: finalize migration: %w", err)
 	}
 	var version int

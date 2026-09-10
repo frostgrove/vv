@@ -1,7 +1,7 @@
 # D-040 — A retryable class is not a client error
 
-**Status:** accepted
-**Invariant:** A lock timeout, a deadlock or a serialisation failure is never classified as a conflict or any other 4xx. It carries its own `Kind`, answers 503, and the framework does not retry on the caller's behalf.
+**Status:** accepted — narrowed by [[D-139]]
+**Invariant:** A lock timeout, a deadlock or a serialisation failure is never classified as a conflict or any other 4xx. It carries its own `Kind`, answers 503, and the framework does not retry on the caller's behalf — except where it opened the transaction itself, which [[D-139]] settled and which the *"argument for the other side"* below anticipated.
 
 ## The decision
 
@@ -50,6 +50,13 @@ when the repository *does* own the transaction, nobody else can see the failure
 or retry it. That case is left open in `ROADMAP-errors.md` §16 and this decision
 is what it has to supersede if it wins.
 
+**It won, for exactly that case.** [[D-139]] lets `lock`'s `Guarded` and
+`Retry` replay a transaction they opened with `crud.InNewTx` — no caller holds
+it, no repository shares it, and each attempt begins a new one, so none of the
+three reasons above reaches it. Nothing else changed: `Take` and `TryTake`, which
+run in an executor the caller supplied, still classify and hand back, and the
+forbids below still hold for every repository, decorator and binding.
+
 **Measured, not assumed.** The corpus provokes a lock timeout on all four
 engines by holding a row on one connection and waiting on another whose patience
 has been cut to a fraction of a second:
@@ -96,7 +103,8 @@ emitting `Detail` on a deadlock would no longer be a finding on that one row.
   Class 23 and class 40 are not neighbours because their numbers are close.
 - Do not let them fall through to 500. A client cannot act on silence.
 - Do not add a retry loop to a repository, a decorator or a binding without
-  superseding this decision.
+  superseding this decision. [[D-139]] is the one narrowing granted so far, and
+  it reaches only code that opened the transaction it replays.
 - Do not read the number without the state. On MySQL `1205` and `3819` share
   `HY000` and mean opposite things.
 

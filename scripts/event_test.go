@@ -25,10 +25,14 @@ func TestNoBaseSubsystemDependsOnTheEventExtension(t *testing.T) {
 // vocabulary, and a row is where that dependency is argued. Two rows add
 // anything at all.
 //
-// `eventpg` reaches `crud/adapter/crudsql` for the caller's transaction, and the
-// closure of that one allowance is `crud`, `crud/catalog`, `crud/sqlfault`,
-// `errs`, `errs/sqlerr` and `utils` — everything a PostgreSQL store needs and
-// nothing more, which is why `health` and `port` stay outside it.
+// `eventpg` reaches `vvdb/lock/locksql` for its migration lock, and that one
+// allowance carries `crud/adapter/crudsql` inside its own closure, because the
+// lock is taken through the same adapter the caller's transaction arrives on.
+// The rest of the closure is `crud`, `vvdb/lock`, `crud/catalog`,
+// `crud/sqlfault`, `errs`, `errs/sqlerr` and `utils` — everything a PostgreSQL
+// store needs and nothing more, which is why `health` and `port` stay outside
+// it. Charging the adapter directly and the lock separately is not available:
+// a row names one allowance, and the lock is the one that needs arguing.
 //
 // `projection` reaches `runtime`, because a consumer that follows a log
 // continuously is a background activity the process owns and this repository has
@@ -44,7 +48,7 @@ func TestNoEventPackageCostsMoreThanTheSeamItNames(t *testing.T) {
 		contracts: []string{"./crud", "./errs"},
 		charged: map[string]string{
 			eventExtension + "/eventmemory": "",
-			eventExtension + "/eventpg":     "./crud/adapter/crudsql",
+			eventExtension + "/eventpg":     "./vvdb/lock/locksql",
 			eventExtension + "/eventtest":   "",
 			eventExtension + "/projection":  "./runtime",
 		},

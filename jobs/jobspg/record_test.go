@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -186,7 +187,7 @@ func TestConstructorsSeparateMagicPreparationFromManualWiring(t *testing.T) {
 	indexAt := strings.Index(joined, `CREATE INDEX CONCURRENTLY IF NOT EXISTS "deliveries_retention_idx"`)
 	validationAt := strings.Index(joined, "retention index deliveries_retention_idx schema mismatch")
 	commentAt := strings.Index(joined, `COMMENT ON INDEX "frostgrove_jobs"."deliveries_retention_idx"`)
-	versionAt := strings.LastIndex(joined, `SET version = 5`)
+	versionAt := strings.LastIndex(joined, fmt.Sprintf(`SET version = %d`, SchemaVersion))
 	if indexAt < 0 || validationAt <= indexAt || commentAt <= validationAt || versionAt <= commentAt {
 		t.Fatalf("manual retention migration phases are unordered: index=%d validation=%d comment=%d version=%d", indexAt, validationAt, commentAt, versionAt)
 	}

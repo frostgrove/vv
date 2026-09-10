@@ -11,7 +11,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/huh"
-	"github.com/frostgrove/vv/utils/vvdb"
+	"github.com/frostgrove/vv/vvdb"
 	"github.com/pressly/goose/v3"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
@@ -191,19 +191,33 @@ func newRootCommand(config vvdb.Config, streams commandIO) *cobra.Command {
 		},
 	})
 
-	root.AddCommand(&cobra.Command{
+	var flushDefaultOnly, flushAssumeYes bool
+	var flushSchemas []string
+	flush := &cobra.Command{
 		Use:   "flush",
-		Short: "Drop every object in the current development database schema",
-		Long:  "Drop every application object, including Goose history, from the current database schema. No migrations are applied afterwards. This is destructive and intended for local development only.",
+		Short: "Drop every object in the development database",
+		Long:  "Drop every object, including Goose history, from every schema the connected user owns — on PostgreSQL that reaches schemas an application never named, such as the ones subsystems keep their own tables in. A schema an extension owns is never dropped. Narrow it with --public or --schema. No migrations are applied afterwards. This is destructive and intended for local development only.",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			if err := runFlush(cmd.Context(), config); err != nil {
+			if flushDefaultOnly && len(flushSchemas) > 0 {
+				return errors.New("vvgoose: --public and --schema each say what to flush; pass one of them")
+			}
+			scope := flushScope{defaultOnly: flushDefaultOnly, schemas: flushSchemas}
+			interactive := !noInteractive && interactiveTerminal(streams)
+			flushed, err := runFlush(cmd.Context(), config, scope, confirmFlush(streams, interactive, flushAssumeYes))
+			if err != nil {
 				return err
 			}
-			fmt.Fprintln(streams.out, "database flushed")
+			if flushed {
+				fmt.Fprintln(streams.out, "database flushed")
+			}
 			return nil
 		},
-	})
+	}
+	flush.Flags().BoolVar(&flushDefaultOnly, "public", false, "flush only the connection's default schema")
+	flush.Flags().StringSliceVar(&flushSchemas, "schema", nil, "flush only the named schemas, comma separated (PostgreSQL)")
+	flush.Flags().BoolVar(&flushAssumeYes, "yes", false, "answer the confirmation, for scripts and CI")
+	root.AddCommand(flush)
 
 	root.AddCommand(&cobra.Command{
 		Use:   "status",
@@ -457,11 +471,14 @@ func runInteractiveFresh(ctx context.Context, config vvdb.Config, streams comman
 	return err
 }
 
+// The menu asks before it connects, where the flush command asks once it knows
+// what it found. Both name the targets before dropping them, and neither opens
+// a database nobody has agreed to flush.
 func runInteractiveFlush(ctx context.Context, config vvdb.Config, streams commandIO) error {
 	confirmed := false
 	form := huh.NewForm(huh.NewGroup(
 		huh.NewConfirm().
-			Title("Drop every object, including Goose history, from the current database schema?").
+			Title("Drop every object, including Goose history, from every schema this connection owns?").
 			Affirmative("Flush database").
 			Negative("Cancel").
 			Value(&confirmed),
@@ -473,11 +490,65 @@ func runInteractiveFlush(ctx context.Context, config vvdb.Config, streams comman
 		fmt.Fprintln(streams.out, "cancelled")
 		return nil
 	}
-	if err := runFlush(ctx, config); err != nil {
+	flushed, err := runFlush(ctx, config, flushScope{}, announceFlush(streams))
+	if err != nil {
 		return err
 	}
-	fmt.Fprintln(streams.out, "database flushed")
+	if flushed {
+		fmt.Fprintln(streams.out, "database flushed")
+	}
 	return nil
+}
+
+func announceFlush(streams commandIO) flushConfirmer {
+	return func(_ context.Context, targets []string) (bool, error) {
+		printFlushTargets(streams, targets)
+		return true, nil
+	}
+}
+
+func printFlushTargets(streams commandIO, targets []string) {
+	fmt.Fprintln(streams.out, "this drops every object, including Goose history, in:")
+	for _, target := range targets {
+		fmt.Fprintln(streams.out, "  "+target)
+	}
+}
+
+// confirmFlush names every target before anything is dropped, because the
+// default scope reaches schemas the caller never asked about. A run that cannot
+// ask refuses instead of assuming, so a script drops nothing it did not say.
+func confirmFlush(streams commandIO, interactive, assumeYes bool) flushConfirmer {
+	return func(ctx context.Context, targets []string) (bool, error) {
+		printFlushTargets(streams, targets)
+		if assumeYes {
+			return true, nil
+		}
+		if !interactive {
+			return false, errors.New("vvgoose: refusing to flush without a confirmation; pass --yes to answer it")
+		}
+		confirmed := false
+		form := huh.NewForm(huh.NewGroup(
+			huh.NewConfirm().
+				Title(fmt.Sprintf("Flush %s listed above?", pluralize(len(targets), "the target", "all %d targets"))).
+				Affirmative("Flush").
+				Negative("Cancel").
+				Value(&confirmed),
+		))
+		if err := runForm(ctx, streams, form); err != nil {
+			return false, fmt.Errorf("vvgoose: flush confirmation: %w", err)
+		}
+		if !confirmed {
+			fmt.Fprintln(streams.out, "cancelled")
+		}
+		return confirmed, nil
+	}
+}
+
+func pluralize(count int, one, many string) string {
+	if count == 1 {
+		return one
+	}
+	return fmt.Sprintf(many, count)
 }
 
 func runForm(ctx context.Context, streams commandIO, form *huh.Form) error {

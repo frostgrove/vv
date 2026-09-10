@@ -1,14 +1,16 @@
 package vvgoose
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
-	"github.com/frostgrove/vv/utils/vvdb"
+	"github.com/frostgrove/vv/vvdb"
 	mysql "github.com/go-sql-driver/mysql"
 	"github.com/pressly/goose/v3"
 )
@@ -160,8 +162,12 @@ func TestFlushDropsEverySQLiteObjectAndMigrationHistory(t *testing.T) {
 		t.Fatalf("close sqlite: %v", err)
 	}
 
-	if err := runFlush(ctx, config); err != nil {
+	flushed, err := runFlush(ctx, config, flushScope{}, alwaysConfirmFlush)
+	if err != nil {
 		t.Fatalf("flush: %v", err)
+	}
+	if !flushed {
+		t.Fatal("flush reported that it dropped nothing")
 	}
 
 	database, err = vvdb.Open(&config)
@@ -187,6 +193,141 @@ func TestFlushDropsEverySQLiteObjectAndMigrationHistory(t *testing.T) {
 	}
 	if len(results) != 1 || results[0].Direction != "up" {
 		t.Fatalf("migrate after flush results = %+v, want one up migration", results)
+	}
+}
+
+func alwaysConfirmFlush(context.Context, []string) (bool, error) { return true, nil }
+
+// The default scope reaches schemas nobody named on the command line, so the
+// confirmation is not decoration: a flush that is not answered drops nothing.
+func TestFlushDropsNothingWhenTheConfirmationIsDeclined(t *testing.T) {
+	t.Parallel()
+
+	config := sqliteMigrationConfig(t)
+	ctx := context.Background()
+	if _, err := runMigrate(ctx, config); err != nil {
+		t.Fatalf("initial migrate: %v", err)
+	}
+
+	var shown []string
+	declined := func(_ context.Context, targets []string) (bool, error) {
+		shown = append(shown, targets...)
+		return false, nil
+	}
+	flushed, err := runFlush(ctx, config, flushScope{}, declined)
+	if err != nil {
+		t.Fatalf("declined flush: %v", err)
+	}
+	if flushed {
+		t.Fatal("a declined flush reported that it dropped something")
+	}
+	if len(shown) == 0 {
+		t.Fatal("the confirmation was asked to approve a flush without being told what it would drop")
+	}
+
+	database, err := vvdb.Open(&config)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	defer func() { _ = database.Close() }()
+	var objects int
+	if err := database.QueryRowContext(ctx, `SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'`).Scan(&objects); err != nil {
+		t.Fatalf("count objects after the declined flush: %v", err)
+	}
+	if objects == 0 {
+		t.Fatal("a declined flush dropped the tables anyway")
+	}
+}
+
+// On MySQL a schema is a database, so honouring --schema there would drop
+// databases nobody in this project owns. It is refused rather than ignored.
+func TestFlushRefusesSchemaSelectionOnAnEngineWithoutSchemas(t *testing.T) {
+	t.Parallel()
+
+	for _, scope := range []flushScope{{defaultOnly: true}, {schemas: []string{"frostgrove_jobs"}}} {
+		config := sqliteMigrationConfig(t)
+		flushed, err := runFlush(context.Background(), config, scope, alwaysConfirmFlush)
+		if err == nil {
+			t.Fatalf("scope %+v was accepted on SQLite", scope)
+		}
+		if flushed {
+			t.Fatalf("scope %+v flushed something before refusing", scope)
+		}
+		if !strings.Contains(err.Error(), "PostgreSQL") {
+			t.Fatalf("the refusal for scope %+v does not say which engine has schemas: %v", scope, err)
+		}
+	}
+}
+
+// A script or a CI job has nobody to answer the prompt. It has to say --yes
+// rather than have the answer assumed for it.
+func TestFlushWithoutATerminalRefusesUntilItIsAnswered(t *testing.T) {
+	t.Parallel()
+
+	var out bytes.Buffer
+	streams := commandIO{in: strings.NewReader(""), out: &out, err: &out}
+	targets := []string{"public", "frostgrove_jobs"}
+
+	proceed, err := confirmFlush(streams, false, false)(context.Background(), targets)
+	if err == nil {
+		t.Fatal("a flush with no terminal and no --yes was allowed to proceed unanswered")
+	}
+	if proceed {
+		t.Fatal("the refused flush still reported approval")
+	}
+	for _, target := range targets {
+		if !strings.Contains(out.String(), target) {
+			t.Fatalf("the refusal never said that %q was going to be dropped: %q", target, out.String())
+		}
+	}
+
+	// Control: the same call with --yes proceeds, so the refusal above is the
+	// missing answer talking and not a broken confirmer.
+	out.Reset()
+	proceed, err = confirmFlush(streams, false, true)(context.Background(), targets)
+	if err != nil || !proceed {
+		t.Fatalf("--yes did not answer the confirmation: proceed=%v err=%v", proceed, err)
+	}
+}
+
+func TestFlushTargetsSkipExtensionSchemasAndNarrowToTheScope(t *testing.T) {
+	t.Parallel()
+
+	schemas := []postgresSchema{
+		{name: "frostgrove_jobs"},
+		{name: "public"},
+		{name: "tiger", extensionOwned: true},
+	}
+
+	targets, err := resolveFlushTargets(flushScope{}, schemas, "public")
+	if err != nil {
+		t.Fatalf("default scope: %v", err)
+	}
+	if !slices.Equal(targets, []string{"frostgrove_jobs", "public"}) {
+		t.Fatalf("the default scope resolved to %v; it must take every schema the user owns and leave the extension's alone", targets)
+	}
+
+	targets, err = resolveFlushTargets(flushScope{defaultOnly: true}, schemas, "public")
+	if err != nil {
+		t.Fatalf("--public scope: %v", err)
+	}
+	if !slices.Equal(targets, []string{"public"}) {
+		t.Fatalf("--public resolved to %v, want only the default schema", targets)
+	}
+
+	targets, err = resolveFlushTargets(flushScope{schemas: []string{"frostgrove_jobs", "frostgrove_events"}}, schemas, "public")
+	if err != nil {
+		t.Fatalf("--schema scope: %v", err)
+	}
+	if !slices.Equal(targets, []string{"frostgrove_jobs"}) {
+		t.Fatalf("--schema resolved to %v; a named schema this database does not have is skipped, not invented", targets)
+	}
+
+	if _, err := resolveFlushTargets(flushScope{schemas: []string{"tiger"}}, schemas, "public"); err == nil {
+		t.Fatal("a schema an extension owns was accepted as a flush target")
+	}
+	if _, err := resolveFlushTargets(flushScope{schemas: []string{"pg_catalog"}}, schemas, "public"); err == nil {
+		t.Fatal("a PostgreSQL system schema was accepted as a flush target")
 	}
 }
 

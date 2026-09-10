@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/frostgrove/vv/jobs"
+	"github.com/frostgrove/vv/vvdb/lock"
+	"github.com/frostgrove/vv/vvdb/lock/locksql"
 )
 
 type retentionCandidate struct {
@@ -24,9 +26,7 @@ type retentionCandidate struct {
 const terminalStatesSQL = "3, 4, 5, 6, 7, 9, 10"
 
 func (r repository) tryRetentionLeadership(ctx context.Context, tx *sql.Tx, namespace jobs.Namespace) (bool, error) {
-	var acquired bool
-	err := tx.QueryRowContext(ctx, `SELECT pg_try_advisory_xact_lock($1)`, retentionAdvisoryLock(namespace)).Scan(&acquired)
-	return acquired, err
+	return locksql.TryTake(ctx, tx, lock.Exclusively(lock.KeyFrom(retentionAdvisoryLock(namespace))))
 }
 
 func retentionAdvisoryLock(namespace jobs.Namespace) int64 {

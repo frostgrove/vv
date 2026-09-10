@@ -11,8 +11,8 @@ import (
 
 	"github.com/frostgrove/vv/crud"
 	"github.com/frostgrove/vv/crud/adapter/crudsql"
-	"github.com/frostgrove/vv/utils/vvdb"
-	"github.com/frostgrove/vv/utils/vvdb/dbpgx"
+	"github.com/frostgrove/vv/vvdb"
+	"github.com/frostgrove/vv/vvdb/dbpgx"
 )
 
 func vvdbConfig(t *testing.T, engine vvdb.Engine, envVar string, port int) vvdb.Config {

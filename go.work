@@ -35,6 +35,6 @@ use (
 	./storage/storageminio/storageminiofx
 	./test
 	./utils/vvcfg
-	./utils/vvdb/dbpgx
+	./vvdb/dbpgx
 	./utils/vvgoose
 )

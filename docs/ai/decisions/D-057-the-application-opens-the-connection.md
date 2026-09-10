@@ -1,7 +1,7 @@
 # D-057 — The application opens the connection; nothing in the seam does
 
-**Status:** accepted
-**Invariant:** `vvdb` imports no other package of this library, is reachable from nothing the repository calls, and hands back a driver handle the caller owns — the hop into vv stays a line the caller writes.
+**Status:** accepted — scoped to the `vvdb` package by [[D-139]]
+**Invariant:** The `vvdb` package imports no other package of this library, is reachable from nothing the repository calls, and hands back a driver handle the caller owns — the hop into vv stays a line the caller writes. Packages *beneath* it are not covered: `vvdb/dbpgx` takes a driver, and `vvdb/lock` takes `crud` and is reached from the repository path.
 
 ## The decision
 
@@ -11,11 +11,17 @@ library's, and three rules keep it that way.
 
 **It imports nothing of vv.** Not `crud`, not `errs`. A service with no vv in it
 can take `vvdb` on its own, and `make check-tiers` is not asked to make an
-exception for it.
+exception for it. This is a claim about the package, not the directory: a
+consumer adopts `vvdb` by importing `vvdb`, and what sits in `vvdb/lock` beside
+it costs them nothing until they import that too. `vvdb/dbpgx` was already the
+precedent — it takes pgx, which `vvdb` may not.
 
 **Nothing in the repository path reaches it.** No `Define`, no `Bind`, no
-decorator, no adapter knows it exists. Delete the package and everything else in
-this repository still compiles.
+decorator, no adapter knows `vvdb` exists. Delete the package and everything else
+in this repository still compiles. `vvdb/lock` is deliberately outside that
+sentence: `jobspg`, `eventpg` and `auditpg` do reach it, which is the whole point
+of it existing, and it reaches `vvdb` not at all — it takes a handle somebody
+else opened, exactly like every other consumer.
 
 **It returns a handle and stops.** The caller writes the next line:
 
@@ -100,7 +106,7 @@ The child package needs no prefix at all: nothing is called `dbpgx`, so it is
 prefix where no collision exists.
 
 **Where the pair sits was settled by [[D-058]] and does not change any of the
-above.** It is `utils/vvdb` and `utils/vvdb/dbpgx`. The name is unaffected: the
+above.** It is `vvdb` and `vvdb/dbpgx`. The name is unaffected: the
 prefix answers "what may this package be called", the directory answers "what is
 this a part of", and `utils/` is the answer to the second because `vvdb` is the
 consumer's plumbing rather than a subsystem of the library. Its own forbid list
@@ -125,7 +131,7 @@ is exactly what `utils/` is allowed to hold.
   `dbpgx.Common`; declare the pool identity with `Primary` or `Replica`.
 - Do not grow `vvdb` a dependency. `database/sql` is the standard library and
   the driver is the consumer's blank import; anything else is a module, and
-  `utils/vvdb/dbpgx` is the first of them ([[D-033]], [[D-051]]).
+  `vvdb/dbpgx` is the first of them ([[D-033]], [[D-051]]).
 - Do not move it back out of `utils/`. The forbid list above *is* the `utils/`
   boundary [[D-058]] states, arrived at from the other direction: a package that
   may not import `crud`, may not be called from the repository path and may not
@@ -135,9 +141,9 @@ is exactly what `utils/` is allowed to hold.
 
 ## Where it lives
 
-- `utils/vvdb/doc.go` — the boundary, stated where a reader of the package meets it.
-- `utils/vvdb/config.go`, `utils/vvdb/dsn.go`, `utils/vvdb/open.go` — the three levels.
-- `utils/vvdb/dbpgx/` — the one engine that is not `database/sql`.
+- `vvdb/doc.go` — the boundary, stated where a reader of the package meets it.
+- `vvdb/config.go`, `vvdb/dsn.go`, `vvdb/open.go` — the three levels.
+- `vvdb/dbpgx/` — the one engine that is not `database/sql`.
 - `docs/ai/flows/FL-021` — the path, and where the escaping lives.
 - `docs/ai/usecases/UC-021` — what the author is trying to do.
 - `_examples/pgx-fiber`, `_examples/sql-nethttp`, `_examples/gorm-mysql-gin` —
@@ -148,10 +154,10 @@ is exactly what `utils/` is allowed to hold.
 The import rule is mechanical and checked:
 
 ```
-go list -deps -f '{{if not .Standard}}{{.ImportPath}}{{end}}' ./utils/vvdb
+go list -deps -f '{{if not .Standard}}{{.ImportPath}}{{end}}' ./vvdb
 ```
 
-prints `github.com/frostgrove/vv/utils/vvdb` and nothing else — the package itself,
+prints `github.com/frostgrove/vv/vvdb` and nothing else — the package itself,
 because `-deps` includes it. Anything on a second line is a violation.
 `make check-deps` covers the third-party half for the whole root module; this is
 the first-party half, and it grows a line the moment `vvdb` imports `crud`.
@@ -161,13 +167,13 @@ and prints nothing at all:
 
 ```
 go list -deps -f '{{.ImportPath}} {{join .Deps " "}}' ./... \
-  | grep -v '^github.com/frostgrove/vv/utils/vvdb' | grep vvdb
+  | grep -v '^github.com/frostgrove/vv/vvdb' | grep vvdb
 ```
 
 The filter is on the package's own path rather than on a directory list, so it
 keeps working when the tree is rearranged.
 
-The behaviour is pinned by `utils/vvdb/*_test.go`, and the escaping — the part a
+The behaviour is pinned by `vvdb/*_test.go`, and the escaping — the part a
 string comparison cannot check — by `test/dsn/dsn_test.go`, which parses what
 `vvdb` writes with pgx and go-sql-driver. `test/integration/vvdb_test.go` opens
 three live servers from one shape of config, with a wrong-password control

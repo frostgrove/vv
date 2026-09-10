@@ -1,11 +1,11 @@
 // The pgx pool opener is its own module so a consumer on database/sql, ent or
 // gorm never takes pgx as a dependency. See D-033 and D-051.
-module github.com/frostgrove/vv/utils/vvdb/dbpgx
+module github.com/frostgrove/vv/vvdb/dbpgx
 
 go 1.26
 
 require (
-	github.com/frostgrove/vv v0.0.0-20260829132449-bc1e4c0b1038
+	github.com/frostgrove/vv v0.0.0-00010101000000-000000000000
 	github.com/jackc/pgx/v5 v5.10.0
 )
 

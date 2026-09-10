@@ -248,7 +248,7 @@ func MigrationStatements(schema string) ([]string, error) {
 	statements = append(statements, repo.operationalIndexValidationStatements()...)
 	statements = append(statements, repo.intentKeysColumnValidationStatements()...)
 	statements = append(statements, repo.schemaConstraintValidationStatements()...)
-	statements = append(statements, `UPDATE `+repo.meta+` SET version = 5 WHERE singleton = true AND version IN (1, 2, 3, 4)`)
+	statements = append(statements, `UPDATE `+repo.meta+` SET version = 6 WHERE singleton = true AND version IN (1, 2, 3, 4, 5)`)
 	return append([]string(nil), statements...), nil
 }
 
@@ -308,6 +308,11 @@ func (r repository) migrateLocked(ctx context.Context, conn *sql.Conn) error {
 				}
 			}
 		}
+		for _, statement := range r.operationalIndexStatements() {
+			if _, err := tx.ExecContext(ctx, statement); err != nil {
+				return fmt.Errorf("jobspg: migrate operational indexes: %w", err)
+			}
+		}
 	}
 	if err := r.validateIntentKeysColumn(ctx, tx); err != nil {
 		return fmt.Errorf("jobspg: validate intent reservations: %w", err)
@@ -329,11 +334,7 @@ func (r repository) migrateLocked(ctx context.Context, conn *sql.Conn) error {
 		}
 		return r.validateOperationalIndexes(ctx, conn)
 	}
-	if needsRetentionMigration {
-		if err := r.buildRetentionIndexes(ctx, conn); err != nil {
-			return err
-		}
-	} else if err := r.validateRetentionIndexes(ctx, conn); err != nil {
+	if err := r.buildRetentionIndexes(ctx, conn); err != nil {
 		return err
 	}
 	if err := r.validateOperationalIndexes(ctx, conn); err != nil {

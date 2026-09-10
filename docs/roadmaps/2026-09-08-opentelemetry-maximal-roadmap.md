@@ -988,6 +988,9 @@ span, and malformed/unknown calls add no arbitrary attributes.
    current adapter extractors only see their concrete outer executor.
 5. **Top-level DX:** `source = vvotel.Source(tel, source)` before building
    repositories; complete DB CLIENT/pool telemetry still uses the native driver.
+   A graph that gets its source from `crudsqlfx` contributes the same wrapper as
+   a `crudsqlfx.Wrapping` named in that module's `Layers` declaration, instead of
+   decorating the module's output ([[D-137]]).
 
 **Implementation:** root executor navigation with a fixed depth, adapter
 extractor and crudpgx COPY-target updates, capability-specific wrapper matrix
