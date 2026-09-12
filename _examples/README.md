@@ -52,10 +52,16 @@ both live in the library.
 | [`auth-jwt-gin`](auth-jwt-gin/) | none | `crudpgx` | PostgreSQL | Gin | The whole authentication and authorization chain: a JWT at the door, a principal in the context, a tenant claim in the `WHERE`. The middleware knows nothing about tenants and the policy knows nothing about JWTs. It prints three tokens on start-up, so the 401, the tenant filter, the 404-not-403 and the 403 are four `curl`s away. |
 | [`tenancy-sharedrow`](tenancy-sharedrow/) | none | none | none | none | The composition root for the optional [`tenancy`](../docs/modules/en/tenancy.md) extension, and the only example with no database: what it demonstrates is the wiring. A control-plane contract returning plain data, one middleware that narrows every verb, a declared tenant-owned relation, an object namespace that is a digest rather than a name, and a cohort grant bounded to reads. Run it and read the four lines it prints. |
 | [`event-checkpoints-elsewhere`](event-checkpoints-elsewhere/) | none | `crudsql` | PostgreSQL | none | A complete `event.Checkpoints` of your own — the fenced save, the outcome classification and the `Transaction` answer — over a database this framework does not ship a store for, and the one wiring where `projection.InUnit` is accepted and cannot be checked: the advance rides in the checkpoint database's transaction and the handler writes to a second pool, so `Destination` is `projection.Unchecked` and the handler's upsert on `(stream, version)` is what closes the window that opens. See [projection](../docs/modules/en/projection.md). |
+| [`event-partitions`](event-partitions/) | none | none | none | none | Four runners over one log, built from a `Cover` and from nothing else: a `SequenceBy` key the application chose, a mask rather than a modulus, and the `Split` that takes one partition to two at the parent's exact cursor and refuses a second one. The third example that needs no database — the log and the checkpoint rows are `eventmemory`, which supports transactions and declines persistence. |
+| [`event-generations`](event-generations/) | none | none | none | none | A read model rebuilt beside the one that is serving: `orders` and `orders@2` over one log, the barrier observed from the retiring generation's own rows rather than supplied, `Reached`, the fenced `Cutover`, the rollback that is the same call exchanged, and the effect gate — the live generation stages, the rebuild has `Effects` nil, and the retired one stops staging the moment the ownership row names another. The `Generations` implementation says where a SQL one takes its lock. |
 
-`tenancy-sharedrow` is the second example that needs no database, for a different
-reason: a tenant is verified before any statement, so the interesting half of it
-happens before a connection would be opened.
+`tenancy-sharedrow`, `event-partitions` and `event-generations` are the three
+examples that need no database, for two different reasons. `tenancy-sharedrow`
+verifies a tenant before any statement, so the interesting half of it happens
+before a connection would be opened. The two event examples run against
+`eventmemory`, which supports transactions and declines persistence — so a split,
+a cutover and a staged effect all ride in a real unit of work, and nothing
+survives the process.
 
 [`example/`](example/) is not a server. It is the library's whole user-facing
 surface in one file — model, DTO, declaration, metamodel, security policy —

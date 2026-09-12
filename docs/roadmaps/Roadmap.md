@@ -384,6 +384,22 @@ name, two advance modes, a typed router, envelope-granular quarantine and a fenc
 that makes two live instances take turns rather than killing one of them
 ([[D-129]]–[[D-133]], [[FL-038]]). Delivery is at least once in both modes.
 
+**The projector's parallel, recoverable and rebuildable halves are delivered
+too.** Partitions are a mask rather than a modulus and a topology change is a
+`Split` that hands the parent's cursor to two children in one transaction of the
+caller's, with a `Cover` as the one place a set is checked; a permanent failure
+under `ParkSequence` parks the failing envelope **and the following envelopes of
+its sequence**, in the same commit as the read model and the advance, and a
+claimed, rotating redrive is the operator's half; a generation is a number in the
+recorded name, so a rebuild runs beside the live one, is measured against a
+barrier `Cutover` derives from the retiring generation's own rows, and is
+switched in by one fenced write; and the capability to cause a side effect is a
+value on the spec, so a rebuild is a spec with that field nil and a retired
+generation stops staging in the same breath as it commits its own advance
+([[D-140]], [[D-141]], [[FL-042]]). The costs are stated rather than implied: N
+partitions x M generations are N x M independent walks of the log, measured at
+8.0x a one-projection baseline, and there is no merge.
+
 **A snapshot is deferred on a measurement rather than omitted.** A full replay is
 10 – 18 ms at 10 000 events and 104 – 171 ms at 100 000, measured on PostgreSQL
 17.9 at the deployed defaults, and paging is a sixth of it: the 391 pages of a

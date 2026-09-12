@@ -6,4002 +6,14672 @@ changes shape is one too. Regenerate and read the diff before every release.
 
 ## github.com/frostgrove/vv/app
 ```go
-var ErrSeeder = errors.New("app: the seed set is not runnable")
-type Ordered[H any] struct{ ... }
-    func Sorted[H any](contributions []Ordered[H]) []Ordered[H]
-type Runner struct{ ... }
-    func NewRunner(seeders []Seeder, spec Seeding) (*Runner, error)
-type Seeder struct{ ... }
-type Seeding struct{ ... }
+var ErrSeeder error
+func NewRunner([]Seeder, Seeding) (*Runner, error)
+type Ordered[H any] struct {
+	Name string
+	Order int
+	Handler H
+}
+type Runner struct {
+	<unexported fields>
+}
+func (*Runner) Env() string
+func (*Runner) Run(context.Context) error
+type Seeder struct {
+	Name string
+	Order int
+	Envs []string
+	Run func(ctx context.Context) error
+}
+func (Seeder) Common() bool
+type Seeding struct {
+	Env string
+	Known []string
+	Logger *log/slog.Logger
+}
+func Sorted[H any]([]Ordered[H]) []Ordered[H]
 ```
 
 ## github.com/frostgrove/vv/app/module
 ```go
-var ErrDefinition = errors.New("module: the definition is not usable") ...
-var Base = Profile{ ... } ...
-type Builder struct{ ... }
-    func New(name string) *Builder
-type Catalog struct{ ... }
-    func MustCatalog(definitions ...Definition) Catalog
-    func NewCatalog(definitions ...Definition) (Catalog, error)
-type CatalogDescriptor struct{ ... }
-type Contribution struct{ ... }
-type Definition struct{ ... }
-    func Auto(name string, constructors ...any) Definition
-    func Define(spec Spec) (Definition, error)
-    func MustDefine(spec Spec) Definition
-type Descriptor struct{ ... }
-type Diagnosis struct{ ... }
-    func Doctor(catalog Catalog, profile Profile) Diagnosis
+const API Role = "api"
+func Auto(string, ...any) Definition
+var Base Profile
+type Builder struct {
+	<unexported fields>
+}
+func (*Builder) Build() (Definition, error)
+func (*Builder) Checks(...any) *Builder
+func (*Builder) MustBuild() Definition
+func (*Builder) Order(int) *Builder
+func (*Builder) Provide(...any) *Builder
+func (*Builder) Routes(...any) *Builder
+func (*Builder) Seeders(...any) *Builder
+func (*Builder) Workers(...any) *Builder
+type Catalog struct {
+	<unexported fields>
+}
+func (Catalog) Check(Profile) error
+func (Catalog) Definitions() []Definition
+func (Catalog) Describe(Profile) CatalogDescriptor
+func (Catalog) Names() []string
+type CatalogDescriptor struct {
+	Profile string "json:\"profile\""
+	Roles []Role "json:\"roles,omitempty\""
+	Modules []Descriptor "json:\"modules\""
+}
+func (CatalogDescriptor) String() string
+const CheckKind Kind = "check"
+var Complete Profile
+type Contribution struct {
+	Kind Kind
+	Constructor any
+}
+func Define(Spec) (Definition, error)
+type Definition struct {
+	<unexported fields>
+}
+func (Definition) Active(Profile) []any
+func (Definition) Contributions() []Contribution
+func (Definition) Describe(Profile) Descriptor
+func (Definition) Name() string
+func (Definition) Order() int
+func (Definition) Roles() []Role
+type Descriptor struct {
+	Name string "json:\"name\""
+	Order int "json:\"order\""
+	Roles []Role "json:\"roles,omitempty\""
+	Kinds []KindDescriptor "json:\"kinds\""
+	Active int "json:\"active\""
+}
+type Diagnosis struct {
+	Catalog CatalogDescriptor
+	Problems []string
+	Notices []string
+}
+func (Diagnosis) OK() bool
+func (Diagnosis) String() string
+func Doctor(Catalog, Profile) Diagnosis
+var ErrCatalog error
+var ErrDefinition error
+var ErrProfile error
 type Kind string
-    const ProvideKind Kind = "provide" ...
-type KindDescriptor struct{ ... }
-type Profile struct{ ... }
-type Refusal struct{ ... }
+func (Kind) Role() Role
+type KindDescriptor struct {
+	Kind Kind "json:\"kind\""
+	Role Role "json:\"role,omitempty\""
+	Contributions int "json:\"contributions\""
+	Active bool "json:\"active\""
+}
+func MustCatalog(...Definition) Catalog
+func MustDefine(Spec) Definition
+func New(string) *Builder
+func NewCatalog(...Definition) (Catalog, error)
+type Profile struct {
+	Name string
+	Roles []Role
+}
+func (Profile) Carries(Role) bool
+func (Profile) Check() error
+func (Profile) Named(string) Profile
+func (Profile) With(...Role) Profile
+const ProvideKind Kind = "provide"
+type Refusal struct {
+	<unexported fields>
+}
+func (*Refusal) Error() string
+func (*Refusal) Is(error) bool
+func (*Refusal) Problems() []string
 type Role string
-    const API Role = "api" ...
-type Spec struct{ ... }
+func (Role) Known() bool
+const RouteKind Kind = "route"
+const Seeder Role = "seeder"
+const SeederKind Kind = "seeder"
+var Seeding Profile
+var Serving Profile
+type Spec struct {
+	Name string
+	Order int
+	Provide []any
+	Routes []any
+	Workers []any
+	Seeders []any
+	Checks []any
+}
+const Worker Role = "worker"
+const WorkerKind Kind = "worker"
+var Working Profile
 ```
 
 ## github.com/frostgrove/vv/audit
 ```go
-const MaxNameBytes = 128 ...
-const HMACSHA256Algorithm = "hmac-sha256" ...
-const AES256GCMAlgorithm = "aes-256-gcm" ...
-var ErrDeclaration error = newAuditSentinel("audit: declaration is invalid", errs.KindValidation, errs.CodeCheck) ...
-func AESGCMProtection(keys ...AESGCMKey) (ProtectionKeyring, error)
-func AdmitPlaintext(reason PrivacyReason, classifications ...Classification) (PrivacyAdmission, error)
-func AllowAccess(request AccessRequest, grant AccessGrantSpec) (AccessDecision, error)
-func AttemptChainCandidate(log LogID, catalog CatalogID, operation OperationID) (AttemptChainID, error)
-func AttemptOwnerCommitmentOf(set IdentityCommitmentSet) (AttemptOwnerCommitment, error)
-func AttemptOwnerIdentityRequest(input AttemptOwnerIdentityInput) (IdentityCommitmentRequest, error)
-func AttemptReplayFingerprintOf(policy AttemptPolicyFingerprint, description SemanticDigestDescription) (AttemptReplayFingerprint, error)
-func AttemptSemanticDigestOf(ctx context.Context, digester SemanticDigester, ...) (SemanticDigest, error)
-func AttemptTargetCommitmentOf(set IdentityCommitmentSet) (AttemptTargetCommitment, error)
-func AttemptTargetIdentityRequest(catalog CatalogID, operation OperationName, target Reference) (IdentityCommitmentRequest, error)
-func AuthorityFor(source, transaction any) (Authority, error)
-func BackingFor(identity any) (Backing, error)
-func CatalogSetDigestOf(manifests []Manifest) (CatalogSetDigest, error)
-func CauseOf(err error) error
-func Compile(spec CatalogSpec, declarations ...Declaration) (*Catalog, error)
-func ComputeEventFixtureFingerprint[E any](eventType *EventType[E], name FixtureName, event E) (PolicyFixtureFingerprint, error)
-func ComputeSubjectFixtureFingerprint[M any, ID comparable](policy *ResourcePolicy[M, ID], name FixtureName, identifier ID) (PolicyFixtureFingerprint, error)
-func CryptoFailure(outcome CryptoOutcome, cause error) error
-func DenyAccess(request AccessRequest, reason Reason) (AccessDecision, error)
-func ExactScope(reference ScopedReference) (ScopeSelector, error)
-func Failure(outcome StoreOutcome, cause error) error
-func HMACIdentityKeyring(keys ...HMACIdentityKey) (IdentityKeyring, error)
-func HMACSemanticDigester(keyID string, key []byte) (SemanticDigester, error)
-func HMACSigner(key HMACSigningKey) (Signer, error)
-func HMACTokenizer(keys ...HMACTokenKey) (Tokenizer, error)
-func HMACVerifier(keys ...HMACVerificationKey) (Verifier, error)
-func Lineage(active *Catalog, retained ...HistoricalCatalog) (*CatalogSet, error)
-func New(config Config) (*Recorder, error)
-func NewAppendResult(request AppendRequest, stored StoredHeader, disposition AppendDisposition, ...) (AppendResult, error)
-func NewAttemptAppendResult(request AppendRequest, stored StoredHeader, disposition AppendDisposition, ...) (AppendResult, error)
-func NewCapabilities(spec CapabilitySpec) (Capabilities, error)
-func NewCatalogChangeRef(ledger DeploymentLedger, change DeploymentChange) (CatalogChangeRef, error)
-func NewCatalogMutationLog(backing BackingID, log LogID, mutations []CatalogMutationView) (CatalogMutationLog, error)
-func NewContextValue[T any](value T, provenance Provenance) (ContextValue[T], error)
-func NewEntityHeadResult(request EntityHeadRequest, data EntityHeadResultData) (EntityHeadResult, error)
-func NewExactResult(query ExactQuery, data ExactResultData) (ExactResult, error)
-func NewHistory(config HistoryConfig) (*History, error)
-func NewHoldAppendResult(request AppendRequest, stored StoredHeader, disposition AppendDisposition, ...) (AppendResult, error)
-func NewIdempotencyLookupResult(request IdempotencyLookupRequest, data IdempotencyLookupResultData) (IdempotencyLookupResult, error)
-func NewIdentityCommitment(description IdentityCommitmentDescription, value []byte) (IdentityCommitment, error)
-func NewIdentityCommitmentSet(request IdentityCommitmentRequest, commitments []IdentityCommitment) (IdentityCommitmentSet, error)
-func NewInactiveStoreCatalogState(digest CatalogSetDigest) (StoreCatalogState, error)
-func NewLimits(spec LimitSpec) (Limits, error)
-func NewLookupResult(request LookupRequest, data LookupResultData) (LookupResult, error)
-func NewProtectedValue(algorithm, profile, keyID string, nonce, ciphertext []byte) (ProtectedValue, error)
-func NewSeal(algorithm, profile, keyID string, value []byte) (Seal, error)
-func NewStoreCatalogState(active CatalogRef, digest CatalogSetDigest) (StoreCatalogState, error)
-func NewStorePosition(wire []byte) (StorePosition, error)
-func NewStoredHeader(data StoredHeaderData) (StoredHeader, error)
-func NewStoredIdentityCommitmentSet(data StoredIdentityCommitmentSetData) (IdentityCommitmentSet, error)
-func NewStoredPage(query StoreQuery, data StoredPageData) (StoredPage, error)
-func NewStoredRevision(data StoredRevisionData) (StoredRevision, error)
-func NewToken(algorithm, profile, keyID string, value []byte) (Token, error)
-func NewTokenQueryResult(query TokenQuery, tokens []Token) (TokenQueryResult, error)
-func NoAttemptCatalogActivation(expected, next CatalogRef) (CatalogActivationProof, error)
-func Observers(observers ...Observer) (Observer, error)
-func ParseCursor([]byte) (Cursor, error)
-func ParseReconcileKey(input []byte) (ReconcileKey, error)
-func SameAuthority(left, right Authority) bool
-func SameBacking(left, right Backing) bool
-func StaticContext(value Context) (ContextResolver, error)
-func TryAttemptCheckpointGolden(name FixtureName, checkpoint AttemptCheckpointCode, expected string) (SemanticGolden, error)
-func TryAttemptFinishGolden(name FixtureName, transition AttemptTransitionKind, reason Reason, ...) (SemanticGolden, error)
-func TryAttemptStartGolden(name FixtureName, expected string) (SemanticGolden, error)
-func TryContextFacts(facts ...ContextFactPolicy) (ContextPolicy, error)
-func TryDeclare[E any](policy EventPolicy[E]) (*EventType[E], error)
-func TryDeclareOperation(policy OperationPolicy) (*OperationType, error)
-func TryDefine[M any, ID comparable](policy Policy[M, ID]) (*ResourcePolicy[M, ID], error)
-func TryDefineCodec[V any](spec CodecSpec, engine CodecEngine[V]) (Codec[V], error)
-func TryGoldenWire(name FixtureName, version CodecVersion, wire, current []byte) (CodecWireFixture, error)
-func TryHoldMatter(codec Codec[Reference], classification Classification, mode StorageMode) (HoldMatterPolicy, error)
-func TryKeepFor(class RetentionClass, period CalendarPeriod) (RetentionRule, error)
-func TryKeepForever(class RetentionClass) (RetentionRule, error)
-func TryMember[M, F any](selector func(*M) *F) (ModelMember[M, F], error)
-func TryOnlyContext(facts ...ContextFactKind) (ContextProjection, error)
-func TryOnlyFields(fields ...FieldName) (FieldProjection, error)
-func TryOutcomes(values ...Outcome) (OutcomeCodes, error)
-func TryPolicyGolden(name FixtureName, expected string) (SemanticGolden, error)
-func TryReasons(values ...Reason) (ReasonCodes, error)
-func TryReasonsFor(action ControlAction, codes ReasonCodes) (ControlReasonPolicy, error)
-func TryRejectedWire(name FixtureName, version CodecVersion, wire []byte) (CodecWireFixture, error)
-func TrySemantics(version PolicyVersion, goldens ...SemanticGolden) (PolicySemantics, error)
-func VerifyCatalogMutations(origin StoreInfo, expected []CatalogMutationView, actual CatalogMutationLog) error
-type AESGCMKey struct{ ... }
-type AccessAuthority interface{ ... }
+const AES256GCMAlgorithm untyped string = "aes-256-gcm"
+type AESGCMKey struct {
+	KeyID string
+	Key []byte
+	Active bool
+}
+func AESGCMProtection(...AESGCMKey) (ProtectionKeyring, error)
+const AESGCMProtectionProfileV1 untyped string = "frostgrove.audit.protection.v1"
+const AbsentNow LookupState = 2
+const AccessActorTarget AccessTargetKind = 10
+const AccessAllowed AccessVerdict = 1
+const AccessAttemptDeclaredTarget AccessTargetKind = 9
+const AccessAttemptTarget AccessTargetKind = 7
+const AccessAttemptTypeTarget AccessTargetKind = 8
+type AccessAuthority interface {
+	AuthorizeAudit(context.Context, AccessRequest) (AccessDecision, error)
+}
 type AccessAuthorityFunc func(context.Context, AccessRequest) (AccessDecision, error)
+func (AccessAuthorityFunc) AuthorizeAudit(context.Context, AccessRequest) (AccessDecision, error)
+const AccessContextTarget AccessTargetKind = 11
 type AccessContinuationDigest [32]byte
-type AccessDecision struct{ ... }
-type AccessDecisionView struct{ ... }
+type AccessDecision struct {
+	<unexported fields>
+}
+func (AccessDecision) View() AccessDecisionView
+type AccessDecisionView struct {
+	Verdict AccessVerdict
+	Reason Reason
+	Grant AccessGrantSpec
+}
+const AccessDenied AccessVerdict = 2
+const AccessEntityIndexTarget AccessTargetKind = 13
+const AccessEventIndexTarget AccessTargetKind = 12
+const AccessEventTarget AccessTargetKind = 3
+const AccessEventTypeTarget AccessTargetKind = 4
 type AccessGrantDigest [32]byte
-type AccessGrantSpec struct{ ... }
+type AccessGrantSpec struct {
+	Roles []Reference
+	Scopes []ScopedReference
+	Catalogs []CatalogRef
+	Resources []Resource
+	Actions []Action
+	Fields []FieldName
+	Context []ContextFactKind
+	Classifications []Classification
+	Time TimeWindowView
+	Direction HistoryDirection
+	Changed ChangedFieldFilterView
+	Outcomes []Outcome
+	Reasons []Reason
+	ExpiresAt time.Time
+	MaxRevisions uint32
+	MaxPages uint32
+	MaxBytes uint64
+	Reconstruction struct{}
+	ComparisonBefore struct{}
+	ComparisonAfter struct{}
+}
 type AccessIntent uint8
-    const HistoryDisclosureAccess AccessIntent = iota + 1 ...
-type AccessRequest struct{ ... }
+const AccessItem ItemKind = 4
+const AccessItemTarget AccessTargetKind = 15
+const AccessOperationTarget AccessTargetKind = 6
+const AccessOperationTypeTarget AccessTargetKind = 5
+type AccessRequest struct {
+	<unexported fields>
+}
+func (AccessRequest) View() AccessRequestView
 type AccessRequestDigest [32]byte
-type AccessRequestView struct{ ... }
+type AccessRequestView struct {
+	Intent AccessIntent
+	Requester ContextView
+	Target AccessTargetView
+	Query NormalizedQueryView
+	Catalogs []CatalogRef
+}
+const AccessResourceTarget AccessTargetKind = 2
 type AccessResultDigest [32]byte
+const AccessRevisionTarget AccessTargetKind = 14
+const AccessSubjectTarget AccessTargetKind = 1
 type AccessTargetKind uint8
-    const AccessSubjectTarget AccessTargetKind = iota + 1 ...
-type AccessTargetView struct{ ... }
+type AccessTargetView struct {
+	Kind AccessTargetKind
+	Resource Resource
+	Action Action
+	Actions []Action
+	Subject Reference
+	SubjectMode StorageMode
+	SubjectClass Classification
+	Target Reference
+	TargetMode StorageMode
+	TargetClass Classification
+	OperationName OperationName
+	Operation OperationID
+	Revision RevisionRef
+	Item ItemRef
+	Resources []Resource
+	Classifications []Classification
+	Fields []FieldName
+	Context []ContextFactKind
+}
 type AccessVerdict uint8
-    const AccessAllowed AccessVerdict = iota + 1 ...
 type Action string
-    const AttemptStartedAction Action = "attempt.started" ...
-type Actor struct{ ... }
+func Actions(...EntityAction) []EntityAction
+type Actor struct {
+	Kind ActorKind
+	Reference Reference
+	Provenance Provenance
+}
+func ActorChain(ContextPresence, ProvenanceSet, Classification, StorageMode) ContextFactPolicy
+const ActorChainContext ContextFactKind = 1
+const ActorHistoryQuery QueryClass = 8
 type ActorKind uint8
-    const HumanActor ActorKind = iota + 1 ...
+func (ActorKind) String() string
+func (ActorKind) Valid() bool
 type ActorPosition uint8
-type ActorReadView struct{ ... }
+type ActorReadView struct {
+	Ordinal uint8
+	Kind ActorKind
+	Provenance Provenance
+	Reference ReadValueView
+}
+func AdmitPlaintext(PrivacyReason, ...Classification) (PrivacyAdmission, error)
+const AllChangedFields ChangedFieldMatch = 3
+func AllContext() ContextProjection
+func AllFields() FieldProjection
+func AllowAccess(AccessRequest, AccessGrantSpec) (AccessDecision, error)
+const AnyChangedField ChangedFieldMatch = 2
 type AppendDisposition uint8
-    const Inserted AppendDisposition = iota + 1 ...
 type AppendIntentDigest [32]byte
-type AppendRequest struct{ ... }
-type AppendRequestView struct{ ... }
-type AppendResult struct{ ... }
-type AttemptAppendCandidateView struct{ ... }
+type AppendRequest struct {
+	<unexported fields>
+}
+func (AppendRequest) View() AppendRequestView
+type AppendRequestView struct {
+	Revision Revision
+	Hold HoldConditionalAppendView
+	Attempt AttemptConditionalAppendView
+	Intent AppendIntentDigest
+	Idempotency IdentityCommitmentSet
+	Entities []EntityAliasBinding
+	Attempts []AttemptIdentityAliasBinding
+	HoldIDs []HoldIDAliasBinding
+	HoldMatters []HoldMatterAliasBinding
+}
+type AppendResult struct {
+	<unexported fields>
+}
+func (AppendResult) AttemptProjection() (AttemptProjectionStateView, bool)
+func (AppendResult) AttemptTransition() (AttemptTransitionWireView, bool)
+func (AppendResult) Authority() Authority
+func (AppendResult) Disposition() AppendDisposition
+func (AppendResult) HoldDisposition() (HoldTransitionDisposition, bool)
+func (AppendResult) HoldProjection() (HoldProjectionStateView, bool)
+func (AppendResult) Stored() StoredHeader
+const AsIndexedProtected StorageMode = 5
+const AsPlaintext StorageMode = 1
+const AsProtected StorageMode = 4
+const AsRedacted StorageMode = 2
+const AsToken StorageMode = 3
+const AttemptAbandonAccess AccessIntent = 4
+const AttemptAbandonedAction Action = "attempt.abandoned"
+const AttemptAbandonedState AttemptState = 6
+const AttemptAbandonedTransition AttemptTransitionKind = 7
+const AttemptAccessDenied ControlAction = "audit.attempt.access_denied"
+type AttemptAccessSpec struct {
+	Purpose Purpose
+	Role Reference
+	Scope ScopeSelector
+	Target Reference
+	MaxBytes uint64
+}
+type AttemptAppendCandidateView struct {
+	Result AttemptProjectionStateView
+	TypeResult AttemptTypeProjectionStateView
+	Revision Revision
+}
+type AttemptBeginSpec struct {
+	IdempotencyKey IdempotencyKey
+}
+func AttemptCancelled[F any](Reason, F) AttemptCompletion[F]
+const AttemptCancelledAction Action = "attempt.cancelled"
+const AttemptCancelledState AttemptState = 5
+const AttemptCancelledTransition AttemptTransitionKind = 6
+func AttemptChainCandidate(LogID, CatalogID, OperationID) (AttemptChainID, error)
 type AttemptChainID [32]byte
+const AttemptCheckpointAction Action = "attempt.checkpoint"
 type AttemptCheckpointCode string
-type AttemptConditionalAppendView struct{ ... }
-type AttemptDescription struct{ ... }
-type AttemptFinishPhaseDescription struct{ ... }
-type AttemptIdentityAliasBinding struct{ ... }
-type AttemptLog interface{}
+func AttemptCheckpointGolden(FixtureName, AttemptCheckpointCode, string) SemanticGolden
+const AttemptCheckpointIdempotencyDomain IdempotencyDomainKind = 3
+type AttemptCheckpointPolicy[C any] struct {
+	<unexported fields>
+}
+const AttemptCheckpointPolicyFixture PolicyFixtureKind = 3
+const AttemptCheckpointTransition AttemptTransitionKind = 2
+type AttemptCompletion[F any] struct {
+	<unexported fields>
+}
+type AttemptConditionalAppendView struct {
+	Chain AttemptChainID
+	Expected AttemptProjectionStateView
+	TypeExpected AttemptTypeProjectionStateView
+	ResumeAuthorization AccessResultDigest
+	Candidate AttemptAppendCandidateView
+}
+const AttemptContinuationAuthorized ControlAction = "audit.attempt.continuation_authorized"
+type AttemptContinuityPolicy struct {
+	<unexported fields>
+}
+const AttemptDeclaration DeclarationKind = 4
+type AttemptDescription struct {
+	Operation OperationName
+	Fingerprint AttemptPolicyFingerprint
+	Replay AttemptReplayFingerprint
+	MaxOpen time.Duration
+	MaxCheckpoints uint16
+	MaxStateBytes uint64
+	OpenReserveBytes uint64
+	UncertainReserveBytes uint64
+	Continuity []AttemptOwnerFact
+	Start AttemptPhaseDescription
+	Checkpoint AttemptPhaseDescription
+	CheckpointCodes []AttemptCheckpointCode
+	Finish []AttemptFinishPhaseDescription
+	Reasons []AttemptReasonDescription
+}
+type AttemptDescriptor struct {
+	Resource Resource
+	Owner Owner
+	Purpose Purpose
+	Retention RetentionClass
+	Consequence Consequence
+	Context ContextPolicy
+}
+const AttemptEffectiveActorOwner AttemptOwnerFact = 1
+type AttemptExecution struct {
+	<unexported fields>
+}
+func (AttemptExecution) ApplicationError() error
+func (AttemptExecution) Attempt() AttemptResult
+func (AttemptExecution) Invoked() bool
+func AttemptFailed[F any](Reason, F) AttemptCompletion[F]
+const AttemptFailedAction Action = "attempt.failed"
+const AttemptFailedState AttemptState = 4
+const AttemptFailedTransition AttemptTransitionKind = 5
+type AttemptField[P any] struct {
+	<unexported fields>
+}
+func AttemptFields[P any](...AttemptField[P]) []AttemptField[P]
+func AttemptFieldsFor[F any](AttemptTransitionKind, ...AttemptField[F]) AttemptTransitionFields[F]
+func AttemptFinish[F any](AttemptReasonPolicies, AttemptFinishFieldSet[F]) AttemptFinishPolicy[F]
+type AttemptFinishFieldSet[F any] struct {
+	<unexported fields>
+}
+func AttemptFinishFields[F any](...AttemptTransitionFields[F]) AttemptFinishFieldSet[F]
+func AttemptFinishGolden(FixtureName, AttemptTransitionKind, Reason, string) SemanticGolden
+const AttemptFinishIdempotencyDomain IdempotencyDomainKind = 4
+type AttemptFinishPhaseDescription struct {
+	Transition AttemptTransitionKind
+	Fields []FieldDescription
+}
+type AttemptFinishPolicy[F any] struct {
+	<unexported fields>
+}
+const AttemptFinishPolicyFixture PolicyFixtureKind = 4
+type AttemptGroupSpec struct {
+	IdempotencyKey IdempotencyKey
+}
+const AttemptHistoryQuery QueryClass = 7
+type AttemptIdentityAliasBinding struct {
+	<unexported fields>
+}
+func (AttemptIdentityAliasBinding) Chain() AttemptChainID
+func (AttemptIdentityAliasBinding) Operation() OperationName
+func (AttemptIdentityAliasBinding) OperationID() OperationID
+func (AttemptIdentityAliasBinding) OwnerCommitments() IdentityCommitmentSet
+func (AttemptIdentityAliasBinding) Policy() AttemptPolicyFingerprint
+func (AttemptIdentityAliasBinding) Replay() AttemptReplayFingerprint
+func (AttemptIdentityAliasBinding) ScopeCommitments() IdentityCommitmentSet
+func (AttemptIdentityAliasBinding) ScopePresent() bool
+func (AttemptIdentityAliasBinding) TargetCommitments() IdentityCommitmentSet
+func (AttemptIdentityAliasBinding) TargetPresent() bool
+const AttemptItem ItemKind = 3
+type AttemptLog interface {
+	StoreInfo
+	AttemptState(context.Context, AttemptStateQuery) (AttemptStateResult, error)
+}
+const AttemptOpenState AttemptState = 1
+const AttemptOutcomeUnknownAction Action = "attempt.outcome_unknown"
+const AttemptOutcomeUnknownTransition AttemptTransitionKind = 3
+func AttemptOwnedBy(...AttemptOwnerFact) AttemptContinuityPolicy
 type AttemptOwnerCommitment [32]byte
+func AttemptOwnerCommitmentOf(IdentityCommitmentSet) (AttemptOwnerCommitment, error)
 type AttemptOwnerFact uint8
-    const AttemptEffectiveActorOwner AttemptOwnerFact = iota + 1 ...
-type AttemptOwnerIdentityComponent struct{ ... }
-type AttemptOwnerIdentityInput struct{ ... }
-type AttemptPhaseDescription struct{ ... }
+type AttemptOwnerIdentityComponent struct {
+	Fact AttemptOwnerFact
+	ActorKind ActorKind
+	Reference Reference
+}
+type AttemptOwnerIdentityInput struct {
+	Catalog CatalogID
+	Operation OperationName
+	Components []AttemptOwnerIdentityComponent
+}
+func AttemptOwnerIdentityRequest(AttemptOwnerIdentityInput) (IdentityCommitmentRequest, error)
+type AttemptPhaseDescription struct {
+	TargetPresent bool
+	Target SubjectDescription
+	Fields []FieldDescription
+}
+type AttemptPolicy[S any, C any, F any] struct {
+	Operation *OperationType
+	Semantics PolicySemantics
+	Descriptor AttemptDescriptor
+	MaxOpen time.Duration
+	MaxCheckpoints uint16
+	MaxStateBytes uint64
+	Continuity AttemptContinuityPolicy
+	Start AttemptStartPolicy[S]
+	Checkpoints AttemptCheckpointPolicy[C]
+	Finish AttemptFinishPolicy[F]
+}
 type AttemptPolicyFingerprint [32]byte
-type AttemptProjectionNextView struct{ ... }
-type AttemptProjectionStateView struct{ ... }
-type AttemptReasonDescription struct{ ... }
+type AttemptProgress[C any] struct {}
+func (*AttemptProgress[C]) Checkpoint(context.Context, C, AttemptTransitionSpec) (AttemptResult, error)
+type AttemptProjectionNextView struct {
+	Present bool
+	Chain AttemptChainID
+	Policy AttemptPolicyFingerprint
+	Replay AttemptReplayFingerprint
+	Operation OperationName
+	OperationID OperationID
+	TargetPresent bool
+	Target AttemptTargetCommitment
+	ScopePresent bool
+	Scope EvidenceScopeCommitment
+	Owner AttemptOwnerCommitment
+	State AttemptState
+	Sequence uint16
+	CheckpointCount uint16
+	TransitionBytes uint64
+	Start ItemRef
+	Head ItemRef
+	ExpiresAt time.Time
+}
+type AttemptProjectionStateView struct {
+	Present bool
+	Chain AttemptChainID
+	Policy AttemptPolicyFingerprint
+	Replay AttemptReplayFingerprint
+	Operation OperationName
+	OperationID OperationID
+	TargetPresent bool
+	Target AttemptTargetCommitment
+	ScopePresent bool
+	Scope EvidenceScopeCommitment
+	Owner AttemptOwnerCommitment
+	State AttemptState
+	Sequence uint16
+	CheckpointCount uint16
+	TransitionBytes uint64
+	Start ItemRef
+	Head ItemRef
+	Leaf LeafDigest
+	ExpiresAt time.Time
+}
+func AttemptProtected[P any, V any](FieldName, func(P) V, Codec[V], Classification) AttemptField[P]
+type AttemptReasonDescription struct {
+	Transition AttemptTransitionKind
+	Codes []Reason
+}
+type AttemptReasonPolicies struct {
+	<unexported fields>
+}
+type AttemptReasonPolicy struct {
+	<unexported fields>
+}
+func AttemptReasons(...AttemptReasonPolicy) AttemptReasonPolicies
+func AttemptReasonsFor(AttemptTransitionKind, ReasonCodes) AttemptReasonPolicy
+func AttemptRedacted[P any, V any](FieldName, func(P) V, Codec[V], Classification) AttemptField[P]
 type AttemptReplayFingerprint [32]byte
-type AttemptSemanticDigestInput struct{ ... }
-type AttemptSemanticTargetView struct{ ... }
-type AttemptSemanticValueView struct{ ... }
+func AttemptReplayFingerprintOf(AttemptPolicyFingerprint, SemanticDigestDescription) (AttemptReplayFingerprint, error)
+const AttemptResolveAccess AccessIntent = 3
+type AttemptResult struct {
+	<unexported fields>
+}
+func (AttemptResult) Receipt() (Receipt, bool)
+func (AttemptResult) ReconcileKey() (ReconcileKey, bool)
+func (AttemptResult) ResultingState() (AttemptState, bool)
+func (AttemptResult) RetryToken() (RetryToken, bool)
+func (AttemptResult) Transition() (AttemptTransitionWireView, bool)
+const AttemptResumeAccess AccessIntent = 2
+type AttemptRun[C any, F any] struct {
+	<unexported fields>
+}
+func (*AttemptRun[C, F]) Checkpoint(context.Context, C, AttemptTransitionSpec) (AttemptResult, error)
+func (*AttemptRun[C, F]) Finish(context.Context, AttemptCompletion[F], AttemptTransitionSpec) (AttemptResult, error)
+func (*AttemptRun[C, F]) OperationID() OperationID
+func (*AttemptRun[C, F]) State() (AttemptState, bool)
+func (*AttemptRun[C, F]) Within(context.Context, AttemptGroupSpec, func(context.Context) (AttemptCompletion[F], error)) (AttemptExecution, error)
+type AttemptRunSpec struct {
+	IdempotencyKey IdempotencyKey
+}
+type AttemptSemanticDigestInput struct {
+	Catalog CatalogID
+	Policy AttemptPolicyFingerprint
+	Replay AttemptReplayFingerprint
+	Resource Resource
+	Operation OperationName
+	OperationID OperationID
+	Chain AttemptChainID
+	ScopePresent bool
+	Scope EvidenceScopeCommitment
+	Owner AttemptOwnerCommitment
+	Transition AttemptTransitionKind
+	Checkpoint AttemptCheckpointCode
+	Reason Reason
+	Target AttemptSemanticTargetView
+	Values []AttemptSemanticValueView
+}
+func AttemptSemanticDigestOf(context.Context, SemanticDigester, AttemptSemanticDigestInput) (SemanticDigest, error)
+type AttemptSemanticTargetView struct {
+	Present bool
+	Classification Classification
+	Mode StorageMode
+	Canonical []byte
+}
+type AttemptSemanticValueView struct {
+	Field FieldName
+	Codec CodecDescription
+	Classification Classification
+	Mode StorageMode
+	State ValueState
+	Canonical []byte
+}
+const AttemptServiceOwner AttemptOwnerFact = 3
+func AttemptStart[S any](AttemptTargetPolicy[S], []AttemptField[S]) AttemptStartPolicy[S]
+func AttemptStartGolden(FixtureName, string) SemanticGolden
+const AttemptStartIdempotencyDomain IdempotencyDomainKind = 2
+type AttemptStartPolicy[S any] struct {
+	<unexported fields>
+}
+const AttemptStartPolicyFixture PolicyFixtureKind = 2
+const AttemptStartedAction Action = "attempt.started"
+const AttemptStartedTransition AttemptTransitionKind = 1
 type AttemptState uint8
-    const AttemptOpenState AttemptState = iota + 1 ...
+type AttemptStateQuery struct {
+	<unexported fields>
+}
+func (AttemptStateQuery) View() AttemptStateQueryView
+type AttemptStateQueryView struct {
+	Log LogID
+	Catalogs []CatalogRef
+	Catalog CatalogID
+	OperationID OperationID
+	Chain AttemptChainID
+	MaxTransitions uint16
+	MaxBytes uint64
+}
+type AttemptStateResult struct {
+	<unexported fields>
+}
+func (AttemptStateResult) State() AttemptProjectionStateView
+func (AttemptStateResult) Transitions() []ItemRef
+type AttemptStateResultData struct {
+	State AttemptProjectionStateView
+	Transitions []ItemRef
+}
+func AttemptSucceeded[F any](F) AttemptCompletion[F]
+const AttemptSucceededAction Action = "attempt.succeeded"
+const AttemptSucceededState AttemptState = 3
+const AttemptSucceededTransition AttemptTransitionKind = 4
+func AttemptTarget[S any](func(S) Reference, Classification, StorageMode) AttemptTargetPolicy[S]
 type AttemptTargetCommitment [32]byte
+func AttemptTargetCommitmentOf(IdentityCommitmentSet) (AttemptTargetCommitment, error)
+const AttemptTargetHistoryQuery QueryClass = 13
+func AttemptTargetIdentityRequest(CatalogID, OperationName, Reference) (IdentityCommitmentRequest, error)
+type AttemptTargetPolicy[S any] struct {
+	<unexported fields>
+}
+func AttemptTokenized[P any, V any](FieldName, func(P) V, Codec[V], Classification) AttemptField[P]
+type AttemptTransitionFields[F any] struct {
+	<unexported fields>
+}
 type AttemptTransitionKind uint8
-    const AttemptStartedTransition AttemptTransitionKind = iota + 1 ...
-type AttemptTransitionWireView struct{ ... }
-type AttemptTypeProjectionNextView struct{ ... }
-type AttemptTypeProjectionStateView struct{ ... }
-type AuditObservation struct{ ... }
-type AuditWorkView struct{ ... }
-type Authority struct{ ... }
-type Backing struct{ ... }
+type AttemptTransitionSpec struct {
+	IdempotencyKey IdempotencyKey
+}
+type AttemptTransitionWireView struct {
+	Chain AttemptChainID
+	Policy AttemptPolicyFingerprint
+	Replay AttemptReplayFingerprint
+	Operation OperationName
+	OperationID OperationID
+	ScopePresent bool
+	Scope EvidenceScopeCommitment
+	Start ItemRef
+	Sequence uint16
+	CheckpointCount uint16
+	Kind AttemptTransitionKind
+	Checkpoint AttemptCheckpointCode
+	ExpiresAt time.Time
+	Expected AttemptProjectionStateView
+	Result AttemptProjectionNextView
+	TypeExpected AttemptTypeProjectionStateView
+	TypeResult AttemptTypeProjectionNextView
+	ResumeAuthorization AccessResultDigest
+}
+type AttemptType[S any, C any, F any] struct {
+	<unexported fields>
+}
+func (*AttemptType[S, C, F]) Abandon(context.Context, *Attempts, OperationID, AttemptAccessSpec, AttemptTransitionSpec) (AttemptResult, error)
+func (*AttemptType[S, C, F]) Begin(context.Context, *Attempts, S, AttemptBeginSpec) (*AttemptRun[C, F], AttemptResult, error)
+func (*AttemptType[S, C, F]) Description() DeclarationDescription
+func (*AttemptType[S, C, F]) ResolveUnknown(context.Context, *Attempts, OperationID, AttemptAccessSpec, AttemptCompletion[F], AttemptTransitionSpec) (AttemptResult, error)
+func (*AttemptType[S, C, F]) Resume(context.Context, *Attempts, OperationID, AttemptAccessSpec) (*AttemptRun[C, F], AttemptResult, error)
+func (*AttemptType[S, C, F]) Run(context.Context, *Attempts, S, AttemptRunSpec, func(context.Context, *AttemptProgress[C]) (AttemptCompletion[F], error)) (AttemptExecution, error)
+const AttemptTypeHistoryQuery QueryClass = 12
+type AttemptTypeLease interface {
+	Append(context.Context, Writer, AppendRequest) (AppendResult, error)
+	Release()
+	State() AttemptTypeStateResult
+}
+type AttemptTypeProjectionNextView struct {
+	Catalog CatalogID
+	Operation OperationName
+	Policy AttemptPolicyFingerprint
+	Replay AttemptReplayFingerprint
+	Anchor CatalogActivationGateDigest
+	Unsettled uint64
+	Head ItemRef
+}
+type AttemptTypeProjectionStateView struct {
+	Catalog CatalogID
+	Operation OperationName
+	Policy AttemptPolicyFingerprint
+	Replay AttemptReplayFingerprint
+	Anchor CatalogActivationGateDigest
+	Unsettled uint64
+	Head ItemRef
+	Leaf LeafDigest
+}
+type AttemptTypeSelectorView struct {
+	Catalog CatalogID
+	Operation OperationName
+	Policy AttemptPolicyFingerprint
+	Replay AttemptReplayFingerprint
+}
+type AttemptTypeState interface {
+	StoreInfo
+	AttemptTypeState(context.Context, AttemptTypeStateQuery) (AttemptTypeStateResult, error)
+	LockAttemptType(context.Context, AttemptTypeStateQuery) (AttemptTypeLease, error)
+}
+type AttemptTypeStateQuery struct {
+	<unexported fields>
+}
+func (AttemptTypeStateQuery) View() AttemptTypeStateQueryView
+type AttemptTypeStateQueryView struct {
+	Log LogID
+	Catalogs []CatalogRef
+	Type AttemptTypeSelectorView
+}
+type AttemptTypeStateResult struct {
+	<unexported fields>
+}
+func (AttemptTypeStateResult) State() AttemptTypeProjectionStateView
+const AttemptUncertainState AttemptState = 2
+func AttemptValue[P any, V any](FieldName, func(P) V, Codec[V], Classification) AttemptField[P]
+const AttemptWorkloadActorOwner AttemptOwnerFact = 2
+type Attempts struct {
+	<unexported fields>
+}
+type AttemptsConfig struct {
+	Profile AttemptsProfile
+	Recorder *Recorder
+	State AttemptLog
+	Types AttemptTypeState
+	History *History
+	SettlementTimeout time.Duration
+}
+type AttemptsProfile uint8
+type AuditObservation struct {
+	Phase ObservationPhase
+	Kind ObservationKind
+	Items uint16
+	Bytes uint64
+	Duration time.Duration
+	Disposition AppendDisposition
+	Settlement Settlement
+	Failure FailureClass
+	Work AuditWorkView
+}
+type AuditWorkView struct {
+	StoreCalls uint32
+	SnapshotReads uint32
+	PagesScanned uint32
+	RevisionsScanned uint32
+	BytesScanned uint64
+	RevisionsVerified uint32
+	UnknownFields uint32
+	Gaps uint32
+	BudgetStopped bool
+}
+type Authority struct {
+	<unexported fields>
+}
+func (Authority) String() string
+func (Authority) Valid() bool
+func AuthorityFor(any, any) (Authority, error)
+const BackendFailure FailureClass = 7
+type Backing struct {
+	<unexported fields>
+}
+func (Backing) String() string
+func BackingFor(any) (Backing, error)
 type BackingID [16]byte
-type CalendarPeriod struct{ ... }
-type Capabilities struct{ ... }
-type CapabilitySpec struct{ ... }
-type CaptureResult struct{ ... }
-type Catalog struct{ ... }
+const BadPosition StoreOutcome = 7
+const BestEffort Consequence = 2
+func Bool() Codec[bool]
+func Bytes() Codec[[]byte]
+type CalendarPeriod struct {
+	Years uint16
+	Months uint8
+	Days uint16
+}
+type Capabilities struct {
+	<unexported fields>
+}
+func (Capabilities) View() CapabilitySpec
+type CapabilitySpec struct {
+	Transactions Support
+	CrossSystemAtomic Support
+	Persistence Support
+	Idempotency Support
+	Reconciliation Support
+	StableSearch Support
+	ExactInspection Support
+	AttemptLifecycle Support
+	Holds Support
+	PurgePlanning Support
+}
+type CaptureResult struct {
+	<unexported fields>
+}
+func (CaptureResult) Receipt() (Receipt, bool)
+func (CaptureResult) RetryToken() (RetryToken, bool)
+func (CaptureResult) Staged() bool
+type Catalog struct {
+	<unexported fields>
+}
+func (*Catalog) Manifest() Manifest
+func (*Catalog) Ref() CatalogRef
+const CatalogActivateMutation CatalogMutationKind = 2
+func CatalogActivated(CatalogRef, CatalogRef, CatalogChangeRef, CatalogActivationProof) CatalogMutationView
 type CatalogActivationGateDigest [32]byte
-type CatalogActivationProof struct{ ... }
-type CatalogAdmin interface{ ... }
-type CatalogChangeRef struct{ ... }
-type CatalogChangeRefView struct{ ... }
+type CatalogActivationProof struct {
+	<unexported fields>
+}
+func (CatalogActivationProof) ValidFor(CatalogRef, CatalogRef) bool
+type CatalogAdmin interface {
+	CatalogMutationLogReader
+	ActivateCatalog(context.Context, CatalogRef, CatalogRef, CatalogChangeRef, CatalogActivationProof) error
+	InstallCatalog(context.Context, Manifest, CatalogChangeRef) error
+	VerifyCatalogs(context.Context, []Manifest) error
+}
+type CatalogChangeRef struct {
+	<unexported fields>
+}
+func (CatalogChangeRef) String() string
+func (CatalogChangeRef) View() CatalogChangeRefView
+type CatalogChangeRefView struct {
+	Ledger DeploymentLedger
+	Change DeploymentChange
+}
 type CatalogDigest [32]byte
 type CatalogGeneration uint64
 type CatalogID string
+const CatalogInstallMutation CatalogMutationKind = 1
+func CatalogInstalled(CatalogRef, CatalogChangeRef) CatalogMutationView
 type CatalogMutationKind uint8
-    const CatalogInstallMutation CatalogMutationKind = iota + 1 ...
-type CatalogMutationLog struct{ ... }
-type CatalogMutationLogReader interface{ ... }
-type CatalogMutationView struct{ ... }
-    func CatalogActivated(expected, active CatalogRef, change CatalogChangeRef, ...) CatalogMutationView
-    func CatalogInstalled(catalog CatalogRef, change CatalogChangeRef) CatalogMutationView
-type CatalogRef struct{ ... }
-type CatalogSet struct{ ... }
+type CatalogMutationLog struct {
+	<unexported fields>
+}
+func (CatalogMutationLog) BackingID() BackingID
+func (CatalogMutationLog) LogID() LogID
+func (CatalogMutationLog) Mutations() []CatalogMutationView
+type CatalogMutationLogReader interface {
+	StoreInfo
+	CatalogMutations(context.Context) (CatalogMutationLog, error)
+}
+type CatalogMutationView struct {
+	Kind CatalogMutationKind
+	Catalog CatalogRef
+	Expected CatalogRef
+	Active CatalogRef
+	Change CatalogChangeRef
+	<unexported fields>
+}
+type CatalogRef struct {
+	ID CatalogID
+	Generation CatalogGeneration
+	Digest CatalogDigest
+}
+type CatalogSet struct {
+	<unexported fields>
+}
+func (*CatalogSet) Active() CatalogRef
+func (*CatalogSet) Digest() CatalogSetDigest
+func (*CatalogSet) Manifest(CatalogRef) (Manifest, bool)
+func (*CatalogSet) Manifests() []Manifest
 type CatalogSetDigest [32]byte
-type CatalogSpec struct{ ... }
-type ChangeReadView struct{ ... }
-type ChangedFieldFilter struct{ ... }
-type ChangedFieldFilterView struct{ ... }
+func CatalogSetDigestOf([]Manifest) (CatalogSetDigest, error)
+type CatalogSpec struct {
+	ID CatalogID
+	Owner Owner
+	Generation CatalogGeneration
+	Previous CatalogRef
+	Retention []RetentionRule
+	Semantics SemanticDigestDescription
+	Identities IdentityCommitmentDescription
+	Protection ProtectionDescription
+	Tokens TokenDescription
+	Integrity IntegrityPolicy
+	Control ControlPolicy
+}
+const CausationContext ContextFactKind = 8
+func CausationFact(ContextPresence, ProvenanceSet, Classification, StorageMode) ContextFactPolicy
+func CauseOf(error) error
+const CertainlyNotWritten RetryState = 1
+type ChangeReadView struct {
+	Field FieldName
+	Before ReadValueView
+	After ReadValueView
+}
+type ChangedFieldFilter struct {
+	<unexported fields>
+}
+func (ChangedFieldFilter) View() ChangedFieldFilterView
+type ChangedFieldFilterView struct {
+	Match ChangedFieldMatch
+	Fields []FieldName
+	Excluded []FieldName
+}
 type ChangedFieldMatch uint8
-    const NoChangedFieldFilter ChangedFieldMatch = iota + 1 ...
 type Classification uint8
-    const Public Classification = iota + 1 ...
-type Clock interface{ ... }
-type Codec[V any] struct{ ... }
-    func Bool() Codec[bool]
-    func Bytes() Codec[[]byte]
-    func DecimalText() Codec[string]
-    func DefineCodec[V any](spec CodecSpec, engine CodecEngine[V]) Codec[V]
-    func Duration() Codec[time.Duration]
-    func Int64() Codec[int64]
-    func ReferenceText() Codec[Reference]
-    func Text() Codec[string]
-    func Time() Codec[time.Time]
-    func UUIDReference() Codec[Reference]
-    func Uint64() Codec[uint64]
-type CodecDescription struct{ ... }
-type CodecEngine[V any] interface{ ... }
+func (Classification) String() string
+func (Classification) Valid() bool
+const ClientContext ContextFactKind = 5
+func ClientFact(ContextPresence, ProvenanceSet, Classification, StorageMode) ContextFactPolicy
+const ClientSupplied Provenance = 4
+type Clock interface {
+	Now() time.Time
+}
+const Closed StoreOutcome = 6
+const ClosedClosedRange RangeBounds = 2
+const ClosedOpenRange RangeBounds = 1
+type Codec[V any] struct {
+	<unexported fields>
+}
+func (Codec[V]) Decode(CodecVersion, []byte) (V, error)
+func (Codec[V]) Description() CodecDescription
+func (Codec[V]) Encode(V) ([]byte, error)
+type CodecDescription struct {
+	Name string
+	WriteVersion CodecVersion
+	ReadVersions []CodecVersion
+	Fingerprint CodecSemanticFingerprint
+}
+type CodecEngine[V any] interface {
+	Decode(CodecVersion, []byte) (V, error)
+	Encode(V) ([]byte, error)
+}
 type CodecSemanticFingerprint [32]byte
-type CodecSpec struct{ ... }
+type CodecSpec struct {
+	Name string
+	WriteVersion CodecVersion
+	ReadVersions []CodecVersion
+	Fixtures []CodecWireFixture
+}
 type CodecVersion uint32
-type CodecWireFixture struct{ ... }
-    func GoldenWire(name FixtureName, version CodecVersion, wire, current []byte) CodecWireFixture
-    func RejectedWire(name FixtureName, version CodecVersion, wire []byte) CodecWireFixture
-type Config struct{ ... }
+type CodecWireFixture struct {
+	<unexported fields>
+}
+const CommitAttemptOwner IdentityCommitmentDomain = 7
+const CommitAttemptTarget IdentityCommitmentDomain = 8
+const CommitEntitySubject IdentityCommitmentDomain = 2
+const CommitEvidenceScope IdentityCommitmentDomain = 3
+const CommitHoldID IdentityCommitmentDomain = 4
+const CommitHoldMatter IdentityCommitmentDomain = 5
+const CommitIdempotency IdentityCommitmentDomain = 1
+const CommitRequester IdentityCommitmentDomain = 6
+const Committed Settlement = 1
+const ComparisonQuery QueryClass = 18
+func Compile(CatalogSpec, ...Declaration) (*Catalog, error)
+func ComputeEventFixtureFingerprint[E any](*EventType[E], FixtureName, E) (PolicyFixtureFingerprint, error)
+func ComputeSubjectFixtureFingerprint[M any, ID comparable](*ResourcePolicy[M, ID], FixtureName, ID) (PolicyFixtureFingerprint, error)
+type Config struct {
+	Catalogs *CatalogSet
+	Writer Writer
+	Context ContextResolver
+	Privacy PrivacyAdmission
+	Semantics SemanticDigester
+	Identities IdentityKeyring
+	Protector Protector
+	Tokenizer Tokenizer
+	Signer Signer
+	Clock Clock
+	IDs IDSource
+	Observer Observer
+}
+const Conflict StoreOutcome = 1
+const ConflictFailure FailureClass = 3
 type Consequence uint8
-    const Required Consequence = iota + 1 ...
-type Context struct{ ... }
-type ContextFactDescription struct{ ... }
+func (Consequence) String() string
+func (Consequence) Valid() bool
+type Context struct {
+	Actors []Actor
+	Scope ContextValue[ScopedReference]
+	Service ContextValue[Reference]
+	Deployment ContextValue[Reference]
+	Client ContextValue[ScopedReference]
+	Operation ContextValue[OperationID]
+	Correlation ContextValue[Reference]
+	Causation ContextValue[Reference]
+	Trace ContextValue[Reference]
+	Source ContextValue[Source]
+}
+func (Context) View() ContextView
+type ContextFactDescription struct {
+	Kind ContextFactKind
+	Presence ContextPresence
+	Allowed []Provenance
+	Classification Classification
+	Mode StorageMode
+	Generated bool
+}
 type ContextFactKind uint8
-    const ActorChainContext ContextFactKind = iota + 1 ...
-type ContextFactPolicy struct{ ... }
-    func ActorChain(presence ContextPresence, allowed ProvenanceSet, classification Classification, ...) ContextFactPolicy
-    func CausationFact(presence ContextPresence, allowed ProvenanceSet, classification Classification, ...) ContextFactPolicy
-    func ClientFact(presence ContextPresence, allowed ProvenanceSet, classification Classification, ...) ContextFactPolicy
-    func CorrelationFact(presence ContextPresence, allowed ProvenanceSet, classification Classification, ...) ContextFactPolicy
-    func DeploymentFact(presence ContextPresence, allowed ProvenanceSet, classification Classification, ...) ContextFactPolicy
-    func GeneratedOperationFact(classification Classification, mode StorageMode) ContextFactPolicy
-    func OperationFact(presence ContextPresence, allowed ProvenanceSet, classification Classification, ...) ContextFactPolicy
-    func ScopeFact(presence ContextPresence, allowed ProvenanceSet, classification Classification, ...) ContextFactPolicy
-    func ServiceFact(presence ContextPresence, allowed ProvenanceSet, classification Classification, ...) ContextFactPolicy
-    func SourceFact(presence ContextPresence, allowed ProvenanceSet, classification Classification, ...) ContextFactPolicy
-    func TraceFact(presence ContextPresence, allowed ProvenanceSet, classification Classification, ...) ContextFactPolicy
-type ContextFactReadView struct{ ... }
-type ContextPolicy struct{ ... }
-    func ContextFacts(facts ...ContextFactPolicy) ContextPolicy
-type ContextPolicyDescription struct{ ... }
+func (ContextFactKind) String() string
+func (ContextFactKind) Valid() bool
+type ContextFactPolicy struct {
+	<unexported fields>
+}
+type ContextFactReadView struct {
+	<unexported fields>
+}
+func (ContextFactReadView) Classification() Classification
+func (ContextFactReadView) Kind() ContextFactKind
+func (ContextFactReadView) Knowledge() FieldKnowledge
+func (ContextFactReadView) OperationID() (OperationID, bool)
+func (ContextFactReadView) Provenance() Provenance
+func (ContextFactReadView) Reference() (Reference, bool)
+func (ContextFactReadView) ScopedReference() (ScopedReference, bool)
+func (ContextFactReadView) Source() (Source, bool)
+func ContextFacts(...ContextFactPolicy) ContextPolicy
+const ContextHistoryQuery QueryClass = 9
+const ContextOptional ContextPresence = 2
+type ContextPolicy struct {
+	<unexported fields>
+}
+type ContextPolicyDescription struct {
+	Facts []ContextFactDescription
+}
 type ContextPresence uint8
-    const ContextRequired ContextPresence = iota + 1 ...
-type ContextProjection struct{ ... }
-    func AllContext() ContextProjection
-    func NoContext() ContextProjection
-    func OnlyContext(facts ...ContextFactKind) ContextProjection
-type ContextProjectionView struct{ ... }
-type ContextResolver interface{ ... }
+func (ContextPresence) String() string
+func (ContextPresence) Valid() bool
+type ContextProjection struct {
+	<unexported fields>
+}
+func (ContextProjection) View() ContextProjectionView
+type ContextProjectionView struct {
+	Kind ProjectionSelectionKind
+	Facts []ContextFactKind
+}
+const ContextRequired ContextPresence = 1
+type ContextResolver interface {
+	ResolveAuditContext(context.Context) (Context, error)
+}
 type ContextResolverFunc func(context.Context) (Context, error)
-type ContextValue[T any] struct{ ... }
-type ContextView struct{ ... }
-type ControlAction Action
-    const HistoryRead ControlAction = "audit.history.read" ...
-    func ControlActions(actions ...ControlAction) []ControlAction
+func (ContextResolverFunc) ResolveAuditContext(context.Context) (Context, error)
+type ContextValue[T any] struct {
+	<unexported fields>
+}
+func (ContextValue[T]) Get() (T, bool)
+func (ContextValue[T]) Provenance() Provenance
+type ContextView struct {
+	Actors []Actor
+	Scope ContextValue[ScopedReference]
+	Service ContextValue[Reference]
+	Deployment ContextValue[Reference]
+	Client ContextValue[ScopedReference]
+	Operation ContextValue[OperationID]
+	Correlation ContextValue[Reference]
+	Causation ContextValue[Reference]
+	Trace ContextValue[Reference]
+	Source ContextValue[Source]
+}
+type ControlAction string
+func ControlActions(...ControlAction) []ControlAction
 type ControlContinuationDigest [32]byte
+const ControlDenied ControlAction = "audit.control.denied"
 type ControlGrantDigest [32]byte
-type ControlOutcomeDescription struct{ ... }
-type ControlPolicy struct{ ... }
-type ControlPolicyDescription struct{ ... }
-type ControlReasonDescription struct{ ... }
-type ControlReasonPolicy struct{ ... }
-    func ControlReasons(reasons ...ControlReasonPolicy) []ControlReasonPolicy
-    func ReasonsFor(action ControlAction, codes ReasonCodes) ControlReasonPolicy
+type ControlOutcomeDescription struct {
+	Action ControlAction
+	Codes []Outcome
+}
+type ControlPolicy struct {
+	Resource Resource
+	Semantics PolicySemantics
+	Purpose Purpose
+	Retention RetentionClass
+	Consequence Consequence
+	Context ContextPolicy
+	Matter HoldMatterPolicy
+	Actions []ControlAction
+	Reasons []ControlReasonPolicy
+}
+type ControlPolicyDescription struct {
+	Resource Resource
+	Semantics PolicySemanticsDescription
+	Purpose Purpose
+	Retention RetentionClass
+	Consequence Consequence
+	Context ContextPolicyDescription
+	Matter HoldMatterDescription
+	Actions []ControlAction
+	Reasons []ControlReasonDescription
+	Outcomes []ControlOutcomeDescription
+}
+type ControlReasonDescription struct {
+	Action ControlAction
+	Codes []Reason
+}
+type ControlReasonPolicy struct {
+	<unexported fields>
+}
+func ControlReasons(...ControlReasonPolicy) []ControlReasonPolicy
 type ControlRequestDigest [32]byte
 type ControlResultDigest [32]byte
+const CorrectionAppended ControlAction = "audit.correction.appended"
 type CorrectionProposalDigest [32]byte
+const CorrelationContext ContextFactKind = 7
+func CorrelationFact(ContextPresence, ProvenanceSet, Classification, StorageMode) ContextFactPolicy
+const Corrupt StoreOutcome = 3
+const CryptoBackend CryptoOutcome = 5
+func CryptoFailure(CryptoOutcome, error) error
+const CryptoInvalid CryptoOutcome = 1
+const CryptoMalformed CryptoOutcome = 4
+const CryptoMissingKey CryptoOutcome = 2
 type CryptoOutcome uint8
-    const CryptoUnclassified CryptoOutcome = iota ...
-    func CryptoOutcomeOf(err error) (CryptoOutcome, bool)
-type Cursor struct{ ... }
-type CursorKeys interface{}
-type Declaration interface{ ... }
-type DeclarationDescription struct{ ... }
+func (CryptoOutcome) String() string
+func (CryptoOutcome) Valid() bool
+func CryptoOutcomeOf(error) (CryptoOutcome, bool)
+const CryptoRefused CryptoOutcome = 6
+const CryptoUnclassified CryptoOutcome = 0
+const CryptoUnsupported CryptoOutcome = 3
+func CurrentScope() ScopeSelector
+type Cursor struct {
+	<unexported fields>
+}
+func (Cursor) Bytes() []byte
+func (Cursor) String() string
+type CursorKeys interface {}
+func DecimalText() Codec[string]
+type Declaration interface {
+	<unexported methods>
+}
+type DeclarationDescription struct {
+	Kind DeclarationKind
+	Resource Resource
+	Action Action
+	Operation OperationName
+	Semantics PolicySemanticsDescription
+	Owner Owner
+	Purpose Purpose
+	Retention RetentionClass
+	Consequence Consequence
+	Subject SubjectDescription
+	TargetPresent bool
+	Target SubjectDescription
+	Actions []EntityAction
+	Outcomes []Outcome
+	Reasons []Reason
+	ReasonOptional bool
+	Fields []FieldDescription
+	Context ContextPolicyDescription
+	Members []string
+	Attempt AttemptDescription
+}
 type DeclarationKind uint8
-    const ResourceDeclaration DeclarationKind = iota + 1 ...
+const DeclarationPolicyFixture PolicyFixtureKind = 1
+func Declare[E any](EventPolicy[E]) *EventType[E]
+func DeclareAttempt[S any, C any, F any](AttemptPolicy[S, C, F]) *AttemptType[S, C, F]
+func DeclareOperation(OperationPolicy) *OperationType
+func Define[M any, ID comparable](Policy[M, ID]) *ResourcePolicy[M, ID]
+func DefineCodec[V any](CodecSpec, CodecEngine[V]) Codec[V]
+const DenialEvidenceCommitted DenialEvidenceState = 6
+const DenialEvidenceLimiterFailed DenialEvidenceState = 3
+const DenialEvidenceNotConfigured DenialEvidenceState = 1
+const DenialEvidenceNotWritten DenialEvidenceState = 4
 type DenialEvidenceState uint8
-    const DenialEvidenceNotConfigured DenialEvidenceState = iota + 1 ...
-    func DenialEvidenceStateOf(err error) (DenialEvidenceState, bool)
-type DenialLimiter interface{}
+func (DenialEvidenceState) String() string
+func (DenialEvidenceState) Valid() bool
+func DenialEvidenceStateOf(error) (DenialEvidenceState, bool)
+const DenialEvidenceSuppressed DenialEvidenceState = 2
+const DenialEvidenceUnconfirmed DenialEvidenceState = 5
+type DenialLimiter interface {}
 type DenialRequestDigest [32]byte
+const DeniedFailure FailureClass = 2
+func DenyAccess(AccessRequest, Reason) (AccessDecision, error)
 type DeploymentChange string
+const DeploymentContext ContextFactKind = 4
+func DeploymentFact(ContextPresence, ProvenanceSet, Classification, StorageMode) ContextFactPolicy
 type DeploymentFingerprint [32]byte
 type DeploymentLedger string
-type Descriptor struct{ ... }
-type Draft struct{ ... }
-type EntityAction Action
-    const EntityCreated EntityAction = "entity.created" ...
-    func Actions(actions ...EntityAction) []EntityAction
-type EntityAliasBinding struct{ ... }
+type Descriptor struct {
+	Resource Resource
+	Action Action
+	Owner Owner
+	Purpose Purpose
+	Retention RetentionClass
+	Consequence Consequence
+	Context ContextPolicy
+}
+const DisputeAppended ControlAction = "audit.dispute.appended"
+type Draft struct {
+	<unexported fields>
+}
+func Duration() Codec[time.Duration]
+type EntityAction string
+type EntityAliasBinding struct {
+	<unexported fields>
+}
+func (EntityAliasBinding) ChainID() EntityChainID
+func (EntityAliasBinding) Commitments() IdentityCommitmentSet
+func (EntityAliasBinding) Resource() Resource
+func (EntityAliasBinding) Scope() (EvidenceScopeCommitment, bool)
 type EntityChainID [32]byte
 type EntityChainKey [32]byte
-type EntityDraft struct{ ... }
-type EntityField[M any] interface{ ... }
-    func Fields[M any](fields ...EntityField[M]) []EntityField[M]
-    func Optional[M, V any](source string, name FieldName, codec Codec[V], classification Classification) EntityField[M]
-    func OptionalBy[M, F, V any](member ModelMember[M, F], name FieldName, codec Codec[V], ...) EntityField[M]
-    func Protected[M, V any](source string, name FieldName, codec Codec[V], classification Classification) EntityField[M]
-    func ProtectedBy[M, F, V any](member ModelMember[M, F], name FieldName, codec Codec[V], ...) EntityField[M]
-    func Redacted[M, V any](source string, name FieldName, codec Codec[V], classification Classification) EntityField[M]
-    func RedactedBy[M, F, V any](member ModelMember[M, F], name FieldName, codec Codec[V], ...) EntityField[M]
-    func Tokenized[M, V any](source string, name FieldName, codec Codec[V], classification Classification) EntityField[M]
-    func TokenizedBy[M, F, V any](member ModelMember[M, F], name FieldName, codec Codec[V], ...) EntityField[M]
-    func Value[M, V any](source string, name FieldName, codec Codec[V], classification Classification) EntityField[M]
-    func ValueBy[M, F, V any](member ModelMember[M, F], name FieldName, codec Codec[V], ...) EntityField[M]
-type EntityHeadRequest struct{ ... }
-type EntityHeadRequestView struct{ ... }
-type EntityHeadResult struct{ ... }
-type EntityHeadResultData struct{ ... }
+const EntityChanged EntityAction = "entity.changed"
+const EntityCreated EntityAction = "entity.created"
+const EntityDeltaState EntityStateKind = 1
+type EntityDraft struct {
+	<unexported fields>
+}
+const EntityExisting EntityHeadState = 2
+type EntityField[M any] interface {
+	<unexported methods>
+}
+const EntityFullState EntityStateKind = 2
+const EntityGenesis EntityHeadState = 1
+const EntityHardDeleted EntityAction = "entity.hard_deleted"
+type EntityHeadRequest struct {
+	<unexported fields>
+}
+func (EntityHeadRequest) View() EntityHeadRequestView
+type EntityHeadRequestView struct {
+	Resource Resource
+	Candidate EntityChainID
+	ScopePresent bool
+	Scope EvidenceScopeCommitment
+	Commitments IdentityCommitmentSet
+}
+type EntityHeadResult struct {
+	<unexported fields>
+}
+func (EntityHeadResult) Authority() Authority
+func (EntityHeadResult) ChainID() EntityChainID
+func (EntityHeadResult) Previous() LeafDigest
+func (EntityHeadResult) State() EntityHeadState
+type EntityHeadResultData struct {
+	State EntityHeadState
+	Chain EntityChainID
+	Previous LeafDigest
+	Authority Authority
+}
 type EntityHeadState uint8
-    const EntityGenesis EntityHeadState = iota + 1 ...
-type EntityIndex[M, V any] struct{ ... }
-    func EntityIndexedProtectedIndex[M, V any](source string, name FieldName, codec Codec[V], classification Classification) EntityIndex[M, V]
-    func EntityIndexedProtectedIndexBy[M, F, V any](member ModelMember[M, F], name FieldName, codec Codec[V], ...) EntityIndex[M, V]
-    func EntityPlaintextIndex[M, V any](source string, name FieldName, codec Codec[V], classification Classification) EntityIndex[M, V]
-    func EntityPlaintextIndexBy[M, F, V any](member ModelMember[M, F], name FieldName, codec Codec[V], ...) EntityIndex[M, V]
-    func EntityTokenIndex[M, V any](source string, name FieldName, codec Codec[V], classification Classification) EntityIndex[M, V]
-    func EntityTokenIndexBy[M, F, V any](member ModelMember[M, F], name FieldName, codec Codec[V], ...) EntityIndex[M, V]
+type EntityIndex[M any, V any] struct {
+	<unexported fields>
+}
+func (EntityIndex[M, V]) Field() EntityField[M]
+const EntityIndexHistoryQuery QueryClass = 11
 type EntityIndexSide uint8
+func EntityIndexedProtectedIndex[M any, V any](string, FieldName, Codec[V], Classification) EntityIndex[M, V]
+func EntityIndexedProtectedIndexBy[M any, F any, V any](ModelMember[M, F], FieldName, Codec[V], Classification) EntityIndex[M, V]
+const EntityItem ItemKind = 2
+func EntityPlaintextIndex[M any, V any](string, FieldName, Codec[V], Classification) EntityIndex[M, V]
+func EntityPlaintextIndexBy[M any, F any, V any](ModelMember[M, F], FieldName, Codec[V], Classification) EntityIndex[M, V]
+const EntityRestored EntityAction = "entity.restored"
+const EntitySoftDeleted EntityAction = "entity.soft_deleted"
 type EntityStateKind uint8
-    const EntityDeltaState EntityStateKind = iota + 1 ...
+const EntityTerminal EntityHeadState = 3
+func EntityTokenIndex[M any, V any](string, FieldName, Codec[V], Classification) EntityIndex[M, V]
+func EntityTokenIndexBy[M any, F any, V any](ModelMember[M, F], FieldName, Codec[V], Classification) EntityIndex[M, V]
 type EnvelopeDigest [32]byte
-type EventField[E any] struct{ ... }
-    func EventFields[E any](fields ...EventField[E]) []EventField[E]
-    func EventProtected[E, V any](name FieldName, extract func(E) V, codec Codec[V], ...) EventField[E]
-    func EventRedacted[E, V any](name FieldName, extract func(E) V, codec Codec[V], ...) EventField[E]
-    func EventTokenized[E, V any](name FieldName, extract func(E) V, codec Codec[V], ...) EventField[E]
-    func EventValue[E, V any](name FieldName, extract func(E) V, codec Codec[V], ...) EventField[E]
-type EventHistory[E any] struct{ ... }
-type EventIndex[E, V any] struct{ ... }
-    func EventIndexedProtectedIndex[E, V any](name FieldName, extract func(E) V, codec Codec[V], ...) EventIndex[E, V]
-    func EventPlaintextIndex[E, V any](name FieldName, extract func(E) V, codec Codec[V], ...) EventIndex[E, V]
-    func EventTokenIndex[E, V any](name FieldName, extract func(E) V, codec Codec[V], ...) EventIndex[E, V]
-type EventPolicy[E any] struct{ ... }
-type EventTargetRef struct{ ... }
-type EventTargetRefView struct{ ... }
-type EventType[E any] struct{ ... }
-    func Declare[E any](policy EventPolicy[E]) *EventType[E]
+var ErrAdmission error
+var ErrBackend error
+var ErrBadPosition error
+var ErrClosed error
+var ErrCommitUnconfirmed error
+var ErrConflict error
+var ErrCursor error
+var ErrDeclaration error
+var ErrDenied error
+var ErrExpired error
+var ErrFence error
+var ErrGroupClosed error
+var ErrGroupPoisoned error
+var ErrIntegrity error
+var ErrInvalid error
+var ErrMalformedEvidence error
+var ErrMissingKey error
+var ErrNotFound error
+var ErrNotWritten error
+var ErrRefused error
+var ErrRollbackUnconfirmed error
+var ErrStaleCatalog error
+var ErrTemporalAmbiguity error
+var ErrTooLarge error
+var ErrTransaction error
+var ErrUnconfirmed error
+var ErrUnknownCatalog error
+var ErrUnsupported error
+var ErrWrongAuthority error
+var ErrWrongCatalog error
+var ErrWrongStore error
+const EventDeclaration DeclarationKind = 2
+type EventField[E any] struct {
+	<unexported fields>
+}
+func EventFields[E any](...EventField[E]) []EventField[E]
+type EventHistory[E any] struct {
+	<unexported fields>
+}
+func (*EventHistory[E]) Events(context.Context, Query) (Page, error)
+func (*EventHistory[E]) Target(context.Context, Reference, Query) (Page, error)
+type EventIndex[E any, V any] struct {
+	<unexported fields>
+}
+func (EventIndex[E, V]) Field() EventField[E]
+const EventIndexHistoryQuery QueryClass = 10
+func EventIndexedProtectedIndex[E any, V any](FieldName, func(E) V, Codec[V], Classification) EventIndex[E, V]
+const EventItem ItemKind = 1
+func EventOccurredAt[E any](func(E) time.Time) OccurredAtPolicy[E]
+func EventOutcome[E any](OutcomeCodes, func(E) Outcome) OutcomePolicy[E]
+func EventPlaintextIndex[E any, V any](FieldName, func(E) V, Codec[V], Classification) EventIndex[E, V]
+type EventPolicy[E any] struct {
+	Semantics PolicySemantics
+	Descriptor Descriptor
+	Target TargetPolicy[E]
+	Outcome OutcomePolicy[E]
+	Reason ReasonPolicy[E]
+	OccurredAt OccurredAtPolicy[E]
+	Fields []EventField[E]
+}
+func EventProtected[E any, V any](FieldName, func(E) V, Codec[V], Classification) EventField[E]
+func EventReason[E any](ReasonCodes, func(E) Reason) ReasonPolicy[E]
+func EventRedacted[E any, V any](FieldName, func(E) V, Codec[V], Classification) EventField[E]
+func EventTarget[E any](func(E) Reference, Classification, StorageMode) TargetPolicy[E]
+const EventTargetHistoryQuery QueryClass = 3
+type EventTargetRef struct {
+	<unexported fields>
+}
+func (EventTargetRef) View() EventTargetRefView
+type EventTargetRefView struct {
+	Resource Resource
+	Action Action
+	Target Reference
+	Mode StorageMode
+	Classification Classification
+}
+func EventTokenIndex[E any, V any](FieldName, func(E) V, Codec[V], Classification) EventIndex[E, V]
+func EventTokenized[E any, V any](FieldName, func(E) V, Codec[V], Classification) EventField[E]
+type EventType[E any] struct {
+	<unexported fields>
+}
+func (*EventType[E]) Description() DeclarationDescription
+func (*EventType[E]) History(*History) *EventHistory[E]
+func (*EventType[E]) New(E) (Draft, error)
+func (*EventType[E]) TargetRef(Reference) (EventTargetRef, error)
+const EventTypeHistoryQuery QueryClass = 4
+func EventValue[E any, V any](FieldName, func(E) V, Codec[V], Classification) EventField[E]
 type EvidenceScopeCommitment [32]byte
-type ExactAccessQuery struct{ ... }
-type ExactEntryData struct{ ... }
+type ExactAccessQuery struct {
+	Resources []Resource
+	Classifications []Classification
+	Query Query
+}
+type ExactEntryData struct {
+	Target ExactTargetView
+	State ExactEntryState
+	Revision StoredRevision
+}
 type ExactEntryState uint8
-    const ExactFound ExactEntryState = iota + 1 ...
-type ExactLog interface{ ... }
-type ExactQuery struct{ ... }
-type ExactQueryView struct{ ... }
-type ExactResult struct{ ... }
-type ExactResultData struct{ ... }
+const ExactFound ExactEntryState = 1
+const ExactItemHistoryQuery QueryClass = 15
+const ExactItemTarget ExactTargetKind = 2
+type ExactLog interface {
+	StoreInfo
+	Inspect(context.Context, ExactQuery) (ExactResult, error)
+}
+const ExactMissing ExactEntryState = 2
+type ExactQuery struct {
+	<unexported fields>
+}
+func (ExactQuery) View() ExactQueryView
+type ExactQueryView struct {
+	Log LogID
+	Catalogs []CatalogRef
+	Targets []ExactTargetView
+	Resources []Resource
+	Actions []Action
+	Classifications []Classification
+	Coordinates []QueryCoordinateView
+	MaxBytes uint64
+}
+type ExactResult struct {
+	<unexported fields>
+}
+func (ExactResult) Entries() []ExactEntryData
+type ExactResultData struct {
+	Entries []ExactEntryData
+}
+const ExactRevisionHistoryQuery QueryClass = 14
+const ExactRevisionTarget ExactTargetKind = 1
+func ExactScope(ScopedReference) (ScopeSelector, error)
 type ExactTargetKind uint8
-    const ExactRevisionTarget ExactTargetKind = iota + 1 ...
-type ExactTargetView struct{ ... }
-type Execution interface{ ... }
+type ExactTargetView struct {
+	Kind ExactTargetKind
+	Revision RevisionRef
+	Item ItemRef
+}
+type Execution interface {
+	Append(context.Context, AppendRequest) (AppendResult, error)
+	Authority() Authority
+	EntityHead(context.Context, EntityHeadRequest) (EntityHeadResult, error)
+}
+const ExternalActor ActorKind = 5
+func Failure(StoreOutcome, error) error
 type FailureClass uint8
-    const NoFailure FailureClass = iota ...
 type FenceDigest [32]byte
-type FieldDescription struct{ ... }
+const FieldAbsent FieldKnowledge = 2
+const FieldBudgetExceeded FieldKnowledge = 10
+type FieldDescription struct {
+	Source string
+	Name FieldName
+	Codec CodecDescription
+	Classification Classification
+	Mode StorageMode
+	Reconstruct bool
+	HistoricalOnly bool
+	QueryIndex bool
+}
+const FieldDestroyed FieldKnowledge = 6
+const FieldGap FieldKnowledge = 9
 type FieldKnowledge uint8
-    const FieldKnown FieldKnowledge = iota + 1 ...
+const FieldKnown FieldKnowledge = 1
+const FieldMissingKey FieldKnowledge = 7
 type FieldName string
-type FieldProjection struct{ ... }
-    func AllFields() FieldProjection
-    func NoFields() FieldProjection
-    func OnlyFields(fields ...FieldName) FieldProjection
-type FieldProjectionView struct{ ... }
+type FieldProjection struct {
+	<unexported fields>
+}
+func (FieldProjection) View() FieldProjectionView
+type FieldProjectionView struct {
+	Kind ProjectionSelectionKind
+	Fields []FieldName
+}
+const FieldRedacted FieldKnowledge = 4
+const FieldTokenized FieldKnowledge = 5
+const FieldUnknownCodec FieldKnowledge = 8
+const FieldUnobserved FieldKnowledge = 3
+const FieldUnprojected FieldKnowledge = 11
+func Fields[M any](...EntityField[M]) []EntityField[M]
 type FixtureName string
-type GroupResult struct{ ... }
-type GroupSpec struct{ ... }
-type HMACIdentityKey struct{ ... }
-type HMACSigningKey struct{ ... }
-type HMACTokenKey struct{ ... }
-type HMACVerificationKey struct{ ... }
-type HistoricalCatalog struct{ ... }
-    func Retain(catalog *Catalog) HistoricalCatalog
-type History struct{ ... }
-type HistoryConfig struct{ ... }
+const Forwarded Provenance = 3
+const Found LookupState = 1
+func GeneratedOperationFact(Classification, StorageMode) ContextFactPolicy
+func GoldenWire(FixtureName, CodecVersion, []byte, []byte) CodecWireFixture
+type GroupResult struct {
+	<unexported fields>
+}
+func (GroupResult) Joined() bool
+func (GroupResult) Receipt() (Receipt, bool)
+func (GroupResult) ReconcileKey() (ReconcileKey, bool)
+func (GroupResult) RetryToken() (RetryToken, bool)
+type GroupSpec struct {
+	Operation *OperationType
+	IdempotencyKey IdempotencyKey
+}
+type HMACIdentityKey struct {
+	KeyID string
+	Key []byte
+	Active bool
+}
+func HMACIdentityKeyring(...HMACIdentityKey) (IdentityKeyring, error)
+const HMACIdentityProfileV1 untyped string = "frostgrove.audit.identity.v1"
+const HMACSHA256Algorithm untyped string = "hmac-sha256"
+func HMACSemanticDigester(string, []byte) (SemanticDigester, error)
+const HMACSemanticProfileV1 untyped string = "frostgrove.audit.semantic.v1"
+const HMACSignatureProfileV1 untyped string = "frostgrove.audit.signature.v1"
+func HMACSigner(HMACSigningKey) (Signer, error)
+type HMACSigningKey struct {
+	KeyID string
+	Key []byte
+}
+type HMACTokenKey struct {
+	KeyID string
+	Key []byte
+	Active bool
+}
+const HMACTokenProfileV1 untyped string = "frostgrove.audit.token.v1"
+func HMACTokenizer(...HMACTokenKey) (Tokenizer, error)
+type HMACVerificationKey struct {
+	KeyID string
+	Key []byte
+}
+func HMACVerifier(...HMACVerificationKey) (Verifier, error)
+type HistoricalCatalog struct {
+	<unexported fields>
+}
+func HistoricalReconstruct[M any, V any](FieldName, Codec[V], Classification) ReconstructField[M, V]
+type History struct {
+	<unexported fields>
+}
+func (*History) Item(context.Context, ItemRef, ExactAccessQuery) (ItemResult, error)
+func (*History) Profile() HistoryProfile
+func (*History) Revision(context.Context, RevisionRef, ExactAccessQuery) (RevisionResult, error)
+func (*History) Subject(context.Context, SubjectRef, Query) (Page, error)
+func (*History) Target(context.Context, EventTargetRef, Query) (Page, error)
+type HistoryConfig struct {
+	Profile HistoryProfile
+	Recorder *Recorder
+	Log Log
+	Exact ExactLog
+	Attempts AttemptLog
+	Access AccessAuthority
+	Denials DenialLimiter
+	Cursors CursorKeys
+	CursorLifetime time.Duration
+	Revealer Revealer
+	Verifier Verifier
+}
+const HistoryDenied ControlAction = "audit.history.denied"
 type HistoryDirection uint8
-    const NewestFirst HistoryDirection = iota + 1 ...
+const HistoryDisclosureAccess AccessIntent = 1
 type HistoryProfile uint8
-    const PublicOnePageDevelopmentAlpha HistoryProfile = 1
-type HoldAppendCandidateView struct{ ... }
+func (HistoryProfile) String() string
+const HistoryRead ControlAction = "audit.history.read"
+const HoldActivated HoldTransitionDisposition = 1
+const HoldAlreadyActive HoldTransitionDisposition = 3
+const HoldAlreadyReleased HoldTransitionDisposition = 4
+type HoldAppendCandidateView struct {
+	Disposition HoldTransitionDisposition
+	Result HoldProjectionStateView
+	Revision Revision
+}
 type HoldCommandKind uint8
-    const HoldPlaceCommand HoldCommandKind = iota + 1 ...
-type HoldConditionalAppendView struct{ ... }
+type HoldConditionalAppendView struct {
+	Kind HoldCommandKind
+	Hold HoldID
+	HoldCommitment HoldIDCommitment
+	Target RevisionRef
+	MatterPresent bool
+	MatterCommitment HoldMatterCommitment
+	Expected HoldProjectionStateView
+	Authorization HoldRequestDigest
+	Candidate HoldAppendCandidateView
+}
 type HoldID [16]byte
-type HoldIDAliasBinding struct{ ... }
+type HoldIDAliasBinding struct {
+	<unexported fields>
+}
 type HoldIDCommitment [32]byte
 type HoldIdentity [32]byte
-type HoldMatterAliasBinding struct{ ... }
+func HoldMatter(Codec[Reference], Classification, StorageMode) HoldMatterPolicy
+type HoldMatterAliasBinding struct {
+	<unexported fields>
+}
 type HoldMatterCommitment [32]byte
-type HoldMatterDescription struct{ ... }
-type HoldMatterPolicy struct{ ... }
-    func HoldMatter(codec Codec[Reference], classification Classification, mode StorageMode) HoldMatterPolicy
+type HoldMatterDescription struct {
+	Codec CodecDescription
+	Classification Classification
+	Mode StorageMode
+}
+type HoldMatterPolicy struct {
+	<unexported fields>
+}
+const HoldMembershipAbsent HoldMembershipState = 1
+const HoldMembershipActive HoldMembershipState = 2
+const HoldMembershipReleased HoldMembershipState = 3
 type HoldMembershipState uint8
-    const HoldMembershipAbsent HoldMembershipState = iota + 1 ...
-type HoldProjectionStateView struct{ ... }
+const HoldPlaceCommand HoldCommandKind = 1
+const HoldPlaced ControlAction = "audit.hold.placed"
+type HoldProjectionStateView struct {
+	Revision RevisionRef
+	Membership HoldMembershipState
+	Count uint32
+	Epoch uint64
+	ActiveSet HoldSetDigest
+	Head RevisionRef
+}
+const HoldReleaseCommand HoldCommandKind = 2
+const HoldReleased ControlAction = "audit.hold.released"
+const HoldReleasedNow HoldTransitionDisposition = 2
 type HoldRequestDigest [32]byte
 type HoldSetDigest [32]byte
 type HoldTransitionDisposition uint8
-    const HoldActivated HoldTransitionDisposition = iota + 1 ...
-type HoldTransitionWireView struct{ ... }
-type IDSource interface{ ... }
-type IdempotencyDomain struct{ ... }
+type HoldTransitionWireView struct {
+	Command HoldCommandKind
+	Hold HoldID
+	Identity HoldIdentity
+	HoldCommitment HoldIDCommitment
+	Target RevisionRef
+	MatterPresent bool
+	Matter StoredValueView
+	MatterCommitment HoldMatterCommitment
+	Expected HoldProjectionStateView
+	Result HoldProjectionStateView
+	Disposition HoldTransitionDisposition
+	Authorization HoldRequestDigest
+}
+const HumanActor ActorKind = 1
+type IDSource interface {
+	NewOperationID() (OperationID, error)
+	NewRevisionID() (RevisionID, error)
+}
+type IdempotencyDomain struct {
+	Kind IdempotencyDomainKind
+	Catalog CatalogID
+	Operation OperationName
+	Attempt AttemptChainID
+	Token IdempotencyToken
+}
 type IdempotencyDomainKind uint8
-    const RecordIdempotencyDomain IdempotencyDomainKind = iota + 1 ...
 type IdempotencyKey string
-type IdempotencyLookupRequest struct{ ... }
-type IdempotencyLookupRequestView struct{ ... }
-type IdempotencyLookupResult struct{ ... }
-type IdempotencyLookupResultData struct{ ... }
+type IdempotencyLookupRequest struct {
+	<unexported fields>
+}
+func (IdempotencyLookupRequest) View() IdempotencyLookupRequestView
+type IdempotencyLookupRequestView struct {
+	Catalog CatalogRef
+	Catalogs []CatalogRef
+	CatalogSet CatalogSetDigest
+	Deployment DeploymentFingerprint
+	Domain IdempotencyDomain
+	Idempotency IdentityCommitmentSet
+	Semantic SemanticDigest
+}
+type IdempotencyLookupResult struct {
+	<unexported fields>
+}
+func (IdempotencyLookupResult) State() LookupState
+func (IdempotencyLookupResult) Stored() (StoredHeader, bool)
+type IdempotencyLookupResultData struct {
+	State LookupState
+	Stored StoredHeader
+}
 type IdempotencyToken [32]byte
-type IdentityCommitment struct{ ... }
-type IdentityCommitmentDescription struct{ ... }
+type IdentityCommitment struct {
+	<unexported fields>
+}
+func (IdentityCommitment) Bytes() []byte
+func (IdentityCommitment) Description() IdentityCommitmentDescription
+type IdentityCommitmentDescription struct {
+	Algorithm string
+	Profile string
+	KeyID string
+}
 type IdentityCommitmentDomain uint8
-    const CommitIdempotency IdentityCommitmentDomain = iota + 1 ...
-type IdentityCommitmentRequest struct{ ... }
-type IdentityCommitmentSet struct{ ... }
-type IdentityKeyring interface{ ... }
+type IdentityCommitmentRequest struct {
+	<unexported fields>
+}
+func (IdentityCommitmentRequest) AAD() []byte
+func (IdentityCommitmentRequest) Domain() IdentityCommitmentDomain
+func (IdentityCommitmentRequest) Plaintext() []byte
+func (IdentityCommitmentRequest) Required() []IdentityCommitmentDescription
+type IdentityCommitmentSet struct {
+	<unexported fields>
+}
+func (IdentityCommitmentSet) Active() IdentityCommitment
+func (IdentityCommitmentSet) Aliases() []IdentityCommitment
+func (IdentityCommitmentSet) Domain() IdentityCommitmentDomain
+type IdentityKeyring interface {
+	ActiveDescription() IdentityCommitmentDescription
+	CommitIdentities(context.Context, IdentityCommitmentRequest) (IdentityCommitmentSet, error)
+	Descriptions() []IdentityCommitmentDescription
+}
+const InCallerTransaction Settlement = 2
+func InOperation(*OperationType) RecordOption
+func IndexedProtectedSubject[ID comparable](func(ID) string, Classification) SubjectPolicy[ID]
+const Inserted AppendDisposition = 1
+func Int64() Codec[int64]
 type IntegrityDigest [32]byte
-type IntegrityPolicy struct{ ... }
-    func IntegrityOnly() IntegrityPolicy
-    func RequireSignature(description SignatureDescription) IntegrityPolicy
-type IntegrityPolicyView struct{ ... }
+func IntegrityOnly() IntegrityPolicy
+type IntegrityPolicy struct {
+	<unexported fields>
+}
+type IntegrityPolicyView struct {
+	RequiresSignature bool
+	Signature SignatureDescription
+}
+const IntegrityVerified ControlAction = "audit.integrity.verified"
+const Internal Classification = 2
+const InvalidFailure FailureClass = 1
+const InventoryRead ControlAction = "audit.inventory.read"
 type ItemKind uint8
-    const EventItem ItemKind = iota + 1 ...
-type ItemReadView struct{ ... }
-type ItemRef struct{ ... }
-type ItemResult struct{ ... }
-type ItemWireView struct{ ... }
+func (ItemKind) String() string
+func (ItemKind) Valid() bool
+type ItemReadView struct {
+	Ordinal uint16
+	Kind ItemKind
+	Resource Resource
+	Action Action
+	EntityState EntityStateKind
+	OccurredAt time.Time
+	Outcome Outcome
+	Reason Reason
+	Subject ReadValueView
+	Target ReadValueView
+	Values []ReadValueView
+	Changes []ChangeReadView
+	CorrectionOf ItemRef
+	DisputeOf ItemRef
+}
+type ItemRef struct {
+	Revision RevisionRef
+	Ordinal uint16
+}
+type ItemResult struct {
+	<unexported fields>
+}
+func (ItemResult) Item() ItemReadView
+type ItemWireView struct {
+	Ordinal uint16
+	Kind ItemKind
+	Resource Resource
+	Action Action
+	EntityState EntityStateKind
+	Chain EntityChainID
+	Subject StoredValueView
+	Target StoredValueView
+	OccurredAt time.Time
+	Outcome Outcome
+	Reason Reason
+	AccessRequest AccessRequestDigest
+	AccessGrant AccessGrantDigest
+	AccessResult AccessResultDigest
+	ControlRequest ControlRequestDigest
+	ControlGrant ControlGrantDigest
+	ControlResult ControlResultDigest
+	DenialRequest DenialRequestDigest
+	Previous LeafDigest
+	Leaf LeafDigest
+	Values []StoredValueView
+	Changes []StoredChangeView
+	CorrectionOf ItemRef
+	DisputeOf ItemRef
+	Attempt AttemptTransitionWireView
+	Hold HoldTransitionWireView
+}
+func KeepFor(RetentionClass, CalendarPeriod) RetentionRule
+func KeepForever(RetentionClass) RetentionRule
 type LeafDigest [32]byte
-type LimitSpec struct{ ... }
-type Limits struct{ ... }
-type Log interface{ ... }
+const LifecycleItem ItemKind = 5
+type LimitSpec struct {
+	RevisionBytes uint64
+	AppendRequestBytes uint64
+	PageRevisions uint32
+	PageBytes uint64
+	ExactTargets uint32
+	ExactBytes uint64
+	PositionBytes uint32
+	InventoryCandidates uint32
+	InventoryCohorts uint32
+	InventoryBytes uint64
+	SnapshotBytes uint32
+	SearchCohortRevisions uint32
+	SearchCohortBytes uint64
+	AttemptTransitions uint16
+	AttemptStateBytes uint64
+	AttemptOpenLifetime time.Duration
+}
+type Limits struct {
+	<unexported fields>
+}
+func (Limits) View() LimitSpec
+func Lineage(*Catalog, ...HistoricalCatalog) (*CatalogSet, error)
+type Log interface {
+	StoreInfo
+	Search(context.Context, StoreQuery) (StoredPage, error)
+}
 type LogID [16]byte
-type LookupRequest struct{ ... }
-type LookupRequestView struct{ ... }
-type LookupResult struct{ ... }
-type LookupResultData struct{ ... }
+type LookupRequest struct {
+	<unexported fields>
+}
+func (LookupRequest) View() LookupRequestView
+type LookupRequestView struct {
+	Key ReconcileKey
+	Revision RevisionID
+	Idempotency IdentityCommitmentSet
+	Catalog CatalogID
+	Operation OperationName
+}
+type LookupResult struct {
+	<unexported fields>
+}
+func (LookupResult) HoldDisposition() (HoldTransitionDisposition, bool)
+func (LookupResult) HoldProjection() (HoldProjectionStateView, bool)
+func (LookupResult) Receipt() (Receipt, bool)
+func (LookupResult) State() LookupState
+type LookupResultData struct {
+	State LookupState
+	Stored StoredHeader
+	Visibility Settlement
+	Authority Authority
+}
 type LookupState uint8
-    const Found LookupState = iota + 1 ...
-type Manifest struct{ ... }
-type ManifestView struct{ ... }
-type ModelMember[M, F any] struct{ ... }
-    func Member[M, F any](selector func(*M) *F) ModelMember[M, F]
-type NormalizedQueryView struct{ ... }
+type Manifest struct {
+	<unexported fields>
+}
+func (Manifest) Canonical() []byte
+func (Manifest) Previous() CatalogRef
+func (Manifest) Ref() CatalogRef
+func (Manifest) View() ManifestView
+type ManifestView struct {
+	Ref CatalogRef
+	Previous CatalogRef
+	Owner Owner
+	Semantics SemanticDigestDescription
+	Identities IdentityCommitmentDescription
+	Protection ProtectionDescription
+	Tokens TokenDescription
+	Integrity IntegrityPolicyView
+	Retention []RetentionRuleView
+	Declarations []DeclarationDescription
+	Codecs []CodecDescription
+	Contexts []ContextPolicyDescription
+	Control ControlPolicyDescription
+}
+const MaxActorHops untyped int = 8
+const MaxAppendRequestBytes untyped int = 41943040
+const MaxAttemptCheckpoints untyped int = 256
+const MaxAttemptOpenLifetime time.Duration = 31536000000000000
+const MaxAttemptSettlementTimeout time.Duration = 60000000000
+const MaxAttemptStateBytes untyped int = 4194304
+const MaxAttemptTransitions untyped int = 259
+const MaxCatalogActivationAttemptTypes untyped int = 4096
+const MaxCatalogActivationProofBytes untyped int = 134217728
+const MaxCatalogDeclarations untyped int = 65536
+const MaxCatalogManifestBytes untyped int = 16777216
+const MaxCatalogMutationBytes untyped int = 4194304
+const MaxCatalogMutations untyped int = 2048
+const MaxCatalogSetBytes untyped int = 134217728
+const MaxCatalogs untyped int = 1024
+const MaxCodecFixtureBytes untyped int = 1048576
+const MaxCodecFixtureSetBytes untyped int = 16777216
+const MaxCodecFixtures untyped int = 1024
+const MaxCodesPerDeclaration untyped int = 256
+const MaxControlCursorLifetime time.Duration = 86400000000000
+const MaxCursorBytes untyped int = 8192
+const MaxCursorLifetime time.Duration = 86400000000000
+const MaxExactTargets untyped int = 10000
+const MaxFenceLifetime time.Duration = 86400000000000
+const MaxFieldsPerItem untyped int = 256
+const MaxHoldStateBytes untyped int = 4194304
+const MaxHoldTransitionsPerRevision untyped int = 512
+const MaxHoldsPerRevision untyped int = 256
+const MaxIdempotencyKeyBytes untyped int = 512
+const MaxInventoryCandidates untyped int = 10000
+const MaxInventoryCohorts untyped int = 10000
+const MaxInventoryCursorBytes untyped int = 8192
+const MaxInventoryFenceBytes untyped int = 8388608
+const MaxInventoryResultBytes untyped int = 33554432
+const MaxItems untyped int = 256
+const MaxNameBytes untyped int = 128
+const MaxNarrativeBytes untyped int = 4096
+const MaxObservers untyped int = 8
+const MaxOperationMembers untyped int = 256
+const MaxPageBytes untyped int = 33554432
+const MaxPageRevisions untyped int = 1000
+const MaxPolicyGoldens untyped int = 256
+const MaxQueryActions untyped int = 256
+const MaxQueryClassifications untyped int = 256
+const MaxQueryCoordinates untyped int = 512
+const MaxQueryResources untyped int = 256
+const MaxQuerySelectors untyped int = 16
+const MaxQueryWindow time.Duration = 3153600000000000000
+const MaxReconcileKeyBytes untyped int = 4096
+const MaxReferenceBytes untyped int = 2048
+const MaxRetentionCohortMembers untyped int = 259
+const MaxRetryTokenBytes untyped int = 41943040
+const MaxRevisionBytes untyped int = 16777216
+const MaxSearchCohortBytes untyped int = 268435456
+const MaxSearchCohortRevisions untyped int = 1000000
+const MaxSelectorAlternatives untyped int = 64
+const MaxSnapshotBytes untyped int = 8388608
+const MaxStorePosition untyped int = 4096
+const MaxValueBytes untyped int = 1048576
+func Member[M any, F any](func(*M) *F) ModelMember[M, F]
+const Missing StoreOutcome = 2
+type ModelMember[M any, F any] struct {
+	<unexported fields>
+}
+func MustObservers(...Observer) Observer
+func New(Config) (*Recorder, error)
+func NewAppendResult(AppendRequest, StoredHeader, AppendDisposition, Authority) (AppendResult, error)
+func NewAttemptAppendResult(AppendRequest, StoredHeader, AppendDisposition, Authority) (AppendResult, error)
+func NewAttemptStateResult(AttemptStateQuery, AttemptStateResultData) (AttemptStateResult, error)
+func NewAttemptTypeStateResult(AttemptTypeStateQuery, AttemptTypeProjectionStateView) (AttemptTypeStateResult, error)
+func NewAttempts(AttemptsConfig) (*Attempts, error)
+func NewCapabilities(CapabilitySpec) (Capabilities, error)
+func NewCatalogChangeRef(DeploymentLedger, DeploymentChange) (CatalogChangeRef, error)
+func NewCatalogMutationLog(BackingID, LogID, []CatalogMutationView) (CatalogMutationLog, error)
+func NewContextValue[T any](T, Provenance) (ContextValue[T], error)
+func NewEmptyStoreCatalogState() StoreCatalogState
+func NewEntityHeadResult(EntityHeadRequest, EntityHeadResultData) (EntityHeadResult, error)
+func NewExactResult(ExactQuery, ExactResultData) (ExactResult, error)
+func NewHistory(HistoryConfig) (*History, error)
+func NewHoldAppendResult(AppendRequest, StoredHeader, AppendDisposition, Authority) (AppendResult, error)
+func NewIdempotencyLookupResult(IdempotencyLookupRequest, IdempotencyLookupResultData) (IdempotencyLookupResult, error)
+func NewIdentityCommitment(IdentityCommitmentDescription, []byte) (IdentityCommitment, error)
+func NewIdentityCommitmentSet(IdentityCommitmentRequest, []IdentityCommitment) (IdentityCommitmentSet, error)
+func NewInactiveStoreCatalogState(CatalogSetDigest) (StoreCatalogState, error)
+func NewLimits(LimitSpec) (Limits, error)
+func NewLookupResult(LookupRequest, LookupResultData) (LookupResult, error)
+func NewProtectedValue(string, string, string, []byte, []byte) (ProtectedValue, error)
+func NewSeal(string, string, string, []byte) (Seal, error)
+func NewStoreCatalogState(CatalogRef, CatalogSetDigest) (StoreCatalogState, error)
+func NewStorePosition([]byte) (StorePosition, error)
+func NewStoredHeader(StoredHeaderData) (StoredHeader, error)
+func NewStoredIdentityCommitmentSet(StoredIdentityCommitmentSetData) (IdentityCommitmentSet, error)
+func NewStoredPage(StoreQuery, StoredPageData) (StoredPage, error)
+func NewStoredRevision(StoredRevisionData) (StoredRevision, error)
+func NewToken(string, string, string, []byte) (Token, error)
+func NewTokenQueryResult(TokenQuery, []Token) (TokenQueryResult, error)
+const NewestFirst HistoryDirection = 1
+func NoAttemptCatalogActivation(CatalogRef, CatalogRef) (CatalogActivationProof, error)
+func NoAttemptCheckpoints[C any]() AttemptCheckpointPolicy[C]
+func NoAttemptTarget[S any]() AttemptTargetPolicy[S]
+const NoChangedFieldFilter ChangedFieldMatch = 1
+func NoContext() ContextProjection
+func NoEventTarget[E any]() TargetPolicy[E]
+const NoFailure FailureClass = 0
+func NoFields() FieldProjection
+type NormalizedQueryView struct {
+	Purpose Purpose
+	Role Reference
+	Scope ScopeSelectorView
+	Class QueryClass
+	Actions []Action
+	Fields FieldProjectionView
+	Context ContextProjectionView
+	Time TimeWindowView
+	Direction HistoryDirection
+	Changed ChangedFieldFilterView
+	Outcomes []Outcome
+	Reasons []Reason
+	Where SelectorSetView
+	Limit uint32
+}
+const NotWritten StoreOutcome = 4
+const NotWrittenFailure FailureClass = 4
+const ObservationAttempt ObservationKind = 6
+const ObservationControl ObservationKind = 5
+const ObservationEvidence ObservationPhase = 5
+const ObservationGroup ObservationKind = 2
+const ObservationHistory ObservationKind = 3
 type ObservationKind uint8
-    const ObservationRecord ObservationKind = iota + 1 ...
 type ObservationPhase uint8
-    const ObservationResolve ObservationPhase = iota + 1 ...
-type Observer interface{ ... }
-    func MustObservers(observers ...Observer) Observer
+const ObservationPrepare ObservationPhase = 2
+const ObservationReconstruction ObservationKind = 4
+const ObservationRecord ObservationKind = 1
+const ObservationResolve ObservationPhase = 1
+const ObservationStore ObservationPhase = 3
+const ObservationVerify ObservationPhase = 4
+const ObservedTimeAxis TimeAxis = 1
+type Observer interface {
+	ObserveAudit(AuditObservation)
+}
 type ObserverFunc func(AuditObservation)
-type OccurredAtPolicy[E any] struct{ ... }
-    func EventOccurredAt[E any](extract func(E) time.Time) OccurredAtPolicy[E]
-type OperationHistory struct{ ... }
+func (ObserverFunc) ObserveAudit(AuditObservation)
+func Observers(...Observer) (Observer, error)
+type OccurredAtPolicy[E any] struct {
+	<unexported fields>
+}
+const OccurredTimeAxis TimeAxis = 2
+const OldestFirst HistoryDirection = 2
+func OnlyContext(...ContextFactKind) ContextProjection
+func OnlyFields(...FieldName) FieldProjection
+const OpenClosedRange RangeBounds = 4
+const OpenOpenRange RangeBounds = 3
+const OperationContext ContextFactKind = 6
+const OperationDeclaration DeclarationKind = 3
+func OperationFact(ContextPresence, ProvenanceSet, Classification, StorageMode) ContextFactPolicy
+type OperationHistory struct {
+	<unexported fields>
+}
+func (*OperationHistory) Operation(context.Context, OperationID, Query) (Page, error)
+func (*OperationHistory) Revisions(context.Context, Query) (Page, error)
 type OperationID [16]byte
-type OperationMember interface{ ... }
-    func OperationMembers(members ...OperationMember) []OperationMember
+const OperationInstanceHistoryQuery QueryClass = 6
+type OperationMember interface {
+	<unexported methods>
+}
+func OperationMembers(...OperationMember) []OperationMember
 type OperationName string
-type OperationPolicy struct{ ... }
-type OperationType struct{ ... }
-    func DeclareOperation(policy OperationPolicy) *OperationType
+type OperationPolicy struct {
+	Name OperationName
+	Semantics PolicySemantics
+	Retention RetentionClass
+	Consequence Consequence
+	Context ContextPolicy
+	Members []OperationMember
+}
+type OperationType struct {
+	<unexported fields>
+}
+func (*OperationType) Description() DeclarationDescription
+func (*OperationType) History(*History) *OperationHistory
+const OperationTypeHistoryQuery QueryClass = 5
+func Optional[M any, V any](string, FieldName, Codec[V], Classification) EntityField[M]
+func OptionalBy[M any, F any, V any](ModelMember[M, F], FieldName, Codec[V], Classification) EntityField[M]
+func OptionalEventReason[E any](ReasonCodes, func(E) Reason) ReasonPolicy[E]
 type Outcome string
-type OutcomeCodes struct{ ... }
-    func Outcomes(values ...Outcome) OutcomeCodes
-type OutcomePolicy[E any] struct{ ... }
-    func EventOutcome[E any](codes OutcomeCodes, extract func(E) Outcome) OutcomePolicy[E]
+type OutcomeCodes struct {
+	<unexported fields>
+}
+type OutcomePolicy[E any] struct {
+	<unexported fields>
+}
+func Outcomes(...Outcome) OutcomeCodes
 type Owner string
-type Page struct{ ... }
-type Policy[M any, ID comparable] struct{ ... }
+type Page struct {
+	<unexported fields>
+}
+func (Page) Cursor() (Cursor, error)
+func (Page) HasMore() bool
+func (Page) Revisions() []RevisionView
+func ParseCursor([]byte) (Cursor, error)
+func ParseReconcileKey([]byte) (ReconcileKey, error)
+const PendingUnknown RetryState = 2
+const Personal Classification = 3
+func PlaintextSubject[ID comparable](func(ID) string, Classification) SubjectPolicy[ID]
+type Policy[M any, ID comparable] struct {
+	Model *github.com/frostgrove/vv/crud.Meta
+	Semantics PolicySemantics
+	Descriptor Descriptor
+	Subject SubjectPolicy[ID]
+	Actions []EntityAction
+	Fields []EntityField[M]
+}
 type PolicyFingerprint [32]byte
 type PolicyFixtureFingerprint [32]byte
 type PolicyFixtureKind uint8
-    const DeclarationPolicyFixture PolicyFixtureKind = iota + 1 ...
-type PolicyGoldenDescription struct{ ... }
-type PolicySemantics struct{ ... }
-    func Semantics(version PolicyVersion, goldens ...SemanticGolden) PolicySemantics
-type PolicySemanticsDescription struct{ ... }
+func PolicyGolden(FixtureName, string) SemanticGolden
+type PolicyGoldenDescription struct {
+	Name FixtureName
+	Fingerprint PolicyFixtureFingerprint
+	Kind PolicyFixtureKind
+	Transition AttemptTransitionKind
+	Checkpoint AttemptCheckpointCode
+	Reason Reason
+}
+type PolicySemantics struct {
+	<unexported fields>
+}
+type PolicySemanticsDescription struct {
+	Version PolicyVersion
+	Fingerprint PolicyFingerprint
+	Fixtures []PolicyGoldenDescription
+}
 type PolicyVersion uint32
-type PrivacyAdmission struct{ ... }
-type PrivacyAdmissionView struct{ ... }
+type PrivacyAdmission struct {
+	<unexported fields>
+}
+func (PrivacyAdmission) Fingerprint() DeploymentFingerprint
+func (PrivacyAdmission) View() PrivacyAdmissionView
+type PrivacyAdmissionView struct {
+	Reason PrivacyReason
+	Plaintext []Classification
+}
 type PrivacyReason string
+const ProjectionAll ProjectionSelectionKind = 2
+const ProjectionNone ProjectionSelectionKind = 1
+const ProjectionOnly ProjectionSelectionKind = 3
 type ProjectionSelectionKind uint8
-    const ProjectionNone ProjectionSelectionKind = iota + 1 ...
-type ProtectedValue struct{ ... }
-type ProtectionDescription struct{ ... }
-type ProtectionKeyring interface{ ... }
-type ProtectionRequest struct{ ... }
-type Protector interface{ ... }
+func Protected[M any, V any](string, FieldName, Codec[V], Classification) EntityField[M]
+func ProtectedBy[M any, F any, V any](ModelMember[M, F], FieldName, Codec[V], Classification) EntityField[M]
+type ProtectedValue struct {
+	<unexported fields>
+}
+func (ProtectedValue) Algorithm() string
+func (ProtectedValue) Ciphertext() []byte
+func (ProtectedValue) KeyID() string
+func (ProtectedValue) Nonce() []byte
+func (ProtectedValue) Profile() string
+type ProtectionDescription struct {
+	Algorithm string
+	Profile string
+	KeyID string
+}
+type ProtectionKeyring interface {
+	Protector
+	Revealer
+}
+type ProtectionRequest struct {
+	<unexported fields>
+}
+func (ProtectionRequest) AAD() []byte
+func (ProtectionRequest) Plaintext() []byte
+type Protector interface {
+	Description() ProtectionDescription
+	Protect(context.Context, ProtectionRequest) (ProtectedValue, error)
+}
 type Provenance uint8
-    const UnstatedProvenance Provenance = iota ...
-type ProvenanceSet struct{ ... }
-    func Provenances(values ...Provenance) ProvenanceSet
+func (Provenance) String() string
+func (Provenance) Valid() bool
+type ProvenanceSet struct {
+	<unexported fields>
+}
+func Provenances(...Provenance) ProvenanceSet
+const Public Classification = 1
+const PublicOnePageDevelopmentAlpha HistoryProfile = 1
+const PurgePlanned ControlAction = "audit.purge.planned"
 type Purpose string
-type Query struct{ ... }
+type Query struct {
+	Purpose Purpose
+	Role Reference
+	Scope ScopeSelector
+	Actions []Action
+	Fields FieldProjection
+	Context ContextProjection
+	Time TimeWindow
+	Direction HistoryDirection
+	Changed ChangedFieldFilter
+	Outcomes []Outcome
+	Reasons []Reason
+	Where SelectorSet
+	Limit uint32
+	Cursor Cursor
+}
+const QueryActor QueryCoordinateKind = 3
+const QueryAttemptTarget QueryCoordinateKind = 8
+const QueryCausation QueryCoordinateKind = 12
 type QueryClass uint8
-    const SubjectHistoryQuery QueryClass = iota + 1 ...
-type QueryCoordinateAlternativeView struct{ ... }
+const QueryClient QueryCoordinateKind = 4
+const QueryCoordinateAllDeclared QueryCoordinateMatch = 2
+type QueryCoordinateAlternativeView struct {
+	Plaintext []byte
+	Tokens []Token
+	Commitments IdentityCommitmentSet
+}
+const QueryCoordinateExact QueryCoordinateMatch = 1
 type QueryCoordinateKind uint8
-    const QueryScope QueryCoordinateKind = iota + 1 ...
 type QueryCoordinateMatch uint8
-    const QueryCoordinateExact QueryCoordinateMatch = iota + 1 ...
-type QueryCoordinateView struct{ ... }
+type QueryCoordinateView struct {
+	Kind QueryCoordinateKind
+	Match QueryCoordinateMatch
+	Resource Resource
+	Action Action
+	Field FieldName
+	ActorPosition ActorPosition
+	ActorKind ActorKind
+	ContextKind ContextFactKind
+	EntitySide EntityIndexSide
+	Classification Classification
+	Mode StorageMode
+	Alternatives []QueryCoordinateAlternativeView
+}
+const QueryCorrelation QueryCoordinateKind = 11
+const QueryDeployment QueryCoordinateKind = 10
+const QueryEntityIndex QueryCoordinateKind = 7
+const QueryEventIndex QueryCoordinateKind = 6
+const QueryScope QueryCoordinateKind = 1
+const QueryService QueryCoordinateKind = 9
+const QuerySource QueryCoordinateKind = 14
+const QuerySubject QueryCoordinateKind = 2
+const QueryTarget QueryCoordinateKind = 5
+const QueryTrace QueryCoordinateKind = 13
 type RangeBounds uint8
-    const ClosedOpenRange RangeBounds = iota + 1 ...
-type ReadValueView struct{ ... }
+type ReadValueView struct {
+	Field FieldName
+	Codec CodecDescription
+	Classification Classification
+	Knowledge FieldKnowledge
+	Canonical []byte
+}
 type Reason string
-type ReasonCodes struct{ ... }
-    func Reasons(values ...Reason) ReasonCodes
-type ReasonPolicy[E any] struct{ ... }
-    func EventReason[E any](codes ReasonCodes, extract func(E) Reason) ReasonPolicy[E]
-    func OptionalEventReason[E any](codes ReasonCodes, extract func(E) Reason) ReasonPolicy[E]
-type Receipt struct{ ... }
-type ReconcileKey struct{ ... }
-    func ReconcileKeyOf(err error) (ReconcileKey, bool)
-type ReconstructField[M, V any] struct{ ... }
-    func HistoricalReconstruct[M, V any](name FieldName, codec Codec[V], classification Classification) ReconstructField[M, V]
-    func Reconstruct[M, V any](source string, name FieldName, codec Codec[V], classification Classification) ReconstructField[M, V]
-    func ReconstructBy[M, F, V any](member ModelMember[M, F], name FieldName, codec Codec[V], ...) ReconstructField[M, V]
-type RecordOption interface{ ... }
-    func InOperation(operation *OperationType) RecordOption
-    func WithIdempotencyKey(key IdempotencyKey) RecordOption
-type RecordResult struct{ ... }
-type Recorder struct{ ... }
+type ReasonCodes struct {
+	<unexported fields>
+}
+type ReasonPolicy[E any] struct {
+	<unexported fields>
+}
+func Reasons(...Reason) ReasonCodes
+func ReasonsFor(ControlAction, ReasonCodes) ControlReasonPolicy
+type Receipt struct {
+	<unexported fields>
+}
+func (Receipt) Disposition() AppendDisposition
+func (Receipt) HoldDisposition() (HoldTransitionDisposition, bool)
+func (Receipt) HoldProjection() (HoldProjectionStateView, bool)
+func (Receipt) OperationID() OperationID
+func (Receipt) ReconcileKey() (ReconcileKey, bool)
+func (Receipt) RevisionID() RevisionID
+func (Receipt) Settlement() Settlement
+type ReconcileKey struct {
+	<unexported fields>
+}
+func (ReconcileKey) Bytes() []byte
+func (ReconcileKey) String() string
+func ReconcileKeyOf(error) (ReconcileKey, bool)
+const ReconcileTransaction RecoveryMode = 2
+func Reconstruct[M any, V any](string, FieldName, Codec[V], Classification) ReconstructField[M, V]
+func ReconstructBy[M any, F any, V any](ModelMember[M, F], FieldName, Codec[V], Classification) ReconstructField[M, V]
+type ReconstructField[M any, V any] struct {
+	<unexported fields>
+}
+const ReconstructionQuery QueryClass = 17
+const RecordIdempotencyDomain IdempotencyDomainKind = 1
+type RecordOption interface {
+	<unexported methods>
+}
+type RecordResult struct {
+	<unexported fields>
+}
+func (RecordResult) Receipt() (Receipt, bool)
+func (RecordResult) RetryToken() (RetryToken, bool)
+const RecordedTimeAxis TimeAxis = 3
+type Recorder struct {
+	<unexported fields>
+}
+func (*Recorder) Capture(context.Context, Draft) (CaptureResult, error)
+func (*Recorder) CheckAtomicSource(any) error
+func (*Recorder) Lookup(context.Context, ReconcileKey) (LookupResult, error)
+func (*Recorder) Record(context.Context, Draft, ...RecordOption) (RecordResult, error)
+func (*Recorder) Retry(context.Context, RetryToken) (RecordResult, error)
+func (*Recorder) Stage(context.Context, Draft) error
+func (*Recorder) String() string
+func (*Recorder) Within(context.Context, GroupSpec, func(context.Context) error) (GroupResult, error)
 type RecoveryMode uint8
-    const RetryStandalone RecoveryMode = iota + 1 ...
+func Redacted[M any, V any](string, FieldName, Codec[V], Classification) EntityField[M]
+func RedactedBy[M any, F any, V any](ModelMember[M, F], FieldName, Codec[V], Classification) EntityField[M]
 type Reference string
+func ReferenceText() Codec[Reference]
+const Refused StoreOutcome = 9
+func RejectedWire(FixtureName, CodecVersion, []byte) CodecWireFixture
+const Replayed AppendDisposition = 2
 type RequesterCommitment [32]byte
+func RequireSignature(SignatureDescription) IntegrityPolicy
+const Required Consequence = 1
 type Resource string
-type ResourceHistory[M any, ID comparable] struct{ ... }
-type ResourcePolicy[M any, ID comparable] struct{ ... }
-    func Define[M any, ID comparable](policy Policy[M, ID]) *ResourcePolicy[M, ID]
+const ResourceDeclaration DeclarationKind = 1
+type ResourceHistory[M any, ID comparable] struct {
+	<unexported fields>
+}
+func (*ResourceHistory[M, ID]) Revisions(context.Context, Query) (Page, error)
+func (*ResourceHistory[M, ID]) Subject(context.Context, ID, Query) (Page, error)
+const ResourceHistoryQuery QueryClass = 2
+type ResourcePolicy[M any, ID comparable] struct {
+	<unexported fields>
+}
+func (*ResourcePolicy[M, ID]) Action(EntityAction) OperationMember
+func (*ResourcePolicy[M, ID]) BaselineChanged(*M, *M) (EntityDraft, bool, error)
+func (*ResourcePolicy[M, ID]) Changed(*M, *M) (EntityDraft, bool, error)
+func (*ResourcePolicy[M, ID]) CheckModel(*github.com/frostgrove/vv/crud.Meta) error
+func (*ResourcePolicy[M, ID]) Created(*M) (EntityDraft, error)
+func (*ResourcePolicy[M, ID]) Deleted(*M) (EntityDraft, error)
+func (*ResourcePolicy[M, ID]) Description() DeclarationDescription
+func (*ResourcePolicy[M, ID]) History(*History) *ResourceHistory[M, ID]
+func (*ResourcePolicy[M, ID]) Restored(*M) (EntityDraft, error)
+func (*ResourcePolicy[M, ID]) SubjectRef(ID) (SubjectRef, error)
+func Retain(*Catalog) HistoricalCatalog
 type RetentionBasisDigest [32]byte
 type RetentionClass string
 type RetentionCohortID [32]byte
-type RetentionRule struct{ ... }
-    func KeepFor(class RetentionClass, period CalendarPeriod) RetentionRule
-    func KeepForever(class RetentionClass) RetentionRule
-    func RetentionRules(rules ...RetentionRule) []RetentionRule
-type RetentionRuleView struct{ ... }
+type RetentionRule struct {
+	<unexported fields>
+}
+type RetentionRuleView struct {
+	Class RetentionClass
+	Forever bool
+	Period CalendarPeriod
+}
+func RetentionRules(...RetentionRule) []RetentionRule
+const RetryStandalone RecoveryMode = 1
 type RetryState uint8
-    const CertainlyNotWritten RetryState = iota + 1 ...
-type RetryToken struct{ ... }
-    func RetryTokenOf(err error) (RetryToken, bool)
-type RevealRequest struct{ ... }
-type Revealer interface{ ... }
-type Revision struct{ ... }
-type RevisionAuthorizationSummaryView struct{ ... }
-type RevisionHeaderView struct{ ... }
+type RetryToken struct {
+	<unexported fields>
+}
+func (RetryToken) Mode() RecoveryMode
+func (RetryToken) ReconcileKey() ReconcileKey
+func (RetryToken) State() RetryState
+func RetryTokenOf(error) (RetryToken, bool)
+type RevealRequest struct {
+	<unexported fields>
+}
+func (RevealRequest) AAD() []byte
+func (RevealRequest) Envelope() ProtectedValue
+type Revealer interface {
+	Descriptions() []ProtectionDescription
+	Reveal(context.Context, RevealRequest) ([]byte, error)
+}
+type Revision struct {
+	<unexported fields>
+}
+func (Revision) View() RevisionWireView
+type RevisionAuthorizationSummaryView struct {
+	Resources []Resource
+	Actions []Action
+	Classifications []Classification
+	Coordinates []QueryCoordinateView
+}
+type RevisionHeaderView struct {
+	Format uint16
+	Log LogID
+	Catalog CatalogRef
+	CatalogSet CatalogSetDigest
+	Deployment DeploymentFingerprint
+	Operation OperationName
+	OperationID OperationID
+	RevisionID RevisionID
+	HasIdempotency bool
+	Idempotency IdempotencyToken
+	ObservedAt time.Time
+	Retention RetentionClass
+	Consequence Consequence
+	RetentionBasis RetentionBasisDigest
+	Authorization RevisionAuthorizationSummaryView
+	Semantic SemanticDigest
+	Envelope EnvelopeDigest
+	Integrity IntegrityDigest
+	Seal Seal
+}
 type RevisionID [16]byte
-type RevisionRef struct{ ... }
-type RevisionResult struct{ ... }
-type RevisionView struct{ ... }
-type RevisionWireView struct{ ... }
-type ScopeSelector struct{ ... }
-    func CurrentScope() ScopeSelector
+const RevisionNeighborsQuery QueryClass = 16
+type RevisionRef struct {
+	Catalog CatalogRef
+	Revision RevisionID
+}
+type RevisionResult struct {
+	<unexported fields>
+}
+func (RevisionResult) Revision() RevisionView
+type RevisionView struct {
+	Ref RevisionRef
+	Operation OperationName
+	OperationID OperationID
+	ObservedAt time.Time
+	RecordedAt time.Time
+	Retention RetentionClass
+	Consequence Consequence
+	Actors []ActorReadView
+	Context []ContextFactReadView
+	Items []ItemReadView
+}
+type RevisionWireView struct {
+	Header RevisionHeaderView
+	Actors []StoredActorView
+	Context []StoredContextFactView
+	Items []ItemWireView
+}
+const RunOnlyAlpha AttemptsProfile = 1
+func SameAuthority(Authority, Authority) bool
+func SameBacking(Backing, Backing) bool
+const ScopeContext ContextFactKind = 2
+const ScopeCurrent ScopeSelectorKind = 1
+const ScopeExact ScopeSelectorKind = 2
+func ScopeFact(ContextPresence, ProvenanceSet, Classification, StorageMode) ContextFactPolicy
+type ScopeSelector struct {
+	<unexported fields>
+}
+func (ScopeSelector) View() ScopeSelectorView
 type ScopeSelectorKind uint8
-    const ScopeCurrent ScopeSelectorKind = iota + 1 ...
-type ScopeSelectorView struct{ ... }
-type ScopedReference struct{ ... }
-type Seal struct{ ... }
-type SearchProgressView struct{ ... }
+type ScopeSelectorView struct {
+	Kind ScopeSelectorKind
+	Reference ScopedReference
+}
+type ScopedReference struct {
+	Scope Reference
+	Reference Reference
+}
+type Seal struct {
+	<unexported fields>
+}
+func (Seal) Algorithm() string
+func (Seal) Bytes() []byte
+func (Seal) KeyID() string
+func (Seal) Profile() string
+type SearchProgressView struct {
+	Pages uint32
+	Cohorts uint32
+	Revisions uint32
+	Bytes uint64
+}
+const Secret Classification = 4
 type SelectionDigest [32]byte
-type SelectorSet struct{ ... }
-type SelectorSetView struct{}
+type SelectorSet struct {
+	<unexported fields>
+}
+func (SelectorSet) View() SelectorSetView
+type SelectorSetView struct {}
 type SemanticDigest [32]byte
-type SemanticDigestDescription struct{ ... }
-type SemanticDigester interface{ ... }
-type SemanticGolden struct{ ... }
-    func AttemptCheckpointGolden(name FixtureName, checkpoint AttemptCheckpointCode, expected string) SemanticGolden
-    func AttemptFinishGolden(name FixtureName, transition AttemptTransitionKind, reason Reason, ...) SemanticGolden
-    func AttemptStartGolden(name FixtureName, expected string) SemanticGolden
-    func PolicyGolden(name FixtureName, expected string) SemanticGolden
+type SemanticDigestDescription struct {
+	Algorithm string
+	Profile string
+	KeyID string
+}
+type SemanticDigester interface {
+	Description() SemanticDigestDescription
+	Digest(context.Context, []byte) (SemanticDigest, error)
+}
+type SemanticGolden struct {
+	<unexported fields>
+}
+func Semantics(PolicyVersion, ...SemanticGolden) PolicySemantics
+const ServerDerived Provenance = 1
+const ServiceActor ActorKind = 3
+const ServiceContext ContextFactKind = 3
+func ServiceFact(ContextPresence, ProvenanceSet, Classification, StorageMode) ContextFactPolicy
 type Settlement uint8
-    const Committed Settlement = iota + 1 ...
-type SignatureDescription struct{ ... }
-type Signer interface{ ... }
+type SignatureDescription struct {
+	Algorithm string
+	Profile string
+	KeyID string
+}
+type Signer interface {
+	Description() SignatureDescription
+	Sign(context.Context, IntegrityDigest) (Seal, error)
+}
 type Source string
+const SourceContext ContextFactKind = 10
+func SourceFact(ContextPresence, ProvenanceSet, Classification, StorageMode) ContextFactPolicy
+const StaleCatalog StoreOutcome = 8
+func StaticContext(Context) (ContextResolver, error)
 type StorageMode uint8
-    const AsPlaintext StorageMode = iota + 1 ...
-type StoreCatalogState struct{ ... }
-    func NewEmptyStoreCatalogState() StoreCatalogState
-type StoreInfo interface{ ... }
+func (StorageMode) String() string
+func (StorageMode) Valid() bool
+type StoreCatalogState struct {
+	<unexported fields>
+}
+func (StoreCatalogState) Active() CatalogRef
+func (StoreCatalogState) HasActive() bool
+func (StoreCatalogState) SetDigest() CatalogSetDigest
+type StoreInfo interface {
+	Backing() Backing
+	BackingID() BackingID
+	Capabilities() Capabilities
+	Catalogs() StoreCatalogState
+	Limits() Limits
+	LogID() LogID
+}
 type StoreOutcome uint8
-    const Unclassified StoreOutcome = iota ...
-type StorePosition struct{ ... }
-type StoreQuery struct{ ... }
-type StoreQueryView struct{ ... }
-type StoredActorView struct{ ... }
-type StoredChangeView struct{ ... }
-type StoredContextFactView struct{ ... }
-type StoredHeader struct{ ... }
-type StoredHeaderData struct{ ... }
-type StoredIdentityCommitmentSetData struct{ ... }
-type StoredPage struct{ ... }
-type StoredPageData struct{ ... }
-type StoredRevision struct{ ... }
-type StoredRevisionData struct{ ... }
-type StoredRevisionView struct{ ... }
-type StoredValueView struct{ ... }
-type SubjectDescription struct{ ... }
-type SubjectPolicy[ID comparable] struct{ ... }
-    func IndexedProtectedSubject[ID comparable](mapper func(ID) string, classification Classification) SubjectPolicy[ID]
-    func PlaintextSubject[ID comparable](mapper func(ID) string, classification Classification) SubjectPolicy[ID]
-    func TokenizedSubject[ID comparable](mapper func(ID) string, classification Classification) SubjectPolicy[ID]
-type SubjectRef struct{ ... }
-type SubjectRefView struct{ ... }
+func (StoreOutcome) String() string
+func (StoreOutcome) Valid() bool
+type StorePosition struct {
+	<unexported fields>
+}
+func (StorePosition) Bytes() []byte
+func (StorePosition) String() string
+type StoreQuery struct {
+	<unexported fields>
+}
+func (StoreQuery) View() StoreQueryView
+type StoreQueryView struct {
+	Log LogID
+	Catalogs []CatalogRef
+	Class QueryClass
+	Resources []Resource
+	OperationName OperationName
+	Operation OperationID
+	Coordinates []QueryCoordinateView
+	Actions []Action
+	Classifications []Classification
+	Fields FieldProjectionView
+	Context ContextProjectionView
+	Time TimeWindowView
+	Direction HistoryDirection
+	Changed ChangedFieldFilterView
+	Outcomes []Outcome
+	Reasons []Reason
+	Limit uint32
+	MaxBytes uint64
+	Progress SearchProgressView
+	Snapshot []byte
+	SnapshotExpiry time.Time
+	After StorePosition
+}
+type StoredActorView struct {
+	Ordinal uint8
+	Kind ActorKind
+	Provenance Provenance
+	Classification Classification
+	Mode StorageMode
+	Reference StoredValueView
+}
+type StoredChangeView struct {
+	Field FieldName
+	Before StoredValueView
+	After StoredValueView
+}
+type StoredContextFactView struct {
+	Kind ContextFactKind
+	Provenance Provenance
+	Classification Classification
+	Mode StorageMode
+	Plaintext []byte
+	Redacted bool
+	Token Token
+	Protected ProtectedValue
+}
+type StoredHeader struct {
+	<unexported fields>
+}
+func (StoredHeader) AttemptProjection() (AttemptProjectionStateView, bool)
+func (StoredHeader) AttemptTransition() (AttemptTransitionWireView, bool)
+func (StoredHeader) HoldDisposition() (HoldTransitionDisposition, bool)
+func (StoredHeader) HoldProjection() (HoldProjectionStateView, bool)
+func (StoredHeader) Intent() AppendIntentDigest
+func (StoredHeader) Position() StorePosition
+func (StoredHeader) RecordedAt() time.Time
+func (StoredHeader) Revision() RevisionHeaderView
+type StoredHeaderData struct {
+	Header RevisionHeaderView
+	Intent AppendIntentDigest
+	RecordedAt time.Time
+	Position StorePosition
+	AttemptTransitionPresent bool
+	AttemptTransition AttemptTransitionWireView
+	AttemptProjection AttemptProjectionStateView
+	HoldTransitionPresent bool
+	HoldDisposition HoldTransitionDisposition
+	HoldProjection HoldProjectionStateView
+}
+type StoredIdentityCommitmentSetData struct {
+	Domain IdentityCommitmentDomain
+	Active IdentityCommitmentDescription
+	Commitments []IdentityCommitment
+}
+type StoredPage struct {
+	<unexported fields>
+}
+func (StoredPage) ExpiresAt() time.Time
+func (StoredPage) HasMore() bool
+func (StoredPage) Position() StorePosition
+func (StoredPage) Progress() SearchProgressView
+func (StoredPage) Revisions() []StoredRevision
+func (StoredPage) Snapshot() []byte
+type StoredPageData struct {
+	Revisions []StoredRevision
+	Position StorePosition
+	HasMore bool
+	Progress SearchProgressView
+	Snapshot []byte
+	ExpiresAt time.Time
+}
+type StoredRevision struct {
+	<unexported fields>
+}
+func (StoredRevision) EncodedBytes() uint64
+func (StoredRevision) View() StoredRevisionView
+type StoredRevisionData struct {
+	Revision RevisionWireView
+	RecordedAt time.Time
+	Position StorePosition
+	ActiveHoldCount uint32
+	HoldEpoch uint64
+	ActiveHoldSet HoldSetDigest
+	HoldTransitions []RevisionRef
+}
+type StoredRevisionView struct {
+	Revision RevisionWireView
+	RecordedAt time.Time
+	Position StorePosition
+	ActiveHoldCount uint32
+	HoldEpoch uint64
+	ActiveHoldSet HoldSetDigest
+	HoldTransitions []RevisionRef
+}
+type StoredValueView struct {
+	Field FieldName
+	Codec CodecDescription
+	Classification Classification
+	Mode StorageMode
+	State ValueState
+	Plaintext []byte
+	Redacted bool
+	Token Token
+	Protected ProtectedValue
+}
+type SubjectDescription struct {
+	Classification Classification
+	Mode StorageMode
+}
+const SubjectHistoryQuery QueryClass = 1
+type SubjectPolicy[ID comparable] struct {
+	<unexported fields>
+}
+type SubjectRef struct {
+	<unexported fields>
+}
+func (SubjectRef) View() SubjectRefView
+type SubjectRefView struct {
+	Resource Resource
+	Subject Reference
+	Mode StorageMode
+	Classification Classification
+}
 type Support uint8
-    const SupportUnstated Support = iota ...
-type TargetPolicy[E any] struct{ ... }
-    func EventTarget[E any](extract func(E) Reference, classification Classification, mode StorageMode) TargetPolicy[E]
-    func NoEventTarget[E any]() TargetPolicy[E]
+func (Support) String() string
+func (Support) Valid() bool
+const SupportSupported Support = 2
+const SupportUnstated Support = 0
+const SupportUnsupported Support = 1
+const SystemActor ActorKind = 4
+type TargetPolicy[E any] struct {
+	<unexported fields>
+}
+func Text() Codec[string]
+func Time() Codec[time.Time]
 type TimeAxis uint8
-    const ObservedTimeAxis TimeAxis = iota + 1 ...
-type TimeWindow struct{ ... }
-type TimeWindowView struct{ ... }
-type Token struct{ ... }
-type TokenDescription struct{ ... }
-type TokenQuery struct{ ... }
-type TokenQueryResult struct{ ... }
-type TokenizeRequest struct{ ... }
-type Tokenizer interface{ ... }
+type TimeWindow struct {
+	<unexported fields>
+}
+func (TimeWindow) View() TimeWindowView
+type TimeWindowView struct {
+	Axis TimeAxis
+	Bounded bool
+	From time.Time
+	Until time.Time
+	Bounds RangeBounds
+}
+type Token struct {
+	<unexported fields>
+}
+func (Token) Algorithm() string
+func (Token) Bytes() []byte
+func (Token) KeyID() string
+func (Token) Profile() string
+type TokenDescription struct {
+	Algorithm string
+	Profile string
+	KeyID string
+}
+type TokenQuery struct {
+	<unexported fields>
+}
+func (TokenQuery) Requests() []TokenizeRequest
+type TokenQueryResult struct {
+	<unexported fields>
+}
+func (TokenQueryResult) Tokens() []Token
+type TokenizeRequest struct {
+	<unexported fields>
+}
+func (TokenizeRequest) AAD() []byte
+func (TokenizeRequest) Description() TokenDescription
+func (TokenizeRequest) Plaintext() []byte
+func Tokenized[M any, V any](string, FieldName, Codec[V], Classification) EntityField[M]
+func TokenizedBy[M any, F any, V any](ModelMember[M, F], FieldName, Codec[V], Classification) EntityField[M]
+func TokenizedSubject[ID comparable](func(ID) string, Classification) SubjectPolicy[ID]
+type Tokenizer interface {
+	ActiveDescription() TokenDescription
+	Descriptions() []TokenDescription
+	QueryTokens(context.Context, TokenQuery) (TokenQueryResult, error)
+	Tokenize(context.Context, TokenizeRequest) (Token, error)
+}
+const TraceContext ContextFactKind = 9
+func TraceFact(ContextPresence, ProvenanceSet, Classification, StorageMode) ContextFactPolicy
+func TryAttemptCheckpointGolden(FixtureName, AttemptCheckpointCode, string) (SemanticGolden, error)
+func TryAttemptFieldsFor[F any](AttemptTransitionKind, ...AttemptField[F]) (AttemptTransitionFields[F], error)
+func TryAttemptFinish[F any](AttemptReasonPolicies, AttemptFinishFieldSet[F]) (AttemptFinishPolicy[F], error)
+func TryAttemptFinishFields[F any](...AttemptTransitionFields[F]) (AttemptFinishFieldSet[F], error)
+func TryAttemptFinishGolden(FixtureName, AttemptTransitionKind, Reason, string) (SemanticGolden, error)
+func TryAttemptOwnedBy(...AttemptOwnerFact) (AttemptContinuityPolicy, error)
+func TryAttemptReasons(...AttemptReasonPolicy) (AttemptReasonPolicies, error)
+func TryAttemptReasonsFor(AttemptTransitionKind, ReasonCodes) (AttemptReasonPolicy, error)
+func TryAttemptStart[S any](AttemptTargetPolicy[S], []AttemptField[S]) (AttemptStartPolicy[S], error)
+func TryAttemptStartGolden(FixtureName, string) (SemanticGolden, error)
+func TryAttemptTarget[S any](func(S) Reference, Classification, StorageMode) (AttemptTargetPolicy[S], error)
+func TryContextFacts(...ContextFactPolicy) (ContextPolicy, error)
+func TryDeclare[E any](EventPolicy[E]) (*EventType[E], error)
+func TryDeclareAttempt[S any, C any, F any](AttemptPolicy[S, C, F]) (*AttemptType[S, C, F], error)
+func TryDeclareOperation(OperationPolicy) (*OperationType, error)
+func TryDefine[M any, ID comparable](Policy[M, ID]) (*ResourcePolicy[M, ID], error)
+func TryDefineCodec[V any](CodecSpec, CodecEngine[V]) (Codec[V], error)
+func TryGoldenWire(FixtureName, CodecVersion, []byte, []byte) (CodecWireFixture, error)
+func TryHoldMatter(Codec[Reference], Classification, StorageMode) (HoldMatterPolicy, error)
+func TryKeepFor(RetentionClass, CalendarPeriod) (RetentionRule, error)
+func TryKeepForever(RetentionClass) (RetentionRule, error)
+func TryMember[M any, F any](func(*M) *F) (ModelMember[M, F], error)
+func TryOnlyContext(...ContextFactKind) (ContextProjection, error)
+func TryOnlyFields(...FieldName) (FieldProjection, error)
+func TryOutcomes(...Outcome) (OutcomeCodes, error)
+func TryPolicyGolden(FixtureName, string) (SemanticGolden, error)
+func TryReasons(...Reason) (ReasonCodes, error)
+func TryReasonsFor(ControlAction, ReasonCodes) (ControlReasonPolicy, error)
+func TryRejectedWire(FixtureName, CodecVersion, []byte) (CodecWireFixture, error)
+func TrySemantics(PolicyVersion, ...SemanticGolden) (PolicySemantics, error)
+func UUIDReference() Codec[Reference]
+func Uint64() Codec[uint64]
+const Unclassified StoreOutcome = 0
+const Unconfirmed StoreOutcome = 5
+const UnconfirmedFailure FailureClass = 5
+const UnreadableFailure FailureClass = 6
+const UnstatedProvenance Provenance = 0
+func Value[M any, V any](string, FieldName, Codec[V], Classification) EntityField[M]
+const ValueAbsent ValueState = 1
+func ValueBy[M any, F any, V any](ModelMember[M, F], FieldName, Codec[V], Classification) EntityField[M]
+const ValuePresent ValueState = 2
+const ValueRedacted ValueState = 3
 type ValueState uint8
-    const ValueAbsent ValueState = iota + 1 ...
-type Verifier interface{ ... }
-type Writer interface{ ... }
+const Verified Provenance = 2
+type Verifier interface {
+	Descriptions() []SignatureDescription
+	Verify(context.Context, IntegrityDigest, Seal) error
+}
+func VerifyCatalogMutations(StoreInfo, []CatalogMutationView, CatalogMutationLog) error
+func WithIdempotencyKey(IdempotencyKey) RecordOption
+const WorkloadActor ActorKind = 2
+type Writer interface {
+	StoreInfo
+	Append(context.Context, AppendRequest) (AppendResult, error)
+	BindTransaction(github.com/frostgrove/vv/crud.Executor) (Execution, error)
+	Lookup(context.Context, LookupRequest) (LookupResult, error)
+	LookupIdempotency(context.Context, IdempotencyLookupRequest) (IdempotencyLookupResult, error)
+	TransactionSource() any
+}
 ```
 
 ## github.com/frostgrove/vv/audit/auditcrud
 ```go
-func Secured[M any, ID comparable](recorder *audit.Recorder, resource *audit.ResourcePolicy[M, ID], ...) crud.Middleware[M, ID]
+func Secured[M any, ID comparable](*github.com/frostgrove/vv/audit.Recorder, *github.com/frostgrove/vv/audit.ResourcePolicy[M, ID], github.com/frostgrove/vv/crud/decorators/security.Policy[M, ID]) github.com/frostgrove/vv/crud.Middleware[M, ID]
 ```
 
 ## github.com/frostgrove/vv/audit/auditmemory
 ```go
-func WithTransaction(ctx context.Context, tx *Tx) context.Context
-type Deployment struct{ ... }
-    func NewDeployment(source *Log) (*Deployment, error)
-type Log struct{ ... }
-    func NewLog(spec LogSpec) (*Log, error)
-type LogSpec struct{ ... }
-type Spec struct{ ... }
-type Store struct{ ... }
-    func New(spec Spec) (*Store, error)
-type Tx struct{ ... }
+type Deployment struct {
+	<unexported fields>
+}
+func (*Deployment) ActivateCatalog(context.Context, github.com/frostgrove/vv/audit.CatalogRef, github.com/frostgrove/vv/audit.CatalogRef, github.com/frostgrove/vv/audit.CatalogChangeRef, github.com/frostgrove/vv/audit.CatalogActivationProof) error
+func (*Deployment) Backing() github.com/frostgrove/vv/audit.Backing
+func (*Deployment) BackingID() github.com/frostgrove/vv/audit.BackingID
+func (*Deployment) Capabilities() github.com/frostgrove/vv/audit.Capabilities
+func (*Deployment) CatalogMutations(context.Context) (github.com/frostgrove/vv/audit.CatalogMutationLog, error)
+func (*Deployment) Catalogs() github.com/frostgrove/vv/audit.StoreCatalogState
+func (*Deployment) Close() error
+func (*Deployment) InstallAndActivate(context.Context, *github.com/frostgrove/vv/audit.CatalogSet, github.com/frostgrove/vv/audit.CatalogChangeRef) error
+func (*Deployment) InstallCatalog(context.Context, github.com/frostgrove/vv/audit.Manifest, github.com/frostgrove/vv/audit.CatalogChangeRef) error
+func (*Deployment) Limits() github.com/frostgrove/vv/audit.Limits
+func (*Deployment) LogID() github.com/frostgrove/vv/audit.LogID
+func (*Deployment) VerifyCatalogs(context.Context, []github.com/frostgrove/vv/audit.Manifest) error
+type Log struct {
+	<unexported fields>
+}
+type LogSpec struct {
+	Limits github.com/frostgrove/vv/audit.LimitSpec
+}
+func New(Spec) (*Store, error)
+func NewDeployment(*Log) (*Deployment, error)
+func NewLog(LogSpec) (*Log, error)
+type Spec struct {
+	Log *Log
+	Clock func() time.Time
+}
+type Store struct {
+	<unexported fields>
+}
+func (*Store) Append(context.Context, github.com/frostgrove/vv/audit.AppendRequest) (github.com/frostgrove/vv/audit.AppendResult, error)
+func (*Store) AttemptState(context.Context, github.com/frostgrove/vv/audit.AttemptStateQuery) (github.com/frostgrove/vv/audit.AttemptStateResult, error)
+func (*Store) AttemptTypeState(context.Context, github.com/frostgrove/vv/audit.AttemptTypeStateQuery) (github.com/frostgrove/vv/audit.AttemptTypeStateResult, error)
+func (*Store) Backing() github.com/frostgrove/vv/audit.Backing
+func (*Store) BackingID() github.com/frostgrove/vv/audit.BackingID
+func (*Store) Begin(context.Context) (*Tx, error)
+func (*Store) BindTransaction(github.com/frostgrove/vv/crud.Executor) (github.com/frostgrove/vv/audit.Execution, error)
+func (*Store) Capabilities() github.com/frostgrove/vv/audit.Capabilities
+func (*Store) CatalogMutations(context.Context) (github.com/frostgrove/vv/audit.CatalogMutationLog, error)
+func (*Store) Catalogs() github.com/frostgrove/vv/audit.StoreCatalogState
+func (*Store) Close() error
+func (*Store) Inspect(context.Context, github.com/frostgrove/vv/audit.ExactQuery) (github.com/frostgrove/vv/audit.ExactResult, error)
+func (*Store) Limits() github.com/frostgrove/vv/audit.Limits
+func (*Store) LockAttemptType(context.Context, github.com/frostgrove/vv/audit.AttemptTypeStateQuery) (github.com/frostgrove/vv/audit.AttemptTypeLease, error)
+func (*Store) LogID() github.com/frostgrove/vv/audit.LogID
+func (*Store) Lookup(context.Context, github.com/frostgrove/vv/audit.LookupRequest) (github.com/frostgrove/vv/audit.LookupResult, error)
+func (*Store) LookupIdempotency(context.Context, github.com/frostgrove/vv/audit.IdempotencyLookupRequest) (github.com/frostgrove/vv/audit.IdempotencyLookupResult, error)
+func (*Store) Search(context.Context, github.com/frostgrove/vv/audit.StoreQuery) (github.com/frostgrove/vv/audit.StoredPage, error)
+func (*Store) TransactionSource() any
+type Tx struct {
+	<unexported fields>
+}
+func (*Tx) Commit(context.Context) error
+func (*Tx) Rollback(context.Context) error
+func WithTransaction(context.Context, *Tx) context.Context
 ```
 
 ## github.com/frostgrove/vv/audit/audittest
 ```go
-func BasicHistory(t *testing.T, factory HistoryStoreFactory)
-func ExactHistory(t *testing.T, factory HistoryStoreFactory)
-type HistoryStore struct{ ... }
+type AttemptStore struct {
+	Writer github.com/frostgrove/vv/audit.Writer
+	Log github.com/frostgrove/vv/audit.Log
+	Exact github.com/frostgrove/vv/audit.ExactLog
+	Attempts github.com/frostgrove/vv/audit.AttemptLog
+	Types github.com/frostgrove/vv/audit.AttemptTypeState
+	Reopen func() (AttemptStore, error)
+	Close func() error
+}
+type AttemptStoreFactory func(context.Context, AttemptStoreRequest) (AttemptStore, error)
+type AttemptStoreRequest struct {
+	Catalogs *github.com/frostgrove/vv/audit.CatalogSet
+	Change github.com/frostgrove/vv/audit.CatalogChangeRef
+	Clock func() time.Time
+}
+func BasicHistory(*testing.T, HistoryStoreFactory)
+func ExactHistory(*testing.T, HistoryStoreFactory)
+type HistoryStore struct {
+	Writer github.com/frostgrove/vv/audit.Writer
+	Log github.com/frostgrove/vv/audit.Log
+	Exact github.com/frostgrove/vv/audit.ExactLog
+	AmbientTransaction func(context.Context) (context.Context, func() error, error)
+	Close func() error
+}
 type HistoryStoreFactory func(context.Context, HistoryStoreRequest) (HistoryStore, error)
-type HistoryStoreRequest struct{ ... }
+type HistoryStoreRequest struct {
+	Catalogs *github.com/frostgrove/vv/audit.CatalogSet
+	Change github.com/frostgrove/vv/audit.CatalogChangeRef
+	Clock func() time.Time
+}
+func RunOnlyAttempts(*testing.T, AttemptStoreFactory)
 ```
 
 ## github.com/frostgrove/vv/auth
 ```go
-const HeaderAuthorization = "Authorization"
-const SchemeBearer = "Bearer"
-var ErrAmbiguousGuardOrder = errors.New("auth: ambiguous guard order")
-var ErrCredentialCardinality = errors.New("auth: credential source must contain at most one value")
-var ErrGuardNotReady = errors.New("auth: guard is not ready")
-var ErrUnauthenticated = errors.New("auth: authentication is required")
-func AmbiguousCredential(reason string) error
-func HasAll(p Principal, ps ...Permission) bool
-func HasAny(p Principal, ps ...Permission) bool
-func InAny(p Principal, rs ...Role) bool
-func Unauthenticated(reason string) error
-func Unauthenticatedf(format string, args ...any) error
-func WithPrincipal(ctx context.Context, p Principal) context.Context
-type Authenticator interface{ ... }
-    func Chain(as ...Authenticator) Authenticator
+func AmbiguousCredential(string) error
+type Authenticator interface {
+	Authenticate(context.Context, Credential) (Principal, error)
+}
 type AuthenticatorFunc func(ctx context.Context, c Credential) (Principal, error)
-type Claims struct{ ... }
-type Credential struct{ ... }
-    func Bearer(header string) (Credential, bool)
-    func ParseAuthorization(header string) (Credential, bool)
-type Guard struct{ ... }
-    func NewGuard(a Authenticator, options ...Option) *Guard
+func (AuthenticatorFunc) Authenticate(context.Context, Credential) (Principal, error)
+func Bearer(string) (Credential, bool)
+func Chain(...Authenticator) Authenticator
+type Claims struct {
+	Sub string
+	Roles []Role
+	Permissions []Permission
+	Attrs map[string]any
+}
+func (Claims) Attr(string) (any, bool)
+func (Claims) Grant(RoleMap) Claims
+func (Claims) Has(Permission) bool
+func (Claims) In(Role) bool
+func (Claims) Subject() string
+type Credential struct {
+	Scheme string
+	Token string
+}
+func (Credential) Is(string) bool
+var ErrAmbiguousGuardOrder error
+var ErrCredentialCardinality error
+var ErrGuardNotReady error
+var ErrUnauthenticated error
+type Guard struct {
+	<unexported fields>
+}
+func (*Guard) Authenticate(context.Context, func(name string) string) (context.Context, error)
+func (*Guard) AuthenticateValues(context.Context, func(name string) []string) (context.Context, error)
+func (*Guard) Validate() error
+func HasAll(Principal, ...Permission) bool
+func HasAny(Principal, ...Permission) bool
+func Header(string) Option
+const HeaderAuthorization untyped string = "Authorization"
+func InAny(Principal, ...Role) bool
 type Lookout func(get func(name string) string) (Credential, bool, error)
-type Observer interface{ ... }
-    func Sampled(oneIn int, observer Observer) Observer
+func Lookup(func(get func(name string) string) (Credential, bool)) Option
+func LookupOrRefuse(Lookout) Option
+func NewGuard(Authenticator, ...Option) *Guard
+func Observe(Observer) Option
+type Observer interface {
+	Refused(context.Context, Reason)
+}
 type ObserverFunc func(ctx context.Context, reason Reason)
-type Option interface{ ... }
-    func Header(name string) Option
-    func Lookup(fn func(get func(name string) string) (Credential, bool)) Option
-    func LookupOrRefuse(fn Lookout) Option
-    func Observe(observer Observer) Option
-    func Optional() Option
+func (ObserverFunc) Refused(context.Context, Reason)
+type Option interface {
+	<unexported methods>
+}
+func Optional() Option
+func ParseAuthorization(string) (Credential, bool)
 type Permission string
-    func Scopes(scope string) []Permission
-type Principal interface{ ... }
-    func PrincipalFrom(ctx context.Context) (Principal, bool)
-    func Require(ctx context.Context) (Principal, error)
-type Reason struct{ ... }
+type Principal interface {
+	Attr(string) (any, bool)
+	Has(Permission) bool
+	In(Role) bool
+	Subject() string
+}
+func PrincipalFrom(context.Context) (Principal, bool)
+type Reason struct {
+	Kind ReasonKind
+	Detail string
+	Err error
+}
+const ReasonAmbiguousCredential ReasonKind = "ambiguous_credential"
+const ReasonGuardUnusable ReasonKind = "guard_unusable"
 type ReasonKind string
-    const ReasonNoCredential ReasonKind = "no_credential" ...
+const ReasonNoCredential ReasonKind = "no_credential"
+const ReasonNoPrincipal ReasonKind = "no_principal"
+const ReasonRejected ReasonKind = "rejected"
+func Require(context.Context) (Principal, error)
 type Role string
 type RoleMap map[Role][]Permission
+func (RoleMap) Expand(...Role) []Permission
+func Sampled(int, Observer) Observer
+const SchemeBearer untyped string = "Bearer"
+func Scopes(string) []Permission
+func Unauthenticated(string) error
+func Unauthenticatedf(string, ...any) error
+func WithPrincipal(context.Context, Principal) context.Context
 ```
 
 ## github.com/frostgrove/vv/auth/apikey
 ```go
-const DefaultScheme = "ApiKey"
-var ErrUnsupportedStaticAttribute = errors.New("apikey: Static cannot safely snapshot a Claims attribute")
-var ErrUnsupportedStaticPrincipal = errors.New("apikey: Static can safely snapshot only auth.Claims principals")
-func Header(name string) auth.Option
-func New(s Store, options ...Option) auth.Authenticator
+func AnyScheme() Option
+const DefaultScheme untyped string = "ApiKey"
+var ErrUnsupportedStaticAttribute error
+var ErrUnsupportedStaticPrincipal error
+func Header(string) github.com/frostgrove/vv/auth.Option
+func New(Store, ...Option) github.com/frostgrove/vv/auth.Authenticator
 type Option func(*authenticator)
-    func AnyScheme() Option
-    func Scheme(name string) Option
-type Store interface{ ... }
-    func Static(keys map[string]auth.Principal) Store
-    func TryStatic(keys map[string]auth.Principal) (Store, error)
-type StoreFunc func(ctx context.Context, key string) (auth.Principal, bool, error)
+func Scheme(string) Option
+func Static(map[string]github.com/frostgrove/vv/auth.Principal) Store
+type Store interface {
+	Lookup(context.Context, string) (github.com/frostgrove/vv/auth.Principal, bool, error)
+}
+type StoreFunc func(ctx context.Context, key string) (github.com/frostgrove/vv/auth.Principal, bool, error)
+func (StoreFunc) Lookup(context.Context, string) (github.com/frostgrove/vv/auth.Principal, bool, error)
+func TryStatic(map[string]github.com/frostgrove/vv/auth.Principal) (Store, error)
 ```
 
 ## github.com/frostgrove/vv/auth/http/authhttp
 ```go
-const HeaderOrigin = "Origin" ...
-var ErrSurface = errors.New("the API and its access declarations disagree")
-func Cookie(name string) auth.Option
-func Locale(r *http.Request) context.Context
-func Preflight(method string, header func(name string) string) bool
-func Refuse(w http.ResponseWriter, r *http.Request, rd porthttp.Renderer, err error)
-func RendererFor(options []porthttp.RenderOption) porthttp.Renderer
-func UnsafeCookieWinsOverAuthorization(name string) auth.Option
-func Verify(declared []Endpoint, mounted []Route, options ...VerifyOption) error
-func VerifyAreas(mounted []Route, areas ...Area) error
-type Area struct{ ... }
-    func Rooted(declared ...Endpoint) Area
-    func Under(prefix string, declared ...Endpoint) Area
-type Endpoint struct{ ... }
-    func AtRoot(endpoint Endpoint) Endpoint
-    func Authenticated(method, path, why string) Endpoint
-    func Public(method, path, why string) Endpoint
-    func Requires(method, path string, permissions ...auth.Permission) Endpoint
-type Route struct{ ... }
+type Area struct {
+	Prefix string
+	Declared []Endpoint
+	<unexported fields>
+}
+func AtRoot(Endpoint) Endpoint
+func Authenticated(string, string, string) Endpoint
+func Cookie(string) github.com/frostgrove/vv/auth.Option
+type Endpoint struct {
+	Method string
+	Path string
+	Needs []github.com/frostgrove/vv/auth.Permission
+	Why string
+	Absolute bool
+}
+func (Endpoint) Declares() bool
+var ErrSurface error
+const HeaderOrigin untyped string = "Origin"
+const HeaderRequestMethod untyped string = "Access-Control-Request-Method"
+func Locale(*net/http.Request) context.Context
+func Preflight(string, func(name string) string) bool
+const PreflightStatus untyped int = 204
+func Public(string, string, string) Endpoint
+func Refuse(net/http.ResponseWriter, *net/http.Request, github.com/frostgrove/vv/port/porthttp.Renderer, error)
+func RendererFor([]github.com/frostgrove/vv/port/porthttp.RenderOption) github.com/frostgrove/vv/port/porthttp.Renderer
+func Requires(string, string, ...github.com/frostgrove/vv/auth.Permission) Endpoint
+func Rooted(...Endpoint) Area
+type Route struct {
+	Method string
+	Path string
+}
+func Under(string, ...Endpoint) Area
+func UnderPrefix(string) VerifyOption
+func UnsafeCookieWinsOverAuthorization(string) github.com/frostgrove/vv/auth.Option
+func Verify([]Endpoint, []Route, ...VerifyOption) error
+func VerifyAreas([]Route, ...Area) error
 type VerifyOption func(*verification)
-    func UnderPrefix(prefix string) VerifyOption
 ```
 
 ## github.com/frostgrove/vv/auth/http/authnet
 ```go
-const AnyMethod = "*"
-func AnswerPreflight(middleware func(http.Handler) http.Handler, preflight http.Handler) func(http.Handler) http.Handler
-func Handler(guard *auth.Guard, next http.Handler, options ...porthttp.RenderOption) http.Handler
-func Middleware(guard *auth.Guard, options ...porthttp.RenderOption) func(http.Handler) http.Handler
-func SkipPreflight(middleware func(http.Handler) http.Handler) func(http.Handler) http.Handler
-type Surface struct{ ... }
-    func Over(mux *http.ServeMux) *Surface
+func AnswerPreflight(func(net/http.Handler) net/http.Handler, net/http.Handler) func(net/http.Handler) net/http.Handler
+const AnyMethod untyped string = "*"
+func Handler(*github.com/frostgrove/vv/auth.Guard, net/http.Handler, ...github.com/frostgrove/vv/port/porthttp.RenderOption) net/http.Handler
+func Middleware(*github.com/frostgrove/vv/auth.Guard, ...github.com/frostgrove/vv/port/porthttp.RenderOption) func(net/http.Handler) net/http.Handler
+func Over(*net/http.ServeMux) *Surface
+func SkipPreflight(func(net/http.Handler) net/http.Handler) func(net/http.Handler) net/http.Handler
+type Surface struct {
+	<unexported fields>
+}
+func (*Surface) Handle(string, net/http.Handler)
+func (*Surface) HandleFunc(string, func(net/http.ResponseWriter, *net/http.Request))
+func (*Surface) Handler() net/http.Handler
+func (*Surface) Mux() *net/http.ServeMux
+func (*Surface) Routes() []github.com/frostgrove/vv/auth/http/authhttp.Route
+func (*Surface) Verify([]github.com/frostgrove/vv/auth/http/authhttp.Endpoint, ...github.com/frostgrove/vv/auth/http/authhttp.VerifyOption) error
+func (*Surface) VerifyAreas(...github.com/frostgrove/vv/auth/http/authhttp.Area) error
 ```
 
 ## github.com/frostgrove/vv/cache
 ```go
-const MaxNamespacePartBytes = 128 ...
-const MaxCapabilityBytes = 64 ...
-const MaxMemoEntries = 4096 ...
-const MaximumTransientWaiters = 4096 ...
-const MaxCodecIDBytes = 64
-const MaxObservers = 8
-const MaxWaiverReasonBytes = 256
-var ErrInvalid = errors.New("invalid cache declaration or call") ...
-var Hot = profile("Hot", MemoryProviderKind, hotDefaults()) ...
-func Activate(ctx context.Context, spec ActivationSpec) error
-func CapabilityOf[T any](backend Backend) (T, bool)
-func Supports(backend Backend, capability Capability) bool
-func WithMemo(ctx context.Context, memo *Memo) context.Context
-type ActivationError struct{ ... }
-type ActivationSpec struct{ ... }
-type Address struct{ ... }
-type Backend interface{ ... }
-type BackendDescriber interface{ ... }
-type BackendDescription struct{ ... }
-    func BackendDescriptionOf(backend Backend) (description BackendDescription, ok bool)
+func Absent[V any]() LoadResult[V]
+func Activate(context.Context, ActivationSpec) error
+type ActivationError struct {
+	<unexported fields>
+}
+func (*ActivationError) Error() string
+func (*ActivationError) Problems() []string
+func (*ActivationError) Unwrap() error
+type ActivationSpec struct {
+	Application string
+	Environment string
+	Runtime Runtime
+	Sets []Set
+	Providers []Provider
+	Resources []ResourceDeclaration
+	RequireDeclaredResources bool
+}
+type Address struct {
+	NamespaceDigest [32]byte
+	PartitionDigest [32]byte
+	KeyDigest [32]byte
+}
+func (Address) String() string
+func AlwaysFresh(string) Freshness
+const AlwaysFreshMode FreshnessMode = "always"
+const AsMiss FailurePolicy = 2
+func Auto[K any, V any](...Profile) *Cache[K, V]
+type Backend interface {
+	Delete(context.Context, Address) error
+	Get(context.Context, Address, ReadLimit) ([]byte, bool, error)
+	Put(context.Context, Address, []byte, Expiry) error
+}
+type BackendDescriber interface {
+	DescribeBackend() BackendDescription
+}
+type BackendDescription struct {
+	Name string
+	Topology BackendTopology
+	ExpiryClock ExpiryClock
+	MaxItemBytes int
+	RelativeExpiry bool
+	MaxRelativeExpiry time.Duration
+	CapacityBounded bool
+}
+func BackendDescriptionOf(Backend) (BackendDescription, bool)
+const BackendReason Reason = "backend"
 type BackendTopology uint8
-    const ProcessBackend BackendTopology = iota + 1 ...
-type BackendWrapper interface{ ... }
-type BatchLoader[K, V any] func(context.Context, []K) ([]LoadResult[V], error)
-type BatchReadLimit struct{ ... }
-type BatchReader interface{ ... }
-    func BatchReaderOf(backend Backend) (BatchReader, bool)
-type Cache[K, V any] struct{ ... }
-    func Auto[K, V any](profiles ...Profile) *Cache[K, V]
-    func New[K, V any](runtime Runtime, backend Backend, scope Scope[K], keys KeyCodec[K], ...) (*Cache[K, V], error)
+type BackendWrapper interface {
+	Backend
+	Next() Backend
+}
+type BatchLoader[K any, V any] func(context.Context, []K) ([]LoadResult[V], error)
+const BatchReadCapability Capability = "batch_read"
+type BatchReadLimit struct {
+	MaxItems int
+	MaxItemBytes int
+	MaxTotalBytes int64
+}
+type BatchReader interface {
+	GetMany(context.Context, []Address, BatchReadLimit) (map[Address][]byte, error)
+}
+func BatchReaderOf(Backend) (BatchReader, bool)
+func BoundedClockSkew(time.Duration) (SkewPolicy, error)
+const BoundedSharedSkew SkewMode = 2
+func Bytes(ValueSchema) Codec[[]byte]
+type Cache[K any, V any] struct {
+	<unexported fields>
+}
+func (*Cache[K, V]) Check(context.Context) error
+func (*Cache[K, V]) Describe() Descriptor
+func (*Cache[K, V]) Forget(context.Context, K) error
+func (*Cache[K, V]) Lookup(context.Context, K) (Result[V], error)
+func (*Cache[K, V]) LookupMany(context.Context, []K) ([]Result[V], error)
+func (*Cache[K, V]) Put(context.Context, K, V) error
+func (*Cache[K, V]) Resolve(context.Context, K, Loader[K, V]) (Result[V], error)
+func (*Cache[K, V]) ResolveMany(context.Context, []K, BatchLoader[K, V]) ([]Result[V], error)
+func (*Cache[K, V]) Stats() LocalStats
+func CacheAbsenceFor(time.Duration) NegativeCaching
+const CacheTenant ResourceTenant = "cache"
+const CancelLoader LastWaiterPolicy = 1
 type Capability string
-    const BatchReadCapability Capability = "batch_read" ...
-    func DeclaredCapabilitiesOf(backend Backend) []Capability
-type CapabilityDeclarer interface{ ... }
-type Clock interface{ ... }
-type ClockSkewDescription struct{ ... }
-type Codec[V any] interface{ ... }
-    func Bytes(schema ValueSchema) Codec[[]byte]
-    func JSON[V any](schema ValueSchema) Codec[V]
-    func RFC3339UTC(schema ValueSchema) Codec[time.Time]
-    func String(schema ValueSchema) Codec[string]
-    func TrustedJSON[V any](schema ValueSchema) Codec[V]
-type CompareAndSwapper interface{ ... }
-    func CompareAndSwapperOf(backend Backend) (CompareAndSwapper, bool)
+type CapabilityDeclarer interface {
+	DeclaredCapabilities() []Capability
+}
+func CapabilityOf[T any](Backend) (T, bool)
+func CapacityBoundedRetention() Retention
+const CapacityOnlyExpiry ExpiryMode = 2
+const CapacityRetentionMode RetentionMode = "capacity"
+const CleanAbsent Presence = 2
+type Clock interface {
+	NewTimer(time.Duration) Timer
+	Now() time.Time
+}
+type ClockSkewDescription struct {
+	Mode SkewMode
+	Bound time.Duration
+}
+type Codec[V any] interface {
+	Decode([]byte, ValueLimit) (V, error)
+	Encode(V, ValueLimit) ([]byte, error)
+	ID() string
+	Schema() ValueSchema
+}
+const CompareAndSwapCapability Capability = "compare_and_swap"
+type CompareAndSwapper interface {
+	CompareAndSwap(context.Context, Address, []byte, []byte, Expiry) (bool, error)
+}
+func CompareAndSwapperOf(Backend) (CompareAndSwapper, bool)
+const CompleteOutcome Outcome = "complete"
+const CorruptAsMiss CorruptionPolicy = 2
+const CorruptReason Reason = "corrupt"
 type CorruptionPolicy uint8
-    const RefuseCorrupt CorruptionPolicy = iota + 1 ...
-type Declaration interface{ ... }
-type DecodeCharger[V any] interface{ ... }
-type Definition[K, V any] struct{ ... }
-    func Define[K, V any](target *Cache[K, V], spec DefinitionSpec[K, V]) (*Definition[K, V], error)
-    func MustDefine[K, V any](target *Cache[K, V], spec DefinitionSpec[K, V]) *Definition[K, V]
-type DefinitionSpec[K, V any] struct{ ... }
-type Descriptor struct{ ... }
-type Error struct{ ... }
-type Event struct{ ... }
-type Expiry struct{ ... }
+type Declaration interface {
+	Describe() Descriptor
+	<unexported methods>
+}
+func DeclaredCapabilitiesOf(Backend) []Capability
+type DecodeCharger[V any] interface {
+	DecodeCharge(V) int64
+}
+func Define[K any, V any](*Cache[K, V], DefinitionSpec[K, V]) (*Definition[K, V], error)
+type Definition[K any, V any] struct {
+	<unexported fields>
+}
+func (*Definition[K, V]) Describe() Descriptor
+type DefinitionSpec[K any, V any] struct {
+	Name string
+	Namespace NamespaceTemplate
+	Scope ScopePlan[K]
+	Keys KeyCodec[K]
+	Values Codec[V]
+	Provider ProviderID
+	Requires []Capability
+}
+const DeletedOutcome Outcome = "deleted"
+type Descriptor struct {
+	LogicalName string
+	Application string
+	Environment string
+	Purpose string
+	Generation Generation
+	Scope ScopeMode
+	KeyVersion KeyVersion
+	ValueCodec string
+	ValueSchema ValueSchema
+	Profile string
+	ProviderKind ProviderKind
+	ProviderID ProviderID
+	ResourceID ResourceID
+	Requires []Capability
+	Backend BackendDescription
+	ClockSkew ClockSkewDescription
+	Policy PolicyDescription
+	Activated bool
+}
+var Disabled Profile
+var Durable Profile
+const DurableSecurityTenant ResourceTenant = "durable-security"
+const DurableWorkTenant ResourceTenant = "durable-work"
+var ErrBackend error
+var ErrClosed error
+var ErrCorrupt error
+var ErrInvalid error
+var ErrLoader error
+var ErrNotActivated error
+var ErrSaturated error
+var ErrTooLarge error
+type Error struct {
+	Operation string
+	Cause error
+}
+func (*Error) Error() string
+func (*Error) Unwrap() error
+const ErrorOutcome Outcome = "error"
+type Event struct {
+	Cache string
+	Operation Operation
+	Outcome Outcome
+	Reason Reason
+	Items int
+	EncodedBytes int64
+	PayloadBytes int64
+	Memoized bool
+}
+func ExpireAfter(time.Duration) Retention
+func Expiring(time.Duration, time.Duration) Freshness
+const ExpiringFreshnessMode FreshnessMode = "expiring"
+const ExpiringNegativeMode NegativeMode = "expiring"
+const ExpiringRetentionMode RetentionMode = "expiring"
+type Expiry struct {
+	Mode ExpiryMode
+	RetainFor time.Duration
+	<unexported fields>
+}
 type ExpiryClock uint8
-    const ProcessExpiryClock ExpiryClock = iota + 1 ...
 type ExpiryMode uint8
-    const RelativeExpiry ExpiryMode = iota + 1 ...
 type FailurePolicy uint8
-    const Propagate FailurePolicy = iota + 1 ...
+const FinishLoader LastWaiterPolicy = 2
+func FlightSaturation(FlightSaturationPolicy) Option
 type FlightSaturationMode uint8
-    const RejectFlight FlightSaturationMode = iota + 1 ...
-type FlightSaturationPolicy struct{ ... }
-    func Reject() FlightSaturationPolicy
-    func ServeStale() FlightSaturationPolicy
-    func WaitBounded(timeout time.Duration) FlightSaturationPolicy
-type Freshness struct{ ... }
-    func AlwaysFresh(reason string) Freshness
-    func Expiring(freshFor, staleFor time.Duration) Freshness
-type FreshnessDescription struct{ ... }
+type FlightSaturationPolicy struct {
+	<unexported fields>
+}
+const ForgetOperation Operation = "forget"
+const Found Presence = 1
+func FreshFor(time.Duration, time.Duration) Option
+type Freshness struct {
+	<unexported fields>
+}
+type FreshnessDescription struct {
+	Mode FreshnessMode
+	FreshFor time.Duration
+	StaleFor time.Duration
+	Reason string
+}
 type FreshnessMode string
-    const ExpiringFreshnessMode FreshnessMode = "expiring" ...
 type Generation uint32
-type HealthChecker interface{ ... }
-    func HealthCheckerOf(backend Backend) (HealthChecker, bool)
-type JitterDescription struct{ ... }
+func Global[K any](Namespace) Scope[K]
+func GlobalPlan[K any]() ScopePlan[K]
+const GlobalScopeMode ScopeMode = "global"
+func HMACKey[K any](KeyCodec[K], []byte) (KeyCodec[K], error)
+const HealthCapability Capability = "health"
+type HealthChecker interface {
+	CheckBackend(context.Context) error
+}
+func HealthCheckerOf(Backend) (HealthChecker, bool)
+const Hit State = 1
+const HitOutcome Outcome = "hit"
+var Hot Profile
+const Ignore FailurePolicy = 3
+func JSON[V any](ValueSchema) Codec[V]
+func JitterBy(JitterPolicy) Option
+type JitterDescription struct {
+	Mode JitterMode
+	SubtractUpTo time.Duration
+}
 type JitterMode string
-    const NoJitterMode JitterMode = "disabled" ...
-type JitterPolicy struct{ ... }
-    func NoJitter() JitterPolicy
-    func SubtractUpTo(duration time.Duration) JitterPolicy
-type KeyCodec[K any] interface{ ... }
-    func HMACKey[K any](inner KeyCodec[K], secret []byte) (KeyCodec[K], error)
-    func KeyFunc[K any](version KeyVersion, encode func(K, KeyLimit) ([]byte, error)) (KeyCodec[K], error)
-    func MustKeyFunc[K any](version KeyVersion, encode func(K, KeyLimit) ([]byte, error)) KeyCodec[K]
-    func MustStructKey[K any](version KeyVersion) KeyCodec[K]
-    func StructKey[K any](version KeyVersion) (KeyCodec[K], error)
-type KeyLimit struct{ ... }
+type JitterPolicy struct {
+	<unexported fields>
+}
+type KeyCodec[K any] interface {
+	Encode(K, KeyLimit) ([]byte, error)
+	Version() KeyVersion
+}
+func KeyFunc[K any](KeyVersion, func(K, KeyLimit) ([]byte, error)) (KeyCodec[K], error)
+type KeyLimit struct {
+	MaxBytes int
+}
 type KeyVersion uint32
 type LastWaiterPolicy uint8
-    const CancelLoader LastWaiterPolicy = iota + 1 ...
-type LoadResult[V any] struct{ ... }
-    func Absent[V any]() LoadResult[V]
-    func Present[V any](value V) LoadResult[V]
-type Loader[K, V any] func(context.Context, K) (LoadResult[V], error)
-type LocalStats struct{ ... }
-type Maintainer interface{ ... }
-    func MaintainerOf(backend Backend) (Maintainer, bool)
-type MaintenanceLimit struct{ ... }
-type MaintenanceReport struct{ ... }
-type Memo struct{ ... }
-    func MemoFrom(ctx context.Context) *Memo
-    func NewMemo(limit MemoLimit) (*Memo, error)
-type MemoLimit struct{ ... }
-type MemoStats struct{ ... }
-type Namespace struct{ ... }
-    func MustNamespace(application, environment, purpose string, generation Generation) Namespace
-    func NamespaceOf(application, environment, purpose string, generation Generation) (Namespace, error)
-type NamespaceTemplate struct{ ... }
-type NegativeCaching struct{ ... }
-    func CacheAbsenceFor(duration time.Duration) NegativeCaching
-    func NoNegativeCaching() NegativeCaching
-type NegativeDescription struct{ ... }
+const LimitReason Reason = "limit"
+const LoadManyOperation Operation = "load_many"
+const LoadOperation Operation = "load"
+type LoadResult[V any] struct {
+	Value V
+	Presence Presence
+}
+const Loaded State = 5
+const LoadedOutcome Outcome = "loaded"
+type Loader[K any, V any] func(context.Context, K) (LoadResult[V], error)
+type LocalStats struct {
+	CoordinationEntries int
+	ActiveFlights int
+	FlightWaiters int
+	CoordinationWaiters int
+	ActiveWrites int
+	TransientBytes int64
+	TransientWaiters int
+	TimedContextWatchers int
+}
+const LookupManyOperation Operation = "lookup_many"
+const LookupOperation Operation = "lookup"
+type Maintainer interface {
+	DeleteExpired(context.Context, MaintenanceLimit) (MaintenanceReport, error)
+}
+func MaintainerOf(Backend) (Maintainer, bool)
+const MaintenanceCapability Capability = "maintenance"
+type MaintenanceLimit struct {
+	MaxItems int
+	MaxBytes int64
+}
+type MaintenanceReport struct {
+	Removed int
+	More bool
+}
+const MaxCapabilityBytes untyped int = 64
+const MaxCodecIDBytes untyped int = 64
+const MaxDeclaredCapabilities untyped int = 32
+const MaxEncodedKeyBytes untyped int = 65536
+func MaxFlights(int) Option
+const MaxMemoEntries untyped int = 4096
+const MaxMemoTotalBytes int64 = 67108864
+const MaxNamespacePartBytes untyped int = 128
+const MaxObservers untyped int = 8
+const MaxTagBytes untyped int = 128
+func MaxTransientBytes(int64) Option
+func MaxTransientWaiters(int) Option
+func MaxValueBytes(int) Option
+const MaxWaiverReasonBytes untyped int = 256
+const MaximumTransientWaiters untyped int = 4096
+type Memo struct {
+	<unexported fields>
+}
+func (*Memo) Close()
+func (*Memo) Stats() MemoStats
+func MemoFrom(context.Context) *Memo
+type MemoLimit struct {
+	MaxEntries int
+	MaxBytes int64
+}
+type MemoStats struct {
+	Entries int
+	Bytes int64
+	Hits int64
+	Stores int64
+	Refused int64
+	Closed bool
+}
+const MemoryProviderKind ProviderKind = "memory"
+const Miss State = 2
+const MissOutcome Outcome = "miss"
+func MustDefine[K any, V any](*Cache[K, V], DefinitionSpec[K, V]) *Definition[K, V]
+func MustKeyFunc[K any](KeyVersion, func(K, KeyLimit) ([]byte, error)) KeyCodec[K]
+func MustNamespace(string, string, string, Generation) Namespace
+func MustObservers(...Observer) Observer
+func MustSet(...Declaration) Set
+func MustStructKey[K any](KeyVersion) KeyCodec[K]
+type Namespace struct {
+	<unexported fields>
+}
+func (Namespace) Digest() [32]byte
+func (Namespace) String() string
+func NamespaceOf(string, string, string, Generation) (Namespace, error)
+type NamespaceTemplate struct {
+	Purpose string
+	Generation Generation
+}
+const Negative State = 3
+type NegativeCaching struct {
+	<unexported fields>
+}
+type NegativeDescription struct {
+	Mode NegativeMode
+	Duration time.Duration
+}
+func NegativeFor(time.Duration) Option
 type NegativeMode string
-    const NoNegativeMode NegativeMode = "disabled" ...
-type Observer interface{ ... }
-    func MustObservers(children ...Observer) Observer
-    func Observers(children ...Observer) (Observer, error)
+const NegativeOutcome Outcome = "negative"
+func New[K any, V any](Runtime, Backend, Scope[K], KeyCodec[K], Codec[V], Policy) (*Cache[K, V], error)
+func NewMemo(MemoLimit) (*Memo, error)
+func NewSet(...Declaration) (Set, error)
+func NewTag(string) (Tag, error)
+func NoJitter() JitterPolicy
+const NoJitterMode JitterMode = "disabled"
+func NoNegative() Option
+func NoNegativeCaching() NegativeCaching
+const NoNegativeMode NegativeMode = "disabled"
+const NoProviderKind ProviderKind = "none"
+type Observer interface {
+	Observe(context.Context, Event)
+}
+func Observers(...Observer) (Observer, error)
+func OnCorruption(CorruptionPolicy) Option
+func OnInvalidateFailure(FailurePolicy) Option
+func OnReadFailure(FailurePolicy) Option
 type Operation string
-    const LookupOperation Operation = "lookup" ...
-type Option interface{ ... }
-    func FlightSaturation(value FlightSaturationPolicy) Option
-    func FreshFor(fresh, stale time.Duration) Option
-    func JitterBy(value JitterPolicy) Option
-    func MaxFlights(value int) Option
-    func MaxTransientBytes(value int64) Option
-    func MaxTransientWaiters(value int) Option
-    func MaxValueBytes(value int) Option
-    func NegativeFor(value time.Duration) Option
-    func NoNegative() Option
-    func OnCorruption(value CorruptionPolicy) Option
-    func OnInvalidateFailure(value FailurePolicy) Option
-    func OnReadFailure(value FailurePolicy) Option
-    func RetainFor(value time.Duration) Option
-    func RetainUntilEvicted() Option
-    func StaleBehavior(value StalePolicy) Option
-    func TransientSaturation(value TransientSaturationPolicy) Option
+type Option interface {
+	<unexported methods>
+}
 type Outcome string
-    const HitOutcome Outcome = "hit" ...
+func Partitioned[K any](Namespace, Partitioner[K]) Scope[K]
+func PartitionedPlan[K any](Partitioner[K]) ScopePlan[K]
+const PartitionedScopeMode ScopeMode = "partitioned"
 type Partitioner[K any] func(K, KeyLimit) ([]byte, error)
-type Policy struct{ ... }
-type PolicyDescription struct{ ... }
+type Policy struct {
+	Freshness Freshness
+	Retention Retention
+	Negative NegativeCaching
+	Jitter JitterPolicy
+	MaxKeyBytes int
+	MaxValueBytes int
+	MaxValueDepth int
+	MaxFlights int
+	FlightSaturation FlightSaturationPolicy
+	Stale StalePolicy
+	LastWaiter LastWaiterPolicy
+	MaxBatchKeys int
+	MaxBatchKeyBytes int
+	MaxBatchResultBytes int
+	MaxTransientBytes int64
+	MaxTransientWaiters int
+	TransientSaturation TransientSaturationPolicy
+	ReadFailure FailurePolicy
+	InvalidateFailure FailurePolicy
+	Corruption CorruptionPolicy
+	<unexported fields>
+}
+type PolicyDescription struct {
+	Disabled bool
+	Freshness FreshnessDescription
+	Retention RetentionDescription
+	Negative NegativeDescription
+	Jitter JitterDescription
+	MaxKeyBytes int
+	MaxValueBytes int
+	MaxValueDepth int
+	MaxFlights int
+	FlightSaturation FlightSaturationMode
+	FlightWait time.Duration
+	Stale StalePolicy
+	LastWaiter LastWaiterPolicy
+	MaxBatchKeys int
+	MaxBatchKeyBytes int
+	MaxBatchResultBytes int
+	MaxTransientBytes int64
+	MaxTransientWaiters int
+	ReservedTransientBytes int64
+	ConcurrentResolves int
+	TransientSaturation TransientSaturationMode
+	TransientWait time.Duration
+	ReadFailure FailurePolicy
+	InvalidateFailure FailurePolicy
+	Corruption CorruptionPolicy
+}
+const PostgreSQLProviderKind ProviderKind = "postgresql"
 type Presence uint8
-    const Found Presence = iota + 1 ...
-type Profile struct{ ... }
-type ProfileDescription struct{ ... }
-type Provider struct{ ... }
+func Present[V any](V) LoadResult[V]
+const ProcessBackend BackendTopology = 1
+const ProcessExpiryClock ExpiryClock = 1
+type Profile struct {
+	<unexported fields>
+}
+func (Profile) Build() (Policy, error)
+func (Profile) Describe() ProfileDescription
+func (Profile) Name() string
+func (Profile) ProviderKind() ProviderKind
+func (Profile) With(...Option) Profile
+type ProfileDescription struct {
+	Name string
+	Provider ProviderKind
+	Policy PolicyDescription
+}
+const Propagate FailurePolicy = 1
+type Provider struct {
+	ID ProviderID
+	Resource ResourceID
+	Kind ProviderKind
+	Backend Backend
+	ClockSkew SkewPolicy
+	Fallback bool
+}
 type ProviderID string
 type ProviderKind string
-    const MemoryProviderKind ProviderKind = "memory" ...
-type Random interface{ ... }
-type ReadLimit struct{ ... }
+const PutOperation Operation = "put"
+func RFC3339UTC(ValueSchema) Codec[time.Time]
+type Random interface {
+	Uint64() uint64
+}
+type ReadLimit struct {
+	MaxBytes int
+}
 type Reason string
-    const BackendReason Reason = "backend" ...
-type ResourceDeclaration struct{ ... }
+const RedisProviderKind ProviderKind = "redis"
+const RefreshBlocking StalePolicy = 1
+const RefuseCorrupt CorruptionPolicy = 1
+func Reject() FlightSaturationPolicy
+const RejectFlight FlightSaturationMode = 1
+func RejectTransient() TransientSaturationPolicy
+const RejectTransientMode TransientSaturationMode = 1
+const RelativeExpiry ExpiryMode = 1
+type ResourceDeclaration struct {
+	Resource ResourceID
+	Tenants []ResourceTenant
+	Waiver SharedResourceWaiver
+}
 type ResourceID string
 type ResourceTenant string
-    const CacheTenant ResourceTenant = "cache" ...
-type Result[V any] struct{ ... }
-type Retention struct{ ... }
-    func CapacityBoundedRetention() Retention
-    func ExpireAfter(duration time.Duration) Retention
-type RetentionDescription struct{ ... }
+type Result[V any] struct {
+	Value V
+	State State
+	<unexported fields>
+}
+func RetainFor(time.Duration) Option
+func RetainUntilEvicted() Option
+type Retention struct {
+	<unexported fields>
+}
+type RetentionDescription struct {
+	Mode RetentionMode
+	ExpiresAfter time.Duration
+}
 type RetentionMode string
-    const ExpiringRetentionMode RetentionMode = "expiring" ...
-type Runtime struct{ ... }
-type Scope[K any] struct{ ... }
-    func Global[K any](namespace Namespace) Scope[K]
-    func Partitioned[K any](namespace Namespace, partition Partitioner[K]) Scope[K]
+type Runtime struct {
+	Clock Clock
+	ClockSkew SkewPolicy
+	Random Random
+	Observer Observer
+	LoaderTimeout time.Duration
+	BackendTimeout time.Duration
+	CleanupTimeout time.Duration
+}
+const RuntimeReason Reason = "runtime"
+type Scope[K any] struct {
+	<unexported fields>
+}
 type ScopeMode string
-    const GlobalScopeMode ScopeMode = "global" ...
-type ScopePlan[K any] struct{ ... }
-    func GlobalPlan[K any]() ScopePlan[K]
-    func PartitionedPlan[K any](partition Partitioner[K]) ScopePlan[K]
-type Set struct{ ... }
-    func MustSet(declarations ...Declaration) Set
-    func NewSet(declarations ...Declaration) (Set, error)
-type SharedResourceWaiver struct{ ... }
-    func SharedDurableSecurity(reason string) SharedResourceWaiver
+type ScopePlan[K any] struct {
+	<unexported fields>
+}
+const ServeOnLoaderError StalePolicy = 3
+func ServeStale() FlightSaturationPolicy
+const ServeStaleFlight FlightSaturationMode = 2
+const ServeWhileRefreshing StalePolicy = 2
+const ServerExpiryClock ExpiryClock = 2
+type Set struct {
+	<unexported fields>
+}
+func (Set) Describe() []Descriptor
+const SharedBackend BackendTopology = 2
+func SharedDurableSecurity(string) SharedResourceWaiver
+type SharedResourceWaiver struct {
+	<unexported fields>
+}
+func (SharedResourceWaiver) Granted() bool
+func (SharedResourceWaiver) Reason() string
+func SingleProcessClock() SkewPolicy
+const SingleProcessSkew SkewMode = 1
 type SkewMode uint8
-    const SingleProcessSkew SkewMode = iota + 1 ...
-type SkewPolicy struct{ ... }
-    func BoundedClockSkew(bound time.Duration) (SkewPolicy, error)
-    func SingleProcessClock() SkewPolicy
+type SkewPolicy struct {
+	<unexported fields>
+}
+const Stale State = 4
+func StaleBehavior(StalePolicy) Option
+const StaleOutcome Outcome = "stale"
 type StalePolicy uint8
-    const RefreshBlocking StalePolicy = iota + 1 ...
 type State uint8
-    const Hit State = iota + 1 ...
-type Tag struct{ ... }
-    func NewTag(value string) (Tag, error)
-type TagInvalidator interface{ ... }
-    func TagInvalidatorOf(backend Backend) (TagInvalidator, bool)
-type Timer interface{ ... }
-type Transactional interface{ ... }
-    func TransactionalOf(backend Backend) (Transactional, bool)
+const StoredOutcome Outcome = "stored"
+func String(ValueSchema) Codec[string]
+func StructKey[K any](KeyVersion) (KeyCodec[K], error)
+const SubtractJitterMode JitterMode = "subtract"
+func SubtractUpTo(time.Duration) JitterPolicy
+const SupersededOutcome Outcome = "superseded"
+func Supports(Backend, Capability) bool
+type Tag struct {
+	<unexported fields>
+}
+func (Tag) IsZero() bool
+func (Tag) String() string
+func (Tag) Value() string
+const TagInvalidationCapability Capability = "tag_invalidation"
+type TagInvalidator interface {
+	InvalidateTag(context.Context, Namespace, Tag) error
+}
+func TagInvalidatorOf(Backend) (TagInvalidator, bool)
+type Timer interface {
+	C() <-chan time.Time
+	Stop() bool
+}
+const TransactionCapability Capability = "transaction"
+type Transactional interface {
+	InTransaction(context.Context, func(context.Context, Backend) error) error
+}
+func TransactionalOf(Backend) (Transactional, bool)
+func TransientSaturation(TransientSaturationPolicy) Option
 type TransientSaturationMode uint8
-    const RejectTransientMode TransientSaturationMode = iota + 1 ...
-type TransientSaturationPolicy struct{ ... }
-    func RejectTransient() TransientSaturationPolicy
-    func WaitForTransient(timeout time.Duration) TransientSaturationPolicy
-type ValueLimit struct{ ... }
+type TransientSaturationPolicy struct {
+	<unexported fields>
+}
+func TrustedJSON[V any](ValueSchema) Codec[V]
+type ValueLimit struct {
+	MaxBytes int
+	MaxDecodedBytes int
+	MaxDepth int
+}
 type ValueSchema uint32
+func WaitBounded(time.Duration) FlightSaturationPolicy
+const WaitForFlight FlightSaturationMode = 3
+func WaitForTransient(time.Duration) TransientSaturationPolicy
+const WaitForTransientMode TransientSaturationMode = 2
+var Warm Profile
+func WithMemo(context.Context, *Memo) context.Context
 ```
 
 ## github.com/frostgrove/vv/cache/cachememory
 ```go
-const ChargeModelVersion = 1 ...
-const MaxObservers = 8
-func EntryCharge(valueBytes int) (int64, error)
-type Backend struct{ ... }
-    func New(limits Limits, options ...Option) (*Backend, error)
-type Clock interface{ ... }
-type Event struct{ ... }
-type Limits struct{ ... }
-type Observer interface{ ... }
-    func MustObservers(children ...Observer) Observer
-    func Observers(children ...Observer) (Observer, error)
+const AddressChargeBytes int64 = 96
+type Backend struct {
+	<unexported fields>
+}
+func (*Backend) CheckBackend(context.Context) error
+func (*Backend) Close() error
+func (*Backend) Delete(context.Context, github.com/frostgrove/vv/cache.Address) error
+func (*Backend) DescribeBackend() github.com/frostgrove/vv/cache.BackendDescription
+func (*Backend) Get(context.Context, github.com/frostgrove/vv/cache.Address, github.com/frostgrove/vv/cache.ReadLimit) ([]byte, bool, error)
+func (*Backend) GetMany(context.Context, []github.com/frostgrove/vv/cache.Address, github.com/frostgrove/vv/cache.BatchReadLimit) (map[github.com/frostgrove/vv/cache.Address][]byte, error)
+func (*Backend) Put(context.Context, github.com/frostgrove/vv/cache.Address, []byte, github.com/frostgrove/vv/cache.Expiry) error
+func (*Backend) Reset() error
+func (*Backend) Stats() Stats
+func (*Backend) StatsContext(context.Context) (Stats, bool)
+const BatchItemLimitReason Reason = "batch_item_limit"
+const BatchTotalLimitReason Reason = "batch_total_limit"
+const ChargeModelVersion untyped int = 1
+type Clock interface {
+	Now() time.Time
+}
+const CloseOperation Operation = "close"
+const CloseReason Reason = "close"
+const CompleteOutcome Outcome = "complete"
+const DeleteOperation Operation = "delete"
+const DeletedOutcome Outcome = "deleted"
+func EntryCharge(int) (int64, error)
+type Event struct {
+	Operation Operation
+	Outcome Outcome
+	Reason Reason
+	Items int
+	ValueBytes int64
+	ChargedBytes int64
+}
+const EvictOperation Operation = "evict"
+const EvictedOutcome Outcome = "evicted"
+const ExpiredReason Reason = "expired"
+const FixedEntryChargeBytes int64 = 352
+const GetManyOperation Operation = "get_many"
+const GetOperation Operation = "get"
+const HitOutcome Outcome = "hit"
+type Limits struct {
+	MaxEntries int
+	MaxBytes int64
+	MaxItemBytes int
+}
+const MaxBytesReason Reason = "max_bytes"
+const MaxEntriesReason Reason = "max_entries"
+const MaxItemBytesReason Reason = "max_item_bytes"
+const MaxObservers untyped int = 8
+const MetadataReserveBytes int64 = 256
+const MissOutcome Outcome = "miss"
+func MustObservers(...Observer) Observer
+func New(Limits, ...Option) (*Backend, error)
+type Observer interface {
+	Observe(context.Context, Event)
+}
+func Observers(...Observer) (Observer, error)
 type Operation string
-    const GetOperation Operation = "get" ...
-type Option interface{ ... }
-    func WithClock(clock Clock) Option
-    func WithObserver(observer Observer) Option
+type Option interface {
+	<unexported methods>
+}
 type Outcome string
-    const HitOutcome Outcome = "hit" ...
+const PutOperation Operation = "put"
+const ReadLimitReason Reason = "read_limit"
 type Reason string
-    const ExpiredReason Reason = "expired" ...
-type Stats struct{ ... }
+const RejectedOutcome Outcome = "rejected"
+const ReplacedOutcome Outcome = "replaced"
+const ResetOperation Operation = "reset"
+const ResetReason Reason = "reset"
+type Stats struct {
+	Entries int
+	ChargedBytes int64
+	Limits Limits
+	Closed bool
+}
+const StoredOutcome Outcome = "stored"
+func WithClock(Clock) Option
+func WithObserver(Observer) Option
 ```
 
 ## github.com/frostgrove/vv/cache/cachetest
 ```go
-var ErrPauseCanceled = errors.New("cachetest: pause canceled")
-func Run(t *testing.T, factory Factory)
-type Capacity struct{ ... }
-type Clock struct{ ... }
-    func ClockAt(start time.Time) *Clock
-    func NewClock() *Clock
-type Controller struct{ ... }
-    func MustController(next cache.Backend) *Controller
-    func NewController(next cache.Backend) (*Controller, error)
+type Capacity struct {
+	MaxEntries int
+	BytePressureValueBytes int
+}
+type Clock struct {
+	<unexported fields>
+}
+func (*Clock) Advance(time.Duration) error
+func (*Clock) MustAdvance(time.Duration)
+func (*Clock) NewTimer(time.Duration) github.com/frostgrove/vv/cache.Timer
+func (*Clock) Now() time.Time
+func (*Clock) PendingTimers() int
+func ClockAt(time.Time) *Clock
+type Controller struct {
+	<unexported fields>
+}
+func (*Controller) Backend() github.com/frostgrove/vv/cache.Backend
+func (*Controller) FailNext(Operation, error) error
+func (*Controller) MustFailNext(Operation, error)
+func (*Controller) MustPauseNext(Operation) *Pause
+func (*Controller) PauseNext(Operation) (*Pause, error)
+func (*Controller) Records() []Record
+func (*Controller) Reset()
+const DeleteOperation Operation = "delete"
+var ErrPauseCanceled error
 type Factory func(*testing.T) Harness
-type Harness struct{ ... }
-type Observer struct{ ... }
-    func NewObserver() *Observer
+const GetManyOperation Operation = "get_many"
+const GetOperation Operation = "get"
+type Harness struct {
+	Backend github.com/frostgrove/vv/cache.Backend
+	Runtime github.com/frostgrove/vv/cache.Runtime
+	Advance func(time.Duration) error
+	Close func() error
+	Capacity *Capacity
+	CapacityNotProbed string
+	VerifyCancellation func(*testing.T)
+	<unexported fields>
+}
+func MustController(github.com/frostgrove/vv/cache.Backend) *Controller
+func NewClock() *Clock
+func NewController(github.com/frostgrove/vv/cache.Backend) (*Controller, error)
+func NewObserver() *Observer
+func NewRandom(...uint64) *Random
+type Observer struct {
+	<unexported fields>
+}
+func (*Observer) Events() []github.com/frostgrove/vv/cache.Event
+func (*Observer) Observe(context.Context, github.com/frostgrove/vv/cache.Event)
+func (*Observer) Reset()
+func (*Observer) Wait(context.Context, int) ([]github.com/frostgrove/vv/cache.Event, error)
 type Operation string
-    const GetOperation Operation = "get" ...
-type Pause struct{ ... }
-type Random struct{ ... }
-    func NewRandom(values ...uint64) *Random
-type Record struct{ ... }
+type Pause struct {
+	<unexported fields>
+}
+func (*Pause) HasEntered() bool
+func (*Pause) Release()
+func (*Pause) Wait(context.Context) error
+const PutOperation Operation = "put"
+type Random struct {
+	<unexported fields>
+}
+func (*Random) Uint64() uint64
+type Record struct {
+	Operation Operation
+	Address github.com/frostgrove/vv/cache.Address
+	Items int
+	ValueBytes int64
+	Found bool
+	Failed bool
+}
+func Run(*testing.T, Factory)
+```
+
+## github.com/frostgrove/vv/cmd/vv-otel-gen
+```go
+type Attribute struct {
+	Name string "json:\"name\""
+	Type string "json:\"type\""
+	Source string "json:\"source\""
+	PrivacyClass string "json:\"privacy_class\""
+	MetricEligible bool "json:\"metric_eligible\""
+	Maturity string "json:\"maturity\""
+	MaxValues int "json:\"max_values,omitempty\""
+	MaxBytes int "json:\"max_bytes,omitempty\""
+	Charset string "json:\"charset,omitempty\""
+	Domains []string "json:\"domains,omitempty\""
+	Owner string "json:\"owner\""
+	Vocabulary string "json:\"vocabulary,omitempty\""
+}
+type Binding struct {
+	Const string "json:\"const,omitempty\""
+	Domain string "json:\"domain,omitempty\""
+	Values []string "json:\"values,omitempty\""
+	Declared bool "json:\"declared,omitempty\""
+	Optional bool "json:\"optional,omitempty\""
+}
+type Component struct {
+	SourceCoverage string "json:\"source_coverage\""
+	SourceRationale string "json:\"source_rationale\""
+	WireValue string "json:\"wire_value\""
+	Source string "json:\"source\""
+	Maturity string "json:\"maturity\""
+	SpanNameDomains []string "json:\"span_name_domains,omitempty\""
+	Operations Vocabulary "json:\"operations\""
+	Outcomes Vocabulary "json:\"outcomes\""
+	Vocabularies map[string]Vocabulary "json:\"vocabularies\""
+}
+type Domain struct {
+	Type string "json:\"type\""
+	Values []string "json:\"values\""
+}
+type Exports struct {
+	Constants map[string]string "json:\"constants\""
+	SpanHelpers map[string]SpanHelper "json:\"span_helpers\""
+	ErrorCodeDomain string "json:\"error_code_domain\""
+	DefaultHistogram string "json:\"default_histogram\""
+	ResourceAttribute string "json:\"resource_attribute\""
+}
+type InterfaceRef struct {
+	File string "json:\"file\""
+	Type string "json:\"type\""
+}
+type Inventory struct {
+	Kind string "json:\"kind\""
+	File string "json:\"file,omitempty\""
+	Type string "json:\"type,omitempty\""
+	Symbol string "json:\"symbol\""
+	Members []SourceMember "json:\"members\""
+	Excluded []SourceExclusion "json:\"excluded,omitempty\""
+	Interfaces []InterfaceRef "json:\"interfaces,omitempty\""
+}
+type LogCorrelation struct {
+	Provider string "json:\"provider\""
+	Selection string "json:\"selection\""
+	Collision string "json:\"collision\""
+	Keys map[string]LogKey "json:\"keys\""
+}
+type LogKey struct {
+	Name string "json:\"name\""
+	GoName string "json:\"go_name\""
+	Format string "json:\"format\""
+	Length int "json:\"length\""
+}
+type MappingEntry struct {
+	From string "json:\"from\""
+	To string "json:\"to\""
+}
+type MigrationMetadata struct {
+	From string "json:\"from\""
+	To string "json:\"to\""
+	Status string "json:\"status\""
+	Since string "json:\"since\""
+	Policy string "json:\"policy\""
+	Note string "json:\"note\""
+	WireChanges []string "json:\"wire_changes\""
+	SignalIDs map[string]int "json:\"signal_ids\""
+}
+type NumericBound string
+func (*NumericBound) UnmarshalJSON([]byte) error
+func (NumericBound) MarshalJSON() ([]byte, error)
+func (NumericBound) String() string
+type Registry struct {
+	ContractVersion string "json:\"contract_version\""
+	Scope ScopeConfig "json:\"scope\""
+	Domains map[string]Domain "json:\"domains\""
+	Attributes map[string]Attribute "json:\"attributes\""
+	Components map[string]Component "json:\"components\""
+	AttributeSets map[string]map[string]Binding "json:\"attribute_sets\""
+	Signals map[string]Signal "json:\"signals\""
+	Migration MigrationMetadata "json:\"migration\""
+	Exports Exports "json:\"exports\""
+	LogCorrelation LogCorrelation "json:\"log_correlation\""
+	RetiredSignals []string "json:\"retired_signals,omitempty\""
+	GlobalDomains []string "json:\"global_domains\""
+	SourceShapes map[string]SourceShape "json:\"source_shapes\""
+	SourceFacts map[string]SourceFact "json:\"source_facts\""
+}
+type ScopeConfig struct {
+	Name string "json:\"name\""
+	Version string "json:\"version\""
+}
+type ShapeMember struct {
+	Type string "json:\"type\""
+	Signals []string "json:\"signals,omitempty\""
+	Attributes []string "json:\"attributes,omitempty\""
+	Gates []string "json:\"gates,omitempty\""
+	Nested string "json:\"nested,omitempty\""
+	Excluded string "json:\"excluded,omitempty\""
+}
+type Signal struct {
+	Inputs []string "json:\"inputs\""
+	DeclaredSources map[string][]string "json:\"declared_sources,omitempty\""
+	ValueSource string "json:\"value_source,omitempty\""
+	ComputedSource string "json:\"computed_source,omitempty\""
+	SignalID int "json:\"signal_id\""
+	Provider string "json:\"provider\""
+	APIKind string "json:\"api_kind,omitempty\""
+	Kind string "json:\"kind\""
+	Name string "json:\"name\""
+	Component string "json:\"component\""
+	Instrument string "json:\"instrument,omitempty\""
+	NumberType string "json:\"number_type,omitempty\""
+	Unit string "json:\"unit,omitempty\""
+	Description string "json:\"description\""
+	Source string "json:\"source\""
+	PrivacyClass string "json:\"privacy_class\""
+	Maturity string "json:\"maturity\""
+	Semconv string "json:\"semconv\""
+	Availability string "json:\"availability\""
+	SpanKind string "json:\"span_kind,omitempty\""
+	NameDomain string "json:\"name_domain,omitempty\""
+	Boundaries []float64 "json:\"boundaries,omitempty\""
+	Min NumericBound "json:\"min,omitempty\""
+	Max NumericBound "json:\"max,omitempty\""
+	SeriesBudget int "json:\"series_budget,omitempty\""
+	RecordWhen string "json:\"record_when,omitempty\""
+	Variants []Variant "json:\"variants\""
+	GoName string "json:\"go_name,omitempty\""
+	BoundariesGoName string "json:\"boundaries_go_name,omitempty\""
+}
+type SignalAvailabilityHistory struct {
+	Format string "json:\"format\""
+	Signals map[string][]string "json:\"signals\""
+}
+type SignalHistory struct {
+	Format string "json:\"format\""
+	Assigned map[string]int "json:\"assigned\""
+}
+type SourceExclusion struct {
+	Value string "json:\"value\""
+	Reason string "json:\"reason\""
+}
+type SourceFact struct {
+	ID int "json:\"id\""
+	Component string "json:\"component\""
+	Shape string "json:\"shape\""
+	Member string "json:\"member\""
+}
+type SourceMember struct {
+	Symbol string "json:\"symbol\""
+	Value string "json:\"value\""
+}
+type SourcePredicate struct {
+	Fact string "json:\"fact\""
+	Operator string "json:\"operator\""
+	Value int64 "json:\"value\""
+}
+type SourceShape struct {
+	Availability string "json:\"availability\""
+	Evolution string "json:\"evolution,omitempty\""
+	Components []string "json:\"components\""
+	Kind string "json:\"kind\""
+	File string "json:\"file\""
+	Type string "json:\"type\""
+	Scope string "json:\"scope\""
+	Members map[string]ShapeMember "json:\"members\""
+}
+type SpanHelper struct {
+	Signal string "json:\"signal\""
+}
+type Variant struct {
+	Base string "json:\"base,omitempty\""
+	Attributes map[string]Binding "json:\"attributes\""
+	Absent []string "json:\"absent,omitempty\""
+	Status string "json:\"status,omitempty\""
+	When []SourcePredicate "json:\"when,omitempty\""
+}
+type Vocabulary struct {
+	Source Inventory "json:\"source\""
+	Domain string "json:\"domain\""
+	Mapping []MappingEntry "json:\"mapping\""
+	Unknown string "json:\"unknown\""
+	Fallback string "json:\"fallback,omitempty\""
+	GoHelper string "json:\"go_helper,omitempty\""
+	GoPrefix string "json:\"go_prefix,omitempty\""
+}
+type WireAttribute struct {
+	Type string "json:\"type\""
+	Values []string "json:\"values,omitempty\""
+	Optional bool "json:\"optional\""
+	Declared bool "json:\"declared\""
+	MaxValues int "json:\"max_values,omitempty\""
+	MaxBytes int "json:\"max_bytes,omitempty\""
+	Charset string "json:\"charset,omitempty\""
+}
+type WireManifest struct {
+	SourceFacts map[string]SourceFact "json:\"source_facts\""
+	SourceShapes map[string]SourceShape "json:\"source_shapes\""
+	LogCorrelation LogCorrelation "json:\"log_correlation\""
+	Migration MigrationMetadata "json:\"migration\""
+	ContractVersion string "json:\"contract_version\""
+	Scope ScopeConfig "json:\"scope\""
+	AdditionalAttributes bool "json:\"additional_attributes\""
+	Attributes map[string]Attribute "json:\"attributes\""
+	Signals map[string]WireSignal "json:\"signals\""
+}
+type WireSignal struct {
+	Signal
+	Names []string "json:\"names\""
+	CardinalityBound int "json:\"cardinality_bound\""
+	ResolvedVariants []WireVariant "json:\"resolved_variants\""
+}
+type WireVariant struct {
+	Attributes map[string]WireAttribute "json:\"attributes\""
+	Absent []string "json:\"absent\""
+	Status string "json:\"status,omitempty\""
+	When []SourcePredicate "json:\"when,omitempty\""
+}
 ```
 
 ## github.com/frostgrove/vv/crud
 ```go
-const DefaultPreloadDepth = 5
-const PortableBindLimit = 999
-const RelTagKey = "rel"
-const TagKey = "db"
-var ErrNotFound = errors.New("crud: not found") ...
-var ReadOptions = OptionGroup{ ... } ...
-var NowFunc = time.Now
-func BindExecutor(ctx context.Context, source Source, e Executor) context.Context
-func BindLimit(d Dialect) int
-func ClaimSavepoint(ctx context.Context, source any) (int64, bool)
-func CreateOf[M any, ID comparable](core Core[M, ID], ctx context.Context, m *M) (M, error, bool)
-func CursorFieldSupported(f *Field) bool
-func DefaultValuesClause(d Dialect) string
-func DefinedFields(s *Schema, dataTransferObject any) ([]string, error)
-func DeleteScopedOf[M any, ID comparable](c Core[M, ID], ctx context.Context, deletion *ScopedDelete[ID]) (int64, error, bool)
-func ElemType(t reflect.Type) reflect.Type
-func ElemValue(v any) any
-func EncodeCursor(fields []string, values []any) (string, error)
-func EqualValues(a, b any) bool
-func ExecutorAs[T any](v any) (T, bool)
-func ExistsUnscopedOf[M any, ID comparable](c Core[M, ID], ctx context.Context, options ...Option) (bool, error, bool)
-func InAtomic(ctx context.Context, source Executor, fn func(context.Context) error) error
-func InNewTx(ctx context.Context, source Executor, fn func(context.Context) error) (err error)
-func InTx(ctx context.Context, source Executor, fn func(context.Context) error) (err error)
-func InsertBatchOf[M any, ID comparable](core Core[M, ID], ctx context.Context, models []*M, options ...BatchOption) (error, bool)
-func IsTautology(p Predicate) bool
-func IsTautologyFor(m *Meta, p Predicate) bool
-func IsTransaction(e Executor) bool
-func KeyOf(v any) any
-func LoadTombstonesOf[M any, ID comparable](core Core[M, ID], ctx context.Context, ids []ID, scope Predicate, ...) ([]M, error, bool)
-func MarshalPredicate(p Predicate) (json.RawMessage, error)
-func MayBeTautologyFor(m *Meta, p Predicate) bool
-func OptElem(t reflect.Type) reflect.Type
-func OptionSpelling(field string) string
-func RegisterTable[M any](table string)
-func RegisterTableRef[M any](table TableRef)
-func RegisterTableRefType(t reflect.Type, table TableRef)
-func RegisterTableType(t reflect.Type, table string)
-func ReplaceOf[M any, ID comparable](core Core[M, ID], ctx context.Context, m *M) (M, error, bool)
-func RestoreOf[M any, ID comparable](core Core[M, ID], ctx context.Context, ids ...ID) (int64, error, bool)
-func RestoreScopedOf[M any, ID comparable](core Core[M, ID], ctx context.Context, restore *ScopedRestore[ID]) (int64, error, bool)
-func RunPreloads(ctx context.Context, ex Executor, d Dialect, m *Meta, items any, ...) error
-func SameDataSource(a, b any) bool
-func SaveScopedOf[M any, ID comparable](c Core[M, ID], ctx context.Context, m *M, save *ScopedSave[M]) (error, bool)
-func SaveScopedOnlyOf[M any, ID comparable](c Core[M, ID], ctx context.Context, m *M, save *ScopedSave[M]) (error, bool)
-func SupportsRestore[M any, ID comparable](core Core[M, ID]) bool
-func TableNameOf(t reflect.Type) string
-func TryRegisterTable[M any](table string) error
-func TryRegisterTableRef[M any](table TableRef) error
-func TryRegisterTableRefType(t reflect.Type, table TableRef) error
-func TryRegisterTableType(t reflect.Type, table string) error
-func UnsafeBulkInsertFor(ctx context.Context, source Source, table TableRef, columns []string, ...) (int64, error)
-func UpdateCountsChangedRowsOnly(d Dialect) bool
-func UpsertTargetsPrimaryKey(d Dialect) bool
-func UsesPortableBatch(options ...BatchOption) bool
-func WithExecutor(ctx context.Context, e Executor) context.Context
-func WithExecutorFor(ctx context.Context, ds any, e Executor) context.Context
-func WithUnsafeExecutor(ctx context.Context, e Executor) context.Context
 type Action uint8
-    const ActionRead Action = iota ...
-    func Actions() []Action
-type AggregateRow struct{ ... }
-type AggregateSpec struct{ ... }
-type Aggregation struct{ ... }
-    func Avg(as, field string) Aggregation
-    func CountAll(as string) Aggregation
-    func CountDistinct(as, field string) Aggregation
-    func CountOf(as, field string) Aggregation
-    func Max(as, field string) Aggregation
-    func Min(as, field string) Aggregation
-    func Sum(as, field string) Aggregation
-type Base[M any, ID comparable] struct{ ... }
-type BatchInserter[M any] interface{ ... }
-type BatchOption struct{ ... }
-    func PortableBatch() BatchOption
-type Beginner interface{ ... }
-    func BeginnerOf(v any) (Beginner, bool)
-type BindBudget interface{ ... }
-type Change struct{ ... }
-    func DefinedChanges(s *Schema, dataTransferObject any) ([]Change, error)
-type Core[M any, ID comparable] interface{ ... }
-    func Chain[M any, ID comparable](c Core[M, ID], mw ...Middleware[M, ID]) Core[M, ID]
-type Creator[M any] interface{ ... }
-type DefaultValuesInserter interface{ ... }
-type Dialect interface{ ... }
-type Executor interface{ ... }
-    func ExecutorFor(ctx context.Context, source any) (Executor, bool)
-    func ExecutorFrom(ctx context.Context) (Executor, bool)
-    func FindExecutor(v any, matches func(Executor) bool) (Executor, bool)
-    func OwnedExecutorFor(ctx context.Context, source any) (e Executor, found, owned bool)
-    func SourceBoundExecutorFor(ctx context.Context, source any) (Executor, bool, error)
-type ExecutorScopeError struct{ ... }
+func (Action) String() string
+const ActionCreate Action = 1
+const ActionDelete Action = 3
+const ActionRead Action = 0
+const ActionRestore Action = 4
+const ActionUpdate Action = 2
+func Actions() []Action
+func After(string) Option
+func Aggregate(...Aggregation) Option
+var AggregateOptions OptionGroup
+type AggregateRow struct {
+	Group map[string]any
+	Value map[string]any
+}
+func (AggregateRow) Float(string) (float64, bool)
+func (AggregateRow) Int(string) (int64, bool)
+type AggregateSpec struct {
+	Aggregations []Aggregation
+	GroupBy []string
+}
+func (AggregateSpec) Render(*SQL)
+func (AggregateSpec) Validate(*Meta) error
+func (AggregateSpec) ValidateSort(*Meta, []Order) error
+type Aggregation struct {
+	As string
+	Fn string
+	Field string
+	Distinct bool
+}
+func And(...Predicate) Predicate
+func Asc(string) Order
+func Avg(string, string) Aggregation
+type Base[M any, ID comparable] struct {
+	Core[M, ID]
+}
+func (Base[M, ID]) Aggregate(context.Context, ...Option) ([]AggregateRow, error)
+func (Base[M, ID]) Count(context.Context, ...Option) (int64, error)
+func (Base[M, ID]) Delete(context.Context, ...ID) (int64, error)
+func (Base[M, ID]) DeleteAll(context.Context, ...Option) (int64, error)
+func (Base[M, ID]) Exists(context.Context, ...Option) (bool, error)
+func (Base[M, ID]) First(context.Context, ...Option) (M, error)
+func (Base[M, ID]) Get(context.Context, ...Option) (PaginatedResponse[M], error)
+func (Base[M, ID]) GetAll(context.Context, ...Option) ([]M, error)
+func (Base[M, ID]) GetByID(context.Context, ID, ...Option) (M, error)
+func (Base[M, ID]) Meta() *Meta
+func (Base[M, ID]) Next() Core[M, ID]
+func (Base[M, ID]) Save(context.Context, *M) (M, error)
+func (Base[M, ID]) SaveAll(context.Context, []*M) error
+func (Base[M, ID]) SaveOnly(context.Context, *M) error
+func (Base[M, ID]) Tx(context.Context, func(context.Context) error) error
+func (Base[M, ID]) Update(context.Context, ID, any, ...Option) (M, error)
+func (Base[M, ID]) UpdateAll(context.Context, any, ...Option) (int64, error)
+type BatchInserter[M any] interface {
+	InsertBatch(context.Context, []*M, ...BatchOption) error
+}
+type BatchOption struct {
+	<unexported fields>
+}
+func Before(string) Option
+type Beginner interface {
+	Begin(context.Context) (Tx, error)
+}
+func BeginnerOf(any) (Beginner, bool)
+const BelongsTo RelKind = 0
+func Between(string, any, any) Predicate
+type BindBudget interface {
+	MaxBindValues() int
+}
+func BindExecutor(context.Context, Source, Executor) context.Context
+func BindLimit(Dialect) int
+func Build(...Option) *Options
+func BuildPreloadOptions(string, ...Option) (*Options, error)
+func Chain[M any, ID comparable](Core[M, ID], ...Middleware[M, ID]) Core[M, ID]
+type Change struct {
+	Field *Field
+	Value any
+}
+func ClaimSavepoint(context.Context, any) (int64, bool)
+func Contains(string, string) Predicate
+func ContainsIgnoreCase(string, string) Predicate
+type Core[M any, ID comparable] interface {
+	Aggregate(context.Context, ...Option) ([]AggregateRow, error)
+	Count(context.Context, ...Option) (int64, error)
+	Delete(context.Context, ...ID) (int64, error)
+	DeleteAll(context.Context, ...Option) (int64, error)
+	Exists(context.Context, ...Option) (bool, error)
+	First(context.Context, ...Option) (M, error)
+	Get(context.Context, ...Option) (PaginatedResponse[M], error)
+	GetAll(context.Context, ...Option) ([]M, error)
+	GetByID(context.Context, ID, ...Option) (M, error)
+	Meta() *Meta
+	Save(context.Context, *M) (M, error)
+	SaveAll(context.Context, []*M) error
+	SaveOnly(context.Context, *M) error
+	Tx(context.Context, func(context.Context) error) error
+	Update(context.Context, ID, any, ...Option) (M, error)
+	UpdateAll(context.Context, any, ...Option) (int64, error)
+}
+func CountAll(string) Aggregation
+func CountDistinct(string, string) Aggregation
+func CountOf(string, string) Aggregation
+func CreateOf[M any, ID comparable](Core[M, ID], context.Context, *M) (M, error, bool)
+type Creator[M any] interface {
+	Create(context.Context, *M) (M, error)
+}
+func CursorFieldSupported(*Field) bool
+func CursorPredicate(*Meta, []Order, string, bool) (Predicate, error)
+func Decorate[M any, ID comparable, U any](*Repo[M, ID, U], ...Middleware[M, ID]) *Repo[M, ID, U]
+const DefaultPreloadDepth untyped int = 5
+func DefaultValuesClause(Dialect) string
+type DefaultValuesInserter interface {
+	DefaultValuesClause() string
+}
+func DefinedChanges(*Schema, any) ([]Change, error)
+func DefinedFields(*Schema, any) ([]string, error)
+func DeleteScopedOf[M any, ID comparable](Core[M, ID], context.Context, *ScopedDelete[ID]) (int64, error, bool)
+func Desc(string) Order
+type Dialect interface {
+	LockClause() string
+	Name() string
+	Placeholder(int) string
+	Quote(string) string
+	SupportsReturning() bool
+	Upsert(string, []string) string
+}
+func Distinct() Option
+func ElemType(reflect.Type) reflect.Type
+func ElemValue(any) any
+func EncodeCursor([]string, []any) (string, error)
+func EndsWith(string, string) Predicate
+func EndsWithIgnoreCase(string, string) Predicate
+func Eq(string, any) Predicate
+func EqField(string, string) Predicate
+func EqualValues(any, any) bool
+var ErrBadRequest error
+var ErrConflict error
+var ErrCreateRaced error
+var ErrExecutorScope error
+var ErrForbidden error
+var ErrMissingID error
+var ErrNoBatchInsertSupport error
+var ErrNoBulkInsertSupport error
+var ErrNoCreateSupport error
+var ErrNoReplaceSupport error
+var ErrNoTombstone error
+var ErrNoTxSupport error
+var ErrNoUnscopedExists error
+var ErrNotFound error
+var ErrReadOnly error
+var ErrSchemaNotReady error
+var ErrStaleVersion error
+var ErrUnavailable error
+type Executor interface {
+	Exec(context.Context, string, ...any) (Result, error)
+	Query(context.Context, string, ...any) (Rows, error)
+}
+func ExecutorAs[T any](any) (T, bool)
+func ExecutorFor(context.Context, any) (Executor, bool)
+func ExecutorFrom(context.Context) (Executor, bool)
+type ExecutorScopeError struct {
+	Reason ExecutorScopeReason
+}
+func (*ExecutorScopeError) Error() string
+func (*ExecutorScopeError) Unwrap() error
+const ExecutorScopeInvalidSession ExecutorScopeReason = "invalid_session"
+const ExecutorScopeInvalidSource ExecutorScopeReason = "invalid_source"
+const ExecutorScopeMismatch ExecutorScopeReason = "mismatch"
+const ExecutorScopeMissingExecutor ExecutorScopeReason = "missing_executor"
+const ExecutorScopeMissingSource ExecutorScopeReason = "missing_source"
 type ExecutorScopeReason string
-    const ExecutorScopeMismatch ExecutorScopeReason = "mismatch" ...
-type ExecutorUnwrapper interface{ ... }
-type Field struct{ ... }
-type Identified interface{ ... }
-type LikeEscaper interface{ ... }
-type Meta struct{ ... }
-    func NewMeta[M any](table string) (*Meta, error)
-    func NewMetaInSchema[M any](schema, table string) (*Meta, error)
-    func NewMetaRef[M any](table TableRef) (*Meta, error)
+const ExecutorScopeTransactionSource ExecutorScopeReason = "transaction_source"
+type ExecutorUnwrapper interface {
+	UnwrapExecutor() Executor
+}
+func ExistsUnscopedOf[M any, ID comparable](Core[M, ID], context.Context, ...Option) (bool, error, bool)
+func False() Predicate
+type Field struct {
+	Name string
+	Column string
+	Type reflect.Type
+	Offset uintptr
+	Ordinal int
+	PK bool
+	Auto bool
+	Immutable bool
+	Generated bool
+	ServerOwned bool
+	Tombstone bool
+	Secret bool
+	Version bool
+	Optional bool
+	<unexported fields>
+}
+func (*Field) AcceptsTombstoneTimestamp() bool
+func (*Field) Nullable() bool
+func FindExecutor(any, func(Executor) bool) (Executor, bool)
+func ForUpdate() Option
+func FromPtr[T any](*T) Opt[T]
+func GroupBy(...string) Option
+func Gt(string, any) Predicate
+func Gte(string, any) Predicate
+const HasMany RelKind = 2
+const HasOne RelKind = 1
+type Identified interface {
+	DataSource() any
+}
+func In(string, ...any) Predicate
+func InAny[T any](string, []T) Predicate
+func InAtomic(context.Context, Executor, func(context.Context) error) error
+func InNewTx(context.Context, Executor, func(context.Context) error) error
+func InTx(context.Context, Executor, func(context.Context) error) error
+func InsertBatchOf[M any, ID comparable](Core[M, ID], context.Context, []*M, ...BatchOption) (error, bool)
+func IsNotNull(string) Predicate
+func IsNull(string) Predicate
+func IsTautology(Predicate) bool
+func IsTautologyFor(*Meta, Predicate) bool
+func IsTransaction(Executor) bool
+func KeyOf(any) any
+func Like(string, string) Predicate
+type LikeEscaper interface {
+	LikeEscapeClause() string
+}
+func LikeIgnoreCase(string, string) Predicate
+func Limit(int) Option
+func LoadTombstonesOf[M any, ID comparable](Core[M, ID], context.Context, []ID, Predicate, *RelationScopes) ([]M, error, bool)
+func Lt(string, any) Predicate
+func Lte(string, any) Predicate
+const ManyToMany RelKind = 3
+func MapPage[A any, B any](PaginatedResponse[A], func(A) B) PaginatedResponse[B]
+func MarshalPredicate(Predicate) (encoding/json.RawMessage, error)
+func Max(string, string) Aggregation
+func MayBeTautologyFor(*Meta, Predicate) bool
+func MergeRelationScopes(*RelationScopes, *RelationScopes) *RelationScopes
+type Meta struct {
+	*Schema
+	Table string
+	<unexported fields>
+}
+func (*Meta) FieldAt(string) (*Field, string, error)
+func (*Meta) QuotedTable(Dialect) string
+func (*Meta) Relation(string) *Relation
+func (*Meta) RelationAt(string) (*Relation, string, error)
+func (*Meta) TableReference() TableRef
+func (*Meta) ValidateRelationPath(string) (string, error)
+func (*Meta) WalkPath(string) ([]PathHop, *Field, string, error)
+func (Meta) CheckID(reflect.Type) error
+func (Meta) Columns() []string
+func (Meta) Field(string) *Field
+func (Meta) HasID(any) (bool, error)
+func (Meta) ID(any) (any, error)
+func (Meta) Pointers(any, []*Field) ([]any, error)
+func (Meta) SetID(any, any) error
+func (Meta) Values(any, []*Field) ([]any, error)
 type Middleware[M any, ID comparable] func(Core[M, ID]) Core[M, ID]
-type MySQL struct{ ... }
-type Nexter[M any, ID comparable] interface{ ... }
-type OffsetLimiter interface{ ... }
-type Opt[T any] = utils.Opt[T]
-    func FromPtr[T any](p *T) Opt[T]
-    func Null[T any]() Opt[T]
-    func Set[T any](v T) Opt[T]
-    func Undefined[T any]() Opt[T]
+func Min(string, string) Aggregation
+func MustSchemaOf[M any]() *Schema
+func MustSession(Source, Executor) Session
+var MutationOptions OptionGroup
+type MySQL struct {
+	RowAlias bool
+}
+func (MySQL) DefaultValuesClause() string
+func (MySQL) LikeEscapeClause() string
+func (MySQL) LimitAll() string
+func (MySQL) LockClause() string
+func (MySQL) MaxBindValues() int
+func (MySQL) Name() string
+func (MySQL) Placeholder(int) string
+func (MySQL) Quote(string) string
+func (MySQL) RollsBackStatementOnly() bool
+func (MySQL) SupportsReturning() bool
+func (MySQL) UpdateCountsChangedRowsOnly() bool
+func (MySQL) Upsert(string, []string) string
+func NarrowRelations(*RelationScopes) Option
+func Ne(string, any) Predicate
+func NewMeta[M any](string) (*Meta, error)
+func NewMetaInSchema[M any](string, string) (*Meta, error)
+func NewMetaRef[M any](TableRef) (*Meta, error)
+func NewPaginatedResponse[T any]([]T, int, int, int64) PaginatedResponse[T]
+func NewSQL(Dialect, *Meta) *SQL
+func NewSession(Source, Executor) (Session, error)
+func NewTableRef(string) (TableRef, error)
+func NewTableRefInSchema(string, string) (TableRef, error)
+type Nexter[M any, ID comparable] interface {
+	Next() Core[M, ID]
+}
+func Not(Predicate) Predicate
+func NotIn(string, ...any) Predicate
+func NotInAny[T any](string, []T) Predicate
+func NotLike(string, string) Predicate
+var NowFunc func() time.Time
+func Null[T any]() Opt[T]
+func Offset(int) Option
+type OffsetLimiter interface {
+	LimitAll() string
+}
+type Opt[T any] = github.com/frostgrove/vv/utils.Opt[T]
+func (*Opt[T]) Scan(any) error
+func (*Opt[T]) UnmarshalJSON([]byte) error
+func (Opt[T]) Get() (T, bool)
+func (Opt[T]) IsDefined() bool
+func (Opt[T]) IsNull() bool
+func (Opt[T]) IsSet() bool
+func (Opt[T]) IsZero() bool
+func (Opt[T]) MarshalJSON() ([]byte, error)
+func (Opt[T]) MustGet() T
+func (Opt[T]) OrElse(T) T
+func (Opt[T]) Ptr() *T
+func (Opt[T]) String() string
+func (Opt[T]) Value() (database/sql/driver.Value, error)
+func OptElem(reflect.Type) reflect.Type
 type Option func(*Options)
-    func After(cursor string) Option
-    func Aggregate(aggs ...Aggregation) Option
-    func Before(cursor string) Option
-    func Distinct() Option
-    func ForUpdate() Option
-    func GroupBy(fields ...string) Option
-    func Limit(n int) Option
-    func NarrowRelations(rs *RelationScopes) Option
-    func Offset(n int) Option
-    func OrderBy(orders ...Order) Option
-    func Page(n int) Option
-    func Preload(paths ...string) Option
-    func PreloadCap(path string, maxRows int, options ...Option) Option
-    func PreloadRows(n int) Option
-    func PreloadWhere(path string, options ...Option) Option
-    func PrimaryOnly() Option
-    func Select(fields ...string) Option
-    func SelectAll() Option
-    func SkipTotal() Option
-    func SortBy(orders ...Order) Option
-    func Unpaged() Option
-    func Unsorted() Option
-    func Where(p Predicate) Option
-    func With(source *Options) Option
-type OptionGroup struct{ ... }
-type Optional = utils.Optional
-type Options struct{ ... }
-    func Build(options ...Option) *Options
-    func BuildPreloadOptions(path string, options ...Option) (*Options, error)
-type Order struct{ ... }
-    func Asc(field string) Order
-    func Desc(field string) Order
-type PaginatedResponse[T any] struct{ ... }
-    func MapPage[A, B any](p PaginatedResponse[A], f func(A) B) PaginatedResponse[B]
-    func NewPaginatedResponse[T any](items []T, page, limit int, total int64) PaginatedResponse[T]
-type PathHop struct{ ... }
-type Postgres struct{}
-type Predicate interface{ ... }
-    func And(preds ...Predicate) Predicate
-    func Between(field string, low, high any) Predicate
-    func Contains(field, s string) Predicate
-    func ContainsIgnoreCase(field, s string) Predicate
-    func CursorPredicate(m *Meta, sort []Order, cursor string, back bool) (Predicate, error)
-    func EndsWith(field, s string) Predicate
-    func EndsWithIgnoreCase(field, s string) Predicate
-    func Eq(field string, value any) Predicate
-    func EqField(left, right string) Predicate
-    func False() Predicate
-    func Gt(field string, value any) Predicate
-    func Gte(field string, value any) Predicate
-    func In(field string, values ...any) Predicate
-    func InAny[T any](field string, values []T) Predicate
-    func IsNotNull(field string) Predicate
-    func IsNull(field string) Predicate
-    func Like(field, pattern string) Predicate
-    func LikeIgnoreCase(field, pattern string) Predicate
-    func Lt(field string, value any) Predicate
-    func Lte(field string, value any) Predicate
-    func Ne(field string, value any) Predicate
-    func Not(p Predicate) Predicate
-    func NotIn(field string, values ...any) Predicate
-    func NotInAny[T any](field string, values []T) Predicate
-    func NotLike(field, pattern string) Predicate
-    func Or(preds ...Predicate) Predicate
-    func Raw(sql string, args ...any) Predicate
-    func StartsWith(field, s string) Predicate
-    func StartsWithIgnoreCase(field, s string) Predicate
-    func True() Predicate
-type PredicateError struct{ ... }
-type PreloadSpec struct{ ... }
-type ReadSourcer interface{ ... }
-    func ReadSourcerOf(v any) (ReadSourcer, bool)
+type OptionGroup struct {
+	<unexported fields>
+}
+func (OptionGroup) Build(string, ...Option) (*Options, error)
+func (OptionGroup) Check(string, *Options) error
+func OptionSpelling(string) string
+type Optional = github.com/frostgrove/vv/utils.Optional
+func (Optional) IsDefined() bool
+func (Optional) IsNull() bool
+func (Optional) IsSet() bool
+type Options struct {
+	Filter []Predicate
+	Sort []Order
+	Preloads []PreloadSpec
+	Fields []string
+	PreloadRows int
+	Page int
+	Limit int
+	Offset int
+	RelScopes *RelationScopes
+	Agg AggregateSpec
+	After string
+	Before string
+	Primary bool
+	Unpaged bool
+	NoSort bool
+	NoTotal bool
+	ForUpdate bool
+	Distinct bool
+}
+func (*Options) Apply(...Option)
+func (*Options) Cursor() (string, bool, bool)
+func (*Options) Predicate() Predicate
+func (*Options) Resolved(int, int) (int, int, int)
+func Or(...Predicate) Predicate
+type Order struct {
+	Field string
+	Desc bool
+	NullsLast bool
+	NullsSet bool
+}
+func (Order) WithNullsFirst() Order
+func (Order) WithNullsLast() Order
+func OrderBy(...Order) Option
+func OwnedExecutorFor(context.Context, any) (Executor, bool, bool)
+func Page(int) Option
+type PaginatedResponse[T any] struct {
+	Items []T "json:\"items\""
+	Page int "json:\"page\""
+	Limit int "json:\"limit\""
+	Total int64 "json:\"total\""
+	TotalPages int "json:\"totalPages\""
+	HasNext bool "json:\"hasNext\""
+	HasPrev bool "json:\"hasPrev\""
+	NextCursor string "json:\"nextCursor,omitempty\""
+	PrevCursor string "json:\"prevCursor,omitempty\""
+}
+func (PaginatedResponse[T]) IsEmpty() bool
+type PathHop struct {
+	Rel *Relation
+	Target *Meta
+	Local *Field
+	Remote *Field
+}
+func PlanFor[U any](*Schema) (*UpdatePlan, error)
+func PortableBatch() BatchOption
+const PortableBindLimit untyped int = 999
+type Postgres struct {}
+func (Postgres) LikeEscapeClause() string
+func (Postgres) LockClause() string
+func (Postgres) MaxBindValues() int
+func (Postgres) Name() string
+func (Postgres) Placeholder(int) string
+func (Postgres) Quote(string) string
+func (Postgres) SupportsReturning() bool
+func (Postgres) UpdateCountsChangedRowsOnly() bool
+func (Postgres) Upsert(string, []string) string
+func (Postgres) UpsertSwallowsPrimaryKeyOnly() bool
+type Predicate interface {
+	<unexported methods>
+}
+type PredicateError struct {
+	Node string
+	Reason string
+}
+func (*PredicateError) Error() string
+func Preload(...string) Option
+func PreloadCap(string, int, ...Option) Option
+var PreloadOptions OptionGroup
+func PreloadRows(int) Option
+type PreloadSpec struct {
+	Path string
+	Opts []Option
+	MaxRows int
+}
+func PreloadWhere(string, ...Option) Option
+func PrimaryOnly() Option
+func Raw(string, ...any) Predicate
+var ReadOptions OptionGroup
+func ReadSourceOf(any) (Source, bool)
+type ReadSourcer interface {
+	ReadSource() Source
+}
+func ReadSourcerOf(any) (ReadSourcer, bool)
+func ReadWrite(Source, Source) Source
+func RegisterTable[M any](string)
+func RegisterTableRef[M any](TableRef)
+func RegisterTableRefType(reflect.Type, TableRef)
+func RegisterTableType(reflect.Type, string)
 type RelKind uint8
-    const BelongsTo RelKind = iota ...
-type Relation struct{ ... }
-type RelationScopes struct{ ... }
-    func MergeRelationScopes(a, b *RelationScopes) *RelationScopes
-type Replacer[M any] interface{ ... }
-type Repo[M any, ID comparable, U any] struct{ ... }
-    func Decorate[M any, ID comparable, U any](r *Repo[M, ID, U], mw ...Middleware[M, ID]) *Repo[M, ID, U]
-    func Wrap[M any, ID comparable, U any](c Core[M, ID]) *Repo[M, ID, U]
-type RestoreSupport interface{ ... }
-type Restorer[M any, ID comparable] interface{ ... }
-type Result struct{ ... }
-    func UnsafeExecFor(ctx context.Context, source Source, query string, args ...any) (Result, error)
-type Rows interface{ ... }
-    func UnsafeQueryFor(ctx context.Context, source Source, query string, args ...any) (Rows, error)
-type SQL struct{ ... }
-    func NewSQL(d Dialect, m *Meta) *SQL
-type SQLite struct{}
-type Schema struct{ ... }
-    func MustSchemaOf[M any]() *Schema
-    func SchemaOf[M any]() (*Schema, error)
-    func SchemaOfType(t reflect.Type) (*Schema, error)
-type SchemaError struct{ ... }
-type ScopedDelete[ID comparable] struct{ ... }
-type ScopedDeleter[M any, ID comparable] interface{ ... }
-type ScopedRestore[ID comparable] struct{ ... }
-type ScopedRestorer[M any, ID comparable] interface{ ... }
-type ScopedSave[M any] struct{ ... }
-type ScopedSaveOnlyer[M any, ID comparable] interface{ ... }
-type ScopedSaver[M any, ID comparable] interface{ ... }
-type Session struct{ ... }
-    func MustSession(source Source, e Executor) Session
-    func NewSession(source Source, e Executor) (Session, error)
-type Source interface{ ... }
-    func ReadSourceOf(v any) (Source, bool)
-    func ReadWrite(primary, replica Source) Source
-    func SourceOf[M any, ID comparable](c Core[M, ID]) (Source, bool)
-type SourceUnwrapper interface{ ... }
-type Sourced interface{ ... }
-type StatementRollback interface{ ... }
-type TableRef struct{ ... }
-    func NewTableRef(name string) (TableRef, error)
-    func NewTableRefInSchema(schema, name string) (TableRef, error)
-    func TableRefOf(t reflect.Type) (TableRef, error)
-type TableRefError struct{ ... }
-type Tabler interface{ ... }
-type TombstoneLoader[M any, ID comparable] interface{ ... }
-type Transactional interface{ ... }
-type Tx interface{ ... }
-type UnknownFieldError struct{ ... }
-type UnsafeBulkInserter interface{ ... }
-    func UnsafeBulkInserterOf(v any) (UnsafeBulkInserter, bool)
-type UnscopedExister[M any, ID comparable] interface{ ... }
-type UpdatePlan struct{ ... }
-    func PlanFor[U any](s *Schema) (*UpdatePlan, error)
-type UpdateRowCount interface{ ... }
-type UpsertScope interface{ ... }
+func (RelKind) String() string
+func (RelKind) ToMany() bool
+const RelTagKey untyped string = "rel"
+type Relation struct {
+	Name string
+	Kind RelKind
+	Owner *Schema
+	Offset uintptr
+	Type reflect.Type
+	Elem reflect.Type
+	LocalField string
+	TargetField string
+	JoinTable string
+	JoinLocal string
+	JoinRef string
+	<unexported fields>
+}
+func (*Relation) JoinTableReference() TableRef
+func (*Relation) Local() (*Field, error)
+func (*Relation) Remote() (*Field, error)
+func (*Relation) Resolve() (*Meta, *Field, *Field, error)
+func (*Relation) Target() (*Meta, error)
+type RelationScopes struct {
+	<unexported fields>
+}
+func (*RelationScopes) At(string, *Meta) Predicate
+func (*RelationScopes) AtPath(string, Predicate) *RelationScopes
+func (*RelationScopes) Empty() bool
+func (*RelationScopes) ForModel(reflect.Type, Predicate) *RelationScopes
+func (*RelationScopes) Resolve(*Meta) (*RelationScopes, error)
+func ReplaceOf[M any, ID comparable](Core[M, ID], context.Context, *M) (M, error, bool)
+type Replacer[M any] interface {
+	Replace(context.Context, *M) (M, error)
+}
+type Repo[M any, ID comparable, U any] struct {
+	Core[M, ID]
+}
+func (*Repo[M, ID, U]) Create(context.Context, *M) (M, error)
+func (*Repo[M, ID, U]) InsertBatch(context.Context, []*M, ...BatchOption) error
+func (*Repo[M, ID, U]) Replace(context.Context, *M) (M, error)
+func (*Repo[M, ID, U]) Restore(context.Context, ...ID) (int64, error)
+func (*Repo[M, ID, U]) SupportsRestore() bool
+func (*Repo[M, ID, U]) Unwrap() Core[M, ID]
+func (*Repo[M, ID, U]) Update(context.Context, ID, U, ...Option) (M, error)
+func (*Repo[M, ID, U]) UpdateAll(context.Context, U, ...Option) (int64, error)
+func (Repo[M, ID, U]) Aggregate(context.Context, ...Option) ([]AggregateRow, error)
+func (Repo[M, ID, U]) Count(context.Context, ...Option) (int64, error)
+func (Repo[M, ID, U]) Delete(context.Context, ...ID) (int64, error)
+func (Repo[M, ID, U]) DeleteAll(context.Context, ...Option) (int64, error)
+func (Repo[M, ID, U]) Exists(context.Context, ...Option) (bool, error)
+func (Repo[M, ID, U]) First(context.Context, ...Option) (M, error)
+func (Repo[M, ID, U]) Get(context.Context, ...Option) (PaginatedResponse[M], error)
+func (Repo[M, ID, U]) GetAll(context.Context, ...Option) ([]M, error)
+func (Repo[M, ID, U]) GetByID(context.Context, ID, ...Option) (M, error)
+func (Repo[M, ID, U]) Meta() *Meta
+func (Repo[M, ID, U]) Save(context.Context, *M) (M, error)
+func (Repo[M, ID, U]) SaveAll(context.Context, []*M) error
+func (Repo[M, ID, U]) SaveOnly(context.Context, *M) error
+func (Repo[M, ID, U]) Tx(context.Context, func(context.Context) error) error
+func RestoreOf[M any, ID comparable](Core[M, ID], context.Context, ...ID) (int64, error, bool)
+func RestoreScopedOf[M any, ID comparable](Core[M, ID], context.Context, *ScopedRestore[ID]) (int64, error, bool)
+type RestoreSupport interface {
+	SupportsRestore() bool
+}
+type Restorer[M any, ID comparable] interface {
+	Restore(context.Context, ...ID) (int64, error)
+}
+type Result struct {
+	RowsAffected int64
+	LastInsertID int64
+	HasLastInsertID bool
+}
+type Rows interface {
+	Close()
+	Err() error
+	Next() bool
+	Scan(...any) error
+}
+func RunPreloads(context.Context, Executor, Dialect, *Meta, any, []PreloadSpec, int, *RelationScopes) error
+type SQL struct {
+	<unexported fields>
+}
+func (*SQL) Alias(string) *SQL
+func (*SQL) Args() []any
+func (*SQL) Bind(any) *SQL
+func (*SQL) Binds([]any) *SQL
+func (*SQL) Column(string) *SQL
+func (*SQL) Columns([]*Field) *SQL
+func (*SQL) Dialect() Dialect
+func (*SQL) Done() (string, []any, error)
+func (*SQL) Err() error
+func (*SQL) Ident(string) *SQL
+func (*SQL) LimitOffset(int, int) *SQL
+func (*SQL) OrderBy([]Order) *SQL
+func (*SQL) Predicate(Predicate) *SQL
+func (*SQL) Raw(string) *SQL
+func (*SQL) RelationScopes(*RelationScopes) *SQL
+func (*SQL) String() string
+func (*SQL) Table() *SQL
+func (*SQL) TableRef(TableRef) *SQL
+func (*SQL) Where(Predicate) *SQL
+type SQLite struct {}
+func (SQLite) LikeEscapeClause() string
+func (SQLite) LimitAll() string
+func (SQLite) LockClause() string
+func (SQLite) MaxBindValues() int
+func (SQLite) Name() string
+func (SQLite) Placeholder(int) string
+func (SQLite) Quote(string) string
+func (SQLite) RollsBackStatementOnly() bool
+func (SQLite) SupportsReturning() bool
+func (SQLite) UpdateCountsChangedRowsOnly() bool
+func (SQLite) Upsert(string, []string) string
+func (SQLite) UpsertSwallowsPrimaryKeyOnly() bool
+func SameDataSource(any, any) bool
+func SaveScopedOf[M any, ID comparable](Core[M, ID], context.Context, *M, *ScopedSave[M]) (error, bool)
+func SaveScopedOnlyOf[M any, ID comparable](Core[M, ID], context.Context, *M, *ScopedSave[M]) (error, bool)
+type Schema struct {
+	Type reflect.Type
+	Name string
+	Fields []*Field
+	PK *Field
+	Insert []*Field
+	InsertGen []*Field
+	Update []*Field
+	HasGen bool
+	Version *Field
+	Tombstone *Field
+	Relations []*Relation
+	<unexported fields>
+}
+func (*Schema) CheckID(reflect.Type) error
+func (*Schema) Columns() []string
+func (*Schema) Field(string) *Field
+func (*Schema) HasID(any) (bool, error)
+func (*Schema) ID(any) (any, error)
+func (*Schema) Pointers(any, []*Field) ([]any, error)
+func (*Schema) Relation(string) *Relation
+func (*Schema) SetID(any, any) error
+func (*Schema) Values(any, []*Field) ([]any, error)
+type SchemaError struct {
+	Model string
+	Field string
+	Reason string
+}
+func (*SchemaError) Error() string
+func SchemaOf[M any]() (*Schema, error)
+func SchemaOfType(reflect.Type) (*Schema, error)
+type ScopedDelete[ID comparable] struct {
+	IDs []ID
+	Scope Predicate
+	RelationScopes *RelationScopes
+	Snapshots map[ID]Predicate
+}
+type ScopedDeleter[M any, ID comparable] interface {
+	DeleteScoped(context.Context, *ScopedDelete[ID]) (int64, error)
+}
+type ScopedRestore[ID comparable] struct {
+	IDs []ID
+	Scope Predicate
+	RelationScopes *RelationScopes
+	Snapshots map[ID]Predicate
+}
+type ScopedRestorer[M any, ID comparable] interface {
+	RestoreScoped(context.Context, *ScopedRestore[ID]) (int64, error)
+}
+type ScopedSave[M any] struct {
+	Previous *M
+	Scope Predicate
+	RelationScopes *RelationScopes
+}
+type ScopedSaveOnlyer[M any, ID comparable] interface {
+	SaveScopedOnly(context.Context, *M, *ScopedSave[M]) error
+}
+type ScopedSaver[M any, ID comparable] interface {
+	SaveScoped(context.Context, *M, *ScopedSave[M]) error
+}
+func Select(...string) Option
+func SelectAll() Option
+type Session struct {
+	<unexported fields>
+}
+func (Session) Bind(context.Context) context.Context
+func Set[T any](T) Opt[T]
+func SkipTotal() Option
+func SortBy(...Order) Option
+type Source interface {
+	Executor
+	Dialect() Dialect
+}
+func SourceBoundExecutorFor(context.Context, any) (Executor, bool, error)
+type SourceExecutorUnwrapper interface {
+	UnwrapSourceExecutor() Source
+}
+func SourceOf[M any, ID comparable](Core[M, ID]) (Source, bool)
+type SourceUnwrapper interface {
+	UnwrapSource() Source
+}
+type Sourced interface {
+	Source() Source
+}
+func StartsWith(string, string) Predicate
+func StartsWithIgnoreCase(string, string) Predicate
+type StatementRollback interface {
+	RollsBackStatementOnly() bool
+}
+func Sum(string, string) Aggregation
+func SupportsRestore[M any, ID comparable](Core[M, ID]) bool
+func TableNameOf(reflect.Type) string
+type TableRef struct {
+	Schema string
+	Name string
+}
+func (TableRef) Components() []string
+func (TableRef) String() string
+func (TableRef) Validate() error
+type TableRefError struct {
+	Component string
+	Value string
+	Reason string
+}
+func (*TableRefError) Error() string
+func TableRefOf(reflect.Type) (TableRef, error)
+type Tabler interface {
+	TableName() string
+}
+const TagKey untyped string = "db"
+type TombstoneLoader[M any, ID comparable] interface {
+	LoadTombstones(context.Context, []ID, Predicate, *RelationScopes) ([]M, error)
+}
+type Transactional interface {
+	InTransaction() bool
+}
+func True() Predicate
+func TryRegisterTable[M any](string) error
+func TryRegisterTableRef[M any](TableRef) error
+func TryRegisterTableRefType(reflect.Type, TableRef) error
+func TryRegisterTableType(reflect.Type, string) error
+type Tx interface {
+	Executor
+	Commit(context.Context) error
+	Rollback(context.Context) error
+}
+func Undefined[T any]() Opt[T]
+type UnknownFieldError struct {
+	Model string
+	Field string
+}
+func (*UnknownFieldError) Error() string
+func Unpaged() Option
+func UnsafeBulkInsertFor(context.Context, Source, TableRef, []string, [][]any) (int64, error)
+type UnsafeBulkInserter interface {
+	UnsafeBulkInsert(context.Context, Executor, TableRef, []string, [][]any) (int64, error)
+}
+func UnsafeBulkInserterOf(any) (UnsafeBulkInserter, bool)
+func UnsafeExecFor(context.Context, Source, string, ...any) (Result, error)
+func UnsafeQueryFor(context.Context, Source, string, ...any) (Rows, error)
+type UnscopedExister[M any, ID comparable] interface {
+	ExistsUnscoped(context.Context, ...Option) (bool, error)
+}
+func Unsorted() Option
+func UpdateCountsChangedRowsOnly(Dialect) bool
+type UpdatePlan struct {
+	DTO reflect.Type
+	Schema *Schema
+	Fields []planField
+}
+func (*UpdatePlan) Apply([]Change, any)
+func (*UpdatePlan) Changes(any, any) ([]Change, error)
+func (*UpdatePlan) Covers() []*Field
+func (*UpdatePlan) Defined(any) ([]string, error)
+func (*UpdatePlan) IncludesField(*Field) bool
+func (*UpdatePlan) Writes(any) ([]Change, error)
+type UpdateRowCount interface {
+	UpdateCountsChangedRowsOnly() bool
+}
+type UpsertScope interface {
+	UpsertSwallowsPrimaryKeyOnly() bool
+}
+func UpsertTargetsPrimaryKey(Dialect) bool
+func UsesPortableBatch(...BatchOption) bool
+func Where(Predicate) Option
+func With(*Options) Option
+func WithExecutor(context.Context, Executor) context.Context
+func WithExecutorFor(context.Context, any, Executor) context.Context
+func WithUnsafeExecutor(context.Context, Executor) context.Context
+func Wrap[M any, ID comparable, U any](Core[M, ID]) *Repo[M, ID, U]
 ```
 
 ## github.com/frostgrove/vv/crud/adapter/crudsql
 ```go
-var ErrEngine = errors.New("crudsql: unknown engine")
-func Source(q Queryer, d crud.Dialect, options ...Option) crud.Source
-func TopLevelTransaction(executor crud.Executor) (*sql.Tx, bool)
-func Transaction(executor crud.Executor) (*sql.Tx, bool)
-func TransactionFor(ctx context.Context, source any) (*sql.Tx, bool)
-func Wired(ctx context.Context, engine Engine, database *sql.DB, options ...Option) (crud.Source, error)
-type DB struct{ ... }
-    func For(engine Engine, database *sql.DB, options ...Option) (DB, error)
-    func MariaDB(database *sql.DB, options ...Option) DB
-    func MySQL(database *sql.DB, options ...Option) DB
-    func Open(database *sql.DB, d crud.Dialect, options ...Option) DB
-    func Postgres(database *sql.DB, options ...Option) DB
-    func SQLite(database *sql.DB, options ...Option) DB
+type DB struct {
+	Executor
+	<unexported fields>
+}
+func (DB) Begin(context.Context) (github.com/frostgrove/vv/crud.Tx, error)
+func (DB) BindExecutor(context.Context, Queryer, ...Option) context.Context
+func (DB) DB() *database/sql.DB
+func (DB) DataSource() any
+func (DB) Dialect() github.com/frostgrove/vv/crud.Dialect
+func (DB) Exec(context.Context, string, ...any) (github.com/frostgrove/vv/crud.Result, error)
+func (DB) InTransaction() bool
+func (DB) Query(context.Context, string, ...any) (github.com/frostgrove/vv/crud.Rows, error)
+func (DB) Unwrap() Queryer
+func (DB) WithTxOptions(*database/sql.TxOptions) DB
 type Engine string
-    const EnginePostgres Engine = "postgres" ...
-type Executor struct{ ... }
-    func From(q Queryer, options ...Option) Executor
+const EngineMariaDB Engine = "mariadb"
+const EngineMySQL Engine = "mysql"
+const EnginePostgres Engine = "postgres"
+const EngineSQLite Engine = "sqlite"
+var ErrEngine error
+type Executor struct {
+	<unexported fields>
+}
+func (Executor) DataSource() any
+func (Executor) Exec(context.Context, string, ...any) (github.com/frostgrove/vv/crud.Result, error)
+func (Executor) InTransaction() bool
+func (Executor) Query(context.Context, string, ...any) (github.com/frostgrove/vv/crud.Rows, error)
+func (Executor) Unwrap() Queryer
+func For(Engine, *database/sql.DB, ...Option) (DB, error)
+func From(Queryer, ...Option) Executor
+func MariaDB(*database/sql.DB, ...Option) DB
+func MySQL(*database/sql.DB, ...Option) DB
+func Open(*database/sql.DB, github.com/frostgrove/vv/crud.Dialect, ...Option) DB
 type Option func(*config)
-    func WithFaults(c errs.Classifier) Option
-    func WithTransaction() Option
-type Queryer interface{ ... }
-type Tx struct{ ... }
+func Postgres(*database/sql.DB, ...Option) DB
+type Queryer interface {
+	ExecContext(context.Context, string, ...any) (database/sql.Result, error)
+	QueryContext(context.Context, string, ...any) (*database/sql.Rows, error)
+}
+func SQLite(*database/sql.DB, ...Option) DB
+func Source(Queryer, github.com/frostgrove/vv/crud.Dialect, ...Option) github.com/frostgrove/vv/crud.Source
+func TopLevelTransaction(github.com/frostgrove/vv/crud.Executor) (*database/sql.Tx, bool)
+func Transaction(github.com/frostgrove/vv/crud.Executor) (*database/sql.Tx, bool)
+func TransactionFor(context.Context, any) (*database/sql.Tx, bool)
+type Tx struct {
+	Executor
+	<unexported fields>
+}
+func (*Tx) Begin(context.Context) (github.com/frostgrove/vv/crud.Tx, error)
+func (*Tx) Commit(context.Context) error
+func (*Tx) Rollback(context.Context) error
+func (*Tx) Tx() *database/sql.Tx
+func (Tx) DataSource() any
+func (Tx) Exec(context.Context, string, ...any) (github.com/frostgrove/vv/crud.Result, error)
+func (Tx) InTransaction() bool
+func (Tx) Query(context.Context, string, ...any) (github.com/frostgrove/vv/crud.Rows, error)
+func (Tx) Unwrap() Queryer
+func Wired(context.Context, Engine, *database/sql.DB, ...Option) (github.com/frostgrove/vv/crud.Source, error)
+func WithFaults(github.com/frostgrove/vv/errs.Classifier) Option
+func WithTransaction() Option
 ```
 
 ## github.com/frostgrove/vv/crud/catalog
 ```go
-var ErrUncomparableHandle = errors.New(...) ...
-type Catalog interface{ ... }
-    func Load(ctx context.Context, source crud.Source) (Catalog, error)
-type Column struct{ ... }
-type Constraint struct{ ... }
+type Catalog interface {
+	Constraint(string, string) (*Constraint, bool)
+	Dialect() string
+	Table(string) (*Table, bool)
+}
+type Column struct {
+	Name string
+	Position int
+	Type string
+	Nullable bool
+	Default *string
+	MaxLength int
+	Generated bool
+}
+type Constraint struct {
+	Name string
+	Table string
+	Schema string
+	Kind Kind
+	Columns []string
+	Expressions []string
+	Prefixes []int
+	Partial bool
+	Predicate string
+	Definition string
+	RefTable string
+	RefSchema string
+	RefColumns []string
+	OnDelete string
+	OnUpdate string
+	Deferrable bool
+}
+var ErrIntrospection error
+var ErrUncomparableHandle error
+var ErrUnknownDialect error
 type Kind uint8
-    const KindPrimaryKey Kind = iota + 1 ...
-type QualifiedCatalog interface{ ... }
-type QualifiedReferrers interface{ ... }
-type Referrers interface{ ... }
-type Reloader interface{ ... }
-type Set struct{ ... }
-type Table struct{ ... }
+func (Kind) String() string
+const KindCheck Kind = 5
+const KindForeignKey Kind = 4
+const KindPrimaryKey Kind = 1
+const KindUnique Kind = 2
+const KindUniqueIndex Kind = 3
+func Load(context.Context, github.com/frostgrove/vv/crud.Source) (Catalog, error)
+type QualifiedCatalog interface {
+	ConstraintByRef(github.com/frostgrove/vv/crud.TableRef, string) (*Constraint, bool)
+	TableByRef(github.com/frostgrove/vv/crud.TableRef) (*Table, bool)
+}
+type QualifiedReferrers interface {
+	ReferencedByRef(github.com/frostgrove/vv/crud.TableRef) []*Constraint
+}
+type Referrers interface {
+	ReferencedBy(string) []*Constraint
+}
+type Reloader interface {
+	Reload(context.Context, string, string) error
+}
+type Set struct {
+	<unexported fields>
+}
+func (*Set) For(github.com/frostgrove/vv/crud.Source) (Catalog, bool)
+func (*Set) Load(context.Context, github.com/frostgrove/vv/crud.Source) (Catalog, error)
+type Table struct {
+	Name string
+	Schema string
+	Columns []Column
+	PrimaryKey []string
+	Constraints []Constraint
+	Definition string
+}
+func (*Table) Column(string) (*Column, bool)
+func (*Table) Constraint(string) (*Constraint, bool)
 ```
 
 ## github.com/frostgrove/vv/crud/crudtest
 ```go
-func Normalize(s string) string
-type Recorder struct{ ... }
-    func MySQL() *Recorder
-    func New(d crud.Dialect) *Recorder
-    func Postgres() *Recorder
-type Result struct{ ... }
-    func Rows(rows ...[]any) Result
-    func RowsFailing(err error, rows ...[]any) Result
-type Statement struct{ ... }
+func MySQL() *Recorder
+func New(github.com/frostgrove/vv/crud.Dialect) *Recorder
+func Normalize(string) string
+func Postgres() *Recorder
+type Recorder struct {
+	D github.com/frostgrove/vv/crud.Dialect
+	<unexported fields>
+}
+func (*Recorder) Begin(context.Context) (github.com/frostgrove/vv/crud.Tx, error)
+func (*Recorder) DataSource() any
+func (*Recorder) Dialect() github.com/frostgrove/vv/crud.Dialect
+func (*Recorder) Exec(context.Context, string, ...any) (github.com/frostgrove/vv/crud.Result, error)
+func (*Recorder) ExecResult(github.com/frostgrove/vv/crud.Result) *Recorder
+func (*Recorder) Fail(error) *Recorder
+func (*Recorder) Last() Statement
+func (*Recorder) Push(...Result) *Recorder
+func (*Recorder) Query(context.Context, string, ...any) (github.com/frostgrove/vv/crud.Rows, error)
+func (*Recorder) Reset()
+func (*Recorder) SQL() []string
+func (*Recorder) Statements() []Statement
+func (*Recorder) TxDepth() int
+type Result struct {
+	Rows [][]any
+	Err error
+	RowsErr error
+}
+func Rows(...[]any) Result
+func RowsFailing(error, ...[]any) Result
+type Statement struct {
+	SQL string
+	Args []any
+	Query bool
+}
+func (Statement) String() string
 ```
 
 ## github.com/frostgrove/vv/crud/decorators/faults
 ```go
-func Enrich[M any, ID comparable](options ...Option) crud.Middleware[M, ID]
+func Enrich[M any, ID comparable](...Option) github.com/frostgrove/vv/crud.Middleware[M, ID]
 type Option func(*settings)
-    func WithProbe(h probe.Handler) Option
-    func WithProbeError(fn func(op string, err error)) Option
-    func WithProbeFor(op string, h probe.Handler) Option
-    func WithSource(source crud.Source) Option
+func WithProbe(github.com/frostgrove/vv/crud/probe.Handler) Option
+func WithProbeError(func(op string, err error)) Option
+func WithProbeFor(string, github.com/frostgrove/vv/crud/probe.Handler) Option
+func WithSource(github.com/frostgrove/vv/crud.Source) Option
 ```
 
 ## github.com/frostgrove/vv/crud/decorators/security
 ```go
-const Read = crud.ActionRead ...
-var ErrForbidden = fmt.Errorf("security: %w", crud.ErrForbidden)
-func Denied(action Action, reason string) error
-func Gate[M any, ID comparable](p Policy[M, ID]) crud.Middleware[M, ID]
-func ReconcileValue(f *crud.Field) func(any) (any, error)
-type Action = crud.Action
-type Policy[M any, ID comparable] struct{ ... }
-    func Combine[M any, ID comparable](ps ...Policy[M, ID]) Policy[M, ID]
-    func Freeze[M any, ID comparable](fields ...string) Policy[M, ID]
-    func InspectOwner[M any, ID comparable](allow func(p auth.Principal, action Action, m *M) bool) Policy[M, ID]
-    func PerAction[M any, ID comparable](m map[Action]auth.Permission) Policy[M, ID]
-    func ReadOnly[M any, ID comparable]() Policy[M, ID]
-    func RequireAnyPermission[M any, ID comparable](ps ...auth.Permission) Policy[M, ID]
-    func RequirePermission[M any, ID comparable](permissions ...auth.Permission) Policy[M, ID]
-    func RequireRole[M any, ID comparable](rs ...auth.Role) Policy[M, ID]
-    func Requiring[M any, ID comparable](requires map[Action][]auth.Permission) Policy[M, ID]
-    func ScopeAttr[M any, ID comparable](field, attr string) Policy[M, ID]
-    func ScopeField[M any, ID comparable](field string, value func(context.Context) (any, error)) Policy[M, ID]
-    func ScopeRelationAttr[M any, ID comparable](path, field, attr string) Policy[M, ID]
-    func ScopeRelationField[M any, ID comparable](path, field string, value func(context.Context) (any, error)) Policy[M, ID]
-    func ScopeRelationSubject[M any, ID comparable](path, field string) Policy[M, ID]
-    func ScopeSubject[M any, ID comparable](field string) Policy[M, ID]
+type Action = github.com/frostgrove/vv/crud.Action
+func (Action) String() string
+func Combine[M any, ID comparable](...Policy[M, ID]) Policy[M, ID]
+const Create github.com/frostgrove/vv/crud.Action = 1
+const Delete github.com/frostgrove/vv/crud.Action = 3
+func Denied(Action, string) error
+var ErrForbidden error
+func Freeze[M any, ID comparable](...string) Policy[M, ID]
+func Gate[M any, ID comparable](Policy[M, ID]) github.com/frostgrove/vv/crud.Middleware[M, ID]
+func InspectOwner[M any, ID comparable](func(p github.com/frostgrove/vv/auth.Principal, action Action, m *M) bool) Policy[M, ID]
+func PerAction[M any, ID comparable](map[Action]github.com/frostgrove/vv/auth.Permission) Policy[M, ID]
+type Policy[M any, ID comparable] struct {
+	Scope func(ctx context.Context) (github.com/frostgrove/vv/crud.Predicate, error)
+	AllowUnscopedScope bool
+	AllowUnscopedRelationScopes bool
+	RelationScopes func(ctx context.Context) (*github.com/frostgrove/vv/crud.RelationScopes, error)
+	Requires map[Action][]github.com/frostgrove/vv/auth.Permission
+	Authorize func(ctx context.Context, action Action) error
+	Inspect func(ctx context.Context, action Action, m *M) error
+	InspectReads bool
+	Immutable []string
+	AllowUnscopedDeleteAll bool
+	AllowUnscopedUpdateAll bool
+}
+func (Policy[M, ID]) RequiredFor(Action) ([]github.com/frostgrove/vv/auth.Permission, bool)
+const Read github.com/frostgrove/vv/crud.Action = 0
+func ReadOnly[M any, ID comparable]() Policy[M, ID]
+func ReconcileValue(*github.com/frostgrove/vv/crud.Field) func(any) (any, error)
+func RequireAnyPermission[M any, ID comparable](...github.com/frostgrove/vv/auth.Permission) Policy[M, ID]
+func RequirePermission[M any, ID comparable](...github.com/frostgrove/vv/auth.Permission) Policy[M, ID]
+func RequireRole[M any, ID comparable](...github.com/frostgrove/vv/auth.Role) Policy[M, ID]
+func Requiring[M any, ID comparable](map[Action][]github.com/frostgrove/vv/auth.Permission) Policy[M, ID]
+const Restore github.com/frostgrove/vv/crud.Action = 4
+func ScopeAttr[M any, ID comparable](string, string) Policy[M, ID]
+func ScopeField[M any, ID comparable](string, func(context.Context) (any, error)) Policy[M, ID]
+func ScopeRelationAttr[M any, ID comparable](string, string, string) Policy[M, ID]
+func ScopeRelationField[M any, ID comparable](string, string, func(context.Context) (any, error)) Policy[M, ID]
+func ScopeRelationSubject[M any, ID comparable](string, string) Policy[M, ID]
+func ScopeSubject[M any, ID comparable](string) Policy[M, ID]
+const Update github.com/frostgrove/vv/crud.Action = 2
 ```
 
 ## github.com/frostgrove/vv/crud/decorators/specs
 ```go
-var ErrNotUnique = fmt.Errorf("specs: more than one row matches: %w", crud.ErrConflict) ...
-func As[M any](s Specification[M]) crud.Option
+func AllOf[M any](...Specification[M]) Composite[M]
+func AnyOf[M any](...Specification[M]) Composite[M]
+func As[M any](Specification[M]) github.com/frostgrove/vv/crud.Option
+type Attr[M any, T any] struct {
+	<unexported fields>
+}
+func (Attr[M, T]) Asc() github.com/frostgrove/vv/crud.Order
+func (Attr[M, T]) Desc() github.com/frostgrove/vv/crud.Order
+func (Attr[M, T]) Eq(T) Specification[M]
+func (Attr[M, T]) EqOpt(github.com/frostgrove/vv/crud.Opt[T]) Specification[M]
+func (Attr[M, T]) EqPtr(*T) Specification[M]
+func (Attr[M, T]) In(...T) Specification[M]
+func (Attr[M, T]) IsNull() Specification[M]
+func (Attr[M, T]) Name() string
+func (Attr[M, T]) Ne(T) Specification[M]
+func (Attr[M, T]) NotIn(...T) Specification[M]
+func (Attr[M, T]) NotNull() Specification[M]
+func (Attr[M, T]) Path() Path
+func Attribute[M any, T any](string) Attr[M, T]
+type Builder struct {}
+func (Builder) And(...github.com/frostgrove/vv/crud.Predicate) github.com/frostgrove/vv/crud.Predicate
+func (Builder) Between(Path, any, any) github.com/frostgrove/vv/crud.Predicate
+func (Builder) Conjunction() github.com/frostgrove/vv/crud.Predicate
+func (Builder) Contains(Path, string) github.com/frostgrove/vv/crud.Predicate
+func (Builder) ContainsIgnoreCase(Path, string) github.com/frostgrove/vv/crud.Predicate
+func (Builder) Disjunction() github.com/frostgrove/vv/crud.Predicate
+func (Builder) EndsWith(Path, string) github.com/frostgrove/vv/crud.Predicate
+func (Builder) EndsWithIgnoreCase(Path, string) github.com/frostgrove/vv/crud.Predicate
+func (Builder) Equal(Path, any) github.com/frostgrove/vv/crud.Predicate
+func (Builder) EqualTo(Path, Path) github.com/frostgrove/vv/crud.Predicate
+func (Builder) GreaterThan(Path, any) github.com/frostgrove/vv/crud.Predicate
+func (Builder) GreaterThanOrEqualTo(Path, any) github.com/frostgrove/vv/crud.Predicate
+func (Builder) In(Path, ...any) github.com/frostgrove/vv/crud.Predicate
+func (Builder) IsNotNull(Path) github.com/frostgrove/vv/crud.Predicate
+func (Builder) IsNull(Path) github.com/frostgrove/vv/crud.Predicate
+func (Builder) LessThan(Path, any) github.com/frostgrove/vv/crud.Predicate
+func (Builder) LessThanOrEqualTo(Path, any) github.com/frostgrove/vv/crud.Predicate
+func (Builder) Like(Path, string) github.com/frostgrove/vv/crud.Predicate
+func (Builder) LikeIgnoreCase(Path, string) github.com/frostgrove/vv/crud.Predicate
+func (Builder) Not(github.com/frostgrove/vv/crud.Predicate) github.com/frostgrove/vv/crud.Predicate
+func (Builder) NotEqual(Path, any) github.com/frostgrove/vv/crud.Predicate
+func (Builder) NotIn(Path, ...any) github.com/frostgrove/vv/crud.Predicate
+func (Builder) NotLike(Path, string) github.com/frostgrove/vv/crud.Predicate
+func (Builder) Or(...github.com/frostgrove/vv/crud.Predicate) github.com/frostgrove/vv/crud.Predicate
+func (Builder) Raw(string, ...any) github.com/frostgrove/vv/crud.Predicate
+func (Builder) StartsWith(Path, string) github.com/frostgrove/vv/crud.Predicate
+func (Builder) StartsWithIgnoreCase(Path, string) github.com/frostgrove/vv/crud.Predicate
+var CB Builder
+type Cmp[M any, T any] struct {
+	Attr[M, T]
+}
+func (Cmp[M, T]) Asc() github.com/frostgrove/vv/crud.Order
+func (Cmp[M, T]) Between(T, T) Specification[M]
+func (Cmp[M, T]) Desc() github.com/frostgrove/vv/crud.Order
+func (Cmp[M, T]) Eq(T) Specification[M]
+func (Cmp[M, T]) EqOpt(github.com/frostgrove/vv/crud.Opt[T]) Specification[M]
+func (Cmp[M, T]) EqPtr(*T) Specification[M]
+func (Cmp[M, T]) Gt(T) Specification[M]
+func (Cmp[M, T]) Gte(T) Specification[M]
+func (Cmp[M, T]) In(...T) Specification[M]
+func (Cmp[M, T]) IsNull() Specification[M]
+func (Cmp[M, T]) Lt(T) Specification[M]
+func (Cmp[M, T]) Lte(T) Specification[M]
+func (Cmp[M, T]) Name() string
+func (Cmp[M, T]) Ne(T) Specification[M]
+func (Cmp[M, T]) NotIn(...T) Specification[M]
+func (Cmp[M, T]) NotNull() Specification[M]
+func (Cmp[M, T]) Path() Path
+func Comparable[M any, T any](string) Cmp[M, T]
+type Composite[M any] struct {
+	<unexported fields>
+}
+func (Composite[M]) And(Specification[M]) Composite[M]
+func (Composite[M]) Not() Composite[M]
+func (Composite[M]) Or(Specification[M]) Composite[M]
+func (Composite[M]) ToPredicate(Root[M], Builder) github.com/frostgrove/vv/crud.Predicate
+var ErrNotUnique error
+var ErrUnboundedDelete error
+var ErrUnboundedUpdate error
+func Executor[M any, ID comparable, U any](*github.com/frostgrove/vv/crud.Repo[M, ID, U]) *Repo[M, ID, U]
+func If[M any](bool, Specification[M]) Specification[M]
+func Lift[M any](github.com/frostgrove/vv/crud.Predicate) Specification[M]
 func Metamodel[M any, A any]() A
-func Predicate[M any](s Specification[M]) crud.Predicate
-type Attr[M any, T any] struct{ ... }
-    func Attribute[M any, T any](field string) Attr[M, T]
-type Builder struct{}
-    var CB Builder
-type Cmp[M any, T any] struct{ ... }
-    func Comparable[M any, T any](field string) Cmp[M, T]
-type Composite[M any] struct{ ... }
-    func AllOf[M any](ss ...Specification[M]) Composite[M]
-    func AnyOf[M any](ss ...Specification[M]) Composite[M]
-    func Not[M any](s Specification[M]) Composite[M]
-    func Where[M any](s Specification[M]) Composite[M]
-type Ord[M any, T cmp.Ordered] struct{ ... }
-    func Ordered[M any, T cmp.Ordered](field string) Ord[M, T]
-type Path struct{ ... }
-type Rel[M any, T any] struct{ ... }
-type Repo[M any, ID comparable, U any] struct{ ... }
-    func Executor[M any, ID comparable, U any](r *crud.Repo[M, ID, U]) *Repo[M, ID, U]
-type Root[M any] struct{}
-type SpecFunc[M any] func(root Root[M], cb Builder) crud.Predicate
-type Specification[M any] interface{ ... }
-    func If[M any](ok bool, s Specification[M]) Specification[M]
-    func Lift[M any](p crud.Predicate) Specification[M]
-    func Of[M any](f func(root Root[M], cb Builder) crud.Predicate) Specification[M]
-type Str[M any] struct{ ... }
-    func Text[M any](field string) Str[M]
+func Not[M any](Specification[M]) Composite[M]
+func Of[M any](func(root Root[M], cb Builder) github.com/frostgrove/vv/crud.Predicate) Specification[M]
+type Ord[M any, T cmp.Ordered] struct {
+	Attr[M, T]
+}
+func (Ord[M, T]) Asc() github.com/frostgrove/vv/crud.Order
+func (Ord[M, T]) Between(T, T) Specification[M]
+func (Ord[M, T]) Desc() github.com/frostgrove/vv/crud.Order
+func (Ord[M, T]) Eq(T) Specification[M]
+func (Ord[M, T]) EqOpt(github.com/frostgrove/vv/crud.Opt[T]) Specification[M]
+func (Ord[M, T]) EqPtr(*T) Specification[M]
+func (Ord[M, T]) Gt(T) Specification[M]
+func (Ord[M, T]) Gte(T) Specification[M]
+func (Ord[M, T]) In(...T) Specification[M]
+func (Ord[M, T]) IsNull() Specification[M]
+func (Ord[M, T]) Lt(T) Specification[M]
+func (Ord[M, T]) Lte(T) Specification[M]
+func (Ord[M, T]) Name() string
+func (Ord[M, T]) Ne(T) Specification[M]
+func (Ord[M, T]) NotIn(...T) Specification[M]
+func (Ord[M, T]) NotNull() Specification[M]
+func (Ord[M, T]) Path() Path
+func Ordered[M any, T cmp.Ordered](string) Ord[M, T]
+type Path struct {
+	Name string
+}
+func Predicate[M any](Specification[M]) github.com/frostgrove/vv/crud.Predicate
+type Rel[M any, T any] struct {
+	<unexported fields>
+}
+func (Rel[M, T]) Path() string
+func (Rel[M, T]) RelPath() string
+func (Rel[M, T]) String() string
+type Repo[M any, ID comparable, U any] struct {
+	*github.com/frostgrove/vv/crud.Repo[M, ID, U]
+}
+func (*Repo[M, ID, U]) CountBy(context.Context, Specification[M]) (int64, error)
+func (*Repo[M, ID, U]) DeleteBy(context.Context, Specification[M]) (int64, error)
+func (*Repo[M, ID, U]) ExistsBy(context.Context, Specification[M]) (bool, error)
+func (*Repo[M, ID, U]) FindAll(context.Context, Specification[M], ...github.com/frostgrove/vv/crud.Option) ([]M, error)
+func (*Repo[M, ID, U]) FindFirst(context.Context, Specification[M], ...github.com/frostgrove/vv/crud.Option) (M, error)
+func (*Repo[M, ID, U]) FindOne(context.Context, Specification[M], ...github.com/frostgrove/vv/crud.Option) (M, error)
+func (*Repo[M, ID, U]) FindPage(context.Context, Specification[M], ...github.com/frostgrove/vv/crud.Option) (github.com/frostgrove/vv/crud.PaginatedResponse[M], error)
+func (*Repo[M, ID, U]) UpdateBy(context.Context, Specification[M], U) (int64, error)
+func (Repo[M, ID, U]) Aggregate(context.Context, ...github.com/frostgrove/vv/crud.Option) ([]github.com/frostgrove/vv/crud.AggregateRow, error)
+func (Repo[M, ID, U]) Count(context.Context, ...github.com/frostgrove/vv/crud.Option) (int64, error)
+func (Repo[M, ID, U]) Create(context.Context, *M) (M, error)
+func (Repo[M, ID, U]) Delete(context.Context, ...ID) (int64, error)
+func (Repo[M, ID, U]) DeleteAll(context.Context, ...github.com/frostgrove/vv/crud.Option) (int64, error)
+func (Repo[M, ID, U]) Exists(context.Context, ...github.com/frostgrove/vv/crud.Option) (bool, error)
+func (Repo[M, ID, U]) First(context.Context, ...github.com/frostgrove/vv/crud.Option) (M, error)
+func (Repo[M, ID, U]) Get(context.Context, ...github.com/frostgrove/vv/crud.Option) (github.com/frostgrove/vv/crud.PaginatedResponse[M], error)
+func (Repo[M, ID, U]) GetAll(context.Context, ...github.com/frostgrove/vv/crud.Option) ([]M, error)
+func (Repo[M, ID, U]) GetByID(context.Context, ID, ...github.com/frostgrove/vv/crud.Option) (M, error)
+func (Repo[M, ID, U]) InsertBatch(context.Context, []*M, ...github.com/frostgrove/vv/crud.BatchOption) error
+func (Repo[M, ID, U]) Meta() *github.com/frostgrove/vv/crud.Meta
+func (Repo[M, ID, U]) Replace(context.Context, *M) (M, error)
+func (Repo[M, ID, U]) Restore(context.Context, ...ID) (int64, error)
+func (Repo[M, ID, U]) Save(context.Context, *M) (M, error)
+func (Repo[M, ID, U]) SaveAll(context.Context, []*M) error
+func (Repo[M, ID, U]) SaveOnly(context.Context, *M) error
+func (Repo[M, ID, U]) SupportsRestore() bool
+func (Repo[M, ID, U]) Tx(context.Context, func(context.Context) error) error
+func (Repo[M, ID, U]) Unwrap() github.com/frostgrove/vv/crud.Core[M, ID]
+func (Repo[M, ID, U]) Update(context.Context, ID, U, ...github.com/frostgrove/vv/crud.Option) (M, error)
+func (Repo[M, ID, U]) UpdateAll(context.Context, U, ...github.com/frostgrove/vv/crud.Option) (int64, error)
+type Root[M any] struct {}
+func (Root[M]) Get(string) Path
+type SpecFunc[M any] func(root Root[M], cb Builder) github.com/frostgrove/vv/crud.Predicate
+func (SpecFunc[M]) ToPredicate(Root[M], Builder) github.com/frostgrove/vv/crud.Predicate
+type Specification[M any] interface {
+	ToPredicate(Root[M], Builder) github.com/frostgrove/vv/crud.Predicate
+}
+type Str[M any] struct {
+	Ord[M, string]
+}
+func (Str[M]) Asc() github.com/frostgrove/vv/crud.Order
+func (Str[M]) Between(string, string) Specification[M]
+func (Str[M]) Contains(string) Specification[M]
+func (Str[M]) ContainsIgnoreCase(string) Specification[M]
+func (Str[M]) Desc() github.com/frostgrove/vv/crud.Order
+func (Str[M]) EndsWith(string) Specification[M]
+func (Str[M]) EndsWithIgnoreCase(string) Specification[M]
+func (Str[M]) Eq(string) Specification[M]
+func (Str[M]) EqOpt(github.com/frostgrove/vv/crud.Opt[string]) Specification[M]
+func (Str[M]) EqPtr(*string) Specification[M]
+func (Str[M]) Gt(string) Specification[M]
+func (Str[M]) Gte(string) Specification[M]
+func (Str[M]) In(...string) Specification[M]
+func (Str[M]) IsNull() Specification[M]
+func (Str[M]) Like(string) Specification[M]
+func (Str[M]) LikeIgnoreCase(string) Specification[M]
+func (Str[M]) Lt(string) Specification[M]
+func (Str[M]) Lte(string) Specification[M]
+func (Str[M]) Name() string
+func (Str[M]) Ne(string) Specification[M]
+func (Str[M]) NotIn(...string) Specification[M]
+func (Str[M]) NotLike(string) Specification[M]
+func (Str[M]) NotNull() Specification[M]
+func (Str[M]) Path() Path
+func (Str[M]) StartsWith(string) Specification[M]
+func (Str[M]) StartsWithIgnoreCase(string) Specification[M]
+func Text[M any](string) Str[M]
+func Where[M any](Specification[M]) Composite[M]
 ```
 
 ## github.com/frostgrove/vv/crud/http/crudhttp
 ```go
-const MaxViolations = porthttp.MaxViolations ...
-const List = "list" ...
-var ErrBadRequest = porthttp.ErrBadRequest
-func AcceptLanguage(header string) string
-func BadRequest(err error) error
-func BadRequestAs(code errs.Code, path errs.Path, format string, args ...any) error
-func BadRequestf(format string, args ...any) error
-func BodyFrom(ctx context.Context) []byte
-func BodyResolver(raw []byte) errs.Resolver
-func ClearGenerated[M any](meta *crud.Meta, m *M) error
-func ClearWriteProtected[M any](meta *crud.Meta, m *M) error
-func CoerceID[ID comparable](raw string) (ID, error)
-func DecodeJSON(r io.Reader, v any) error
-func DecodeJSONKeep(r io.Reader, v any) ([]byte, error)
-func DecodeJSONKeepLimit(r io.Reader, v any, limit int) ([]byte, error)
-func KeepBody(b []byte) []byte
-func KindForStatus(code int) errs.Kind
-func KindOf(err error) errs.Kind
-func LocaleFrom(ctx context.Context) string
-func MalformedBody(err error) error
-func NarrowForCount(request *query.Request)
-func NarrowForEntity(request *query.Request)
-func Routed(status int) error
-func Sanitize[M any](meta *crud.Meta, m *M, allowClientID bool) error
-func Status(err error) int
-func StatusFor(k errs.Kind) int
-func TooLarge(limit int) error
-func WithBody(ctx context.Context, body []byte) context.Context
-func WithLocale(ctx context.Context, locale string) context.Context
-type BulkDeleteRequest[ID comparable] struct{ ... }
-type Envelope = porthttp.Envelope
-    func Internal() Envelope
-    func ParseEnvelope(body []byte) (Envelope, bool)
-type EnvelopeRenderer = porthttp.EnvelopeRenderer
-    func NewRenderer(options ...RenderOption) *EnvelopeRenderer
-type Groups = porthttp.Groups
-type Policy interface{ ... }
-type RenderOption = porthttp.RenderOption
-    func WithCodes(c *errs.Codes) RenderOption
-    func WithMaxViolations(n int) RenderOption
-    func WithMessages(m errs.MessageSource) RenderOption
-    func WithObserver(fn func(context.Context, error)) RenderOption
-    func WithResolvers(rs ...errs.Resolver) RenderOption
-    func WithRetryAfter(seconds int) RenderOption
-type Renderer = porthttp.Renderer
-type Repository[M any, ID comparable, U any] = port.Repository[M, ID, U]
-type Route struct{ ... }
-type Rules = port.Rules
-type Table struct{ ... }
+func AcceptLanguage(string) string
+func BadRequest(error) error
+func BadRequestAs(github.com/frostgrove/vv/errs.Code, github.com/frostgrove/vv/errs.Path, string, ...any) error
+func BadRequestf(string, ...any) error
+func BodyFrom(context.Context) []byte
+func BodyResolver([]byte) github.com/frostgrove/vv/errs.Resolver
+const BulkDelete untyped string = "bulk-delete"
+type BulkDeleteRequest[ID comparable] struct {
+	IDs []ID "json:\"ids\""
+}
+func ClearGenerated[M any](*github.com/frostgrove/vv/crud.Meta, *M) error
+func ClearWriteProtected[M any](*github.com/frostgrove/vv/crud.Meta, *M) error
+func CoerceID[ID comparable](string) (ID, error)
+const Count untyped string = "count"
+const CountQuery untyped string = "count-query"
+const Create untyped string = "create"
+func DecodeJSON(io.Reader, any) error
+func DecodeJSONKeep(io.Reader, any) ([]byte, error)
+func DecodeJSONKeepLimit(io.Reader, any, int) ([]byte, error)
+const DefaultRetryAfter untyped int = 1
+const Delete untyped string = "delete"
+type Envelope = github.com/frostgrove/vv/port/porthttp.Envelope
+func (Envelope) MarshalJSON() ([]byte, error)
+func (Envelope) Violations() []github.com/frostgrove/vv/errs.Violation
+type EnvelopeRenderer = github.com/frostgrove/vv/port/porthttp.EnvelopeRenderer
+func (*EnvelopeRenderer) Render(context.Context, error) (int, net/http.Header, any)
+func (*EnvelopeRenderer) Status(error) int
+var ErrBadRequest error
+const Get untyped string = "get"
+type Groups = github.com/frostgrove/vv/port/porthttp.Groups
+func Internal() Envelope
+func KeepBody([]byte) []byte
+func KindForStatus(int) github.com/frostgrove/vv/errs.Kind
+func KindOf(error) github.com/frostgrove/vv/errs.Kind
+const List untyped string = "list"
+func LocaleFrom(context.Context) string
+func MalformedBody(error) error
+const MaxBody untyped int = 4194304
+const MaxKeptBody untyped int = 65536
+const MaxViolations untyped int = 100
+func NarrowForCount(*github.com/frostgrove/vv/crud/query.Request)
+func NarrowForEntity(*github.com/frostgrove/vv/crud/query.Request)
+func NewRenderer(...RenderOption) *EnvelopeRenderer
+func ParseEnvelope([]byte) (Envelope, bool)
+type Policy interface {
+	RequiredFor(github.com/frostgrove/vv/crud.Action) ([]github.com/frostgrove/vv/auth.Permission, bool)
+}
+const Query untyped string = "query"
+type RenderOption = github.com/frostgrove/vv/port/porthttp.RenderOption
+type Renderer = github.com/frostgrove/vv/port/porthttp.Renderer
+func (Renderer) Render(context.Context, error) (int, net/http.Header, any)
+const Replace untyped string = "replace"
+type Repository[M any, ID comparable, U any] = github.com/frostgrove/vv/port.Repository[M, ID, U]
+func (Repository[M, ID, U]) Count(context.Context, ...github.com/frostgrove/vv/crud.Option) (int64, error)
+func (Repository[M, ID, U]) Delete(context.Context, ...ID) (int64, error)
+func (Repository[M, ID, U]) Get(context.Context, ...github.com/frostgrove/vv/crud.Option) (github.com/frostgrove/vv/crud.PaginatedResponse[M], error)
+func (Repository[M, ID, U]) GetAll(context.Context, ...github.com/frostgrove/vv/crud.Option) ([]M, error)
+func (Repository[M, ID, U]) GetByID(context.Context, ID, ...github.com/frostgrove/vv/crud.Option) (M, error)
+func (Repository[M, ID, U]) Meta() *github.com/frostgrove/vv/crud.Meta
+func (Repository[M, ID, U]) Save(context.Context, *M) (M, error)
+func (Repository[M, ID, U]) Update(context.Context, ID, U, ...github.com/frostgrove/vv/crud.Option) (M, error)
+type Route struct {
+	Method string
+	Path string
+	Name string
+	Action github.com/frostgrove/vv/crud.Action
+}
+func Routed(int) error
+type Rules = github.com/frostgrove/vv/port.Rules
+func (*Rules) BulkCap() int
+func (*Rules) Mounted() github.com/frostgrove/vv/port.Operations
+func (*Rules) RefuseContradictions(string)
+func (*Rules) RefuseServiceOptions(string)
+func (*Rules) Service() []github.com/frostgrove/vv/port.ServiceOption
+func Sanitize[M any](*github.com/frostgrove/vv/crud.Meta, *M, bool) error
+func Status(error) int
+func StatusFor(github.com/frostgrove/vv/errs.Kind) int
+type Table struct {
+	Prefix string
+	ReadOnly bool
+	Expose github.com/frostgrove/vv/port.Operations
+}
+func (Table) Guarded(github.com/frostgrove/vv/auth.Permission, github.com/frostgrove/vv/auth.Permission, github.com/frostgrove/vv/auth.Permission) []github.com/frostgrove/vv/auth/http/authhttp.Endpoint
+func (Table) GuardedBy(Policy) ([]github.com/frostgrove/vv/auth/http/authhttp.Endpoint, error)
+func (Table) Routes() []Route
+func TooLarge(int) error
+const Update untyped string = "update"
+func WithBody(context.Context, []byte) context.Context
+func WithCodes(*github.com/frostgrove/vv/errs.Codes) RenderOption
+func WithLocale(context.Context, string) context.Context
+func WithMaxViolations(int) RenderOption
+func WithMessages(github.com/frostgrove/vv/errs.MessageSource) RenderOption
+func WithObserver(func(context.Context, error)) RenderOption
+func WithResolvers(...github.com/frostgrove/vv/errs.Resolver) RenderOption
+func WithRetryAfter(int) RenderOption
 ```
 
 ## github.com/frostgrove/vv/crud/http/crudnet
 ```go
-func DefaultErrorHandler(w http.ResponseWriter, r *http.Request, err error)
-func Errors(options ...crudhttp.RenderOption) func(http.Handler) http.Handler
-func Routing(mux *http.ServeMux, options ...crudhttp.RenderOption)
-func Status(err error) int
-func WithErrors(f HandlerFunc, options ...crudhttp.RenderOption) http.Handler
-type BulkDeleteRequest[ID comparable] = crudhttp.BulkDeleteRequest[ID]
-type Envelope = crudhttp.Envelope
+func AllowClientID[M any, ID comparable, U any]() Option[M, ID, U]
+func BeforeSave[M any, ID comparable, U any](func(*net/http.Request, *M) error) Option[M, ID, U]
+func BeforeUpdate[M any, ID comparable, U any](func(*net/http.Request, ID, *U) error) Option[M, ID, U]
+type BulkDeleteRequest[ID comparable] = github.com/frostgrove/vv/crud/http/crudhttp.BulkDeleteRequest[ID]
+func DefaultErrorHandler(net/http.ResponseWriter, *net/http.Request, error)
+type Envelope = github.com/frostgrove/vv/crud/http/crudhttp.Envelope
+func (Envelope) MarshalJSON() ([]byte, error)
+func (Envelope) Violations() []github.com/frostgrove/vv/errs.Violation
+func Errors(...github.com/frostgrove/vv/crud/http/crudhttp.RenderOption) func(net/http.Handler) net/http.Handler
+func Exposing[M any, ID comparable, U any](github.com/frostgrove/vv/port.Operations) Option[M, ID, U]
 type Handler[M any, ID comparable, U any] = ResourceFor[M, ID, U, M, U, M]
-    func New[M any, ID comparable, U any](repository Repository[M, ID, U], options ...Option[M, ID, U]) *Handler[M, ID, U]
-    func Serving[M any, ID comparable, U any](service Service[M, ID, U], options ...Option[M, ID, U]) *Handler[M, ID, U]
+func (*Handler[M, ID, U]) BulkDelete(net/http.ResponseWriter, *net/http.Request)
+func (*Handler[M, ID, U]) CountGet(net/http.ResponseWriter, *net/http.Request)
+func (*Handler[M, ID, U]) CountPost(net/http.ResponseWriter, *net/http.Request)
+func (*Handler[M, ID, U]) Create(net/http.ResponseWriter, *net/http.Request)
+func (*Handler[M, ID, U]) Delete(net/http.ResponseWriter, *net/http.Request)
+func (*Handler[M, ID, U]) GetByID(net/http.ResponseWriter, *net/http.Request)
+func (*Handler[M, ID, U]) List(net/http.ResponseWriter, *net/http.Request)
+func (*Handler[M, ID, U]) Mount(*net/http.ServeMux, string)
+func (*Handler[M, ID, U]) Query(net/http.ResponseWriter, *net/http.Request)
+func (*Handler[M, ID, U]) Rendering(...github.com/frostgrove/vv/crud/http/crudhttp.RenderOption) *ResourceFor[M, ID, U, M, U, M]
+func (*Handler[M, ID, U]) Replace(net/http.ResponseWriter, *net/http.Request)
+func (*Handler[M, ID, U]) Update(net/http.ResponseWriter, *net/http.Request)
 type HandlerFor[M any, ID comparable, U any, In any] = ResourceFor[M, ID, U, In, U, M]
-    func NewFor[In, M any, ID comparable, U any](repository Repository[M, ID, U], mapper Mapper[In, M], ...) *HandlerFor[M, ID, U, In]
-    func ServingFor[In, M any, ID comparable, U any](service Service[M, ID, U], mapper Mapper[In, M], options ...Option[M, ID, U]) *HandlerFor[M, ID, U, In]
-type HandlerFunc func(http.ResponseWriter, *http.Request) error
-type Mapper[In, M any] = port.Mapper[In, M]
+func (*HandlerFor[M, ID, U, In]) BulkDelete(net/http.ResponseWriter, *net/http.Request)
+func (*HandlerFor[M, ID, U, In]) CountGet(net/http.ResponseWriter, *net/http.Request)
+func (*HandlerFor[M, ID, U, In]) CountPost(net/http.ResponseWriter, *net/http.Request)
+func (*HandlerFor[M, ID, U, In]) Create(net/http.ResponseWriter, *net/http.Request)
+func (*HandlerFor[M, ID, U, In]) Delete(net/http.ResponseWriter, *net/http.Request)
+func (*HandlerFor[M, ID, U, In]) GetByID(net/http.ResponseWriter, *net/http.Request)
+func (*HandlerFor[M, ID, U, In]) List(net/http.ResponseWriter, *net/http.Request)
+func (*HandlerFor[M, ID, U, In]) Mount(*net/http.ServeMux, string)
+func (*HandlerFor[M, ID, U, In]) Query(net/http.ResponseWriter, *net/http.Request)
+func (*HandlerFor[M, ID, U, In]) Rendering(...github.com/frostgrove/vv/crud/http/crudhttp.RenderOption) *ResourceFor[M, ID, U, In, U, M]
+func (*HandlerFor[M, ID, U, In]) Replace(net/http.ResponseWriter, *net/http.Request)
+func (*HandlerFor[M, ID, U, In]) Update(net/http.ResponseWriter, *net/http.Request)
+type HandlerFunc func(net/http.ResponseWriter, *net/http.Request) error
+func (HandlerFunc) ServeHTTP(net/http.ResponseWriter, *net/http.Request)
+type Mapper[In any, M any] = github.com/frostgrove/vv/port.Mapper[In, M]
+func (Mapper[In, M]) Model(context.Context, In) (M, error)
+func MaxBody[M any, ID comparable, U any](int) Option[M, ID, U]
+func MaxBulk[M any, ID comparable, U any](int) Option[M, ID, U]
+func New[M any, ID comparable, U any](Repository[M, ID, U], ...Option[M, ID, U]) *Handler[M, ID, U]
+func NewFor[In any, M any, ID comparable, U any](Repository[M, ID, U], Mapper[In, M], ...Option[M, ID, U]) *HandlerFor[M, ID, U, In]
+func NewWire[In any, P any, R any, M any, ID comparable, U any](Repository[M, ID, U], Mapper[In, M], PatchMapper[P, U], Presenter[M, R], ...Option[M, ID, U]) *ResourceFor[M, ID, U, In, P, R]
 type Option[M any, ID comparable, U any] func(*options[M, ID, U])
-    func AllowClientID[M any, ID comparable, U any]() Option[M, ID, U]
-    func BeforeSave[M any, ID comparable, U any](fn func(*http.Request, *M) error) Option[M, ID, U]
-    func BeforeUpdate[M any, ID comparable, U any](fn func(*http.Request, ID, *U) error) Option[M, ID, U]
-    func Exposing[M any, ID comparable, U any](operations port.Operations) Option[M, ID, U]
-    func MaxBody[M any, ID comparable, U any](n int) Option[M, ID, U]
-    func MaxBulk[M any, ID comparable, U any](n int) Option[M, ID, U]
-    func ReadOnly[M any, ID comparable, U any]() Option[M, ID, U]
-    func WithErrorHandler[M any, ID comparable, U any](fn func(http.ResponseWriter, *http.Request, error)) Option[M, ID, U]
-    func WithQuery[M any, ID comparable, U any](config *query.Config) Option[M, ID, U]
-    func WithQueryFor[M any, ID comparable, U any](defaultConfig *query.Config, variants map[string]*query.Config, ...) Option[M, ID, U]
-    func WithRenderer[M any, ID comparable, U any](r crudhttp.Renderer) Option[M, ID, U]
-    func WithScope[M any, ID comparable, U any](fn func(*http.Request) ([]crud.Option, error)) Option[M, ID, U]
-    func WithTransform[M any, ID comparable, U any](fn func(*http.Request, M) any) Option[M, ID, U]
-type PatchMapper[P, U any] = wire.PatchMapper[P, U]
-type Presenter[M, R any] = wire.Presenter[M, R]
-type Renderer = crudhttp.Renderer
-type Repository[M any, ID comparable, U any] = crudhttp.Repository[M, ID, U]
-type ResourceFor[M any, ID comparable, U any, In any, P any, R any] struct{ ... }
-    func NewWire[In, P, R, M any, ID comparable, U any](repository Repository[M, ID, U], mapper Mapper[In, M], ...) *ResourceFor[M, ID, U, In, P, R]
-    func ServingWire[In, P, R, M any, ID comparable, U any](service Service[M, ID, U], mapper Mapper[In, M], patcher PatchMapper[P, U], ...) *ResourceFor[M, ID, U, In, P, R]
-type Service[M any, ID comparable, U any] = port.Service[M, ID, U]
+type PatchMapper[P any, U any] = github.com/frostgrove/vv/crud/wire.PatchMapper[P, U]
+func (PatchMapper[P, U]) Update(P) U
+type Presenter[M any, R any] = github.com/frostgrove/vv/crud/wire.Presenter[M, R]
+func (Presenter[M, R]) Response(M) R
+func ReadOnly[M any, ID comparable, U any]() Option[M, ID, U]
+type Renderer = github.com/frostgrove/vv/crud/http/crudhttp.Renderer
+func (Renderer) Render(context.Context, error) (int, net/http.Header, any)
+type Repository[M any, ID comparable, U any] = github.com/frostgrove/vv/crud/http/crudhttp.Repository[M, ID, U]
+func (Repository[M, ID, U]) Count(context.Context, ...github.com/frostgrove/vv/crud.Option) (int64, error)
+func (Repository[M, ID, U]) Delete(context.Context, ...ID) (int64, error)
+func (Repository[M, ID, U]) Get(context.Context, ...github.com/frostgrove/vv/crud.Option) (github.com/frostgrove/vv/crud.PaginatedResponse[M], error)
+func (Repository[M, ID, U]) GetAll(context.Context, ...github.com/frostgrove/vv/crud.Option) ([]M, error)
+func (Repository[M, ID, U]) GetByID(context.Context, ID, ...github.com/frostgrove/vv/crud.Option) (M, error)
+func (Repository[M, ID, U]) Meta() *github.com/frostgrove/vv/crud.Meta
+func (Repository[M, ID, U]) Save(context.Context, *M) (M, error)
+func (Repository[M, ID, U]) Update(context.Context, ID, U, ...github.com/frostgrove/vv/crud.Option) (M, error)
+type ResourceFor[M any, ID comparable, U any, In any, P any, R any] struct {
+	<unexported fields>
+}
+func (*ResourceFor[M, ID, U, In, P, R]) BulkDelete(net/http.ResponseWriter, *net/http.Request)
+func (*ResourceFor[M, ID, U, In, P, R]) CountGet(net/http.ResponseWriter, *net/http.Request)
+func (*ResourceFor[M, ID, U, In, P, R]) CountPost(net/http.ResponseWriter, *net/http.Request)
+func (*ResourceFor[M, ID, U, In, P, R]) Create(net/http.ResponseWriter, *net/http.Request)
+func (*ResourceFor[M, ID, U, In, P, R]) Delete(net/http.ResponseWriter, *net/http.Request)
+func (*ResourceFor[M, ID, U, In, P, R]) GetByID(net/http.ResponseWriter, *net/http.Request)
+func (*ResourceFor[M, ID, U, In, P, R]) List(net/http.ResponseWriter, *net/http.Request)
+func (*ResourceFor[M, ID, U, In, P, R]) Mount(*net/http.ServeMux, string)
+func (*ResourceFor[M, ID, U, In, P, R]) Query(net/http.ResponseWriter, *net/http.Request)
+func (*ResourceFor[M, ID, U, In, P, R]) Rendering(...github.com/frostgrove/vv/crud/http/crudhttp.RenderOption) *ResourceFor[M, ID, U, In, P, R]
+func (*ResourceFor[M, ID, U, In, P, R]) Replace(net/http.ResponseWriter, *net/http.Request)
+func (*ResourceFor[M, ID, U, In, P, R]) Update(net/http.ResponseWriter, *net/http.Request)
+func Routing(*net/http.ServeMux, ...github.com/frostgrove/vv/crud/http/crudhttp.RenderOption)
+type Service[M any, ID comparable, U any] = github.com/frostgrove/vv/port.Service[M, ID, U]
+func (Service[M, ID, U]) Count(context.Context, github.com/frostgrove/vv/port.CountCommand) (int64, error)
+func (Service[M, ID, U]) Create(context.Context, github.com/frostgrove/vv/port.CreateCommand[M]) (M, error)
+func (Service[M, ID, U]) Delete(context.Context, github.com/frostgrove/vv/port.DeleteCommand[ID]) (int64, error)
+func (Service[M, ID, U]) DeleteMany(context.Context, github.com/frostgrove/vv/port.BulkDeleteCommand[ID]) (int64, error)
+func (Service[M, ID, U]) Get(context.Context, github.com/frostgrove/vv/port.GetCommand[ID]) (M, error)
+func (Service[M, ID, U]) List(context.Context, github.com/frostgrove/vv/port.ListCommand) (github.com/frostgrove/vv/crud.PaginatedResponse[M], error)
+func (Service[M, ID, U]) Meta() *github.com/frostgrove/vv/crud.Meta
+func (Service[M, ID, U]) Paths() github.com/frostgrove/vv/errs.Resolver
+func (Service[M, ID, U]) Replace(context.Context, github.com/frostgrove/vv/port.ReplaceCommand[ID, M]) (M, error)
+func (Service[M, ID, U]) Update(context.Context, github.com/frostgrove/vv/port.UpdateCommand[ID, U]) (M, error)
+func Serving[M any, ID comparable, U any](Service[M, ID, U], ...Option[M, ID, U]) *Handler[M, ID, U]
+func ServingFor[In any, M any, ID comparable, U any](Service[M, ID, U], Mapper[In, M], ...Option[M, ID, U]) *HandlerFor[M, ID, U, In]
+func ServingWire[In any, P any, R any, M any, ID comparable, U any](Service[M, ID, U], Mapper[In, M], PatchMapper[P, U], Presenter[M, R], ...Option[M, ID, U]) *ResourceFor[M, ID, U, In, P, R]
+func Status(error) int
+func WithErrorHandler[M any, ID comparable, U any](func(net/http.ResponseWriter, *net/http.Request, error)) Option[M, ID, U]
+func WithErrors(HandlerFunc, ...github.com/frostgrove/vv/crud/http/crudhttp.RenderOption) net/http.Handler
+func WithQuery[M any, ID comparable, U any](*github.com/frostgrove/vv/crud/query.Config) Option[M, ID, U]
+func WithQueryFor[M any, ID comparable, U any](*github.com/frostgrove/vv/crud/query.Config, map[string]*github.com/frostgrove/vv/crud/query.Config, github.com/frostgrove/vv/port.QuerySelector) Option[M, ID, U]
+func WithRenderer[M any, ID comparable, U any](github.com/frostgrove/vv/crud/http/crudhttp.Renderer) Option[M, ID, U]
+func WithScope[M any, ID comparable, U any](func(*net/http.Request) ([]github.com/frostgrove/vv/crud.Option, error)) Option[M, ID, U]
+func WithTransform[M any, ID comparable, U any](func(*net/http.Request, M) any) Option[M, ID, U]
 ```
 
 ## github.com/frostgrove/vv/crud/probe
 ```go
-const DefaultMaxConstraints = 16 ...
-var ErrUnknownTable = errors.New("probe: the catalog does not know this table") ...
-type Declarer interface{ ... }
-type Handler interface{ ... }
-    func Full(cat catalog.Catalog, o ...Option) Handler
-    func Simple() Handler
+func CodeOnly() Option
+type Declarer interface {
+	Declare(*github.com/frostgrove/vv/crud.Meta) (Handler, error)
+}
+const DefaultMaxConstraints untyped int = 16
+const DefaultMaxRows untyped int = 50
+const DefaultMaxSavepoints untyped int = 32
+const DefaultTimeout time.Duration = 250000000
+var ErrKeyDoesNotIdentify error
+var ErrNotDeclared error
+var ErrQualifiedCatalog error
+var ErrUnknownConstraint error
+var ErrUnknownTable error
+func Full(github.com/frostgrove/vv/crud/catalog.Catalog, ...Option) Handler
+type Handler interface {
+	Enrich(context.Context, *Request) (*github.com/frostgrove/vv/errs.Fault, error)
+}
 type Option func(*config)
-    func CodeOnly() Option
-    func Skip(names ...string) Option
-    func WithMaxConstraints(n int) Option
-    func WithMaxRows(n int) Option
-    func WithMaxSavepoints(n int) Option
-    func WithSavepoints() Option
-    func WithScope(fn func(context.Context) (crud.Predicate, error)) Option
-    func WithTimeout(d time.Duration) Option
-    func WithValues() Option
-type Request struct{ ... }
-type Row struct{ ... }
-type Savepointer interface{ ... }
+type Request struct {
+	Op string
+	Fault *github.com/frostgrove/vv/errs.Fault
+	Meta *github.com/frostgrove/vv/crud.Meta
+	Source github.com/frostgrove/vv/crud.Source
+	Rows []Row
+	Batch bool
+	Upsert bool
+	Stored bool
+	Recovered bool
+	Resolve func(table string, columns []string) (github.com/frostgrove/vv/errs.Path, bool)
+}
+type Row struct {
+	Values map[string]any
+	ID any
+	HasID bool
+}
+type Savepointer interface {
+	Savepoints() (bool, int)
+}
+func Simple() Handler
+func Skip(...string) Option
+func WithMaxConstraints(int) Option
+func WithMaxRows(int) Option
+func WithMaxSavepoints(int) Option
+func WithSavepoints() Option
+func WithScope(func(context.Context) (github.com/frostgrove/vv/crud.Predicate, error)) Option
+func WithTimeout(time.Duration) Option
+func WithValues() Option
 ```
 
 ## github.com/frostgrove/vv/crud/query
 ```go
-func Coerce(s string, t reflect.Type) (any, error)
-type Config struct{ ... }
-type Error struct{ ... }
-type Filter struct{ ... }
-    func RawFilter(doc string) Filter
-type Preload struct{ ... }
+func Coerce(string, reflect.Type) (any, error)
+type Config struct {
+	MaxDepth int
+	MaxConditions int
+	MaxPreloads int
+	MaxInValues int
+	MaxSort int
+	MaxSelect int
+	MaxLimit int
+	MaxOffset int
+	MaxBindValues int
+	MaxPreloadRows int
+	AllowDistinct bool
+	AllowUnpaged bool
+	Filterable []string
+	Sortable []string
+	Selectable []string
+	Preloadable []string
+	Searchable []string
+	DefaultSearchFields []string
+}
+func (*Config) Check(*github.com/frostgrove/vv/crud.Meta) error
+func (*Config) MustCheck(*github.com/frostgrove/vv/crud.Meta) *Config
+type Error struct {
+	Path string
+	Reason string
+}
+func (*Error) Error() string
+type Filter struct {
+	<unexported fields>
+}
+func (*Filter) UnmarshalJSON([]byte) error
+func (Filter) IsZero() bool
+func (Filter) MarshalJSON() ([]byte, error)
+func ParseQuery(net/url.Values) (*Request, error)
+func ParseTerm(string) (Term, error)
+type Preload struct {
+	Path string "json:\"path\""
+	Filter Filter "json:\"filter,omitzero\""
+	Sort Sorts "json:\"sort,omitempty\""
+	MaxRows int "json:\"maxRows,omitzero\""
+}
 type Preloads []Preload
-type Request struct{ ... }
-    func ParseQuery(v url.Values) (*Request, error)
-type Sort struct{ ... }
+func (*Preloads) UnmarshalJSON([]byte) error
+func RawFilter(string) Filter
+type Request struct {
+	Page int "json:\"page,omitempty\""
+	Limit int "json:\"limit,omitempty\""
+	Offset int "json:\"offset,omitempty\""
+	Sort Sorts "json:\"sort,omitempty\""
+	Select Strings "json:\"select,omitempty\""
+	Preload Preloads "json:\"preload,omitempty\""
+	Filter Filter "json:\"filter,omitzero\""
+	Terms []Term "json:\"terms,omitempty\""
+	Search string "json:\"search,omitempty\""
+	SearchFields Strings "json:\"searchFields,omitempty\""
+	After string "json:\"after,omitempty\""
+	Before string "json:\"before,omitempty\""
+	Unpaged bool "json:\"unpaged,omitempty\""
+	SkipTotal bool "json:\"skipTotal,omitempty\""
+	Distinct bool "json:\"distinct,omitempty\""
+	<unexported fields>
+}
+func (*Request) ClearCursors()
+func (*Request) Compile(*github.com/frostgrove/vv/crud.Meta, *Config) ([]github.com/frostgrove/vv/crud.Option, error)
+func (*Request) OmitPaging()
+func (*Request) UnmarshalJSON([]byte) error
+func (*Request) UnpagedParam() string
+type Sort struct {
+	Field string "json:\"field\""
+	Desc bool "json:\"desc,omitempty\""
+	Nulls string "json:\"nulls,omitempty\""
+}
 type Sorts []Sort
+func (*Sorts) UnmarshalJSON([]byte) error
 type Strings []string
-type Term struct{ ... }
-    func ParseTerm(s string) (Term, error)
+func (*Strings) UnmarshalJSON([]byte) error
+type Term struct {
+	Path string "json:\"path\""
+	Op string "json:\"op,omitempty\""
+	Values Strings "json:\"values,omitempty\""
+	<unexported fields>
+}
+func (*Term) UnmarshalJSON([]byte) error
+func (Term) MarshalJSON() ([]byte, error)
 ```
 
 ## github.com/frostgrove/vv/crud/sqlfault
 ```go
-func Extract(err error) *sqlerr.Err
-func Integrity(err error) bool
-func Wrap(c errs.Classifier, err error) error
-type Classifier struct{ ... }
-    func New(engine string, options ...Option) *Classifier
-type Columns interface{ ... }
-    func FromCatalog(cat catalog.Catalog) Columns
-type Extractor interface{ ... }
-type ExtractorFunc func(error) *sqlerr.Err
+type Classifier struct {
+	<unexported fields>
+}
+func (*Classifier) Classify(error) (*github.com/frostgrove/vv/errs.Fault, bool)
+func (*Classifier) Engine() string
+type Columns interface {
+	ConstraintColumns(string, string) ([]string, bool)
+}
+func Extract(error) *github.com/frostgrove/vv/errs/sqlerr.Err
+type Extractor interface {
+	Extract(error) *github.com/frostgrove/vv/errs/sqlerr.Err
+}
+type ExtractorFunc func(error) *github.com/frostgrove/vv/errs/sqlerr.Err
+func (ExtractorFunc) Extract(error) *github.com/frostgrove/vv/errs/sqlerr.Err
+func FromCatalog(github.com/frostgrove/vv/crud/catalog.Catalog) Columns
+func Integrity(error) bool
+func New(string, ...Option) *Classifier
 type Option func(*Classifier)
-    func WithCodes(c *errs.Codes) Option
-    func WithColumns(c Columns) Option
-    func WithExtractor(x Extractor) Option
-type QualifiedColumns interface{ ... }
+type QualifiedColumns interface {
+	ConstraintColumnsIn(string, string, string) ([]string, bool)
+}
+func WithCodes(*github.com/frostgrove/vv/errs.Codes) Option
+func WithColumns(Columns) Option
+func WithExtractor(Extractor) Option
+func Wrap(github.com/frostgrove/vv/errs.Classifier, error) error
 ```
 
 ## github.com/frostgrove/vv/crud/sqlrepo
 ```go
-const DefaultPageSize = 20
-func New[M any, ID comparable, U any](source crud.Source, table string, options ...Setting) *crud.Repo[M, ID, U]
-type Blueprint[M any, ID comparable, U any] struct{ ... }
-    func Define[M any, ID comparable, U any](table string, options ...Setting) *Blueprint[M, ID, U]
-    func DefineInSchema[M any, ID comparable, U any](schema, table string, options ...Setting) *Blueprint[M, ID, U]
-    func TryDefine[M any, ID comparable, U any](table string, options ...Setting) (*Blueprint[M, ID, U], error)
-    func TryDefineInSchema[M any, ID comparable, U any](schema, table string, options ...Setting) (*Blueprint[M, ID, U], error)
+type Blueprint[M any, ID comparable, U any] struct {
+	<unexported fields>
+}
+func (*Blueprint[M, ID, U]) Bind(github.com/frostgrove/vv/crud.Source, ...github.com/frostgrove/vv/crud.Middleware[M, ID]) *github.com/frostgrove/vv/crud.Repo[M, ID, U]
+func (*Blueprint[M, ID, U]) Meta() *github.com/frostgrove/vv/crud.Meta
+func DefaultLimit(int) Setting
+const DefaultPageSize untyped int = 20
+func DefaultSort(...github.com/frostgrove/vv/crud.Order) Setting
+func Define[M any, ID comparable, U any](string, ...Setting) *Blueprint[M, ID, U]
+func DefineInSchema[M any, ID comparable, U any](string, string, ...Setting) *Blueprint[M, ID, U]
+func IndependentTable() Setting
+func MaxLimit(int) Setting
+func New[M any, ID comparable, U any](github.com/frostgrove/vv/crud.Source, string, ...Setting) *github.com/frostgrove/vv/crud.Repo[M, ID, U]
+func PortableBatch() Setting
+func PreloadDepth(int) Setting
+func RelationScope(string, github.com/frostgrove/vv/crud.Predicate) Setting
+func Scope(github.com/frostgrove/vv/crud.Predicate) Setting
 type Setting func(*settings)
-    func DefaultLimit(n int) Setting
-    func DefaultSort(orders ...crud.Order) Setting
-    func IndependentTable() Setting
-    func MaxLimit(n int) Setting
-    func PortableBatch() Setting
-    func PreloadDepth(n int) Setting
-    func RelationScope(path string, p crud.Predicate) Setting
-    func Scope(p crud.Predicate) Setting
-    func SoftDelete(field string) Setting
-    func UnstablePagination() Setting
+func SoftDelete(string) Setting
+func TryDefine[M any, ID comparable, U any](string, ...Setting) (*Blueprint[M, ID, U], error)
+func TryDefineInSchema[M any, ID comparable, U any](string, string, ...Setting) (*Blueprint[M, ID, U], error)
+func UnstablePagination() Setting
 ```
 
 ## github.com/frostgrove/vv/crud/wire
 ```go
-func CoversCreate[M, In any](except ...string) error
-func CoversPatch[U, P any](except ...string) error
-func CoversResponse[M, R any](except ...string) error
-func MustCoverCreate[M, In any](except ...string)
-func MustCoverPatch[U, P any](except ...string)
-func MustCoverResponse[M, R any](except ...string)
-type PatchMapper[P, U any] interface{ ... }
-    func IdentityPatch[U any]() PatchMapper[U, U]
-type Presenter[M, R any] interface{ ... }
-    func IdentityPresenter[M any]() Presenter[M, M]
+func CoversCreate[M any, In any](...string) error
+func CoversPatch[U any, P any](...string) error
+func CoversResponse[M any, R any](...string) error
+func IdentityPatch[U any]() PatchMapper[U, U]
+func IdentityPresenter[M any]() Presenter[M, M]
+func MustCoverCreate[M any, In any](...string)
+func MustCoverPatch[U any, P any](...string)
+func MustCoverResponse[M any, R any](...string)
+type PatchMapper[P any, U any] interface {
+	Update(P) U
+}
+type Presenter[M any, R any] interface {
+	Response(M) R
+}
 ```
 
 ## github.com/frostgrove/vv/errs
 ```go
-const DefaultLocaleFile = "default" ...
-const MaxMessageKeyBytes = 256 ...
-var ErrCodeRedeclared = errors.New("errs: the code is already declared with a different kind")
-var ErrMessageRedeclared = errors.New("errs: the message key is already declared with different text")
-func SortViolations(vs []Violation)
-type Builder struct{ ... }
-    func BadRequest() *Builder
-    func Conflict() *Builder
-    func Forbidden() *Builder
-    func Internal() *Builder
-    func MethodNotAllowed() *Builder
-    func New(kind Kind) *Builder
-    func NotFound() *Builder
-    func Retryable() *Builder
-    func TooLarge() *Builder
-    func Unauthorized() *Builder
-    func Validation() *Builder
-type Classifier interface{ ... }
+func AsFault(error) (*Fault, bool)
+func BadRequest() *Builder
+type Builder struct {
+	<unexported fields>
+}
+func (*Builder) Approximate(bool) *Builder
+func (*Builder) At(Path) *Builder
+func (*Builder) Code(Code) *Builder
+func (*Builder) Detail(Detail) *Builder
+func (*Builder) Entity(string) *Builder
+func (*Builder) Fault() *Fault
+func (*Builder) Field(string) *Builder
+func (*Builder) General() *Builder
+func (*Builder) Message(string) *Builder
+func (*Builder) Op(string) *Builder
+func (*Builder) Origin(Origin) *Builder
+func (*Builder) Params(P) *Builder
+func (*Builder) Partial(bool) *Builder
+func (*Builder) Source(Source) *Builder
+func (*Builder) Wrapping(...error) *Builder
+func Chain(...Resolver) Resolver
+type Classifier interface {
+	Classify(error) (*Fault, bool)
+}
 type Code string
-    const CodeUnique Code = "unique" ...
-type CodeDef struct{ ... }
-type CodeMapper interface{ ... }
-type Codes struct{ ... }
-    func NewCodes() *Codes
-    func StandardCodes() *Codes
-type Detail struct{ ... }
-type Fault struct{ ... }
-    func AsFault(err error) (*Fault, bool)
-type FieldViolation interface{ ... }
+const CodeBadQuery Code = "bad_query"
+const CodeCheck Code = "check"
+const CodeConflict Code = "conflict"
+const CodeDeadlock Code = "deadlock"
+type CodeDef struct {
+	Kind Kind
+	Message string
+}
+const CodeExclusion Code = "exclusion"
+const CodeForbidden Code = "forbidden"
+const CodeForeignKey Code = "foreign_key"
+const CodeInternal Code = "internal"
+const CodeInvalidEnum Code = "invalid_enum"
+const CodeInvalidFormat Code = "invalid_format"
+const CodeInvalidID Code = "invalid_id"
+const CodeLockTimeout Code = "lock_timeout"
+const CodeMalformedBody Code = "malformed_body"
+type CodeMapper interface {
+	CodeFor(*Fault, Violation) (Code, bool)
+}
+const CodeMethodNotAllowed Code = "method_not_allowed"
+const CodeNotFound Code = "not_found"
+const CodeNotUnique Code = "not_unique"
+const CodeOutOfRange Code = "out_of_range"
+const CodeRequired Code = "required"
+const CodeRestrict Code = "restrict"
+const CodeSchemaNotReady Code = "schema_not_ready"
+const CodeSerializationFailure Code = "serialization_failure"
+const CodeStaleVersion Code = "stale_version"
+const CodeTooLarge Code = "too_large"
+const CodeTooLong Code = "too_long"
+const CodeTransactionAborted Code = "transaction_aborted"
+const CodeUnauthenticated Code = "unauthenticated"
+const CodeUnavailable Code = "unavailable"
+const CodeUnique Code = "unique"
+const CodeUnknownField Code = "unknown_field"
+type Codes struct {
+	<unexported fields>
+}
+func (*Codes) Add(Code, Kind, string) error
+func (*Codes) KindOf(Code) (Kind, bool)
+func (*Codes) Message(context.Context, Violation, string) (string, bool)
+func (*Codes) MessageFor(Code) (string, bool)
+func Conflict() *Builder
+const DefaultLocaleFile untyped string = "default"
+type Detail struct {
+	Dialect string
+	SQLState string
+	Native int
+	Constraint string
+	Table string
+	Columns []string
+	Value string
+	RefTable string
+	RefColumns []string
+	Driver error
+}
+var ErrCodeRedeclared error
+var ErrMessageRedeclared error
+type Fault struct {
+	Kind Kind
+	Code Code
+	Message string
+	Violations []Violation
+	Op string
+	Entity string
+	Partial bool
+	Detail Detail
+	<unexported fields>
+}
+func (*Fault) Error() string
+func (*Fault) Unwrap() []error
+func (Fault) MarshalJSON() ([]byte, error)
+func (Fault) String() string
+type FieldViolation interface {
+	Namespace() string
+	Param() string
+	Tag() string
+	Value() any
+}
+func Forbidden() *Builder
+func FromFieldViolations[T FieldViolation](string, ...T) []Violation
+func Indexed(int) Step
+func Internal() *Builder
 type Kind uint8
-    const KindInternal Kind = iota ...
-type LocalizedMessageSource interface{ ... }
-type MessageSource interface{ ... }
-type Messages struct{ ... }
-    func LoadMessages(codes *Codes, fsys fs.FS, dir string) (*Messages, error)
-    func NewMessages(codes *Codes) *Messages
+func (Kind) MarshalJSON() ([]byte, error)
+func (Kind) String() string
+const KindBadRequest Kind = 7
+const KindConflict Kind = 5
+const KindForbidden Kind = 3
+const KindInternal Kind = 0
+const KindMethodNotAllowed Kind = 9
+const KindNotFound Kind = 1
+const KindRetryable Kind = 4
+const KindTooLarge Kind = 8
+const KindUnauthorized Kind = 2
+const KindValidation Kind = 6
+func LoadMessages(*Codes, io/fs.FS, string) (*Messages, error)
+type LocalizedMessageSource interface {
+	MessageSource
+	MessageWithLocale(context.Context, Violation, string) (string, string, bool)
+}
+const MaxCatalogueBytes untyped int = 16777216
+const MaxCatalogueDirectoryEntries untyped int = 4096
+const MaxCatalogueEntries untyped int = 10000
+const MaxCatalogueFileBytes untyped int = 1048576
+const MaxCatalogueFiles untyped int = 128
+const MaxLocaleBytes untyped int = 128
+const MaxMessageKeyBytes untyped int = 256
+const MaxMessageOutputBytes untyped int = 16384
+const MaxMessageTemplateBytes untyped int = 16384
+type MessageSource interface {
+	Message(context.Context, Violation, string) (string, bool)
+}
+type Messages struct {
+	<unexported fields>
+}
+func (*Messages) Add(string, string, string) error
+func (*Messages) Load(io/fs.FS, string) error
+func (*Messages) Locales() []string
+func (*Messages) Message(context.Context, Violation, string) (string, bool)
+func (*Messages) MessageWithLocale(context.Context, Violation, string) (string, string, bool)
+func (*Messages) Missing(string) []Code
+func MethodNotAllowed() *Builder
+func Named(string) Step
+func New(Kind) *Builder
+func NewCodes() *Codes
+func NewMessages(*Codes) *Messages
+func NotFound() *Builder
 type Origin uint8
-    const OriginInput Origin = iota ...
+func (Origin) String() string
+const OriginInput Origin = 0
+const OriginState Origin = 1
 type P = map[string]any
+func ParsePath(string) Path
 type Path []Step
-    func ParsePath(s string) Path
-type Resolver interface{ ... }
-    func Chain(rs ...Resolver) Resolver
-type Source struct{ ... }
-type Step struct{ ... }
-    func Indexed(i int) Step
-    func Named(name string) Step
-type Violation struct{ ... }
-    func FromFieldViolations[T FieldViolation](root string, vs ...T) []Violation
+func (*Path) UnmarshalJSON([]byte) error
+func (Path) MarshalJSON() ([]byte, error)
+func (Path) Pointer() string
+func (Path) String() string
+type Resolver interface {
+	Resolve(Path) (Path, bool)
+}
+func Retryable() *Builder
+func SortViolations([]Violation)
+type Source struct {
+	Table string
+	Schema string
+	Columns []string
+	Constraint string
+}
+func StandardCodes() *Codes
+type Step struct {
+	Name string
+	Index int
+	IsIndex bool
+}
+func TooLarge() *Builder
+func Unauthorized() *Builder
+func Validation() *Builder
+type Violation struct {
+	Path Path
+	Code Code
+	Origin Origin
+	Message string
+	MessageLocale string
+	Params map[string]any
+	Source Source
+	Approximate bool
+}
+func (Violation) MarshalJSON() ([]byte, error)
+func (Violation) String() string
 ```
 
 ## github.com/frostgrove/vv/errs/sqlerr
 ```go
-const KindIntegrity = "integrity" ...
-func Classify(dialect string, e *Err) (errs.Code, errs.Source, bool)
-func Path(dir, engine string) string
-func Save(dir string, c *Corpus) error
-type Case struct{ ... }
-type Corpus struct{ ... }
-    func Load(dir, engine string) (*Corpus, error)
-type Err struct{ ... }
+type Case struct {
+	Name string "json:\"name\""
+	Kind string "json:\"kind\""
+	Want string "json:\"want\""
+	Stmt string "json:\"stmt\""
+	Unreachable string "json:\"unreachable,omitempty\""
+	Err *Err "json:\"err\""
+}
+func Classify(string, *Err) (github.com/frostgrove/vv/errs.Code, github.com/frostgrove/vv/errs.Source, bool)
+type Corpus struct {
+	Engine string "json:\"engine\""
+	Server string "json:\"server\""
+	Driver string "json:\"driver\""
+	Cases []Case "json:\"cases\""
+}
+func (*Corpus) Case(string) (Case, bool)
+type Err struct {
+	Type string "json:\"type\""
+	SQLState string "json:\"sqlstate\""
+	Native uint64 "json:\"native\""
+	Message string "json:\"message\""
+	Fields map[string]string "json:\"fields,omitempty\""
+}
+func (*Err) Key() string
+func (*Err) SameKey(*Err) bool
+const KindData untyped string = "data"
+const KindIntegrity untyped string = "integrity"
+const KindInternal untyped string = "internal"
+const KindNone untyped string = "none"
+const KindRetryable untyped string = "retryable"
+func Load(string, string) (*Corpus, error)
+func Path(string, string) string
+func Save(string, *Corpus) error
 ```
 
 ## github.com/frostgrove/vv/event
 ```go
-const MaxPayloadBytes = 1 << 20 ...
-var ErrDeclaration = errors.New("event: the declaration is malformed") ...
-func CauseOf(err error) error
-func Failure(outcome Outcome, cause error) error
-func ResidentPage(maxPayload int) int
-type Aggregate[S any, ID any] struct{ ... }
-    func Define[S any, ID any](family string, key func(ID) Key) *Aggregate[S, ID]
-    func TryDefine[S any, ID any](family string, key func(ID) Key) (*Aggregate[S, ID], error)
-type AppendRequest struct{ ... }
-type At[S any] struct{ ... }
-type Authority struct{ ... }
-    func NewAuthority(over Backing, transaction any) (Authority, error)
-type Backing struct{ ... }
-    func NewBacking(identity any) (Backing, error)
-type Binding struct{ ... }
-    func Open(store Store) *Binding
-type Capabilities struct{ ... }
-type Chain[V any] struct{ ... }
-    func From[V any](codec Codec[V]) Chain[V]
-    func Then[A, B any](prev Chain[A], codec Codec[B], up func(A) (B, error)) Chain[B]
-type Change[S any] struct{ ... }
-type Checkpoint struct{ ... }
-type CheckpointCapabilities struct{ ... }
-type Checkpoints interface{ ... }
-type Codec[V any] interface{ ... }
-    func JSON[V any]() Codec[V]
-type Commit struct{ ... }
+type Aggregate[S any, ID any] struct {
+	<unexported fields>
+}
+func (*Aggregate[S, ID]) Family() string
+func (*Aggregate[S, ID]) Fold(ID, S, ...Change[S]) (S, error)
+func (*Aggregate[S, ID]) Key(ID) (Key, error)
+type AppendRequest struct {
+	Stream Stream
+	Expected Version
+	Records []Record
+}
+type At[S any] struct {
+	<unexported fields>
+}
+func (At[S]) Stream() Stream
+func (At[S]) Version() Version
+type Authority struct {
+	<unexported fields>
+}
+func (Authority) MarshalJSON() ([]byte, error)
+func (Authority) Same(Authority) bool
+func (Authority) String() string
+func (Authority) Valid() bool
+type Backing struct {
+	<unexported fields>
+}
+func (Backing) Equal(Backing) bool
+func (Backing) String() string
+const BadCursor Outcome = 5
+func Bind[S any, ID any](*Binding, *Aggregate[S, ID]) (*Repo[S, ID], error)
+type Binding struct {
+	<unexported fields>
+}
+type Capabilities struct {
+	Transactions Support
+	Persistence Support
+	MonotoneVisibility Support
+	SharedBacking Support
+}
+func CauseOf(error) error
+type Chain[V any] struct {
+	<unexported fields>
+}
+type Change[S any] struct {
+	<unexported fields>
+}
+func (Change[S]) Err() error
+func (Change[S]) Stream() Stream
+type Checkpoint struct {
+	Projection string
+	Cursor Cursor
+	Advance uint64
+	Progress Progress
+}
+func (Checkpoint) Fresh() bool
+type CheckpointCapabilities struct {
+	Transactions Support
+	Persistence Support
+}
+type Checkpoints interface {
+	Backing() Backing
+	Capabilities() CheckpointCapabilities
+	Close() error
+	Forget(context.Context, string) error
+	Load(context.Context, string) (Checkpoint, error)
+	Save(context.Context, Checkpoint) error
+	Transaction(context.Context) (Authority, error)
+}
+const Closed Outcome = 4
+type Codec[V any] interface {
+	CanEncode() error
+	Decode([]byte) (V, error)
+	Encode(V) ([]byte, error)
+}
+type Commit struct {
+	<unexported fields>
+}
+func (Commit) Authority() Authority
+func (Commit) Count() int
+func (Commit) Empty() bool
+func (Commit) First() Version
+func (Commit) Last() Version
+func (Commit) Stream() Stream
+func Compose(...string) Key
+const Conflict Outcome = 1
 type Cursor string
-type Declaration interface{ ... }
-type Envelope struct{ ... }
-type Fact[S any, ID any, E any] struct{ ... }
-    func Declare[S, ID, E any](a *Aggregate[S, ID], name string, chain Chain[E], fold func(S, E) S) *Fact[S, ID, E]
-    func TryDeclare[S, ID, E any](a *Aggregate[S, ID], name string, chain Chain[E], fold func(S, E) S) (*Fact[S, ID, E], error)
+type Declaration interface {
+	Family() string
+	<unexported methods>
+}
+func Declare[S any, ID any, E any](*Aggregate[S, ID], string, Chain[E], func(S, E) S) *Fact[S, ID, E]
+func Define[S any, ID any](string, func(ID) Key) *Aggregate[S, ID]
+type Envelope struct {
+	Stream Stream
+	Version Version
+	Position Position
+	Type string
+	Revision int
+	Payload []byte
+	RecordedAt time.Time
+}
+var ErrAmbientNotTransaction error
+var ErrBackend error
+var ErrClosed error
+var ErrCodecType error
+var ErrConflict error
+var ErrCursor error
+var ErrDeclaration error
+var ErrEncode error
+var ErrFamily error
+var ErrKey error
+var ErrNoTransaction error
+var ErrNoTransactionBinding error
+var ErrPayload error
+var ErrRefused error
+var ErrRevision error
+var ErrSample error
+var ErrSealed error
+var ErrTooLarge error
+var ErrTransactionMismatch error
+var ErrUncertain error
+var ErrUnknownType error
+var ErrUpcast error
+var ErrWrongStore error
+var ErrWrongStream error
+type Fact[S any, ID any, E any] struct {
+	<unexported fields>
+}
+func (*Fact[S, ID, E]) Family() string
+func (*Fact[S, ID, E]) Name() string
+func (*Fact[S, ID, E]) New(ID, E) Change[S]
+func (*Fact[S, ID, E]) Read(Envelope) (E, error)
+func (*Fact[S, ID, E]) Revisions() int
+func (*Fact[S, ID, E]) RoundTrip(...any) ([]E, error)
+func Failure(Outcome, error) error
+func From[V any](Codec[V]) Chain[V]
+func JSON[V any]() Codec[V]
 type Key string
-    func Compose(parts ...string) Key
-type Limits struct{ ... }
-type Log interface{ ... }
-    func ReadOnly(store Store) Log
+type Limits struct {
+	MaxPayload int
+	MaxBatch int
+	MaxKey int
+	StreamPage int
+	MaxRead int
+}
+type Log interface {
+	Backing() Backing
+	Capabilities() Capabilities
+	Limits() Limits
+	ReadAll(context.Context, Cursor) ([]Envelope, Cursor, error)
+}
+const MaxBatchCount untyped int = 1024
+const MaxCursorBytes untyped int = 4096
+const MaxKeyBytes untyped int = 2048
+const MaxNameBytes untyped int = 128
+const MaxPageCount untyped int = 4096
+const MaxPayloadBytes untyped int = 1048576
+const MaxResidentBytes untyped int = 67108864
+func NewAuthority(Backing, any) (Authority, error)
+func NewBacking(any) (Backing, error)
+const NotWritten Outcome = 2
+func Open(Store) *Binding
 type Outcome uint8
-    const Unclassified Outcome = iota ...
+func (Outcome) String() string
 type Position uint64
-type Progress struct{ ... }
-type Reader struct{ ... }
-    func Read(log Log, after Cursor) (*Reader, error)
-type Record struct{ ... }
-type Repo[S any, ID any] struct{ ... }
-    func Bind[S, ID any](b *Binding, a *Aggregate[S, ID]) (*Repo[S, ID], error)
-type Store interface{ ... }
-type Stream struct{ ... }
+type Progress struct {
+	Highest Position
+	Applied uint64
+	Quarantined uint64
+	At time.Time
+}
+func Read(Log, Cursor) (*Reader, error)
+func ReadOnly(Store) Log
+type Reader struct {
+	<unexported fields>
+}
+func (*Reader) Cursor() Cursor
+func (*Reader) Events() []Envelope
+func (*Reader) Next(context.Context) (bool, error)
+type Record struct {
+	Type string
+	Revision int
+	Payload []byte
+}
+const Refused Outcome = 6
+type Repo[S any, ID any] struct {
+	<unexported fields>
+}
+func (*Repo[S, ID]) Append(context.Context, At[S], ...Change[S]) (At[S], Commit, error)
+func (*Repo[S, ID]) Authority(context.Context) (Authority, error)
+func (*Repo[S, ID]) Load(context.Context, ID) (S, At[S], error)
+func (*Repo[S, ID]) Within(context.Context) (context.Context, error)
+func ResidentPage(int) int
+type Store interface {
+	Log
+	Append(context.Context, AppendRequest) error
+	Close() error
+	ReadStream(context.Context, Stream, Version) ([]Envelope, error)
+	Transaction(context.Context) (Authority, error)
+}
+type Stream struct {
+	Family string
+	Key Key
+}
+func (Stream) String() string
 type Support uint8
-    const Unstated Support = iota ...
-type Tracker struct{ ... }
-    func Track(checkpoints Checkpoints, projection string) (*Tracker, error)
+func (Support) String() string
+const Supported Support = 2
+func Then[A any, B any](Chain[A], Codec[B], func(A) (B, error)) Chain[B]
+func Track(Checkpoints, string) (*Tracker, error)
+type Tracker struct {
+	<unexported fields>
+}
+func (*Tracker) Backing() Backing
+func (*Tracker) Capabilities() CheckpointCapabilities
+func (*Tracker) Forget(context.Context) error
+func (*Tracker) Load(context.Context) (Checkpoint, error)
+func (*Tracker) Projection() string
+func (*Tracker) Save(context.Context, Cursor, Progress) (uint64, error)
+func (*Tracker) Transaction(context.Context) (Authority, error)
+func TryDeclare[S any, ID any, E any](*Aggregate[S, ID], string, Chain[E], func(S, E) S) (*Fact[S, ID, E], error)
+func TryDefine[S any, ID any](string, func(ID) Key) (*Aggregate[S, ID], error)
+const Unclassified Outcome = 0
+const Unconfirmed Outcome = 3
+const Unstated Support = 0
+const Unsupported Support = 1
 type Version uint64
 ```
 
 ## github.com/frostgrove/vv/event/eventmemory
 ```go
-func WithTransaction(ctx context.Context, tx *Tx) context.Context
-type CheckpointSpec struct{ ... }
-type Checkpoints struct{ ... }
-    func NewCheckpoints(spec CheckpointSpec) (*Checkpoints, error)
-type Log struct{ ... }
-    func NewLog(spec LogSpec) (*Log, error)
-type LogSpec struct{ ... }
-type Spec struct{ ... }
-type Store struct{ ... }
-    func New(spec Spec) (*Store, error)
-type Tx struct{ ... }
+type CheckpointSpec struct {
+	Log *Log
+}
+type Checkpoints struct {
+	<unexported fields>
+}
+func (*Checkpoints) Backing() github.com/frostgrove/vv/event.Backing
+func (*Checkpoints) Begin(context.Context) (*Tx, error)
+func (*Checkpoints) Capabilities() github.com/frostgrove/vv/event.CheckpointCapabilities
+func (*Checkpoints) Close() error
+func (*Checkpoints) Forget(context.Context, string) error
+func (*Checkpoints) Load(context.Context, string) (github.com/frostgrove/vv/event.Checkpoint, error)
+func (*Checkpoints) Save(context.Context, github.com/frostgrove/vv/event.Checkpoint) error
+func (*Checkpoints) Transaction(context.Context) (github.com/frostgrove/vv/event.Authority, error)
+type Log struct {
+	<unexported fields>
+}
+type LogSpec struct {
+	MaxPayload int
+	MaxKey int
+}
+func New(Spec) (*Store, error)
+func NewCheckpoints(CheckpointSpec) (*Checkpoints, error)
+func NewLog(LogSpec) (*Log, error)
+type Spec struct {
+	Log *Log
+	Clock func() time.Time
+	MaxBatch int
+	StreamPage int
+	MaxRead int
+}
+type Store struct {
+	<unexported fields>
+}
+func (*Store) Append(context.Context, github.com/frostgrove/vv/event.AppendRequest) error
+func (*Store) Backing() github.com/frostgrove/vv/event.Backing
+func (*Store) Begin(context.Context) (*Tx, error)
+func (*Store) Capabilities() github.com/frostgrove/vv/event.Capabilities
+func (*Store) Check(context.Context) error
+func (*Store) Close() error
+func (*Store) Limits() github.com/frostgrove/vv/event.Limits
+func (*Store) ReadAll(context.Context, github.com/frostgrove/vv/event.Cursor) ([]github.com/frostgrove/vv/event.Envelope, github.com/frostgrove/vv/event.Cursor, error)
+func (*Store) ReadStream(context.Context, github.com/frostgrove/vv/event.Stream, github.com/frostgrove/vv/event.Version) ([]github.com/frostgrove/vv/event.Envelope, error)
+func (*Store) Transaction(context.Context) (github.com/frostgrove/vv/event.Authority, error)
+type Tx struct {
+	<unexported fields>
+}
+func (*Tx) Commit(context.Context) error
+func (*Tx) Rollback(context.Context) error
+func WithTransaction(context.Context, *Tx) context.Context
 ```
 
 ## github.com/frostgrove/vv/event/eventtest
 ```go
-func Families(t *testing.T, declarations ...event.Declaration)
-func Keys[S, ID any](t *testing.T, a *event.Aggregate[S, ID], ids ...ID)
-func RoundTrip[S, ID, E any](t *testing.T, fact *event.Fact[S, ID, E], byRevision ...any)
-func Run(t *testing.T, factory Factory)
-func RunCheckpoints(t *testing.T, factory CheckpointFactory)
-type CheckpointFactory struct{ ... }
-type Factory struct{ ... }
-type Tx interface{ ... }
+type CheckpointFactory struct {
+	New func(t *testing.T) github.com/frostgrove/vv/event.Checkpoints
+	Begin func(t *testing.T, ctx context.Context, c github.com/frostgrove/vv/event.Checkpoints) (context.Context, Tx)
+	Sibling func(t *testing.T, c github.com/frostgrove/vv/event.Checkpoints) github.com/frostgrove/vv/event.Checkpoints
+	Cursor func(t *testing.T) github.com/frostgrove/vv/event.Cursor
+	Instant func(minted time.Time) time.Time
+	Window time.Duration
+}
+type Factory struct {
+	New func(t *testing.T) github.com/frostgrove/vv/event.Store
+	Begin func(t *testing.T, ctx context.Context, s github.com/frostgrove/vv/event.Store) (context.Context, Tx)
+	Sibling func(t *testing.T, s github.com/frostgrove/vv/event.Store) github.com/frostgrove/vv/event.Store
+	Fail func(t *testing.T, s github.com/frostgrove/vv/event.Store, outcome github.com/frostgrove/vv/event.Outcome) bool
+	Tail func(t *testing.T, s github.com/frostgrove/vv/event.Store) github.com/frostgrove/vv/event.Cursor
+	Unparsable func(t *testing.T, s github.com/frostgrove/vv/event.Store) github.com/frostgrove/vv/event.Cursor
+	Window time.Duration
+}
+func Families(*testing.T, ...github.com/frostgrove/vv/event.Declaration)
+func Keys[S any, ID any](*testing.T, *github.com/frostgrove/vv/event.Aggregate[S, ID], ...ID)
+func RoundTrip[S any, ID any, E any](*testing.T, *github.com/frostgrove/vv/event.Fact[S, ID, E], ...any)
+func Run(*testing.T, Factory)
+func RunCheckpoints(*testing.T, CheckpointFactory)
+type Tx interface {
+	Commit(context.Context) error
+	Rollback(context.Context) error
+}
 ```
 
 ## github.com/frostgrove/vv/event/projection
 ```go
-const MaxPartitions = 1024
-var ErrSpec = errors.New("projection: this projection cannot be assembled from this spec") ...
-var Unchecked = unchecked{}
-func Ignore(router *Router, family string, types ...string)
-func On[S, ID, E any](router *Router, fact *event.Fact[S, ID, E], ...)
-func Split(ctx context.Context, spec SplitSpec) (Identity, Identity, error)
-func TryIgnore(router *Router, family string, types ...string) error
-func TryOn[S, ID, E any](router *Router, fact *event.Fact[S, ID, E], ...) error
 type Advance uint8
-    const UnsetAdvance Advance = iota ...
-type Backoff struct{ ... }
-type Batch struct{ ... }
-type Claim struct{ ... }
+func (Advance) String() string
+func (Advance) Valid() bool
+const AfterApply Advance = 1
+type Backoff struct {
+	First time.Duration
+	Max time.Duration
+}
+type Barrier struct {
+	Projection string
+	Generation Generation
+	At github.com/frostgrove/vv/event.Position
+}
+type Batch struct {
+	Projection string
+	Identity Identity
+	Envelopes []github.com/frostgrove/vv/event.Envelope
+	Attempt int
+}
+func ByStream() Sequencer
+type Claim struct {
+	Of Identity
+	Sequence string
+	Token string
+	Until time.Time
+}
 type Classifier func(err error) Verdict
-type Cover struct{ ... }
-    func NewCover(partitions ...Partition) (Cover, error)
+func Classify(error) Verdict
+type Cover struct {
+	<unexported fields>
+}
+func (Cover) Count() int
+func (Cover) Partitions() []Partition
+func Cutover(context.Context, CutoverSpec) error
+type CutoverSpec struct {
+	Checkpoints github.com/frostgrove/vv/event.Checkpoints
+	Generations Generations
+	Park Park
+	Projection string
+	From Generation
+	To Generation
+	Retiring Cover
+	Arriving Cover
+	Unit func(ctx context.Context, work func(context.Context) error) error
+	AcceptQuarantined bool
+}
+type Effect struct {
+	Identity Identity
+	Envelopes []github.com/frostgrove/vv/event.Envelope
+	Attempt int
+}
+type Effects interface {
+	Stage(context.Context, Effect) error
+}
+type EffectsFunc func(ctx context.Context, effect Effect) error
+func (EffectsFunc) Stage(context.Context, Effect) error
+var ErrClaimLost error
+var ErrHalted error
+var ErrOvertaken error
+var ErrParkFull error
+var ErrRetired error
+var ErrSpec error
+var ErrTopology error
+var ErrUnrouted error
 type Failure uint8
-    const Halt Failure = iota ...
+func (Failure) Valid() bool
 type Foreign uint8
-    const SkipForeign Foreign = iota ...
 type Generation uint32
-    const Ungenerated Generation = 0
-type Handler interface{ ... }
+type Generations interface {
+	Activate(context.Context, string, Generation, Generation) error
+	Active(context.Context, string) (Generation, error)
+}
+const Halt Failure = 0
+type Handler interface {
+	Apply(context.Context, Batch) error
+}
 type HandlerFunc func(ctx context.Context, batch Batch) error
-type Identity struct{ ... }
-    func NewIdentity(projection string, generation Generation, partition Partition) (Identity, error)
-    func ParseIdentity(text string) (Identity, error)
-type Letter struct{ ... }
-type Observer interface{ ... }
+func (HandlerFunc) Apply(context.Context, Batch) error
+type Identity struct {
+	<unexported fields>
+}
+func (Identity) Generation() Generation
+func (Identity) Partition() Partition
+func (Identity) Projection() string
+func (Identity) String() string
+func (Identity) Whole() Identity
+func Ignore(*Router, string, ...string)
+const InUnit Advance = 2
+type Letter struct {
+	Identity Identity
+	Sequencer string
+	Sequence string
+	Envelope github.com/frostgrove/vv/event.Envelope
+	Cause error
+	Attempt int
+}
+const MaxPartitions untyped int = 1024
+func New(Spec) (*Projection, error)
+func NewCover(...Partition) (Cover, error)
+func NewIdentity(string, Generation, Partition) (Identity, error)
+func NewPartition(uint32, uint32) (Partition, error)
+func NewRedrive(RedriveSpec) (*Redrive, error)
+func NewRouter(Foreign) *Router
+func Observe(context.Context, github.com/frostgrove/vv/event.Checkpoints, Identity, Cover) (Barrier, error)
+type Observer interface {
+	Observed(State)
+}
 type ObserverFunc func(state State)
-type Park interface{ ... }
-type Partition struct{ ... }
-    func NewPartition(id, mask uint32) (Partition, error)
-    func ParsePartition(text string) (Partition, error)
-    func Whole() Partition
+func (ObserverFunc) Observed(State)
+func On[S any, ID any, E any](*Router, *github.com/frostgrove/vv/event.Fact[S, ID, E], func(context.Context, E, github.com/frostgrove/vv/event.Envelope) error)
+func OneSequence() Sequencer
+type Park interface {
+	Holds(context.Context, Identity, string) (bool, error)
+	Holes(context.Context, Identity) (uint64, error)
+	Park(context.Context, Letter) error
+	Sequences(context.Context, Identity) (uint64, error)
+}
+const ParkSequence Failure = 1
+func ParseIdentity(string) (Identity, error)
+func ParsePartition(string) (Partition, error)
+type Partition struct {
+	<unexported fields>
+}
+func (Partition) Count() int
+func (Partition) ID() uint32
+func (Partition) Mask() uint32
+func (Partition) Matches(string) bool
+func (Partition) Split() (Partition, Partition, error)
+func (Partition) String() string
+func (Partition) Whole() bool
+const Permanent Verdict = 1
 type Phase string
-    const PhaseStarting Phase = "starting" ...
-type Projection struct{ ... }
-    func New(spec Spec) (*Projection, error)
-type Redrive struct{ ... }
-    func NewRedrive(spec RedriveSpec) (*Redrive, error)
-type RedriveSpec struct{ ... }
-type Redriver interface{ ... }
-type Retried struct{ ... }
-type Router struct{ ... }
-    func NewRouter(foreign Foreign) *Router
-type Sequencer interface{ ... }
-    func ByStream() Sequencer
-    func OneSequence() Sequencer
-    func SequenceBy(name string, of func(event.Envelope) string) Sequencer
-    func Unordered() Sequencer
-type Spec struct{ ... }
-type SplitSpec struct{ ... }
-type State struct{ ... }
+const PhaseBlocked Phase = "blocked"
+const PhaseDegraded Phase = "degraded"
+const PhaseDraining Phase = "draining"
+const PhaseFollowing Phase = "following"
+const PhaseHalted Phase = "halted"
+const PhaseRetrying Phase = "retrying"
+const PhaseStarting Phase = "starting"
+type Projection struct {
+	<unexported fields>
+}
+func (*Projection) Declaration() github.com/frostgrove/vv/runtime.Declaration
+func (*Projection) Drain(context.Context) error
+func (*Projection) Name() string
+func (*Projection) Ready(context.Context) error
+func (*Projection) Run(context.Context) error
+func (*Projection) State() State
+func Reached(context.Context, github.com/frostgrove/vv/event.Checkpoints, Park, Barrier, Identity, Cover) (Readiness, error)
+type Readiness struct {
+	Reached bool
+	Behind github.com/frostgrove/vv/event.Position
+	Quarantined uint64
+	Holes uint64
+}
+type Redrive struct {
+	<unexported fields>
+}
+func (*Redrive) Any(context.Context) (Retried, error)
+func (*Redrive) Sequence(context.Context, string) (Retried, error)
+type RedriveSpec struct {
+	Identity Identity
+	Handler Handler
+	Sequencer Sequencer
+	Park Redriver
+	Unit func(ctx context.Context, work func(context.Context) error) error
+	Destination any
+	Effects Effects
+	EffectsAfter github.com/frostgrove/vv/event.Position
+	Generations Generations
+}
+type Redriver interface {
+	Claim(context.Context, Identity, string) (Claim, bool, error)
+	Evict(context.Context, Claim, Letter) error
+	Release(context.Context, Claim) error
+	Sequence(context.Context, Claim) ([]Letter, error)
+	Touch(context.Context, Claim, error) error
+}
+const RefuseForeign Foreign = 1
+type Retried struct {
+	Sequence string
+	Applied int
+	Left int
+	Cause error
+}
+const Retryable Verdict = 0
+type Router struct {
+	<unexported fields>
+}
+func (*Router) Apply(context.Context, Batch) error
+func (*Router) Skipped() uint64
+func SequenceBy(string, func(github.com/frostgrove/vv/event.Envelope) string) Sequencer
+type Sequencer interface {
+	Name() string
+	SequenceOf(github.com/frostgrove/vv/event.Envelope) string
+}
+const SkipForeign Foreign = 0
+type Spec struct {
+	Name string
+	Log github.com/frostgrove/vv/event.Log
+	Checkpoints github.com/frostgrove/vv/event.Checkpoints
+	Handler Handler
+	Advance Advance
+	Unit func(ctx context.Context, work func(context.Context) error) error
+	Destination any
+	Sequence Sequencer
+	Partition Partition
+	Generation Generation
+	Idle time.Duration
+	Pace time.Duration
+	Wake <-chan struct{}
+	Backoff Backoff
+	Attempts int
+	Tolerate time.Duration
+	OnPermanentFailure Failure
+	Park Park
+	Generations Generations
+	Effects Effects
+	EffectsAfter github.com/frostgrove/vv/event.Position
+	Classifier Classifier
+	Observer Observer
+	Ticks github.com/frostgrove/vv/runtime.Ticks
+}
+func Split(context.Context, SplitSpec) (Identity, Identity, error)
+type SplitSpec struct {
+	Checkpoints github.com/frostgrove/vv/event.Checkpoints
+	Identity Identity
+	Unit func(ctx context.Context, work func(context.Context) error) error
+}
+type State struct {
+	Projection string
+	Identity Identity
+	Phase Phase
+	Progress github.com/frostgrove/vv/event.Progress
+	Parked uint64
+	Attempt int
+	Err error
+	At time.Time
+}
+func TryIgnore(*Router, string, ...string) error
+func TryOn[S any, ID any, E any](*Router, *github.com/frostgrove/vv/event.Fact[S, ID, E], func(context.Context, E, github.com/frostgrove/vv/event.Envelope) error) error
+var Unchecked unchecked
+const Ungenerated Generation = 0
+func Unordered() Sequencer
+const UnsetAdvance Advance = 0
 type Verdict uint8
-    const Retryable Verdict = iota ...
-    func Classify(err error) Verdict
+func Whole() Partition
 ```
 
 ## github.com/frostgrove/vv/health
 ```go
-const DefaultTimeout = 2 * time.Second ...
-const MaxMessageBytes = 256
-var ErrRegistration = errors.New("health: the registered checks are not usable")
-type CheckDetail struct{ ... }
-type Contribution struct{ ... }
-type Detail struct{ ... }
+func Auto(...Contribution) (*Registry, error)
+type CheckDetail struct {
+	Name string "json:\"name\""
+	Code string "json:\"code,omitempty\""
+	Importance Importance "json:\"importance\""
+	State State "json:\"state\""
+	Message string "json:\"message,omitempty\""
+	Took time.Duration "json:\"took\""
+}
+type Contribution struct {
+	Name string
+	Code string
+	Importance Importance
+	Timeout time.Duration
+	Probe Probe
+}
+const DefaultFreshness time.Duration = 1000000000
+const DefaultTimeout time.Duration = 2000000000
+const Degrading Importance = "degrading"
+type Detail struct {
+	Status Status "json:\"status\""
+	ObservedAt time.Time "json:\"observedAt\""
+	Checks []CheckDetail "json:\"checks\""
+}
+const Disabled Importance = "disabled"
+var ErrRegistration error
 type Importance string
-    const Required Importance = "required" ...
-type Probe interface{ ... }
+func (Importance) Known() bool
+const Informational Importance = "informational"
+const MaxMessageBytes untyped int = 256
+func New(Spec) (*Registry, error)
+type Probe interface {
+	Check(context.Context) error
+}
 type ProbeFunc func(ctx context.Context) error
-type RegistrationError struct{ ... }
-type Registry struct{ ... }
-    func Auto(contributions ...Contribution) (*Registry, error)
-    func New(spec Spec) (*Registry, error)
-type Report struct{ ... }
-type Spec struct{ ... }
+func (ProbeFunc) Check(context.Context) error
+type RegistrationError struct {
+	<unexported fields>
+}
+func (*RegistrationError) Error() string
+func (*RegistrationError) Is(error) bool
+func (*RegistrationError) Problems() []string
+type Registry struct {
+	<unexported fields>
+}
+func (*Registry) Contributions() []Contribution
+func (*Registry) Inspect(context.Context) Detail
+func (*Registry) Live() Report
+func (*Registry) Ready(context.Context) Report
+type Report struct {
+	Status Status "json:\"status\""
+	Codes []string "json:\"codes,omitempty\""
+}
+const Required Importance = "required"
+type Spec struct {
+	Contributions []Contribution
+	Timeout time.Duration
+	Freshness time.Duration
+	Now func() time.Time
+}
 type State string
-    const StatePassing State = "passing" ...
+const StateDisabled State = "disabled"
+const StateFailing State = "failing"
+const StatePassing State = "passing"
 type Status string
-    const StatusLive Status = "live" ...
+const StatusDegraded Status = "degraded"
+const StatusDown Status = "down"
+const StatusLive Status = "live"
+const StatusReady Status = "ready"
 ```
 
 ## github.com/frostgrove/vv/jobs
 ```go
-const DefaultAdmissionFreshness = 30 * time.Second ...
-const MaxDefinitions = 4096 ...
-const DefaultAttemptTimeout = 10 * time.Minute ...
-const MaxDeliveryRecordBytes ...
-const MaxPartitionBytes = 512 ...
-const DefaultListLimit = 100
-const DefaultPurgeLimit = 100
-const MaxHeldReasonBytes = 64
-const MaxLeaseTokenBytes = 2 << 10
-const MaxListDefinitions = 128
-const MaxListLimit = 1000
-const MaxListOffset = 1_000_000
-const MaxPurgeLimit = 1000
-const MaxResourceUnits = 1 << 20
-const MaxScheduleObservers = 8
-const MaxWorkerObservers = 8
-const MaximumCollapseDelay = MaximumMaxElapsed
-const MaximumPriority = 1000
-const WorkerIncarnationBytes = 16
-var ErrAdmissionHeld = errors.New("jobs: admission held") ...
-var ErrInvalid = errors.New("jobs: invalid value") ...
-var Interactive = newProfile("Interactive", "interactive", 50, 4, 2 * time.Minute, 2 * time.Hour, 3, 64, 64, ...) ...
-var ErrDriver = errors.New("jobs: driver operation failed") ...
-var ErrInvocationNotFound = errors.New("jobs: invocation not found")
-var ErrStepTimeout = errors.New("jobs: step timed out")
-func BuildDurableContext(namespace Namespace, definition Name, mode PartitionMode, policy TracePolicy, ...) (PartitionKey, DurableContext, error)
-func Deferred(err error) error
-func DeliveryRecordSize(record DeliveryRecord) (int, error)
-func EnqueueOnce[P any](ctx context.Context, queue *Queue, definition DefinitionOf[P], ...) (InvocationID, EnqueueOnceOutcome, error)
-func Go[P any](ctx context.Context, automatic *Automatic[P], payload P, ...) error
-func IsDeferred(err error) bool
-func IsPermanent(err error) bool
-func Permanent(err error) error
-func RejectPlacement(reason error) error
-func RestoreTrustedIdentity(ctx context.Context, restorer TrustedIdentityRestorer, ...) (restored context.Context, err error)
-func Step(ctx context.Context, reporter ProgressReporter, timeout time.Duration, ...) error
+func AcceptAckModes(...AckMode) Option
+func AcceptAnyAckMode() Option
+const AckBeforePersistence AckMode = 1
+const AckLocalPersistence AckMode = 2
 type AckMode uint8
-    const AckBeforePersistence AckMode = iota + 1 ...
-type AckModeSet struct{ ... }
-    func AckModes(values ...AckMode) (AckModeSet, error)
+func (AckMode) String() string
+func (AckMode) Valid() bool
+type AckModeSet struct {
+	<unexported fields>
+}
+func (AckModeSet) Contains(AckMode) bool
+func (AckModeSet) IsZero() bool
+func (AckModeSet) Values() []AckMode
+func AckModes(...AckMode) (AckModeSet, error)
+const AckRemoteApply AckMode = 5
+const AckRemotePersistence AckMode = 4
+const AckRemoteWrite AckMode = 3
 type AcknowledgedLoss uint8
-    const AcknowledgedLossPossible AcknowledgedLoss = iota + 1 ...
-type ActorIdentity struct{ ... }
+func (AcknowledgedLoss) String() string
+func (AcknowledgedLoss) Valid() bool
+const AcknowledgedLossExcludedForDeclaredFailures AcknowledgedLoss = 2
+const AcknowledgedLossPossible AcknowledgedLoss = 1
+func ActiveAttemptOutcome(AttemptOrdinal, time.Time) (InvocationOutcome, error)
+func Actor(string) ProducerActor
+type ActorIdentity struct {
+	<unexported fields>
+}
+func (ActorIdentity) Bytes() [32]byte
+func (ActorIdentity) Format(fmt.State, rune)
+func (ActorIdentity) IsZero() bool
+func (ActorIdentity) MarshalJSON() ([]byte, error)
+func (ActorIdentity) String() string
 type AdapterHandler[P any] func(context.Context, P, DeliveryMeta, AttemptController) error
-type Admin interface{ ... }
-type Admission struct{ ... }
-    func NewAdmission(limit int, heldReason HeldReason, observedAt time.Time) (Admission, error)
-type AdmissionDecision struct{ ... }
-type AdmissionError struct{ ... }
-type AdmissionPublisher struct{ ... }
-type AdmissionReader struct{ ... }
+type Admin interface {
+	Count(context.Context, ListSpec) (int64, error)
+	Get(context.Context, InvocationID) (DeliveryView, error)
+	List(context.Context, ListSpec) ([]DeliveryView, error)
+	PurgeTerminal(context.Context, time.Time, int) (int, error)
+	Redrive(context.Context, InvocationID) (DeliveryView, error)
+}
+type Admission struct {
+	<unexported fields>
+}
+func (Admission) Format(fmt.State, rune)
+func (Admission) HeldReason() HeldReason
+func (Admission) IsInitialized() bool
+func (Admission) Limit() int
+func (Admission) LogValue() log/slog.Value
+func (Admission) MarshalJSON() ([]byte, error)
+func (Admission) ObservedAt() time.Time
+func (Admission) String() string
+type AdmissionDecision struct {
+	<unexported fields>
+}
+func (AdmissionDecision) Available(int) (int, error)
+func (AdmissionDecision) Err() error
+func (AdmissionDecision) Format(fmt.State, rune)
+func (AdmissionDecision) HeldReason() HeldReason
+func (AdmissionDecision) Limit() int
+func (AdmissionDecision) LogValue() log/slog.Value
+func (AdmissionDecision) MarshalJSON() ([]byte, error)
+func (AdmissionDecision) ObservedAt() time.Time
+func (AdmissionDecision) Signal() AdmissionSignal
+func (AdmissionDecision) String() string
+type AdmissionError struct {
+	<unexported fields>
+}
+func (AdmissionError) Error() string
+func (AdmissionError) Format(fmt.State, rune)
+func (AdmissionError) HeldReason() HeldReason
+func (AdmissionError) LogValue() log/slog.Value
+func (AdmissionError) MarshalJSON() ([]byte, error)
+func (AdmissionError) Signal() AdmissionSignal
+func (AdmissionError) Unwrap() error
+const AdmissionHeld AdmissionSignal = 3
+const AdmissionInvalid AdmissionSignal = 5
+type AdmissionPublisher struct {
+	<unexported fields>
+}
+func (AdmissionPublisher) Format(fmt.State, rune)
+func (AdmissionPublisher) LogValue() log/slog.Value
+func (AdmissionPublisher) MarshalJSON() ([]byte, error)
+func (AdmissionPublisher) Publish(Admission) error
+func (AdmissionPublisher) String() string
+func (AdmissionPublisher) Unrestricted(time.Time) error
+func (AdmissionPublisher) Update(int, HeldReason, time.Time) error
+type AdmissionReader struct {
+	<unexported fields>
+}
+func (AdmissionReader) Evaluate(int, time.Time) AdmissionDecision
+func (AdmissionReader) Format(fmt.State, rune)
+func (AdmissionReader) Freshness() time.Duration
+func (AdmissionReader) LogValue() log/slog.Value
+func (AdmissionReader) MarshalJSON() ([]byte, error)
+func (AdmissionReader) String() string
+const AdmissionReady AdmissionSignal = 1
 type AdmissionSignal uint8
-    const AdmissionUninitialized AdmissionSignal = iota ...
-type AdmissionSnapshot struct{ ... }
-    func NewAdmissionSnapshot(freshness time.Duration) (*AdmissionSnapshot, error)
-type ApplyRequest struct{ ... }
-    func NewApplyRequest(command DeliveryCommand) (ApplyRequest, error)
-type ApplyResult struct{ ... }
-    func NewApplyResult(observedAt time.Time, result DeliveryCommandResult, ...) (ApplyResult, error)
-    func ValidateApplyResult(description BackendDescription, request ApplyRequest, result ApplyResult) (ApplyResult, error)
-type Attempt struct{ ... }
-type AttemptController interface{ ... }
-type AttemptOrdinal struct{ ... }
-    func NewAttemptOrdinal(value uint16) (AttemptOrdinal, error)
-type AttemptRecord struct{ ... }
+func (AdmissionSignal) String() string
+func (AdmissionSignal) Valid() bool
+type AdmissionSnapshot struct {
+	<unexported fields>
+}
+func (*AdmissionSnapshot) Format(fmt.State, rune)
+func (*AdmissionSnapshot) Freshness() time.Duration
+func (*AdmissionSnapshot) LogValue() log/slog.Value
+func (*AdmissionSnapshot) MarshalJSON() ([]byte, error)
+func (*AdmissionSnapshot) Publisher() AdmissionPublisher
+func (*AdmissionSnapshot) Reader() AdmissionReader
+func (*AdmissionSnapshot) String() string
+const AdmissionStale AdmissionSignal = 4
+const AdmissionUninitialized AdmissionSignal = 0
+const AdmissionUnrestricted AdmissionSignal = 2
+func After(time.Duration) EnqueueOption
+func AllowAcknowledgedLoss() Option
+func AllowTraceCorrelations(...CorrelationKey) Option
+func Anchor(time.Time) ScheduleCadenceOption
+func ApplyDeliveryCommand(Invocation, DeliveryCommand, time.Time) (DeliveryApplication, error)
+type ApplyRequest struct {
+	<unexported fields>
+}
+func (ApplyRequest) Command() DeliveryCommand
+func (ApplyRequest) Format(fmt.State, rune)
+func (ApplyRequest) LogValue() log/slog.Value
+func (ApplyRequest) MarshalJSON() ([]byte, error)
+func (ApplyRequest) String() string
+type ApplyResult struct {
+	<unexported fields>
+}
+func (ApplyResult) Application() DeliveryApplication
+func (ApplyResult) Format(fmt.State, rune)
+func (ApplyResult) HandlerReady() bool
+func (ApplyResult) LogValue() log/slog.Value
+func (ApplyResult) MarshalJSON() ([]byte, error)
+func (ApplyResult) ObservedAt() time.Time
+func (ApplyResult) Result() DeliveryCommandResult
+func (ApplyResult) String() string
+func ArbitrateAttemptDeadlineCommand(LeaseRef, time.Duration) (DeliveryCommand, error)
+func At(time.Time) ScheduleCadence
+func AtPriority(int) EnqueueOption
+type Attempt struct {
+	<unexported fields>
+}
+func (Attempt) Binding() BindingName
+func (Attempt) Build() BuildID
+func (Attempt) Deadline() time.Time
+func (Attempt) Disposition() Disposition
+func (Attempt) FinishedAt() time.Time
+func (Attempt) Format(fmt.State, rune)
+func (Attempt) InvocationID() InvocationID
+func (Attempt) IsZero() bool
+func (Attempt) Ordinal() AttemptOrdinal
+func (Attempt) ProgressDeadline() time.Time
+func (Attempt) ProgressedAt() time.Time
+func (Attempt) Record() AttemptRecord
+func (Attempt) StartedAt() time.Time
+func (Attempt) State() AttemptState
+func (Attempt) String() string
+type AttemptController interface {
+	ProgressReporter
+	Guard(context.Context, LeaseFence) error
+}
+const AttemptFinished AttemptState = 2
+type AttemptOrdinal struct {
+	<unexported fields>
+}
+func (AttemptOrdinal) IsZero() bool
+func (AttemptOrdinal) Value() uint16
+type AttemptRecord struct {
+	Invocation InvocationID
+	Ordinal AttemptOrdinal
+	Binding BindingName
+	Build BuildID
+	State AttemptState
+	StartedAt time.Time
+	Deadline time.Time
+	ProgressedAt time.Time
+	ProgressDeadline time.Time
+	FinishedAt time.Time
+	Disposition Disposition
+}
+func (AttemptRecord) Format(fmt.State, rune)
+func (AttemptRecord) String() string
+const AttemptRunning AttemptState = 1
 type AttemptState uint8
-    const AttemptRunning AttemptState = iota + 1 ...
-type Automatic[P any] struct{ ... }
-    func Auto[P any](handler Handler[P], profiles ...Profile) *Automatic[P]
-    func Declare[P any](profiles ...Profile) *Automatic[P]
-    func MustWire[P any](automatic *Automatic[P], spec WireSpec[P]) *Automatic[P]
-    func Wire[P any](automatic *Automatic[P], spec WireSpec[P]) (*Automatic[P], error)
-type BackendDescription struct{ ... }
-    func NewBackendDescription(id BackendID, durability DurabilityProfile, capabilities Capabilities) (BackendDescription, error)
-    func NewBackendDescriptionWithResources(id BackendID, durability DurabilityProfile, capabilities Capabilities, ...) (BackendDescription, error)
-    func ValidateDeliveryDriver(driver DeliveryDriver) (description BackendDescription, err error)
-type BackendID struct{ ... }
-    func BackendIDFromBytes(value [BackendIDBytes]byte) (BackendID, error)
-type BackoffDescription struct{ ... }
-type BackoffPolicy struct{ ... }
-    func Exponential(initial, maximum time.Duration, jitter JitterMode) BackoffPolicy
-type BeginAttemptSpec struct{ ... }
-type BindingName struct{ ... }
-    func ParseBindingName(raw string) (BindingName, error)
-type BuildID struct{ ... }
-    func ParseBuildID(raw string) (BuildID, error)
-type Capabilities struct{ ... }
-type Catalog struct{ ... }
-    func MustCatalog(declarations ...Declaration) Catalog
-    func NewCatalog(declarations ...Declaration) (Catalog, error)
-type CatalogDescriptor struct{ ... }
-type ClaimBatch struct{ ... }
-    func NewClaimBatch(observedAt time.Time, items []ClaimedDelivery) (ClaimBatch, error)
-    func ValidateClaimBatch(description BackendDescription, request ClaimRequest, batch ClaimBatch) (ClaimBatch, error)
-type ClaimRequest struct{ ... }
-    func NewClaimRequest(spec ClaimRequestSpec) (ClaimRequest, error)
-type ClaimRequestSpec struct{ ... }
-type ClaimTarget struct{ ... }
-    func NewClaimTarget(spec ClaimTargetSpec) (ClaimTarget, error)
-type ClaimTargetSpec struct{ ... }
-type ClaimedDelivery struct{ ... }
-    func NewClaimedDelivery(target ClaimTarget, lease LeaseRef, record DeliveryRecord) (ClaimedDelivery, error)
-    func TakeClaimedDelivery(target ClaimTarget, lease LeaseRef, record *DeliveryRecord) (ClaimedDelivery, error)
-type Clock interface{ ... }
-type Codec[P any] interface{ ... }
-    func Bytes(version SchemaVersion) Codec[[]byte]
-    func JSON[V any](version SchemaVersion) Codec[V]
-    func RFC3339UTC(version SchemaVersion) Codec[time.Time]
-    func String(version SchemaVersion) Codec[string]
-    func TrustedJSON[V any](version SchemaVersion) Codec[V]
-type CodecDescription struct{ ... }
-type CodecID struct{ ... }
-    func ParseCodecID(raw string) (CodecID, error)
+func (AttemptState) String() string
+func (AttemptState) Valid() bool
+func AttemptTimeout(time.Duration) Option
+func Auto[P any](Handler[P], ...Profile) *Automatic[P]
+type Automatic[P any] struct {
+	<unexported fields>
+}
+func (*Automatic[P]) Declaration() Declaration
+func (*Automatic[P]) Decode(EncodedPayload) (P, error)
+func (*Automatic[P]) Definition() (*Definition[P], bool)
+func (*Automatic[P]) Describe() Descriptor
+func (*Automatic[P]) Digest(P) (PayloadDigest, error)
+func (*Automatic[P]) Encode(P) (EncodedPayload, error)
+func (*Automatic[P]) Format(fmt.State, rune)
+func (*Automatic[P]) Handler() Handler[P]
+func (*Automatic[P]) Name() Name
+func (*Automatic[P]) Partition() PartitionMode
+func (*Automatic[P]) PayloadIdentity() PayloadIdentityDescription
+func (*Automatic[P]) Policy() Policy
+func (*Automatic[P]) String() string
+const AutomaticPayloadIdentityVersion SchemaVersion = 1
+type BackendDescription struct {
+	<unexported fields>
+}
+func (BackendDescription) Capabilities() Capabilities
+func (BackendDescription) Durability() DurabilityProfile
+func (BackendDescription) Format(fmt.State, rune)
+func (BackendDescription) ID() BackendID
+func (BackendDescription) IsZero() bool
+func (BackendDescription) ResourceProfile() ResourceProfile
+func (BackendDescription) String() string
+type BackendID struct {
+	<unexported fields>
+}
+func (BackendID) Bytes() [32]byte
+func (BackendID) Format(fmt.State, rune)
+func (BackendID) IsZero() bool
+func (BackendID) String() string
+const BackendIDBytes untyped int = 32
+func BackendIDFromBytes([32]byte) (BackendID, error)
+type BackoffDescription struct {
+	Initial time.Duration
+	Maximum time.Duration
+	Jitter JitterMode
+}
+type BackoffPolicy struct {
+	Initial time.Duration
+	Maximum time.Duration
+	Jitter JitterMode
+}
+var Batch Profile
+func BeginAttemptCommand(LeaseRef, BindingName, BuildID) (DeliveryCommand, error)
+type BeginAttemptSpec struct {
+	Binding BindingName
+	Build BuildID
+	StartedAt time.Time
+}
+func (BeginAttemptSpec) Format(fmt.State, rune)
+func (BeginAttemptSpec) String() string
+func Binding(string) WorkerOption
+type BindingName struct {
+	<unexported fields>
+}
+func (BindingName) IsZero() bool
+func (BindingName) String() string
+func (BindingName) Value() string
+func BuildDurableContext(Namespace, Name, PartitionMode, TracePolicy, ContextCapture) (PartitionKey, DurableContext, error)
+type BuildID struct {
+	<unexported fields>
+}
+func (BuildID) IsZero() bool
+func (BuildID) String() string
+func (BuildID) Value() string
+func Bytes(SchemaVersion) Codec[[]byte]
+func CancelRequestedOutcome(AttemptOrdinal, time.Time) (InvocationOutcome, error)
+func CancelledDisposition(Reason) (Disposition, error)
+type Capabilities struct {
+	Priority bool
+	Debounce bool
+	Unique bool
+	Scheduled bool
+	AttemptTrace bool
+}
+func (Capabilities) Format(fmt.State, rune)
+func (Capabilities) String() string
+type Catalog struct {
+	<unexported fields>
+}
+func (Catalog) AutomaticConsumers() []Consumer
+func (Catalog) Definitions() []Declaration
+func (Catalog) Describe() CatalogDescriptor
+func (Catalog) Fingerprint() string
+func (Catalog) Format(fmt.State, rune)
+func (Catalog) Len() int
+func (Catalog) Lookup(Name) (Declaration, bool)
+func (Catalog) RequiresTenantPartition() bool
+func (Catalog) String() string
+type CatalogDescriptor struct {
+	Definitions []Descriptor
+	Fingerprint string
+}
+type ClaimBatch struct {
+	<unexported fields>
+}
+func (ClaimBatch) Format(fmt.State, rune)
+func (ClaimBatch) Items() []ClaimedDelivery
+func (ClaimBatch) Len() int
+func (ClaimBatch) LogValue() log/slog.Value
+func (ClaimBatch) MarshalJSON() ([]byte, error)
+func (ClaimBatch) ObservedAt() time.Time
+func (ClaimBatch) String() string
+type ClaimRequest struct {
+	<unexported fields>
+}
+func (ClaimRequest) Format(fmt.State, rune)
+func (ClaimRequest) Incarnation() WorkerIncarnation
+func (ClaimRequest) LeaseTTL() time.Duration
+func (ClaimRequest) LogValue() log/slog.Value
+func (ClaimRequest) MarshalJSON() ([]byte, error)
+func (ClaimRequest) MaxBytes() int
+func (ClaimRequest) MaxItems() int
+func (ClaimRequest) Namespace() Namespace
+func (ClaimRequest) String() string
+func (ClaimRequest) Targets() []ClaimTarget
+type ClaimRequestSpec struct {
+	Namespace Namespace
+	Incarnation WorkerIncarnation
+	Targets []ClaimTarget
+	MaxItems int
+	MaxBytes int
+	LeaseTTL time.Duration
+}
+func (ClaimRequestSpec) Format(fmt.State, rune)
+func (ClaimRequestSpec) String() string
+type ClaimTarget struct {
+	<unexported fields>
+}
+func (ClaimTarget) Available() int
+func (ClaimTarget) Binding() BindingName
+func (ClaimTarget) Build() BuildID
+func (ClaimTarget) Definition() Name
+func (ClaimTarget) Format(fmt.State, rune)
+func (ClaimTarget) LogValue() log/slog.Value
+func (ClaimTarget) MarshalJSON() ([]byte, error)
+func (ClaimTarget) String() string
+func (ClaimTarget) SupportedRevisions() []PayloadRevision
+type ClaimTargetSpec struct {
+	Definition Name
+	Binding BindingName
+	Build BuildID
+	SupportedRevisions []PayloadRevision
+	Available int
+}
+func (ClaimTargetSpec) Format(fmt.State, rune)
+func (ClaimTargetSpec) String() string
+type ClaimedDelivery struct {
+	<unexported fields>
+}
+func (ClaimedDelivery) Format(fmt.State, rune)
+func (ClaimedDelivery) Lease() LeaseRef
+func (ClaimedDelivery) LogValue() log/slog.Value
+func (ClaimedDelivery) MarshalJSON() ([]byte, error)
+func (ClaimedDelivery) Record() DeliveryRecord
+func (ClaimedDelivery) String() string
+func (ClaimedDelivery) Target() ClaimTarget
+func Classify(ErrorClassifier) WorkerOption
+type Clock interface {
+	NewTimerAt(time.Time) Timer
+	Now() time.Time
+}
+type Codec[P any] interface {
+	Decode([]byte, PayloadLimit) (P, error)
+	Encode(P, PayloadLimit) ([]byte, error)
+	ID() CodecID
+	Version() SchemaVersion
+}
+type CodecDescription struct {
+	ID CodecID
+	CurrentVersion SchemaVersion
+	SupportedRevisions []SchemaVersion
+	Mode CodecMode
+	Upcasts []UpcastDescription
+}
+type CodecID struct {
+	<unexported fields>
+}
+func (CodecID) IsZero() bool
+func (CodecID) String() string
+func (CodecID) Value() string
 type CodecMode string
-    const SafeCodecMode CodecMode = "safe" ...
-type Consumer interface{ ... }
-    func On[P any](definition DefinitionOf[P], handler Handler[P], options ...WorkerOption) Consumer
-    func OnAdapter[P any](definition DefinitionOf[P], handler AdapterHandler[P], options ...WorkerOption) Consumer
-type ContextCapture struct{ ... }
-    func NewContextCapture(spec ContextCaptureSpec) (ContextCapture, error)
-type ContextCaptureRequest struct{ ... }
-type ContextCaptureSpec struct{ ... }
+func Collapse(string) EnqueueOption
+func Concurrency(int) WorkerOption
+type Consumer interface {
+	Declaration() Declaration
+	<unexported methods>
+}
+type ContextCapture struct {
+	<unexported fields>
+}
+func (ContextCapture) Format(fmt.State, rune)
+func (ContextCapture) IsZero() bool
+func (ContextCapture) LogValue() log/slog.Value
+func (ContextCapture) MarshalJSON() ([]byte, error)
+func (ContextCapture) String() string
+func (ContextCapture) Trace() UntrustedTraceCarrier
+func (ContextCapture) WithTrace(UntrustedTraceCarrier) (ContextCapture, error)
+type ContextCaptureRequest struct {
+	<unexported fields>
+}
+func (ContextCaptureRequest) Candidate() InvocationID
+func (ContextCaptureRequest) Definition() Name
+func (ContextCaptureRequest) Format(fmt.State, rune)
+func (ContextCaptureRequest) Namespace() Namespace
+func (ContextCaptureRequest) Partition() PartitionMode
+func (ContextCaptureRequest) String() string
+func (ContextCaptureRequest) WireDigest() WireDigest
+type ContextCaptureSpec struct {
+	Tenant ProducerPartition
+	Actor ProducerActor
+	Token ProtectedIdentityToken
+	Provenance IdentityProvenance
+	Epoch IdentityEpoch
+	Trace UntrustedTraceCarrier
+}
+func (ContextCaptureSpec) Format(fmt.State, rune)
+func (ContextCaptureSpec) String() string
 type ContextScope uint8
-    const ContextSystem ContextScope = iota + 1 ...
-type Controller interface{ ... }
-type CorrelationField struct{ ... }
-    func NewCorrelationField(key CorrelationKey, value string) (CorrelationField, error)
-type CorrelationKey struct{ ... }
-    func ParseCorrelationKey(raw string) (CorrelationKey, error)
-type CorrelationRecord struct{ ... }
-type DebounceOption interface{ ... }
-    func MaxDelay(maximum time.Duration) DebounceOption
-type Declaration interface{ ... }
-type DeferDeliverySpec struct{ ... }
-type Definition[P any] struct{ ... }
-    func Define[P any](spec DefinitionSpec[P]) (*Definition[P], error)
-    func MustDefine[P any](spec DefinitionSpec[P]) *Definition[P]
-type DefinitionOf[P any] interface{ ... }
-type DefinitionSpec[P any] struct{ ... }
-type DeliveryApplication struct{ ... }
-    func ApplyDeliveryCommand(current Invocation, command DeliveryCommand, now time.Time) (DeliveryApplication, error)
-type DeliveryCommand struct{ ... }
-    func ArbitrateAttemptDeadlineCommand(lease LeaseRef, deadlineRetryDelay time.Duration) (DeliveryCommand, error)
-    func BeginAttemptCommand(lease LeaseRef, binding BindingName, build BuildID) (DeliveryCommand, error)
-    func DeferDeliveryCommand(lease LeaseRef, reason Reason, failure PublicFailure, delay time.Duration) (DeliveryCommand, error)
-    func FinishAttemptCommand(lease LeaseRef, disposition Disposition, ...) (DeliveryCommand, error)
-    func FinishDeliveryCommand(lease LeaseRef, state InvocationState, reason Reason, failure PublicFailure) (DeliveryCommand, error)
-    func ProgressCommand(lease LeaseRef) (DeliveryCommand, error)
-    func RejectCorruptCommand(lease LeaseRef) (DeliveryCommand, error)
-    func ReleaseForAdmissionCommand(lease LeaseRef, delay time.Duration) (DeliveryCommand, error)
-    func ReleaseForShutdownCommand(lease LeaseRef, delay time.Duration) (DeliveryCommand, error)
-    func ReleaseUnchangedCommand(lease LeaseRef, binding BindingName, build BuildID, delay time.Duration) (DeliveryCommand, error)
-    func RevokeAttemptCommand(lease LeaseRef, reason Reason, retryDelay time.Duration) (DeliveryCommand, error)
+func (ContextScope) String() string
+func (ContextScope) Valid() bool
+const ContextSystem ContextScope = 1
+const ContextTenant ContextScope = 2
+type Controller interface {
+	Cancel(context.Context, InvocationID) (DeliveryView, error)
+	Terminate(context.Context, InvocationID) (DeliveryView, error)
+}
+type CorrelationField struct {
+	<unexported fields>
+}
+func (CorrelationField) Format(fmt.State, rune)
+func (CorrelationField) IsZero() bool
+func (CorrelationField) Key() CorrelationKey
+func (CorrelationField) MarshalJSON() ([]byte, error)
+func (CorrelationField) String() string
+func (CorrelationField) Value() string
+type CorrelationKey struct {
+	<unexported fields>
+}
+func (CorrelationKey) IsZero() bool
+func (CorrelationKey) String() string
+func (CorrelationKey) Value() string
+type CorrelationRecord struct {
+	Key string
+	Value string
+}
+func (CorrelationRecord) Format(fmt.State, rune)
+func (CorrelationRecord) MarshalJSON() ([]byte, error)
+func (CorrelationRecord) String() string
+func CurrentIntentDigestPlan() IntentDigestPlan
+const CustomCodecMode CodecMode = "custom"
+func Debounce(string, DebounceOption) EnqueueOption
+type DebounceOption interface {
+	<unexported methods>
+}
+type Declaration interface {
+	Describe() Descriptor
+	<unexported methods>
+}
+func Declare[P any](...Profile) *Automatic[P]
+func DecodedBytes(int) Option
+var Default Profile
+const DefaultAdmissionFreshness time.Duration = 30000000000
+const DefaultAttemptTimeout time.Duration = 600000000000
+const DefaultAttemptTraceEvents untyped int = 32
+const DefaultClaimBytes untyped int = 41147648
+const DefaultClaimItems untyped int = 64
+const DefaultDecodedBytes untyped int = 262144
+const DefaultDeliveryDeferrals untyped int = 256
+const DefaultHandlerDeferrals untyped int = 256
+const DefaultHeartbeat time.Duration = 15000000000
+const DefaultIntentRetention time.Duration = 2592000000000000
+const DefaultLeaseTTL time.Duration = 60000000000
+const DefaultListLimit untyped int = 100
+const DefaultMaxElapsed time.Duration = 86400000000000
+const DefaultMaxRetryDelay time.Duration = 300000000000
+const DefaultOperationTimeout time.Duration = 10000000000
+const DefaultPayloadBytes untyped int = 65536
+func DefaultPayloadLimit() PayloadLimit
+const DefaultPollInterval time.Duration = 1000000000
+const DefaultPurgeLimit untyped int = 100
+const DefaultReclaimBatch untyped int = 100
+const DefaultReclaimInterval time.Duration = 15000000000
+const DefaultRetries untyped int = 5
+const DefaultRetryDelay time.Duration = 5000000000
+const DefaultShutdownGrace time.Duration = 20000000000
+const DefaultTerminalRetention time.Duration = 604800000000000
+const DefaultTransientBytes untyped int = 16777216
+const DefaultTransientWait time.Duration = 250000000
+const DefaultTransientWaiters untyped int = 256
+const DefaultWorkerInFlightBytes untyped int = 134217728
+func DeferDeliveryCommand(LeaseRef, Reason, PublicFailure, time.Duration) (DeliveryCommand, error)
+type DeferDeliverySpec struct {
+	Reason Reason
+	Failure PublicFailure
+	ObservedAt time.Time
+	AvailableAt time.Time
+}
+func (DeferDeliverySpec) Format(fmt.State, rune)
+func (DeferDeliverySpec) String() string
+func Deferred(error) error
+func DeferredDeliveryOutcome(Reason, PublicFailure, time.Time, time.Time) (InvocationOutcome, error)
+func DeferredDisposition(PublicFailure, time.Duration) (Disposition, error)
+func Define[P any](DefinitionSpec[P]) (*Definition[P], error)
+func DefineSchedule[P any](ScheduleSpec[P]) (Schedule, error)
+type Definition[P any] struct {
+	<unexported fields>
+}
+func (*Definition[P]) Decode(EncodedPayload) (P, error)
+func (*Definition[P]) Describe() Descriptor
+func (*Definition[P]) Digest(P) (PayloadDigest, error)
+func (*Definition[P]) Encode(P) (EncodedPayload, error)
+func (*Definition[P]) Name() Name
+func (*Definition[P]) Partition() PartitionMode
+func (*Definition[P]) PayloadIdentity() PayloadIdentityDescription
+func (*Definition[P]) Policy() Policy
+func (Definition[P]) Format(fmt.State, rune)
+func (Definition[P]) String() string
+type DefinitionOf[P any] interface {
+	Declaration
+	Decode(EncodedPayload) (P, error)
+	Digest(P) (PayloadDigest, error)
+	Encode(P) (EncodedPayload, error)
+	Name() Name
+	Partition() PartitionMode
+	PayloadIdentity() PayloadIdentityDescription
+	Policy() Policy
+	<unexported methods>
+}
+type DefinitionSpec[P any] struct {
+	Name Name
+	Codec Codec[P]
+	Identity PayloadIdentity[P]
+	Upcasters []Upcaster
+	Policy Policy
+	Partition PartitionMode
+}
+func (DefinitionSpec[P]) Format(fmt.State, rune)
+func (DefinitionSpec[P]) String() string
+type DeliveryApplication struct {
+	<unexported fields>
+}
+func (DeliveryApplication) Attempt() (Attempt, bool)
+func (DeliveryApplication) Changed() bool
+func (DeliveryApplication) Format(fmt.State, rune)
+func (DeliveryApplication) Invocation() Invocation
+func (DeliveryApplication) IsZero() bool
+func (DeliveryApplication) Kind() DeliveryCommandKind
+func (DeliveryApplication) LogValue() log/slog.Value
+func (DeliveryApplication) MarshalJSON() ([]byte, error)
+func (DeliveryApplication) Release() (DeliveryRelease, bool)
+func (DeliveryApplication) RequiresFence() bool
+func (DeliveryApplication) String() string
+type DeliveryCommand struct {
+	<unexported fields>
+}
+func (DeliveryCommand) Binding() BindingName
+func (DeliveryCommand) Build() BuildID
+func (DeliveryCommand) DeadlineRetryDelay() time.Duration
+func (DeliveryCommand) Delay() time.Duration
+func (DeliveryCommand) Disposition() Disposition
+func (DeliveryCommand) Failure() PublicFailure
+func (DeliveryCommand) Format(fmt.State, rune)
+func (DeliveryCommand) Kind() DeliveryCommandKind
+func (DeliveryCommand) Lease() LeaseRef
+func (DeliveryCommand) LogValue() log/slog.Value
+func (DeliveryCommand) MarshalJSON() ([]byte, error)
+func (DeliveryCommand) Reason() Reason
+func (DeliveryCommand) State() InvocationState
+func (DeliveryCommand) String() string
+const DeliveryCommandArbitrateAttemptDeadline DeliveryCommandKind = 8
+const DeliveryCommandBeginAttempt DeliveryCommandKind = 1
+const DeliveryCommandDeferDelivery DeliveryCommandKind = 4
+const DeliveryCommandFinishAttempt DeliveryCommandKind = 3
+const DeliveryCommandFinishDelivery DeliveryCommandKind = 5
 type DeliveryCommandKind uint8
-    const DeliveryCommandBeginAttempt DeliveryCommandKind = iota + 1 ...
-type DeliveryCommandResult struct{ ... }
-    func NewDeliveryCommandResult(mutation DeliveryMutationStatus, control DeliveryControlStatus) (DeliveryCommandResult, error)
+func (DeliveryCommandKind) String() string
+func (DeliveryCommandKind) Valid() bool
+const DeliveryCommandProgress DeliveryCommandKind = 2
+const DeliveryCommandRejectCorrupt DeliveryCommandKind = 7
+const DeliveryCommandReleaseUnchanged DeliveryCommandKind = 6
+type DeliveryCommandResult struct {
+	<unexported fields>
+}
+func (DeliveryCommandResult) Control() DeliveryControlStatus
+func (DeliveryCommandResult) Format(fmt.State, rune)
+func (DeliveryCommandResult) IsZero() bool
+func (DeliveryCommandResult) LogValue() log/slog.Value
+func (DeliveryCommandResult) MarshalJSON() ([]byte, error)
+func (DeliveryCommandResult) Mutation() DeliveryMutationStatus
+func (DeliveryCommandResult) String() string
+const DeliveryCommandRevokeAttempt DeliveryCommandKind = 9
 type DeliveryCompatibility uint8
-    const DeliveryCompatible DeliveryCompatibility = iota + 1 ...
+func (DeliveryCompatibility) String() string
+func (DeliveryCompatibility) Valid() bool
+const DeliveryCompatible DeliveryCompatibility = 1
+const DeliveryControlCancelRequested DeliveryControlStatus = 1
+const DeliveryControlNone DeliveryControlStatus = 0
 type DeliveryControlStatus uint8
-    const DeliveryControlNone DeliveryControlStatus = iota ...
-type DeliveryDeferralLimit struct{ ... }
-    func NewDeliveryDeferralLimit(value uint16) (DeliveryDeferralLimit, error)
-type DeliveryDeferrals struct{ ... }
-    func NewDeliveryDeferrals(value uint16) (DeliveryDeferrals, error)
-type DeliveryDriver interface{ ... }
-type DeliveryMeta struct{ ... }
-    func NewDeliveryMeta(spec DeliveryMetaSpec) (DeliveryMeta, error)
-type DeliveryMetaSpec struct{ ... }
+func (DeliveryControlStatus) String() string
+func (DeliveryControlStatus) Valid() bool
+const DeliveryControlTerminated DeliveryControlStatus = 2
+type DeliveryDeferralLimit struct {
+	<unexported fields>
+}
+func (DeliveryDeferralLimit) IsZero() bool
+func (DeliveryDeferralLimit) Value() uint16
+type DeliveryDeferrals struct {
+	<unexported fields>
+}
+func (DeliveryDeferrals) IsZero() bool
+func (DeliveryDeferrals) Value() uint16
+const DeliveryDefinitionUnavailable DeliveryCompatibility = 2
+type DeliveryDriver interface {
+	Apply(context.Context, ApplyRequest) (ApplyResult, error)
+	Claim(context.Context, ClaimRequest) (ClaimBatch, error)
+	Description() BackendDescription
+	Recover(context.Context, RecoverRequest) (RecoverResult, error)
+	Renew(context.Context, RenewRequest) (RenewResult, error)
+}
+type DeliveryMeta struct {
+	<unexported fields>
+}
+func (DeliveryMeta) AttemptDeadline() time.Time
+func (DeliveryMeta) AttemptOrdinal() AttemptOrdinal
+func (DeliveryMeta) Binding() BindingName
+func (DeliveryMeta) Build() BuildID
+func (DeliveryMeta) CreatedAt() time.Time
+func (DeliveryMeta) Definition() Name
+func (DeliveryMeta) EligibleAt() time.Time
+func (DeliveryMeta) Format(fmt.State, rune)
+func (DeliveryMeta) InvocationID() InvocationID
+func (DeliveryMeta) IsZero() bool
+func (DeliveryMeta) LastChargedAttempt() bool
+func (DeliveryMeta) LogValue() log/slog.Value
+func (DeliveryMeta) MarshalJSON() ([]byte, error)
+func (DeliveryMeta) MaxElapsedAt() time.Time
+func (DeliveryMeta) ProgressDeadline() time.Time
+func (DeliveryMeta) RetryLimit() RetryLimit
+func (DeliveryMeta) RetrySpent() RetrySpent
+func (DeliveryMeta) StartedAt() time.Time
+func (DeliveryMeta) String() string
+type DeliveryMetaSpec struct {
+	Invocation InvocationID
+	Definition Name
+	Binding BindingName
+	Build BuildID
+	Attempt AttemptOrdinal
+	RetrySpent RetrySpent
+	RetryLimit RetryLimit
+	CreatedAt time.Time
+	EligibleAt time.Time
+	StartedAt time.Time
+	AttemptDeadline time.Time
+	MaxElapsedAt time.Time
+	ProgressDeadline time.Time
+}
+func (DeliveryMetaSpec) Format(fmt.State, rune)
+func (DeliveryMetaSpec) LogValue() log/slog.Value
+func (DeliveryMetaSpec) MarshalJSON() ([]byte, error)
+func (DeliveryMetaSpec) String() string
+const DeliveryMutationAmbiguous DeliveryMutationStatus = 3
+const DeliveryMutationApplied DeliveryMutationStatus = 1
+const DeliveryMutationLeaseLost DeliveryMutationStatus = 2
 type DeliveryMutationStatus uint8
-    const DeliveryMutationApplied DeliveryMutationStatus = iota + 1 ...
-type DeliveryRecord struct{ ... }
-    func NewDeliveryRecord(invocation Invocation, payload EncodedPayload, wireDigest WireDigest, ...) (DeliveryRecord, error)
-type DeliveryRelease struct{ ... }
-type DeliveryView struct{ ... }
-    func NewDeliveryView(invocation Invocation, payload EncodedPayload) (DeliveryView, error)
-type Descriptor struct{ ... }
+func (DeliveryMutationStatus) String() string
+func (DeliveryMutationStatus) Valid() bool
+const DeliveryPartitionIncompatible DeliveryCompatibility = 3
+const DeliveryPayloadIdentityIncompatible DeliveryCompatibility = 5
+const DeliveryPayloadLimitIncompatible DeliveryCompatibility = 6
+const DeliveryPayloadRevisionUnsupported DeliveryCompatibility = 4
+type DeliveryRecord struct {
+	Genesis InvocationGenesisRecord
+	Payload EncodedPayloadRecord
+	WireDigest WireDigest
+	PayloadDigest PayloadDigest
+	Outcomes []InvocationOutcome
+	Attempts []AttemptRecord
+}
+func (DeliveryRecord) Format(fmt.State, rune)
+func (DeliveryRecord) MarshalJSON() ([]byte, error)
+func (DeliveryRecord) Size() (int, error)
+func (DeliveryRecord) String() string
+func DeliveryRecordSize(DeliveryRecord) (int, error)
+type DeliveryRelease struct {
+	<unexported fields>
+}
+func (DeliveryRelease) AvailableAt() time.Time
+func (DeliveryRelease) ExcludedBinding() BindingName
+func (DeliveryRelease) ExcludedBuild() BuildID
+func (DeliveryRelease) Format(fmt.State, rune)
+func (DeliveryRelease) IsZero() bool
+func (DeliveryRelease) LogValue() log/slog.Value
+func (DeliveryRelease) MarshalJSON() ([]byte, error)
+func (DeliveryRelease) Reason() Reason
+func (DeliveryRelease) String() string
+type DeliveryView struct {
+	<unexported fields>
+}
+func (DeliveryView) Format(fmt.State, rune)
+func (DeliveryView) Invocation() Invocation
+func (DeliveryView) IsZero() bool
+func (DeliveryView) LogValue() log/slog.Value
+func (DeliveryView) MarshalJSON() ([]byte, error)
+func (DeliveryView) Payload() EncodedPayload
+func (DeliveryView) String() string
+type Descriptor struct {
+	Name Name
+	Codec CodecDescription
+	PayloadIdentity PayloadIdentityDescription
+	Policy PolicyDescription
+	Partition PartitionMode
+	Automatic bool
+	Resolved bool
+}
 type DigestRevision uint16
-    const DigestRevision1 DigestRevision = iota + 1 ...
-type Disposition struct{ ... }
-    func CancelledDisposition(reason Reason) (Disposition, error)
-    func DeferredDisposition(failure PublicFailure, after time.Duration) (Disposition, error)
-    func DiscardDisposition(reason Reason, failure PublicFailure) (Disposition, error)
-    func NewDisposition(spec DispositionSpec) (Disposition, error)
-    func PermanentFailureDisposition(reason Reason, failure PublicFailure) (Disposition, error)
-    func QuarantineDisposition(reason Reason, failure PublicFailure) (Disposition, error)
-    func RetryDisposition(reason Reason, failure PublicFailure, after time.Duration, cost RetryCost) (Disposition, error)
-    func SuccessDisposition() Disposition
-    func TerminatedDisposition() Disposition
+func (DigestRevision) String() string
+func (DigestRevision) Valid() bool
+const DigestRevision1 DigestRevision = 1
+const DigestRevision2 DigestRevision = 2
+func DiscardDisposition(Reason, PublicFailure) (Disposition, error)
+type Disposition struct {
+	<unexported fields>
+}
+func (Disposition) Failure() PublicFailure
+func (Disposition) Format(fmt.State, rune)
+func (Disposition) IsZero() bool
+func (Disposition) Kind() DispositionKind
+func (Disposition) Reason() Reason
+func (Disposition) RetryAfter() time.Duration
+func (Disposition) RetryCost() RetryCost
+func (Disposition) String() string
+const DispositionCancelled DispositionKind = 7
+const DispositionDeferred DispositionKind = 6
+const DispositionDiscard DispositionKind = 4
 type DispositionKind uint8
-    const DispositionSucceeded DispositionKind = iota + 1 ...
-type DispositionSpec struct{ ... }
-type DurabilityProfile struct{ ... }
-    func NewDurabilityProfile(ack AckMode, loss AcknowledgedLoss, failures FailureSet) (DurabilityProfile, error)
-type DurabilityRequirement struct{ ... }
-    func NewDurabilityRequirement(acceptedAckModes AckModeSet, protectedFailures FailureSet) (DurabilityRequirement, error)
-type DurableContext struct{ ... }
-    func RestoreDurableContext(namespace Namespace, partition PartitionKey, definition Name, ...) (DurableContext, error)
-type DurableContextBinding struct{ ... }
-type DurableContextRecord struct{ ... }
-type EncodedPayload struct{ ... }
-    func NewEncodedPayload(codec CodecID, version SchemaVersion, data []byte) (EncodedPayload, error)
-type EncodedPayloadRecord struct{ ... }
+func (DispositionKind) String() string
+func (DispositionKind) Valid() bool
+const DispositionPermanentFailure DispositionKind = 3
+const DispositionQuarantine DispositionKind = 5
+const DispositionRetry DispositionKind = 2
+type DispositionSpec struct {
+	Kind DispositionKind
+	Reason Reason
+	RetryAfter time.Duration
+	RetryCost RetryCost
+	Failure PublicFailure
+}
+const DispositionSucceeded DispositionKind = 1
+const DispositionTerminated DispositionKind = 8
+type DurabilityProfile struct {
+	<unexported fields>
+}
+func (DurabilityProfile) AckMode() AckMode
+func (DurabilityProfile) AcknowledgedLoss() AcknowledgedLoss
+func (DurabilityProfile) FailureModel() FailureSet
+func (DurabilityProfile) Format(fmt.State, rune)
+func (DurabilityProfile) IsZero() bool
+func (DurabilityProfile) String() string
+type DurabilityRequirement struct {
+	<unexported fields>
+}
+func (DurabilityRequirement) AcceptedAckModes() AckModeSet
+func (DurabilityRequirement) Format(fmt.State, rune)
+func (DurabilityRequirement) IsZero() bool
+func (DurabilityRequirement) ProtectedFailures() FailureSet
+func (DurabilityRequirement) String() string
+type DurableContext struct {
+	<unexported fields>
+}
+func (DurableContext) Actor() (ActorIdentity, bool)
+func (DurableContext) Binding() DurableContextBinding
+func (DurableContext) Epoch() IdentityEpoch
+func (DurableContext) Format(fmt.State, rune)
+func (DurableContext) IdentityRestoreRequest(Namespace, PartitionKey, Name, InvocationID, WireDigest, TracePolicy) (IdentityRestoreRequest, error)
+func (DurableContext) IsZero() bool
+func (DurableContext) LogValue() log/slog.Value
+func (DurableContext) MarshalJSON() ([]byte, error)
+func (DurableContext) Provenance() IdentityProvenance
+func (DurableContext) Record() DurableContextRecord
+func (DurableContext) Scope() ContextScope
+func (DurableContext) String() string
+func (DurableContext) Tenant() (TenantIdentity, bool)
+func (DurableContext) Token() (ProtectedIdentityToken, bool)
+func (DurableContext) Trace() UntrustedTraceCarrier
+type DurableContextBinding struct {
+	<unexported fields>
+}
+func (DurableContextBinding) Bytes() [32]byte
+func (DurableContextBinding) Format(fmt.State, rune)
+func (DurableContextBinding) IsZero() bool
+func (DurableContextBinding) MarshalJSON() ([]byte, error)
+func (DurableContextBinding) String() string
+type DurableContextRecord struct {
+	Scope ContextScope
+	Tenant [32]byte
+	Actor [32]byte
+	Token []byte
+	Provenance string
+	Epoch uint64
+	Trace TraceCarrierRecord
+	Binding [32]byte
+}
+func (DurableContextRecord) Format(fmt.State, rune)
+func (DurableContextRecord) MarshalJSON() ([]byte, error)
+func (DurableContextRecord) String() string
+type EncodedPayload struct {
+	<unexported fields>
+}
+func (EncodedPayload) Bytes() []byte
+func (EncodedPayload) Codec() CodecID
+func (EncodedPayload) Format(fmt.State, rune)
+func (EncodedPayload) IsZero() bool
+func (EncodedPayload) String() string
+func (EncodedPayload) Version() SchemaVersion
+type EncodedPayloadRecord struct {
+	Codec CodecID
+	Version SchemaVersion
+	Data []byte
+}
+func (EncodedPayloadRecord) Format(fmt.State, rune)
+func (EncodedPayloadRecord) MarshalJSON() ([]byte, error)
+func (EncodedPayloadRecord) String() string
+func Enqueue[P any](context.Context, *Queue, DefinitionOf[P], P, ...EnqueueOption) (InvocationID, error)
+const EnqueueConflict EnqueueOnceOutcome = 3
+const EnqueueCreated EnqueueOnceOutcome = 1
+const EnqueueExistingSamePayload EnqueueOnceOutcome = 2
+func EnqueueIn[P any](context.Context, *Queue, Stager, DefinitionOf[P], P, ...EnqueueOption) (Staged, error)
+func EnqueueOnce[P any](context.Context, *Queue, DefinitionOf[P], ProducerIntent, P, ...EnqueueOption) (InvocationID, EnqueueOnceOutcome, error)
+func EnqueueOnceIn[P any](context.Context, *Queue, Stager, DefinitionOf[P], ProducerIntent, P, ...EnqueueOption) (Staged, error)
 type EnqueueOnceOutcome uint8
-    const EnqueueCreated EnqueueOnceOutcome = iota + 1 ...
-type EnqueueOption interface{ ... }
-    func After(delay time.Duration) EnqueueOption
-    func AtPriority(priority int) EnqueueOption
-    func Collapse(raw string) EnqueueOption
-    func Debounce(raw string, option DebounceOption) EnqueueOption
-    func StartBefore(deadline time.Time) EnqueueOption
-    func Unique(raw string) EnqueueOption
+func (EnqueueOnceOutcome) String() string
+func (EnqueueOnceOutcome) Valid() bool
+type EnqueueOption interface {
+	<unexported methods>
+}
+var ErrAdmissionHeld error
+var ErrAdmissionStale error
+var ErrAdmissionUninitialized error
+var ErrAmbiguous error
+var ErrCancelled error
+var ErrConflict error
+var ErrCorrupt error
+var ErrDriver error
+var ErrDriverContract error
+var ErrEntropy error
+var ErrInvalid error
+var ErrInvocationNotFound error
+var ErrLeaseLost error
+var ErrNotActivated error
+var ErrSaturated error
+var ErrStepTimeout error
+var ErrTerminated error
+var ErrTooLarge error
+var ErrUnsupported error
 type ErrorClassifier func(HandlerFailure) Disposition
+func Exponential(time.Duration, time.Duration, JitterMode) BackoffPolicy
 type Failure uint8
-    const FailureProcessCrash Failure = iota + 1 ...
-type FailureCode struct{ ... }
-    func ParseFailureCode(raw string) (FailureCode, error)
-type FailureSet struct{ ... }
-    func Failures(values ...Failure) (FailureSet, error)
-type FencedTransactions interface{ ... }
-type FinishAttemptSpec struct{ ... }
-type FinishDeliverySpec struct{ ... }
+func (Failure) String() string
+func (Failure) Valid() bool
+type FailureCode struct {
+	<unexported fields>
+}
+func (FailureCode) IsZero() bool
+func (FailureCode) String() string
+func (FailureCode) Value() string
+const FailureHostLoss Failure = 2
+const FailureNetworkPartition Failure = 5
+const FailureProcessCrash Failure = 1
+type FailureSet struct {
+	<unexported fields>
+}
+func (FailureSet) Contains(Failure) bool
+func (FailureSet) ContainsAll(FailureSet) bool
+func (FailureSet) IsZero() bool
+func (FailureSet) Values() []Failure
+const FailureSiteLoss Failure = 4
+const FailureStorageLoss Failure = 3
+func Failures(...Failure) (FailureSet, error)
+type FencedTransactions interface {
+	InFencedTx(context.Context, AttemptController, func(context.Context) error, func(context.Context) error) error
+}
+func FinishAttemptCommand(LeaseRef, Disposition, time.Duration, time.Duration) (DeliveryCommand, error)
+type FinishAttemptSpec struct {
+	FinishedAt time.Time
+	Disposition Disposition
+	AvailableAt time.Time
+}
+func (FinishAttemptSpec) Format(fmt.State, rune)
+func (FinishAttemptSpec) String() string
+func FinishDeliveryCommand(LeaseRef, InvocationState, Reason, PublicFailure) (DeliveryCommand, error)
+type FinishDeliverySpec struct {
+	State InvocationState
+	Reason Reason
+	Failure PublicFailure
+	ObservedAt time.Time
+}
+func (FinishDeliverySpec) Format(fmt.State, rune)
+func (FinishDeliverySpec) String() string
+func FinishedAttemptOutcome(AttemptOrdinal, Disposition, Reason, time.Time, time.Time) (InvocationOutcome, error)
+func FixedEvery(time.Duration, ...ScheduleCadenceOption) ScheduleCadence
+const FullJitter JitterMode = 2
+func Go[P any](context.Context, *Automatic[P], P, ...EnqueueOption) error
 type Handler[P any] func(context.Context, P) error
-type HandlerDeferralLimit struct{ ... }
-    func NewHandlerDeferralLimit(value uint16) (HandlerDeferralLimit, error)
-type HandlerDeferrals struct{ ... }
-    func NewHandlerDeferrals(value uint16) (HandlerDeferrals, error)
-type HandlerFailure struct{ ... }
-type HeldReason struct{ ... }
-    func ParseHeldReason(raw string) (HeldReason, error)
+type HandlerDeferralLimit struct {
+	<unexported fields>
+}
+func (HandlerDeferralLimit) IsZero() bool
+func (HandlerDeferralLimit) Value() uint16
+type HandlerDeferrals struct {
+	<unexported fields>
+}
+func (HandlerDeferrals) IsZero() bool
+func (HandlerDeferrals) Value() uint16
+type HandlerFailure struct {
+	<unexported fields>
+}
+func (HandlerFailure) Error() string
+func (HandlerFailure) Format(fmt.State, rune)
+func (HandlerFailure) IsZero() bool
+func (HandlerFailure) LogValue() log/slog.Value
+func (HandlerFailure) MarshalJSON() ([]byte, error)
+func (HandlerFailure) Panicked() bool
+func (HandlerFailure) Recovered() (any, bool)
+func (HandlerFailure) Stack() []byte
+func (HandlerFailure) String() string
+func (HandlerFailure) Unwrap() error
+var Heavy Profile
+type HeldReason struct {
+	<unexported fields>
+}
+func (HeldReason) IsZero() bool
+func (HeldReason) String() string
+func (HeldReason) Value() string
 type IdentityEpoch uint64
-    func NewIdentityEpoch(value uint64) (IdentityEpoch, error)
-type IdentityProvenance struct{ ... }
-    func ParseIdentityProvenance(raw string) (IdentityProvenance, error)
-type IdentityRestoreRequest struct{ ... }
-type IntentDigest struct{ ... }
-    func IntentDigestFromBytes(value [IntentDigestBytes]byte) (IntentDigest, error)
-type IntentDigestPlan struct{ ... }
-    func CurrentIntentDigestPlan() IntentDigestPlan
-    func NewIntentDigestPlan(current DigestRevision, compatibility ...DigestRevision) (IntentDigestPlan, error)
-    func WithLegacyIntentCompatibility(plan IntentDigestPlan) (IntentDigestPlan, error)
-type IntentDigests struct{ ... }
-    func NewIntentDigests(current IntentKey, compatibility ...IntentKey) (IntentDigests, error)
-    func RestoreInvocationIntentDigests(invocation Invocation) (IntentDigests, error)
-type IntentKey struct{ ... }
-    func NewIntentKey(scope IntentScopeBinding, revision DigestRevision, purpose IntentPurpose, ...) (IntentKey, error)
+func (IdentityEpoch) IsZero() bool
+func (IdentityEpoch) Value() uint64
+type IdentityProvenance struct {
+	<unexported fields>
+}
+func (IdentityProvenance) IsZero() bool
+func (IdentityProvenance) String() string
+func (IdentityProvenance) Value() string
+type IdentityRestoreRequest struct {
+	<unexported fields>
+}
+func (IdentityRestoreRequest) Actor() (ActorIdentity, bool)
+func (IdentityRestoreRequest) Definition() Name
+func (IdentityRestoreRequest) Epoch() IdentityEpoch
+func (IdentityRestoreRequest) Format(fmt.State, rune)
+func (IdentityRestoreRequest) Invocation() InvocationID
+func (IdentityRestoreRequest) MarshalJSON() ([]byte, error)
+func (IdentityRestoreRequest) Namespace() Namespace
+func (IdentityRestoreRequest) Partition() PartitionKey
+func (IdentityRestoreRequest) Provenance() IdentityProvenance
+func (IdentityRestoreRequest) Scope() ContextScope
+func (IdentityRestoreRequest) String() string
+func (IdentityRestoreRequest) Tenant() (TenantIdentity, bool)
+func (IdentityRestoreRequest) Token() (ProtectedIdentityToken, bool)
+func (IdentityRestoreRequest) Trace() UntrustedTraceCarrier
+func (IdentityRestoreRequest) WireDigest() WireDigest
+func InitialInvocationOutcome() InvocationOutcome
+func Intent(string) ProducerIntent
+const IntentCollapse IntentPurpose = 3
+type IntentDigest struct {
+	<unexported fields>
+}
+func (IntentDigest) Bytes() [32]byte
+func (IntentDigest) Format(fmt.State, rune)
+func (IntentDigest) IsZero() bool
+func (IntentDigest) String() string
+const IntentDigestBytes untyped int = 32
+func IntentDigestFromBytes([32]byte) (IntentDigest, error)
+type IntentDigestPlan struct {
+	<unexported fields>
+}
+func (IntentDigestPlan) Current() DigestRevision
+func (IntentDigestPlan) IsZero() bool
+func (IntentDigestPlan) LegacyCompatibility() bool
+func (IntentDigestPlan) Revisions() []DigestRevision
+type IntentDigests struct {
+	<unexported fields>
+}
+func (IntentDigests) Current() IntentKey
+func (IntentDigests) Format(fmt.State, rune)
+func (IntentDigests) IsZero() bool
+func (IntentDigests) ReadCandidates() []IntentKey
+func (IntentDigests) ReservationKeys() []IntentKey
+func (IntentDigests) String() string
+type IntentKey struct {
+	<unexported fields>
+}
+func (IntentKey) Digest() IntentDigest
+func (IntentKey) Format(fmt.State, rune)
+func (IntentKey) IsZero() bool
+func (IntentKey) Purpose() IntentPurpose
+func (IntentKey) Revision() DigestRevision
+func (IntentKey) Scope() IntentScopeBinding
+func (IntentKey) String() string
+const IntentOnce IntentPurpose = 2
 type IntentPurpose uint8
-    const IntentRegular IntentPurpose = iota + 1 ...
-type IntentScopeBinding struct{ ... }
-    func IntentScopeBindingFromBytes(value [IntentScopeBytes]byte) (IntentScopeBinding, error)
-type Invocation struct{ ... }
-    func NewInvocation(spec InvocationSpec) (Invocation, error)
-    func RedriveInvocation(invocation Invocation, at time.Time) (Invocation, error)
-    func RestoreInvocation(spec InvocationRestoreSpec) (Invocation, error)
-type InvocationGenesisRecord struct{ ... }
-type InvocationID struct{ ... }
-    func Enqueue[P any](ctx context.Context, queue *Queue, definition DefinitionOf[P], payload P, ...) (InvocationID, error)
-    func InvocationIDFromBytes(value [16]byte) (InvocationID, error)
-    func NewInvocationID() (InvocationID, error)
-    func ParseInvocationID(raw string) (InvocationID, error)
-type InvocationOutcome struct{ ... }
-    func ActiveAttemptOutcome(ordinal AttemptOrdinal, startedAt time.Time) (InvocationOutcome, error)
-    func CancelRequestedOutcome(ordinal AttemptOrdinal, requestedAt time.Time) (InvocationOutcome, error)
-    func DeferredDeliveryOutcome(reason Reason, failure PublicFailure, observedAt, availableAt time.Time) (InvocationOutcome, error)
-    func FinishedAttemptOutcome(ordinal AttemptOrdinal, disposition Disposition, terminalReason Reason, ...) (InvocationOutcome, error)
-    func InitialInvocationOutcome() InvocationOutcome
-    func TerminalDeliveryOutcome(state InvocationState, reason, terminalReason Reason, failure PublicFailure, ...) (InvocationOutcome, error)
+func (IntentPurpose) String() string
+func (IntentPurpose) Valid() bool
+const IntentRegular IntentPurpose = 1
+type IntentScopeBinding struct {
+	<unexported fields>
+}
+func (IntentScopeBinding) Bytes() [32]byte
+func (IntentScopeBinding) Format(fmt.State, rune)
+func (IntentScopeBinding) IsZero() bool
+func (IntentScopeBinding) MarshalJSON() ([]byte, error)
+func (IntentScopeBinding) String() string
+func IntentScopeBindingFromBytes([32]byte) (IntentScopeBinding, error)
+const IntentScopeBytes untyped int = 32
+var Interactive Profile
+type Invocation struct {
+	<unexported fields>
+}
+func (Invocation) AttemptOrdinal() AttemptOrdinal
+func (Invocation) AttemptRecords() []AttemptRecord
+func (Invocation) Attempts() []Attempt
+func (Invocation) BeginAttempt(BeginAttemptSpec) (Invocation, Attempt, error)
+func (Invocation) CancelRequestedAt() time.Time
+func (Invocation) Context() DurableContext
+func (Invocation) CreatedAt() time.Time
+func (Invocation) DeferDelivery(DeferDeliverySpec) (Invocation, error)
+func (Invocation) Definition() Name
+func (Invocation) DeliveryDeferrals() DeliveryDeferrals
+func (Invocation) EligibleAt() time.Time
+func (Invocation) Expire(time.Time) (Invocation, error)
+func (Invocation) FinishAttempt(Attempt, FinishAttemptSpec) (Invocation, Attempt, error)
+func (Invocation) FinishDelivery(FinishDeliverySpec) (Invocation, error)
+func (Invocation) FinishedAt() time.Time
+func (Invocation) Format(fmt.State, rune)
+func (Invocation) HandlerDeferrals() HandlerDeferrals
+func (Invocation) History() []InvocationOutcome
+func (Invocation) ID() InvocationID
+func (Invocation) Intent() IntentKey
+func (Invocation) IntentDigest() IntentDigest
+func (Invocation) IsTerminal() bool
+func (Invocation) IsZero() bool
+func (Invocation) LegacyIntent() (LegacyIntent, bool)
+func (Invocation) MaxElapsedAt() time.Time
+func (Invocation) Mode() PlacementMode
+func (Invocation) Namespace() Namespace
+func (Invocation) Outcome() InvocationOutcome
+func (Invocation) Partition() PartitionKey
+func (Invocation) Policy() PolicySnapshot
+func (Invocation) Priority() int
+func (Invocation) Queue() QueueName
+func (Invocation) RecordProgress(Attempt, time.Time) (Invocation, Attempt, error)
+func (Invocation) RequestCancel(time.Time) (Invocation, error)
+func (Invocation) RetrySpent() RetrySpent
+func (Invocation) StartBefore() time.Time
+func (Invocation) State() InvocationState
+func (Invocation) String() string
+func (Invocation) Terminate(time.Time) (Invocation, error)
+const InvocationCancelRequested InvocationState = 8
+const InvocationCancelled InvocationState = 9
+const InvocationDead InvocationState = 5
+const InvocationDiscarded InvocationState = 6
+const InvocationFailed InvocationState = 4
+type InvocationGenesisRecord struct {
+	ID InvocationID
+	Namespace Namespace
+	Partition PartitionKey
+	Definition Name
+	Queue QueueName
+	Mode PlacementMode
+	Intent IntentKey
+	LegacyIntent LegacyIntent
+	Priority int
+	CreatedAt time.Time
+	EligibleAt time.Time
+	StartBefore time.Time
+	Policy PolicySnapshot
+	Context DurableContextRecord
+}
+func (InvocationGenesisRecord) Format(fmt.State, rune)
+func (InvocationGenesisRecord) MarshalJSON() ([]byte, error)
+func (InvocationGenesisRecord) String() string
+type InvocationID struct {
+	<unexported fields>
+}
+func (InvocationID) Bytes() [16]byte
+func (InvocationID) IsZero() bool
+func (InvocationID) String() string
+const InvocationIDBytes untyped int = 16
+func InvocationIDFromBytes([16]byte) (InvocationID, error)
+type InvocationOutcome struct {
+	<unexported fields>
+}
+func (InvocationOutcome) AttemptOrdinal() AttemptOrdinal
+func (InvocationOutcome) AvailableAt() time.Time
+func (InvocationOutcome) Disposition() Disposition
+func (InvocationOutcome) Failure() PublicFailure
+func (InvocationOutcome) Format(fmt.State, rune)
+func (InvocationOutcome) IsZero() bool
+func (InvocationOutcome) Kind() InvocationOutcomeKind
+func (InvocationOutcome) OccurredAt() time.Time
+func (InvocationOutcome) Reason() Reason
+func (InvocationOutcome) String() string
+func (InvocationOutcome) TerminalReason() Reason
+func (InvocationOutcome) TerminalState() InvocationState
+const InvocationOutcomeAttemptActive InvocationOutcomeKind = 2
+const InvocationOutcomeAttemptFinished InvocationOutcomeKind = 3
+const InvocationOutcomeCancelRequested InvocationOutcomeKind = 5
+const InvocationOutcomeDeliveryDeferred InvocationOutcomeKind = 4
+const InvocationOutcomeDeliveryTerminal InvocationOutcomeKind = 6
+const InvocationOutcomeInitial InvocationOutcomeKind = 1
 type InvocationOutcomeKind uint8
-    const InvocationOutcomeInitial InvocationOutcomeKind = iota + 1 ...
-type InvocationRestoreSpec struct{ ... }
-type InvocationSpec struct{ ... }
+func (InvocationOutcomeKind) String() string
+func (InvocationOutcomeKind) Valid() bool
+const InvocationQuarantined InvocationState = 7
+const InvocationQueued InvocationState = 1
+type InvocationRestoreSpec struct {
+	Genesis InvocationSpec
+	Outcomes []InvocationOutcome
+	Attempts []AttemptRecord
+}
+func (InvocationRestoreSpec) Format(fmt.State, rune)
+func (InvocationRestoreSpec) String() string
+const InvocationRunning InvocationState = 2
+type InvocationSpec struct {
+	ID InvocationID
+	Namespace Namespace
+	Partition PartitionKey
+	Definition Name
+	Queue QueueName
+	Mode PlacementMode
+	Intent IntentKey
+	LegacyIntent LegacyIntent
+	Priority int
+	CreatedAt time.Time
+	EligibleAt time.Time
+	StartBefore time.Time
+	Policy PolicySnapshot
+	Context DurableContext
+}
+func (InvocationSpec) Format(fmt.State, rune)
+func (InvocationSpec) String() string
 type InvocationState uint8
-    const InvocationQueued InvocationState = iota + 1 ...
+func (InvocationState) String() string
+func (InvocationState) Terminal() bool
+func (InvocationState) Valid() bool
+const InvocationSucceeded InvocationState = 3
+const InvocationTerminated InvocationState = 10
+func IsDeferred(error) bool
+func IsPermanent(error) bool
+func JSON[V any](SchemaVersion) Codec[V]
 type JitterMode uint8
-    const NoJitter JitterMode = iota + 1 ...
-type LeaseFence interface{ ... }
-type LeaseRef struct{ ... }
-    func NewLeaseRef(backend BackendID, invocation InvocationID, driverToken []byte) (LeaseRef, error)
-type LeaseRenewal struct{ ... }
-    func NewLeaseRenewal(previous LeaseRef, current LeaseRef, mutation DeliveryMutationStatus, ...) (LeaseRenewal, error)
-type LegacyIntent struct{ ... }
-    func RestoreLegacyIntent(raw string) (LegacyIntent, error)
-type ListCursor struct{ ... }
-type ListSpec struct{ ... }
-type Name struct{ ... }
-    func ParseName(raw string) (Name, error)
-type Namespace struct{ ... }
-    func NamespaceOf(application, environment string) (Namespace, error)
-    func NewNamespace(application, environment Name) (Namespace, error)
-type Operations interface{ ... }
-type Option interface{ ... }
-    func AcceptAckModes(values ...AckMode) Option
-    func AcceptAnyAckMode() Option
-    func AllowAcknowledgedLoss() Option
-    func AllowTraceCorrelations(values ...CorrelationKey) Option
-    func AttemptTimeout(value time.Duration) Option
-    func DecodedBytes(value int) Option
-    func MaxBytes(value int) Option
-    func MaxDecodedPayloadBytes(value int) Option
-    func MaxDeliveryDeferrals(value int) Option
-    func MaxDepth(value int) Option
-    func MaxElapsed(value time.Duration) Option
-    func MaxHandlerDeferrals(value int) Option
-    func NoTraceCorrelations() Option
-    func OnQueue(value QueueName) Option
-    func PayloadBytes(value int) Option
-    func PayloadDepth(value int) Option
-    func Priority(value int) Option
-    func ProgressTimeout(value time.Duration) Option
-    func ProtectAcknowledgedEnqueuesFrom(values ...Failure) Option
-    func RetainFor(value time.Duration) Option
-    func RetainIntentsFor(value time.Duration) Option
-    func Retries(value int) Option
-    func RetryBackoff(value BackoffPolicy) Option
-type PartitionDigest struct{ ... }
-    func PartitionDigestFromBytes(value [32]byte) (PartitionDigest, error)
-type PartitionKey struct{ ... }
-    func RestorePartitionKey(namespace Namespace, binding PartitionNamespaceBinding, ...) (PartitionKey, error)
+type LeaseFence interface {
+	Fence(context.Context, LeaseRef) error
+}
+type LeaseRef struct {
+	<unexported fields>
+}
+func (LeaseRef) Backend() BackendID
+func (LeaseRef) DriverToken() []byte
+func (LeaseRef) Format(fmt.State, rune)
+func (LeaseRef) InvocationID() InvocationID
+func (LeaseRef) IsZero() bool
+func (LeaseRef) LogValue() log/slog.Value
+func (LeaseRef) MarshalJSON() ([]byte, error)
+func (LeaseRef) String() string
+type LeaseRenewal struct {
+	<unexported fields>
+}
+func (LeaseRenewal) Control() DeliveryControlStatus
+func (LeaseRenewal) Current() LeaseRef
+func (LeaseRenewal) Format(fmt.State, rune)
+func (LeaseRenewal) LogValue() log/slog.Value
+func (LeaseRenewal) MarshalJSON() ([]byte, error)
+func (LeaseRenewal) Mutation() DeliveryMutationStatus
+func (LeaseRenewal) Previous() LeaseRef
+func (LeaseRenewal) String() string
+type LegacyIntent struct {
+	<unexported fields>
+}
+func (LegacyIntent) Format(fmt.State, rune)
+func (LegacyIntent) IsZero() bool
+func (LegacyIntent) LogValue() log/slog.Value
+func (LegacyIntent) MarshalJSON() ([]byte, error)
+func (LegacyIntent) String() string
+func (LegacyIntent) Value() string
+type ListCursor struct {
+	CreatedAt time.Time
+	ID InvocationID
+}
+type ListSpec struct {
+	Definitions []Name
+	States []InvocationState
+	Limit int
+	Offset int
+	After *ListCursor
+}
+const MaxActorIdentityBytes untyped int = 512
+const MaxAttemptOrdinal untyped int = 4129
+const MaxAttemptTraceEvents untyped int = 128
+const MaxBindingConcurrency untyped int = 256
+const MaxBindingNameBytes untyped int = 128
+const MaxBuildIDBytes untyped int = 128
+func MaxBytes(int) Option
+const MaxClaimBytes untyped int = 67108864
+const MaxClaimItems untyped int = 256
+const MaxCodecIDBytes untyped int = 64
+const MaxCorrelationFields untyped int = 8
+const MaxCorrelationKeyBytes untyped int = 32
+const MaxCorrelationValueBytes untyped int = 128
+const MaxDecodedBytes untyped int = 4194304
+func MaxDecodedPayloadBytes(int) Option
+const MaxDefinitions untyped int = 4096
+func MaxDelay(time.Duration) DebounceOption
+func MaxDeliveryDeferrals(int) Option
+const MaxDeliveryRecordBytes untyped int = 41147648
+func MaxDepth(int) Option
+func MaxElapsed(time.Duration) Option
+const MaxFailureCodeBytes untyped int = 64
+func MaxHandlerDeferrals(int) Option
+const MaxHeldReasonBytes untyped int = 64
+const MaxIdentityProvenanceBytes untyped int = 64
+const MaxIdentityTokenBytes untyped int = 2048
+const MaxIntentBytes untyped int = 512
+const MaxIntentDigestKeys untyped int = 2
+const MaxInvocationOutcomes untyped int = 12356
+const MaxLeaseTokenBytes untyped int = 2048
+const MaxListDefinitions untyped int = 128
+const MaxListLimit untyped int = 1000
+const MaxListOffset untyped int = 1000000
+const MaxNameBytes untyped int = 128
+const MaxPartitionBytes untyped int = 512
+const MaxPayloadBytes untyped int = 1048576
+const MaxPayloadDepth untyped int = 64
+const MaxPublicFailureBytes untyped int = 2048
+const MaxPurgeLimit untyped int = 1000
+const MaxQueueNameBytes untyped int = 64
+const MaxReclaimBatch untyped int = 1000
+const MaxResourceUnits untyped int = 1048576
+const MaxRetention time.Duration = 31536000000000000
+const MaxRetryDelay time.Duration = 3600000000000
+const MaxScheduleObservers untyped int = 8
+const MaxShutdownGrace time.Duration = 600000000000
+const MaxSupportedRevisions untyped int = 8
+const MaxTraceCarrierBytes untyped int = 1024
+const MaxTraceEventNameBytes untyped int = 64
+const MaxTraceParentBytes untyped int = 256
+const MaxTraceStateBytes untyped int = 512
+const MaxTransientWaiters untyped int = 4096
+const MaxUpcastHops untyped int = 7
+const MaxWorkerConcurrency untyped int = 4096
+const MaxWorkerInFlightBytes untyped int = 1073741824
+const MaxWorkerObservers untyped int = 8
+const MaximumAdmissionFreshness time.Duration = 86400000000000
+const MaximumAttemptTimeout time.Duration = 86400000000000
+const MaximumCollapseDelay time.Duration = 2592000000000000
+const MaximumDeliveryDeferrals untyped int = 4096
+const MaximumHandlerDeferrals untyped int = 4096
+const MaximumLeaseTTL time.Duration = 86400000000000
+const MaximumMaxElapsed time.Duration = 2592000000000000
+const MaximumOperationTimeout time.Duration = 60000000000
+const MaximumPollInterval time.Duration = 60000000000
+const MaximumPriority untyped int = 1000
+const MaximumReclaimInterval time.Duration = 86400000000000
+const MaximumRetries untyped int = 32
+const MinRetryDelay time.Duration = 100000000
+const MinimumLeaseTTL time.Duration = 1000000000
+const MinimumOperationTimeout time.Duration = 10000000
+const MinimumPollInterval time.Duration = 10000000
+const MinimumReclaimInterval time.Duration = 100000000
+func MustCatalog(...Declaration) Catalog
+func MustDefine[P any](DefinitionSpec[P]) *Definition[P]
+func MustScheduleObservers(...ScheduleObserver) ScheduleObserver
+func MustWire[P any](*Automatic[P], WireSpec[P]) *Automatic[P]
+func MustWorkerObservers(...WorkerObserver) WorkerObserver
+func MustWorkerPlan(Catalog, ...Consumer) WorkerPlan
+type Name struct {
+	<unexported fields>
+}
+func (Name) IsZero() bool
+func (Name) String() string
+func (Name) Value() string
+type Namespace struct {
+	<unexported fields>
+}
+func (Namespace) Application() Name
+func (Namespace) Digest() [32]byte
+func (Namespace) Environment() Name
+func (Namespace) Format(fmt.State, rune)
+func (Namespace) IsZero() bool
+func (Namespace) MarshalJSON() ([]byte, error)
+func (Namespace) String() string
+func NamespaceOf(string, string) (Namespace, error)
+func NewAdmission(int, HeldReason, time.Time) (Admission, error)
+func NewAdmissionSnapshot(time.Duration) (*AdmissionSnapshot, error)
+func NewApplyRequest(DeliveryCommand) (ApplyRequest, error)
+func NewApplyResult(time.Time, DeliveryCommandResult, DeliveryApplication) (ApplyResult, error)
+func NewAttemptOrdinal(uint16) (AttemptOrdinal, error)
+func NewBackendDescription(BackendID, DurabilityProfile, Capabilities) (BackendDescription, error)
+func NewBackendDescriptionWithResources(BackendID, DurabilityProfile, Capabilities, ResourceProfile) (BackendDescription, error)
+func NewCatalog(...Declaration) (Catalog, error)
+func NewClaimBatch(time.Time, []ClaimedDelivery) (ClaimBatch, error)
+func NewClaimRequest(ClaimRequestSpec) (ClaimRequest, error)
+func NewClaimTarget(ClaimTargetSpec) (ClaimTarget, error)
+func NewClaimedDelivery(ClaimTarget, LeaseRef, DeliveryRecord) (ClaimedDelivery, error)
+func NewContextCapture(ContextCaptureSpec) (ContextCapture, error)
+func NewCorrelationField(CorrelationKey, string) (CorrelationField, error)
+func NewDeliveryCommandResult(DeliveryMutationStatus, DeliveryControlStatus) (DeliveryCommandResult, error)
+func NewDeliveryDeferralLimit(uint16) (DeliveryDeferralLimit, error)
+func NewDeliveryDeferrals(uint16) (DeliveryDeferrals, error)
+func NewDeliveryMeta(DeliveryMetaSpec) (DeliveryMeta, error)
+func NewDeliveryRecord(Invocation, EncodedPayload, WireDigest, PayloadDigest) (DeliveryRecord, error)
+func NewDeliveryView(Invocation, EncodedPayload) (DeliveryView, error)
+func NewDisposition(DispositionSpec) (Disposition, error)
+func NewDurabilityProfile(AckMode, AcknowledgedLoss, FailureSet) (DurabilityProfile, error)
+func NewDurabilityRequirement(AckModeSet, FailureSet) (DurabilityRequirement, error)
+func NewEncodedPayload(CodecID, SchemaVersion, []byte) (EncodedPayload, error)
+func NewHandlerDeferralLimit(uint16) (HandlerDeferralLimit, error)
+func NewHandlerDeferrals(uint16) (HandlerDeferrals, error)
+func NewIdentityEpoch(uint64) (IdentityEpoch, error)
+func NewIntentDigestPlan(DigestRevision, ...DigestRevision) (IntentDigestPlan, error)
+func NewIntentDigests(IntentKey, ...IntentKey) (IntentDigests, error)
+func NewIntentKey(IntentScopeBinding, DigestRevision, IntentPurpose, IntentDigest) (IntentKey, error)
+func NewInvocation(InvocationSpec) (Invocation, error)
+func NewInvocationID() (InvocationID, error)
+func NewLeaseRef(BackendID, InvocationID, []byte) (LeaseRef, error)
+func NewLeaseRenewal(LeaseRef, LeaseRef, DeliveryMutationStatus, DeliveryControlStatus) (LeaseRenewal, error)
+func NewNamespace(Name, Name) (Namespace, error)
+func NewPayloadDigest(CodecID, SchemaVersion, [32]byte) (PayloadDigest, error)
+func NewPayloadRevision(CodecID, SchemaVersion) (PayloadRevision, error)
+func NewPlacement(PlacementSpec) (Placement, error)
+func NewPlacementResult(InvocationID, PlacementOutcome) (PlacementResult, error)
+func NewPolicySnapshot(Policy) (PolicySnapshot, error)
+func NewProtectedIdentityToken([]byte) (ProtectedIdentityToken, error)
+func NewPublicFailure(FailureCode, string) (PublicFailure, error)
+func NewQueue(QueueSpec) (*Queue, error)
+func NewRecoverRequest(RecoverRequestSpec) (RecoverRequest, error)
+func NewRecoverResult(time.Time, []RecoveredDelivery, int, bool) (RecoverResult, error)
+func NewRecoveredDelivery(LeaseRef, DeliveryRecord) (RecoveredDelivery, error)
+func NewRenewRequest([]LeaseRef, time.Duration) (RenewRequest, error)
+func NewRenewResult(time.Time, []LeaseRenewal) (RenewResult, error)
+func NewResourceProfile(ResourceProfileSpec) (ResourceProfile, error)
+func NewResources(ResourcesSpec) (Resources, error)
+func NewRestoredIdentity(context.Context, ProducerPartition, ProducerActor) (RestoredIdentity, error)
+func NewRetryLimit(uint16) (RetryLimit, error)
+func NewRetrySpent(uint16) (RetrySpent, error)
+func NewScheduler(SchedulerSpec, ...Schedule) (*Scheduler, error)
+func NewStaged(TransactionContext, PlacementResult) (Staged, error)
+func NewTracePolicy(...CorrelationKey) (TracePolicy, error)
+func NewTransactionContext(BackendID, TransactionBinding, DurabilityProfile) (TransactionContext, error)
+func NewUntrustedTraceCarrier(TraceCarrierSpec) (UntrustedTraceCarrier, error)
+func NewWorkerPlan(Catalog, ...Consumer) (WorkerPlan, error)
+func NewWorkers(WorkersSpec, ...Consumer) (*Workers, error)
+const NoJitter JitterMode = 1
+func NoTraceCorrelations() Option
+func On[P any](DefinitionOf[P], Handler[P], ...WorkerOption) Consumer
+func OnAdapter[P any](DefinitionOf[P], AdapterHandler[P], ...WorkerOption) Consumer
+func OnQueue(QueueName) Option
+type Operations interface {
+	Admin
+	Controller
+}
+type Option interface {
+	<unexported methods>
+}
+func ParseActor(string) (ProducerActor, error)
+func ParseBindingName(string) (BindingName, error)
+func ParseBuildID(string) (BuildID, error)
+func ParseCodecID(string) (CodecID, error)
+func ParseCorrelationKey(string) (CorrelationKey, error)
+func ParseFailureCode(string) (FailureCode, error)
+func ParseHeldReason(string) (HeldReason, error)
+func ParseIdentityProvenance(string) (IdentityProvenance, error)
+func ParseIntent(string) (ProducerIntent, error)
+func ParseInvocationID(string) (InvocationID, error)
+func ParseName(string) (Name, error)
+func ParsePartition(string) (ProducerPartition, error)
+func ParseQueueName(string) (QueueName, error)
+func Partition(string) ProducerPartition
+type PartitionDigest struct {
+	<unexported fields>
+}
+func (PartitionDigest) Bytes() [32]byte
+func (PartitionDigest) Format(fmt.State, rune)
+func (PartitionDigest) IsZero() bool
+func (PartitionDigest) String() string
+func PartitionDigestFromBytes([32]byte) (PartitionDigest, error)
+const PartitionGlobal PartitionMode = 0
+type PartitionKey struct {
+	<unexported fields>
+}
+func (PartitionKey) Digest() PartitionDigest
+func (PartitionKey) Format(fmt.State, rune)
+func (PartitionKey) Global() bool
+func (PartitionKey) IsZero() bool
+func (PartitionKey) MarshalJSON() ([]byte, error)
+func (PartitionKey) NamespaceBinding() PartitionNamespaceBinding
+func (PartitionKey) Revision() DigestRevision
+func (PartitionKey) String() string
 type PartitionMode uint8
-    const PartitionGlobal PartitionMode = iota ...
-type PartitionNamespaceBinding struct{ ... }
-    func PartitionNamespaceBindingFromBytes(value [32]byte) (PartitionNamespaceBinding, error)
-type PayloadDigest struct{ ... }
-    func NewPayloadDigest(identity CodecID, version SchemaVersion, value [32]byte) (PayloadDigest, error)
-type PayloadIdentity[P any] interface{ ... }
-type PayloadIdentityDescription struct{ ... }
-type PayloadLimit struct{ ... }
-    func DefaultPayloadLimit() PayloadLimit
-type PayloadRevision struct{ ... }
-    func NewPayloadRevision(codec CodecID, version SchemaVersion) (PayloadRevision, error)
-type Placement struct{ ... }
-    func NewPlacement(spec PlacementSpec) (Placement, error)
+func (PartitionMode) String() string
+func (PartitionMode) Valid() bool
+type PartitionNamespaceBinding struct {
+	<unexported fields>
+}
+func (PartitionNamespaceBinding) Bytes() [32]byte
+func (PartitionNamespaceBinding) Format(fmt.State, rune)
+func (PartitionNamespaceBinding) IsZero() bool
+func (PartitionNamespaceBinding) MarshalJSON() ([]byte, error)
+func (PartitionNamespaceBinding) String() string
+func PartitionNamespaceBindingFromBytes([32]byte) (PartitionNamespaceBinding, error)
+const PartitionTenantRequired PartitionMode = 1
+func PayloadBytes(int) Option
+func PayloadDepth(int) Option
+type PayloadDigest struct {
+	<unexported fields>
+}
+func (PayloadDigest) Bytes() [32]byte
+func (PayloadDigest) Format(fmt.State, rune)
+func (PayloadDigest) Identity() CodecID
+func (PayloadDigest) IsZero() bool
+func (PayloadDigest) String() string
+func (PayloadDigest) Version() SchemaVersion
+type PayloadIdentity[P any] interface {
+	Digest(P, PayloadLimit) ([32]byte, error)
+	ID() CodecID
+	Version() SchemaVersion
+}
+type PayloadIdentityDescription struct {
+	ID CodecID
+	Version SchemaVersion
+	Available bool
+	Automatic bool
+}
+type PayloadLimit struct {
+	MaxBytes int
+	MaxDecodedBytes int
+	MaxDepth int
+}
+type PayloadRevision struct {
+	<unexported fields>
+}
+func (PayloadRevision) Codec() CodecID
+func (PayloadRevision) Format(fmt.State, rune)
+func (PayloadRevision) IsZero() bool
+func (PayloadRevision) LogValue() log/slog.Value
+func (PayloadRevision) MarshalJSON() ([]byte, error)
+func (PayloadRevision) String() string
+func (PayloadRevision) Version() SchemaVersion
+func Permanent(error) error
+func PermanentFailureDisposition(Reason, PublicFailure) (Disposition, error)
+type Placement struct {
+	<unexported fields>
+}
+func (Placement) Candidate() InvocationID
+func (Placement) Context() DurableContext
+func (Placement) Definition() Name
+func (Placement) Delay() time.Duration
+func (Placement) Format(fmt.State, rune)
+func (Placement) IntentDigest() IntentDigest
+func (Placement) IntentDigests() IntentDigests
+func (Placement) IsZero() bool
+func (Placement) LegacyIntent() (LegacyIntent, bool)
+func (Placement) MaxDelay() time.Duration
+func (Placement) Mode() PlacementMode
+func (Placement) Namespace() Namespace
+func (Placement) Partition() PartitionKey
+func (Placement) Payload() EncodedPayload
+func (Placement) PayloadDigest() PayloadDigest
+func (Placement) Policy() PolicySnapshot
+func (Placement) Priority() int
+func (Placement) Queue() QueueName
+func (Placement) StartBefore() time.Time
+func (Placement) String() string
+func (Placement) WireDigest() WireDigest
+const PlacementCollapse PlacementMode = 3
+const PlacementCollapsed PlacementOutcome = 4
+const PlacementConflict PlacementOutcome = 3
+const PlacementCreated PlacementOutcome = 1
+const PlacementDebounce PlacementMode = 4
+const PlacementExisting PlacementOutcome = 5
+const PlacementExistingSamePayload PlacementOutcome = 2
 type PlacementMode uint8
-    const PlacementRegular PlacementMode = iota + 1 ...
+func (PlacementMode) String() string
+func (PlacementMode) Valid() bool
+const PlacementOnce PlacementMode = 2
 type PlacementOutcome uint8
-    const PlacementCreated PlacementOutcome = iota + 1 ...
-type PlacementResult struct{ ... }
-    func NewPlacementResult(id InvocationID, outcome PlacementOutcome) (PlacementResult, error)
-type PlacementSpec struct{ ... }
-type Policy struct{ ... }
-type PolicyDescription struct{ ... }
-type PolicySnapshot struct{ ... }
-    func NewPolicySnapshot(policy Policy) (PolicySnapshot, error)
-type ProducerActor struct{ ... }
-    func Actor(raw string) ProducerActor
-    func ParseActor(raw string) (ProducerActor, error)
-type ProducerIntent struct{ ... }
-    func Intent(raw string) ProducerIntent
-    func ParseIntent(raw string) (ProducerIntent, error)
-type ProducerPartition struct{ ... }
-    func ParsePartition(raw string) (ProducerPartition, error)
-    func Partition(raw string) ProducerPartition
-type ProducerRequirements struct{ ... }
-    func ProducerCoreOnly() ProducerRequirements
-    func RequireProducerCapabilities(capabilities Capabilities) ProducerRequirements
-    func StandardProducerRequirements() ProducerRequirements
-type Profile struct{ ... }
-type ProgressReporter interface{ ... }
-type ProtectedIdentityToken struct{ ... }
-    func NewProtectedIdentityToken(value []byte) (ProtectedIdentityToken, error)
-type PublicFailure struct{ ... }
-    func NewPublicFailure(code FailureCode, message string) (PublicFailure, error)
-type Queue struct{ ... }
-    func NewQueue(spec QueueSpec) (*Queue, error)
-type QueueActivation struct{ ... }
-type QueueName struct{ ... }
-    func ParseQueueName(raw string) (QueueName, error)
-type QueueSpec struct{ ... }
+func (PlacementOutcome) String() string
+func (PlacementOutcome) Valid() bool
+const PlacementRegular PlacementMode = 1
+type PlacementResult struct {
+	<unexported fields>
+}
+func (PlacementResult) Format(fmt.State, rune)
+func (PlacementResult) InvocationID() InvocationID
+func (PlacementResult) IsZero() bool
+func (PlacementResult) Outcome() PlacementOutcome
+func (PlacementResult) String() string
+type PlacementSpec struct {
+	Namespace Namespace
+	Partition PartitionKey
+	Candidate InvocationID
+	Definition Name
+	Queue QueueName
+	Mode PlacementMode
+	Payload EncodedPayload
+	PayloadDigest PayloadDigest
+	WireDigest WireDigest
+	IntentDigests IntentDigests
+	LegacyIntent LegacyIntent
+	Priority int
+	Delay time.Duration
+	MaxDelay time.Duration
+	StartBefore time.Time
+	Policy PolicySnapshot
+	Context DurableContext
+}
+func (PlacementSpec) Format(fmt.State, rune)
+func (PlacementSpec) String() string
+const PlacementUnique PlacementMode = 5
+type Policy struct {
+	Queue QueueName
+	Priority int
+	AttemptTimeout time.Duration
+	ProgressTimeout time.Duration
+	MaxElapsed time.Duration
+	MaxRetries int
+	MaxHandlerDeferrals int
+	MaxDeliveryDeferrals int
+	Backoff BackoffPolicy
+	Retention time.Duration
+	IntentRetention time.Duration
+	Payload PayloadLimit
+	Durability DurabilityRequirement
+	Trace TracePolicy
+	<unexported fields>
+}
+type PolicyDescription struct {
+	Profile string
+	Overrides []string
+	Queue QueueName
+	Priority int
+	AttemptTimeout time.Duration
+	ProgressTimeout time.Duration
+	MaxElapsed time.Duration
+	MaxRetries int
+	MaxHandlerDeferrals int
+	MaxDeliveryDeferrals int
+	Backoff BackoffDescription
+	Retention time.Duration
+	IntentRetention time.Duration
+	MaxPayloadBytes int
+	MaxDecodedBytes int
+	MaxPayloadDepth int
+	Durability DurabilityRequirement
+	Trace TracePolicy
+}
+type PolicySnapshot struct {
+	<unexported fields>
+}
+func (PolicySnapshot) AttemptTimeout() time.Duration
+func (PolicySnapshot) Backoff() BackoffPolicy
+func (PolicySnapshot) DefaultPriority() int
+func (PolicySnapshot) DeliveryDeferralLimit() DeliveryDeferralLimit
+func (PolicySnapshot) Durability() DurabilityRequirement
+func (PolicySnapshot) Format(fmt.State, rune)
+func (PolicySnapshot) HandlerDeferralLimit() HandlerDeferralLimit
+func (PolicySnapshot) IntentRetention() time.Duration
+func (PolicySnapshot) MaxElapsed() time.Duration
+func (PolicySnapshot) Payload() PayloadLimit
+func (PolicySnapshot) Priority() int
+func (PolicySnapshot) ProgressTimeout() time.Duration
+func (PolicySnapshot) Queue() QueueName
+func (PolicySnapshot) Retention() time.Duration
+func (PolicySnapshot) RetryLimit() RetryLimit
+func (PolicySnapshot) String() string
+func (PolicySnapshot) Trace() TracePolicy
+func Priority(int) Option
+type ProducerActor struct {
+	<unexported fields>
+}
+func (ProducerActor) Format(fmt.State, rune)
+func (ProducerActor) IsZero() bool
+func (ProducerActor) LogValue() log/slog.Value
+func (ProducerActor) MarshalJSON() ([]byte, error)
+func (ProducerActor) String() string
+func ProducerCoreOnly() ProducerRequirements
+type ProducerIntent struct {
+	<unexported fields>
+}
+func (ProducerIntent) Format(fmt.State, rune)
+func (ProducerIntent) IsZero() bool
+func (ProducerIntent) LogValue() log/slog.Value
+func (ProducerIntent) MarshalJSON() ([]byte, error)
+func (ProducerIntent) String() string
+type ProducerPartition struct {
+	<unexported fields>
+}
+func (ProducerPartition) Format(fmt.State, rune)
+func (ProducerPartition) IsZero() bool
+func (ProducerPartition) LogValue() log/slog.Value
+func (ProducerPartition) MarshalJSON() ([]byte, error)
+func (ProducerPartition) String() string
+type ProducerRequirements struct {
+	<unexported fields>
+}
+func (ProducerRequirements) Capabilities() Capabilities
+func (ProducerRequirements) Format(fmt.State, rune)
+func (ProducerRequirements) IsZero() bool
+func (ProducerRequirements) String() string
+type Profile struct {
+	<unexported fields>
+}
+func (Profile) Build() (Policy, error)
+func (Profile) Name() string
+func (Profile) With(...Option) Profile
+func ProgressCommand(LeaseRef) (DeliveryCommand, error)
+type ProgressReporter interface {
+	Pulse(context.Context) error
+}
+func ProgressTimeout(time.Duration) Option
+func ProtectAcknowledgedEnqueuesFrom(...Failure) Option
+type ProtectedIdentityToken struct {
+	<unexported fields>
+}
+func (ProtectedIdentityToken) Bytes() []byte
+func (ProtectedIdentityToken) Format(fmt.State, rune)
+func (ProtectedIdentityToken) IsZero() bool
+func (ProtectedIdentityToken) LogValue() log/slog.Value
+func (ProtectedIdentityToken) MarshalJSON() ([]byte, error)
+func (ProtectedIdentityToken) String() string
+type PublicFailure struct {
+	<unexported fields>
+}
+func (PublicFailure) Code() FailureCode
+func (PublicFailure) Format(fmt.State, rune)
+func (PublicFailure) IsZero() bool
+func (PublicFailure) Message() string
+func (PublicFailure) String() string
+func QuarantineDisposition(Reason, PublicFailure) (Disposition, error)
+type Queue struct {
+	<unexported fields>
+}
+func (*Queue) Activate() (*QueueActivation, error)
+func (*Queue) Backend() BackendID
+func (*Queue) Capabilities() Capabilities
+func (*Queue) Catalog() Catalog
+func (*Queue) Description() BackendDescription
+func (*Queue) Durability() DurabilityProfile
+func (*Queue) Format(fmt.State, rune)
+func (*Queue) GlobalDurabilityRequirement() DurabilityRequirement
+func (*Queue) IntentDigestPlan() IntentDigestPlan
+func (*Queue) Namespace() Namespace
+func (*Queue) RequiredDurability(Name) (DurabilityRequirement, bool)
+func (*Queue) Requirements() ProducerRequirements
+func (*Queue) String() string
+type QueueActivation struct {
+	<unexported fields>
+}
+func (*QueueActivation) Close() error
+func (*QueueActivation) Format(fmt.State, rune)
+func (*QueueActivation) String() string
+type QueueName struct {
+	<unexported fields>
+}
+func (QueueName) IsZero() bool
+func (QueueName) String() string
+func (QueueName) Value() string
+type QueueSpec struct {
+	Namespace Namespace
+	Catalog Catalog
+	Sender Sender
+	Context TrustedContextProvider
+	Digests IntentDigestPlan
+	Requirements ProducerRequirements
+	Durability DurabilityRequirement
+	Entropy io.Reader
+}
+func (QueueSpec) Format(fmt.State, rune)
+func (QueueSpec) String() string
+func RFC3339UTC(SchemaVersion) Codec[time.Time]
 type Reason uint8
-    const ReasonNone Reason = iota ...
-type RecoverRequest struct{ ... }
-    func NewRecoverRequest(spec RecoverRequestSpec) (RecoverRequest, error)
-type RecoverRequestSpec struct{ ... }
-type RecoverResult struct{ ... }
-    func NewRecoverResult(observedAt time.Time, items []RecoveredDelivery, released int, more bool) (RecoverResult, error)
-    func ValidateRecoverResult(description BackendDescription, request RecoverRequest, result RecoverResult) (RecoverResult, error)
-type RecoveredDelivery struct{ ... }
-    func NewRecoveredDelivery(lease LeaseRef, record DeliveryRecord) (RecoveredDelivery, error)
-    func TakeRecoveredDelivery(lease LeaseRef, record *DeliveryRecord) (RecoveredDelivery, error)
-type RenewRequest struct{ ... }
-    func NewRenewRequest(leases []LeaseRef, leaseTTL time.Duration) (RenewRequest, error)
-type RenewResult struct{ ... }
-    func NewRenewResult(observedAt time.Time, items []LeaseRenewal) (RenewResult, error)
-    func ValidateRenewResult(description BackendDescription, request RenewRequest, result RenewResult) (RenewResult, error)
-type ResourceProfile struct{ ... }
-    func NewResourceProfile(spec ResourceProfileSpec) (ResourceProfile, error)
-type ResourceProfileSpec struct{ ... }
-type Resources struct{ ... }
-    func NewResources(spec ResourcesSpec) (Resources, error)
-    func SumResources(values ...Resources) (Resources, error)
-type ResourcesSpec struct{ ... }
-type RestoredDelivery struct{ ... }
-    func RestoreDeliveryRecord(catalog Catalog, record DeliveryRecord) (RestoredDelivery, error)
-type RestoredIdentity struct{ ... }
-    func NewRestoredIdentity(ctx context.Context, tenant ProducerPartition, actor ProducerActor) (RestoredIdentity, error)
-type RetentionSweeper interface{ ... }
+func (Reason) String() string
+func (Reason) Valid() bool
+const ReasonAdmission Reason = 8
+const ReasonAttemptTimeout Reason = 3
+const ReasonAttemptsExhausted Reason = 18
+const ReasonCancelRequested Reason = 12
+const ReasonClassifier Reason = 15
+const ReasonCompatibility Reason = 9
+const ReasonDeferralsExhausted Reason = 17
+const ReasonDependency Reason = 7
+const ReasonHandlerFailure Reason = 1
+const ReasonLeaseLost Reason = 11
+const ReasonMaxElapsed Reason = 5
+const ReasonNone Reason = 0
+const ReasonOperatorTerminated Reason = 13
+const ReasonPanic Reason = 2
+const ReasonPayload Reason = 14
+const ReasonProgressTimeout Reason = 4
+const ReasonRetryExhausted Reason = 16
+const ReasonShutdown Reason = 10
+const ReasonStartBefore Reason = 6
+type RecoverRequest struct {
+	<unexported fields>
+}
+func (RecoverRequest) Format(fmt.State, rune)
+func (RecoverRequest) Holds(InvocationID) bool
+func (RecoverRequest) Incarnation() WorkerIncarnation
+func (RecoverRequest) LeaseTTL() time.Duration
+func (RecoverRequest) LogValue() log/slog.Value
+func (RecoverRequest) MarshalJSON() ([]byte, error)
+func (RecoverRequest) MaxBytes() int
+func (RecoverRequest) MaxItems() int
+func (RecoverRequest) Namespace() Namespace
+func (RecoverRequest) String() string
+type RecoverRequestSpec struct {
+	Namespace Namespace
+	Incarnation WorkerIncarnation
+	MaxItems int
+	MaxBytes int
+	LeaseTTL time.Duration
+	Held []InvocationID
+}
+func (RecoverRequestSpec) Format(fmt.State, rune)
+func (RecoverRequestSpec) String() string
+type RecoverResult struct {
+	<unexported fields>
+}
+func (RecoverResult) Format(fmt.State, rune)
+func (RecoverResult) Items() []RecoveredDelivery
+func (RecoverResult) LogValue() log/slog.Value
+func (RecoverResult) MarshalJSON() ([]byte, error)
+func (RecoverResult) More() bool
+func (RecoverResult) ObservedAt() time.Time
+func (RecoverResult) Released() int
+func (RecoverResult) String() string
+type RecoveredDelivery struct {
+	<unexported fields>
+}
+func (RecoveredDelivery) Format(fmt.State, rune)
+func (RecoveredDelivery) Lease() LeaseRef
+func (RecoveredDelivery) LogValue() log/slog.Value
+func (RecoveredDelivery) MarshalJSON() ([]byte, error)
+func (RecoveredDelivery) Record() DeliveryRecord
+func (RecoveredDelivery) String() string
+func RedriveInvocation(Invocation, time.Time) (Invocation, error)
+func RejectCorruptCommand(LeaseRef) (DeliveryCommand, error)
+func RejectPlacement(error) error
+func ReleaseForAdmissionCommand(LeaseRef, time.Duration) (DeliveryCommand, error)
+func ReleaseForShutdownCommand(LeaseRef, time.Duration) (DeliveryCommand, error)
+func ReleaseUnchangedCommand(LeaseRef, BindingName, BuildID, time.Duration) (DeliveryCommand, error)
+type RenewRequest struct {
+	<unexported fields>
+}
+func (RenewRequest) Format(fmt.State, rune)
+func (RenewRequest) LeaseTTL() time.Duration
+func (RenewRequest) Leases() []LeaseRef
+func (RenewRequest) LogValue() log/slog.Value
+func (RenewRequest) MarshalJSON() ([]byte, error)
+func (RenewRequest) String() string
+type RenewResult struct {
+	<unexported fields>
+}
+func (RenewResult) Format(fmt.State, rune)
+func (RenewResult) Items() []LeaseRenewal
+func (RenewResult) Len() int
+func (RenewResult) LogValue() log/slog.Value
+func (RenewResult) MarshalJSON() ([]byte, error)
+func (RenewResult) ObservedAt() time.Time
+func (RenewResult) String() string
+func RequireProducerCapabilities(Capabilities) ProducerRequirements
+type ResourceProfile struct {
+	<unexported fields>
+}
+func (ResourceProfile) Format(fmt.State, rune)
+func (ResourceProfile) IsDeclared() bool
+func (ResourceProfile) Lifecycle() Resources
+func (ResourceProfile) LogValue() log/slog.Value
+func (ResourceProfile) PerWorker() Resources
+func (ResourceProfile) Resolve(int) (Resources, error)
+func (ResourceProfile) SteadyBase() Resources
+func (ResourceProfile) String() string
+type ResourceProfileSpec struct {
+	SteadyBase ResourcesSpec
+	PerWorker ResourcesSpec
+	Lifecycle ResourcesSpec
+}
+type Resources struct {
+	<unexported fields>
+}
+func (Resources) Format(fmt.State, rune)
+func (Resources) IsComplete() bool
+func (Resources) IsEmpty() bool
+func (Resources) LogValue() log/slog.Value
+func (Resources) MaxConcurrentDBOps() int
+func (Resources) MaxConcurrentRemoteOps() int
+func (Resources) PinnedConnections() int
+func (Resources) String() string
+type ResourcesSpec struct {
+	PinnedConnections int
+	MaxConcurrentDBOps int
+	MaxConcurrentRemoteOps int
+}
+func RestoreDeliveryRecord(Catalog, DeliveryRecord) (RestoredDelivery, error)
+func RestoreDurableContext(Namespace, PartitionKey, Name, TracePolicy, DurableContextRecord) (DurableContext, error)
+func RestoreInvocation(InvocationRestoreSpec) (Invocation, error)
+func RestoreInvocationIntentDigests(Invocation) (IntentDigests, error)
+func RestoreLegacyIntent(string) (LegacyIntent, error)
+func RestorePartitionKey(Namespace, PartitionNamespaceBinding, DigestRevision, PartitionDigest, bool) (PartitionKey, error)
+func RestoreTrustedIdentity(context.Context, TrustedIdentityRestorer, IdentityRestoreRequest) (context.Context, error)
+type RestoredDelivery struct {
+	<unexported fields>
+}
+func (RestoredDelivery) Compatibility() DeliveryCompatibility
+func (RestoredDelivery) Compatible() bool
+func (RestoredDelivery) Format(fmt.State, rune)
+func (RestoredDelivery) Invocation() Invocation
+func (RestoredDelivery) IsZero() bool
+func (RestoredDelivery) LogValue() log/slog.Value
+func (RestoredDelivery) MarshalJSON() ([]byte, error)
+func (RestoredDelivery) Payload() EncodedPayload
+func (RestoredDelivery) PayloadDigest() PayloadDigest
+func (RestoredDelivery) Record() DeliveryRecord
+func (RestoredDelivery) RequireCompatible() error
+func (RestoredDelivery) String() string
+func (RestoredDelivery) WireDigest() WireDigest
+type RestoredIdentity struct {
+	<unexported fields>
+}
+func (RestoredIdentity) Context() context.Context
+func (RestoredIdentity) Format(fmt.State, rune)
+func (RestoredIdentity) LogValue() log/slog.Value
+func (RestoredIdentity) MarshalJSON() ([]byte, error)
+func (RestoredIdentity) String() string
+func (RestoredIdentity) WithContext(context.Context) (RestoredIdentity, error)
+func RetainFor(time.Duration) Option
+func RetainIntentsFor(time.Duration) Option
+type RetentionSweeper interface {
+	SweepTerminalRetention(context.Context, int) (int, error)
+}
+func Retries(int) Option
+func RetryBackoff(BackoffPolicy) Option
 type RetryCost uint8
-    const RetryCostNone RetryCost = iota ...
-type RetryLimit struct{ ... }
-    func NewRetryLimit(value uint16) (RetryLimit, error)
-type RetrySpent struct{ ... }
-    func NewRetrySpent(value uint16) (RetrySpent, error)
-type Schedule interface{ ... }
-    func DefineSchedule[P any](spec ScheduleSpec[P]) (Schedule, error)
-type ScheduleCadence struct{ ... }
-    func At(value time.Time) ScheduleCadence
-    func FixedEvery(every time.Duration, options ...ScheduleCadenceOption) ScheduleCadence
-type ScheduleCadenceOption interface{ ... }
-    func Anchor(value time.Time) ScheduleCadenceOption
-type ScheduleDescription struct{ ... }
-type ScheduleEvent struct{ ... }
-type ScheduleObserver interface{ ... }
-    func MustScheduleObservers(observers ...ScheduleObserver) ScheduleObserver
-    func ScheduleObservers(observers ...ScheduleObserver) (ScheduleObserver, error)
+func (RetryCost) String() string
+func (RetryCost) Valid() bool
+const RetryCostCharged RetryCost = 1
+const RetryCostNone RetryCost = 0
+func RetryDisposition(Reason, PublicFailure, time.Duration, RetryCost) (Disposition, error)
+type RetryLimit struct {
+	<unexported fields>
+}
+func (RetryLimit) IsZero() bool
+func (RetryLimit) Value() uint16
+type RetrySpent struct {
+	<unexported fields>
+}
+func (RetrySpent) IsZero() bool
+func (RetrySpent) Value() uint16
+func RevokeAttemptCommand(LeaseRef, Reason, time.Duration) (DeliveryCommand, error)
+const SafeCodecMode CodecMode = "safe"
+type Schedule interface {
+	Describe() ScheduleDescription
+	<unexported methods>
+}
+type ScheduleCadence struct {
+	<unexported fields>
+}
+type ScheduleCadenceOption interface {
+	<unexported methods>
+}
+type ScheduleDescription struct {
+	Name Name
+	Revision ScheduleRevision
+	Job Name
+	At time.Time
+	Anchor time.Time
+	Every time.Duration
+}
+type ScheduleEvent struct {
+	<unexported fields>
+}
+func (ScheduleEvent) Elapsed() time.Duration
+func (ScheduleEvent) Err() error
+func (ScheduleEvent) Result() ScheduleRunResult
+type ScheduleObserver interface {
+	Observe(context.Context, ScheduleEvent)
+}
 type ScheduleObserverFunc func(context.Context, ScheduleEvent)
+func (ScheduleObserverFunc) Observe(context.Context, ScheduleEvent)
+func ScheduleObservers(...ScheduleObserver) (ScheduleObserver, error)
 type ScheduleRevision uint16
-type ScheduleRunResult struct{ ... }
-type ScheduleSpec[P any] struct{ ... }
-type Scheduler struct{ ... }
-    func NewScheduler(spec SchedulerSpec, schedules ...Schedule) (*Scheduler, error)
-type SchedulerSpec struct{ ... }
+func (ScheduleRevision) Valid() bool
+type ScheduleRunResult struct {
+	Due int
+	Placed int
+	Existing int
+	Conflicts int
+}
+type ScheduleSpec[P any] struct {
+	Name Name
+	Revision ScheduleRevision
+	Cadence ScheduleCadence
+	Job DefinitionOf[P]
+	Payload func(time.Time) (P, error)
+}
+type Scheduler struct {
+	<unexported fields>
+}
+func (*Scheduler) Run(context.Context) error
+func (*Scheduler) RunDue(context.Context) (ScheduleRunResult, error)
+type SchedulerSpec struct {
+	Queue *Queue
+	Clock Clock
+	Observer ScheduleObserver
+}
 type SchemaVersion uint32
-    const AutomaticPayloadIdentityVersion SchemaVersion = 1
-type Sender interface{ ... }
-type Staged struct{ ... }
-    func EnqueueIn[P any](ctx context.Context, queue *Queue, stager Stager, definition DefinitionOf[P], ...) (Staged, error)
-    func EnqueueOnceIn[P any](ctx context.Context, queue *Queue, stager Stager, definition DefinitionOf[P], ...) (Staged, error)
-    func NewStaged(transaction TransactionContext, result PlacementResult) (Staged, error)
-type Stager interface{ ... }
-type TenantIdentity struct{ ... }
-type TenantPartitioner interface{ ... }
+func (SchemaVersion) IsZero() bool
+type Sender interface {
+	Description() BackendDescription
+	Place(context.Context, Placement) (PlacementResult, error)
+}
+type Staged struct {
+	<unexported fields>
+}
+func (Staged) Backend() BackendID
+func (Staged) Format(fmt.State, rune)
+func (Staged) InvocationID() InvocationID
+func (Staged) IsZero() bool
+func (Staged) Outcome() PlacementOutcome
+func (Staged) String() string
+func (Staged) Transaction() TransactionContext
+type Stager interface {
+	Stage(context.Context, Placement) (Staged, error)
+	Transaction() TransactionContext
+}
+func StandardProducerRequirements() ProducerRequirements
+func StartBefore(time.Time) EnqueueOption
+func Step(context.Context, ProgressReporter, time.Duration, func(context.Context) error) error
+func String(SchemaVersion) Codec[string]
+func SuccessDisposition() Disposition
+func SumResources(...Resources) (Resources, error)
+func SystemContextProvider() TrustedContextProvider
+func SystemIdentityRestorer() TrustedIdentityRestorer
+func TakeClaimedDelivery(ClaimTarget, LeaseRef, *DeliveryRecord) (ClaimedDelivery, error)
+func TakeRecoveredDelivery(LeaseRef, *DeliveryRecord) (RecoveredDelivery, error)
+type TenantIdentity struct {
+	<unexported fields>
+}
+func (TenantIdentity) Bytes() [32]byte
+func (TenantIdentity) Format(fmt.State, rune)
+func (TenantIdentity) IsZero() bool
+func (TenantIdentity) MarshalJSON() ([]byte, error)
+func (TenantIdentity) String() string
+type TenantPartitioner interface {
+	Partition(context.Context) (ProducerPartition, error)
+}
 type TenantPartitionerFunc func(context.Context) (ProducerPartition, error)
-type Timer interface{ ... }
-type TraceCarrierRecord struct{ ... }
-type TraceCarrierSpec struct{ ... }
-type TracePolicy struct{ ... }
-    func NewTracePolicy(keys ...CorrelationKey) (TracePolicy, error)
-type TransactionBinding struct{ ... }
-    func TransactionBindingFromBytes(value [32]byte) (TransactionBinding, error)
-type TransactionContext struct{ ... }
-    func NewTransactionContext(backend BackendID, binding TransactionBinding, durability DurabilityProfile) (TransactionContext, error)
-type TrustedContextProvider interface{ ... }
-    func SystemContextProvider() TrustedContextProvider
-    func TrustTenantPartitioner(partitioner TenantPartitioner, provenance IdentityProvenance, ...) (TrustedContextProvider, error)
+func (TenantPartitionerFunc) Partition(context.Context) (ProducerPartition, error)
+func TerminalDeliveryOutcome(InvocationState, Reason, Reason, PublicFailure, time.Time, time.Time) (InvocationOutcome, error)
+func TerminatedDisposition() Disposition
+type Timer interface {
+	C() <-chan time.Time
+	Stop() bool
+}
+type TraceCarrierRecord struct {
+	TraceParent string
+	TraceState string
+	Correlations []CorrelationRecord
+}
+func (TraceCarrierRecord) Format(fmt.State, rune)
+func (TraceCarrierRecord) MarshalJSON() ([]byte, error)
+func (TraceCarrierRecord) String() string
+type TraceCarrierSpec struct {
+	TraceParent string
+	TraceState string
+	Correlations []CorrelationField
+}
+func (TraceCarrierSpec) Format(fmt.State, rune)
+func (TraceCarrierSpec) String() string
+type TracePolicy struct {
+	<unexported fields>
+}
+func (TracePolicy) Format(fmt.State, rune)
+func (TracePolicy) Keys() []CorrelationKey
+func (TracePolicy) String() string
+type TransactionBinding struct {
+	<unexported fields>
+}
+func (TransactionBinding) Bytes() [32]byte
+func (TransactionBinding) Format(fmt.State, rune)
+func (TransactionBinding) IsZero() bool
+func (TransactionBinding) MarshalJSON() ([]byte, error)
+func (TransactionBinding) String() string
+func TransactionBindingFromBytes([32]byte) (TransactionBinding, error)
+type TransactionContext struct {
+	<unexported fields>
+}
+func (TransactionContext) Backend() BackendID
+func (TransactionContext) Binding() TransactionBinding
+func (TransactionContext) Durability() DurabilityProfile
+func (TransactionContext) Format(fmt.State, rune)
+func (TransactionContext) IsZero() bool
+func (TransactionContext) MarshalJSON() ([]byte, error)
+func (TransactionContext) String() string
+func TrustTenantPartitioner(TenantPartitioner, IdentityProvenance, IdentityEpoch) (TrustedContextProvider, error)
+const TrustedCodecMode CodecMode = "trusted"
+type TrustedContextProvider interface {
+	Capture(context.Context, ContextCaptureRequest) (ContextCapture, error)
+}
 type TrustedContextProviderFunc func(context.Context, ContextCaptureRequest) (ContextCapture, error)
-type TrustedIdentityRestorer interface{ ... }
-    func SystemIdentityRestorer() TrustedIdentityRestorer
+func (TrustedContextProviderFunc) Capture(context.Context, ContextCaptureRequest) (ContextCapture, error)
+type TrustedIdentityRestorer interface {
+	RestoreIdentity(context.Context, IdentityRestoreRequest) (RestoredIdentity, error)
+}
 type TrustedIdentityRestorerFunc func(context.Context, IdentityRestoreRequest) (RestoredIdentity, error)
-type UntrustedTraceCarrier struct{ ... }
-    func NewUntrustedTraceCarrier(spec TraceCarrierSpec) (UntrustedTraceCarrier, error)
-type UpcastDescription struct{ ... }
-type Upcaster interface{ ... }
-    func Upcast[A, B any](from Codec[A], to Codec[B], fn func(A) (B, error)) Upcaster
-type WireDigest struct{ ... }
-    func WireDigestFromBytes(value [32]byte) (WireDigest, error)
-type WireSpec[P any] struct{ ... }
-type WorkerAdmissionGroup struct{ ... }
-type WorkerBindingDescription struct{ ... }
-type WorkerDeliveryResultCount struct{ ... }
-type WorkerEvent struct{ ... }
+func (TrustedIdentityRestorerFunc) RestoreIdentity(context.Context, IdentityRestoreRequest) (RestoredIdentity, error)
+func TrustedJSON[V any](SchemaVersion) Codec[V]
+func Unique(string) EnqueueOption
+type UntrustedTraceCarrier struct {
+	<unexported fields>
+}
+func (UntrustedTraceCarrier) Correlations() []CorrelationField
+func (UntrustedTraceCarrier) Format(fmt.State, rune)
+func (UntrustedTraceCarrier) IsZero() bool
+func (UntrustedTraceCarrier) LogValue() log/slog.Value
+func (UntrustedTraceCarrier) MarshalJSON() ([]byte, error)
+func (UntrustedTraceCarrier) String() string
+func (UntrustedTraceCarrier) TraceParent() string
+func (UntrustedTraceCarrier) TraceState() string
+func Upcast[A any, B any](Codec[A], Codec[B], func(A) (B, error)) Upcaster
+type UpcastDescription struct {
+	From SchemaVersion
+	To SchemaVersion
+	SourceCodec CodecID
+	TargetCodec CodecID
+}
+type Upcaster interface {
+	From() SchemaVersion
+	SourceCodec() CodecID
+	TargetCodec() CodecID
+	To() SchemaVersion
+	<unexported methods>
+}
+func ValidateApplyResult(BackendDescription, ApplyRequest, ApplyResult) (ApplyResult, error)
+func ValidateClaimBatch(BackendDescription, ClaimRequest, ClaimBatch) (ClaimBatch, error)
+func ValidateDeliveryDriver(DeliveryDriver) (BackendDescription, error)
+func ValidateRecoverResult(BackendDescription, RecoverRequest, RecoverResult) (RecoverResult, error)
+func ValidateRenewResult(BackendDescription, RenewRequest, RenewResult) (RenewResult, error)
+func Wire[P any](*Automatic[P], WireSpec[P]) (*Automatic[P], error)
+type WireDigest struct {
+	<unexported fields>
+}
+func (WireDigest) Bytes() [32]byte
+func (WireDigest) Format(fmt.State, rune)
+func (WireDigest) IsZero() bool
+func (WireDigest) String() string
+func WireDigestFromBytes([32]byte) (WireDigest, error)
+type WireSpec[P any] struct {
+	Name Name
+	Codec Codec[P]
+	Identity PayloadIdentity[P]
+	Upcasters []Upcaster
+	Partition PartitionMode
+}
+func (WireSpec[P]) Format(fmt.State, rune)
+func (WireSpec[P]) String() string
+func WithAdmission(AdmissionReader) WorkerOption
+func WithLegacyIntentCompatibility(IntentDigestPlan) (IntentDigestPlan, error)
+type WorkerAdmissionGroup struct {
+	<unexported fields>
+}
+func (WorkerAdmissionGroup) IsZero() bool
+func (WorkerAdmissionGroup) String() string
+func (WorkerAdmissionGroup) Value() string
+type WorkerBindingDescription struct {
+	Definition Name
+	Binding BindingName
+	AdmissionGroup WorkerAdmissionGroup
+	Concurrency int
+	Adapter bool
+	CustomClassifier bool
+	DynamicAdmission bool
+}
+func (WorkerBindingDescription) Format(fmt.State, rune)
+func (WorkerBindingDescription) LogValue() log/slog.Value
+func (WorkerBindingDescription) String() string
+type WorkerDeliveryResultCount struct {
+	<unexported fields>
+}
+func (WorkerDeliveryResultCount) Control() DeliveryControlStatus
+func (WorkerDeliveryResultCount) Format(fmt.State, rune)
+func (WorkerDeliveryResultCount) Items() int
+func (WorkerDeliveryResultCount) LogValue() log/slog.Value
+func (WorkerDeliveryResultCount) MarshalJSON() ([]byte, error)
+func (WorkerDeliveryResultCount) Mutation() DeliveryMutationStatus
+func (WorkerDeliveryResultCount) String() string
+type WorkerEvent struct {
+	<unexported fields>
+}
+func (WorkerEvent) Active() int
+func (WorkerEvent) AdmissionGroup() WorkerAdmissionGroup
+func (WorkerEvent) AdmissionSignal() AdmissionSignal
+func (WorkerEvent) Binding() BindingName
+func (WorkerEvent) Bytes() int
+func (WorkerEvent) CommandKind() DeliveryCommandKind
+func (WorkerEvent) Definition() Name
+func (WorkerEvent) Disposition() DispositionKind
+func (WorkerEvent) Elapsed() time.Duration
+func (WorkerEvent) Failure() WorkerFailure
+func (WorkerEvent) Format(fmt.State, rune)
+func (WorkerEvent) Items() int
+func (WorkerEvent) Limit() int
+func (WorkerEvent) LogValue() log/slog.Value
+func (WorkerEvent) MarshalJSON() ([]byte, error)
+func (WorkerEvent) More() bool
+func (WorkerEvent) Operation() WorkerOperation
+func (WorkerEvent) Outcome() WorkerOutcome
+func (WorkerEvent) Reason() Reason
+func (WorkerEvent) Released() int
+func (WorkerEvent) Results() []WorkerDeliveryResultCount
+func (WorkerEvent) String() string
 type WorkerFailure uint8
-    const WorkerFailureNone WorkerFailure = iota ...
-type WorkerIncarnation struct{ ... }
-    func WorkerIncarnationFromBytes(value [WorkerIncarnationBytes]byte) (WorkerIncarnation, error)
-type WorkerObserver interface{ ... }
-    func MustWorkerObservers(children ...WorkerObserver) WorkerObserver
-    func WorkerObservers(children ...WorkerObserver) (WorkerObserver, error)
+func (WorkerFailure) String() string
+func (WorkerFailure) Valid() bool
+const WorkerFailureDriver WorkerFailure = 1
+const WorkerFailureDriverContract WorkerFailure = 2
+const WorkerFailureDriverPanic WorkerFailure = 3
+const WorkerFailureNone WorkerFailure = 0
+const WorkerFailureRuntime WorkerFailure = 4
+type WorkerIncarnation struct {
+	<unexported fields>
+}
+func (WorkerIncarnation) Bytes() [16]byte
+func (WorkerIncarnation) Format(fmt.State, rune)
+func (WorkerIncarnation) IsZero() bool
+func (WorkerIncarnation) LogValue() log/slog.Value
+func (WorkerIncarnation) MarshalJSON() ([]byte, error)
+func (WorkerIncarnation) String() string
+const WorkerIncarnationBytes untyped int = 16
+func WorkerIncarnationFromBytes([16]byte) (WorkerIncarnation, error)
+type WorkerObserver interface {
+	Observe(context.Context, WorkerEvent)
+}
 type WorkerObserverFunc func(context.Context, WorkerEvent)
+func (WorkerObserverFunc) Observe(context.Context, WorkerEvent)
+func WorkerObservers(...WorkerObserver) (WorkerObserver, error)
 type WorkerOperation uint8
-    const WorkerOperationRun WorkerOperation = iota + 1 ...
-type WorkerOption interface{ ... }
-    func Binding(raw string) WorkerOption
-    func Classify(classifier ErrorClassifier) WorkerOption
-    func Concurrency(value int) WorkerOption
-    func WithAdmission(reader AdmissionReader) WorkerOption
+func (WorkerOperation) String() string
+func (WorkerOperation) Valid() bool
+const WorkerOperationAdmission WorkerOperation = 7
+const WorkerOperationApply WorkerOperation = 6
+const WorkerOperationClaim WorkerOperation = 3
+const WorkerOperationDrain WorkerOperation = 2
+const WorkerOperationRecover WorkerOperation = 4
+const WorkerOperationRenew WorkerOperation = 5
+const WorkerOperationRun WorkerOperation = 1
+type WorkerOption interface {
+	<unexported methods>
+}
 type WorkerOutcome uint8
-    const WorkerOutcomeStarted WorkerOutcome = iota + 1 ...
-type WorkerPlan struct{ ... }
-    func MustWorkerPlan(catalog Catalog, consumers ...Consumer) WorkerPlan
-    func NewWorkerPlan(catalog Catalog, consumers ...Consumer) (WorkerPlan, error)
-type WorkerPlanDescription struct{ ... }
-type Workers struct{ ... }
-    func NewWorkers(spec WorkersSpec, consumers ...Consumer) (*Workers, error)
-type WorkersDescription struct{ ... }
-type WorkersSpec struct{ ... }
+func (WorkerOutcome) String() string
+func (WorkerOutcome) Valid() bool
+const WorkerOutcomeCancelled WorkerOutcome = 10
+const WorkerOutcomeComplete WorkerOutcome = 2
+const WorkerOutcomeEmpty WorkerOutcome = 3
+const WorkerOutcomeFailed WorkerOutcome = 11
+const WorkerOutcomeForced WorkerOutcome = 12
+const WorkerOutcomeHeld WorkerOutcome = 5
+const WorkerOutcomeInvalid WorkerOutcome = 7
+const WorkerOutcomeReady WorkerOutcome = 4
+const WorkerOutcomeSaturated WorkerOutcome = 8
+const WorkerOutcomeStale WorkerOutcome = 6
+const WorkerOutcomeStarted WorkerOutcome = 1
+const WorkerOutcomeTimedOut WorkerOutcome = 9
+type WorkerPlan struct {
+	<unexported fields>
+}
+func (WorkerPlan) CatalogFingerprint() string
+func (WorkerPlan) Describe() WorkerPlanDescription
+func (WorkerPlan) Format(fmt.State, rune)
+func (WorkerPlan) Len() int
+func (WorkerPlan) LogValue() log/slog.Value
+func (WorkerPlan) String() string
+func (WorkerPlan) TotalConcurrency() int
+type WorkerPlanDescription struct {
+	Bindings []WorkerBindingDescription
+	TotalConcurrency int
+	CatalogFingerprint string
+}
+func (WorkerPlanDescription) Format(fmt.State, rune)
+func (WorkerPlanDescription) LogValue() log/slog.Value
+func (WorkerPlanDescription) String() string
+type Workers struct {
+	<unexported fields>
+}
+func (*Workers) Check(context.Context) error
+func (*Workers) Describe() WorkersDescription
+func (*Workers) Drain(context.Context) error
+func (*Workers) Format(fmt.State, rune)
+func (*Workers) LogValue() log/slog.Value
+func (*Workers) Run(context.Context) error
+func (*Workers) String() string
+type WorkersDescription struct {
+	Namespace Namespace
+	Backend BackendDescription
+	Build BuildID
+	Plan WorkerPlanDescription
+	Resources Resources
+	Lifecycle Resources
+	ObserverEnabled bool
+	LeaseTTL time.Duration
+	Heartbeat time.Duration
+	OperationTimeout time.Duration
+	PollInterval time.Duration
+	ReclaimInterval time.Duration
+	ShutdownGrace time.Duration
+	ClaimItems int
+	ClaimBytes int
+	InFlightBytes int
+	PulseWaiters int
+}
+func (WorkersDescription) Format(fmt.State, rune)
+func (WorkersDescription) LogValue() log/slog.Value
+func (WorkersDescription) String() string
+type WorkersSpec struct {
+	Namespace Namespace
+	Catalog Catalog
+	Driver DeliveryDriver
+	Build BuildID
+	Identity TrustedIdentityRestorer
+	Observer WorkerObserver
+	Clock Clock
+	Entropy io.Reader
+	LeaseTTL time.Duration
+	Heartbeat time.Duration
+	OperationTimeout time.Duration
+	PollInterval time.Duration
+	ReclaimInterval time.Duration
+	ShutdownGrace time.Duration
+	ClaimItems int
+	ClaimBytes int
+	InFlightBytes int
+	PulseWaiters int
+}
+func (WorkersSpec) Format(fmt.State, rune)
+func (WorkersSpec) String() string
 ```
 
 ## github.com/frostgrove/vv/jobs/jobsmemory
 ```go
-var ErrClosed = errors.New("jobsmemory: closed")
-type Backend struct{ ... }
-    func New(limits Limits, options ...Option) (*Backend, error)
-    func NewDefault(options ...Option) (*Backend, error)
-type Clock interface{ ... }
-type Limits struct{ ... }
-    func DefaultLimits() Limits
-type Option interface{ ... }
-    func WithBackendID(id jobs.BackendID) Option
-    func WithClock(clock Clock) Option
-type Stats struct{ ... }
+type Backend struct {
+	<unexported fields>
+}
+func (*Backend) Apply(context.Context, github.com/frostgrove/vv/jobs.ApplyRequest) (github.com/frostgrove/vv/jobs.ApplyResult, error)
+func (*Backend) Cancel(context.Context, github.com/frostgrove/vv/jobs.InvocationID) (github.com/frostgrove/vv/jobs.DeliveryView, error)
+func (*Backend) Claim(context.Context, github.com/frostgrove/vv/jobs.ClaimRequest) (github.com/frostgrove/vv/jobs.ClaimBatch, error)
+func (*Backend) Close() error
+func (*Backend) Description() github.com/frostgrove/vv/jobs.BackendDescription
+func (*Backend) Enqueue(context.Context, github.com/frostgrove/vv/jobs.DeliveryRecord) error
+func (*Backend) Place(context.Context, github.com/frostgrove/vv/jobs.Placement) (github.com/frostgrove/vv/jobs.PlacementResult, error)
+func (*Backend) Recover(context.Context, github.com/frostgrove/vv/jobs.RecoverRequest) (github.com/frostgrove/vv/jobs.RecoverResult, error)
+func (*Backend) Renew(context.Context, github.com/frostgrove/vv/jobs.RenewRequest) (github.com/frostgrove/vv/jobs.RenewResult, error)
+func (*Backend) Reset() error
+func (*Backend) Stats() Stats
+func (*Backend) Terminate(context.Context, github.com/frostgrove/vv/jobs.InvocationID) (github.com/frostgrove/vv/jobs.DeliveryView, error)
+type Clock interface {
+	Now() time.Time
+}
+func DefaultLimits() Limits
+var ErrClosed error
+type Limits struct {
+	MaxRecords int
+	MaxBytes int64
+}
+func New(Limits, ...Option) (*Backend, error)
+func NewDefault(...Option) (*Backend, error)
+type Option interface {
+	<unexported methods>
+}
+type Stats struct {
+	Records int
+	Bytes int64
+	Limits Limits
+	Leased int
+	Closed bool
+}
+func WithBackendID(github.com/frostgrove/vv/jobs.BackendID) Option
+func WithClock(Clock) Option
 ```
 
 ## github.com/frostgrove/vv/port
 ```go
-const Reads = OpList | OpQuery | OpCount | OpCountQuery | OpGet ...
-const DefaultMaxBulk = 1024
-const MaxViolations = 100
-var ErrBadRequest = errors.New("bad request")
-func At(names ...string) errs.Path
-func BadRequest(err error) error
-func BadRequestAs(code errs.Code, path errs.Path, format string, args ...any) error
-func BadRequestf(format string, args ...any) error
-func ClearGenerated[M any](meta *crud.Meta, m *M) error
-func ClearWriteProtected[M any](meta *crud.Meta, m *M) error
-func CodeForKind(k errs.Kind) errs.Code
-func CoerceID[ID comparable](raw string) (ID, error)
-func CoversUpdate[M, U any](except ...string) error
-func DefaultMessage(code errs.Code) (string, bool)
-func FaultFrom(kind errs.Kind, code errs.Code, vs []errs.Violation, partial bool) *errs.Fault
-func FaultOf(err error) *errs.Fault
-func FirstLanguageTag(list string) string
-func FormatID[ID comparable](id ID) string
-func Hops[M any, ID comparable, U any, In any](service Service[M, ID, U], mapper Mapper[In, M]) []errs.Resolver
-func HopsFrom(ctx context.Context) []errs.Resolver
-func KindOf(err error) errs.Kind
-func KindOfWith(err error, codes *errs.Codes) errs.Kind
-func LocaleFrom(ctx context.Context) string
-func Logger(ctx context.Context) *slog.Logger
-func MustCoverUpdate[M, U any](except ...string)
-func NarrowForCount(request *query.Request)
-func NarrowForEntity(request *query.Request)
-func Sanitize[M any](meta *crud.Meta, m *M, allowClientID bool) error
-func Violations(ctx context.Context, f *errs.Fault, o *ViolationOptions) []errs.Violation
-func WithHops(ctx context.Context, hops []errs.Resolver) context.Context
-func WithLocale(ctx context.Context, locale string) context.Context
-func WithLogger(ctx context.Context, l *slog.Logger) context.Context
-type BulkDeleteCommand[ID comparable] struct{ ... }
-type BulkRestoreCommand[ID comparable] struct{ ... }
-type CountCommand struct{ ... }
-type CreateCommand[M any] struct{ ... }
-type DefaultService[M any, ID comparable, U any] struct{ ... }
-    func NewService[M any, ID comparable, U any](repository Repository[M, ID, U], options ...ServiceOption) *DefaultService[M, ID, U]
-type DeleteCommand[ID comparable] struct{ ... }
-type Fields map[string]errs.Path
-type GetCommand[ID comparable] struct{ ... }
-type ListCommand struct{ ... }
-type Mapper[In, M any] interface{ ... }
-    func Identity[M any]() Mapper[M, M]
+const AllOperations Operations = 1023
+func AllowClientID() ServiceOption
+func At(...string) github.com/frostgrove/vv/errs.Path
+func BadRequest(error) error
+func BadRequestAs(github.com/frostgrove/vv/errs.Code, github.com/frostgrove/vv/errs.Path, string, ...any) error
+func BadRequestf(string, ...any) error
+type BulkDeleteCommand[ID comparable] struct {
+	IDs []ID
+}
+type BulkRestoreCommand[ID comparable] struct {
+	IDs []ID
+}
+func ChainService[M any, ID comparable, U any](Service[M, ID, U], ...ServiceMiddleware[M, ID, U]) Service[M, ID, U]
+func ClearGenerated[M any](*github.com/frostgrove/vv/crud.Meta, *M) error
+func ClearWriteProtected[M any](*github.com/frostgrove/vv/crud.Meta, *M) error
+func CodeForKind(github.com/frostgrove/vv/errs.Kind) github.com/frostgrove/vv/errs.Code
+func CoerceID[ID comparable](string) (ID, error)
+type CountCommand struct {
+	Query *github.com/frostgrove/vv/crud/query.Request
+	Options []github.com/frostgrove/vv/crud.Option
+}
+func CoversUpdate[M any, U any](...string) error
+type CreateCommand[M any] struct {
+	Model M
+	Before func(*M) error
+}
+const DefaultMaxBulk untyped int = 1024
+func DefaultMessage(github.com/frostgrove/vv/errs.Code) (string, bool)
+type DefaultService[M any, ID comparable, U any] struct {
+	<unexported fields>
+}
+func (*DefaultService[M, ID, U]) Count(context.Context, CountCommand) (int64, error)
+func (*DefaultService[M, ID, U]) Create(context.Context, CreateCommand[M]) (M, error)
+func (*DefaultService[M, ID, U]) Delete(context.Context, DeleteCommand[ID]) (int64, error)
+func (*DefaultService[M, ID, U]) DeleteMany(context.Context, BulkDeleteCommand[ID]) (int64, error)
+func (*DefaultService[M, ID, U]) Get(context.Context, GetCommand[ID]) (M, error)
+func (*DefaultService[M, ID, U]) List(context.Context, ListCommand) (github.com/frostgrove/vv/crud.PaginatedResponse[M], error)
+func (*DefaultService[M, ID, U]) Meta() *github.com/frostgrove/vv/crud.Meta
+func (*DefaultService[M, ID, U]) Paths() github.com/frostgrove/vv/errs.Resolver
+func (*DefaultService[M, ID, U]) Replace(context.Context, ReplaceCommand[ID, M]) (M, error)
+func (*DefaultService[M, ID, U]) Restorable() (RestorableService[ID], bool)
+func (*DefaultService[M, ID, U]) Update(context.Context, UpdateCommand[ID, U]) (M, error)
+type DeleteCommand[ID comparable] struct {
+	ID ID
+}
+const Deletes Operations = 768
+var ErrBadRequest error
+func FaultFrom(github.com/frostgrove/vv/errs.Kind, github.com/frostgrove/vv/errs.Code, []github.com/frostgrove/vv/errs.Violation, bool) *github.com/frostgrove/vv/errs.Fault
+func FaultOf(error) *github.com/frostgrove/vv/errs.Fault
+type Fields map[string]github.com/frostgrove/vv/errs.Path
+func (Fields) Resolve(github.com/frostgrove/vv/errs.Path) (github.com/frostgrove/vv/errs.Path, bool)
+func FirstLanguageTag(string) string
+func FormatID[ID comparable](ID) string
+type GetCommand[ID comparable] struct {
+	ID ID
+	Query *github.com/frostgrove/vv/crud/query.Request
+	Options []github.com/frostgrove/vv/crud.Option
+}
+func Hops[M any, ID comparable, U any, In any](Service[M, ID, U], Mapper[In, M]) []github.com/frostgrove/vv/errs.Resolver
+func HopsFrom(context.Context) []github.com/frostgrove/vv/errs.Resolver
+func Identity[M any]() Mapper[M, M]
+func KindOf(error) github.com/frostgrove/vv/errs.Kind
+func KindOfWith(error, *github.com/frostgrove/vv/errs.Codes) github.com/frostgrove/vv/errs.Kind
+type ListCommand struct {
+	Query *github.com/frostgrove/vv/crud/query.Request
+	Options []github.com/frostgrove/vv/crud.Option
+}
+func LocaleFrom(context.Context) string
+func Logger(context.Context) *log/slog.Logger
+type Mapper[In any, M any] interface {
+	Model(context.Context, In) (M, error)
+}
+const MaxViolations untyped int = 100
+func MustCoverUpdate[M any, U any](...string)
+func MustPathMap[M any](PathMap, ...string) PathMap
+func NarrowForCount(*github.com/frostgrove/vv/crud/query.Request)
+func NarrowForEntity(*github.com/frostgrove/vv/crud/query.Request)
+func NewPathMap[M any](PathMap, ...string) (PathMap, error)
+func NewService[M any, ID comparable, U any](Repository[M, ID, U], ...ServiceOption) *DefaultService[M, ID, U]
+const OpBulkDelete Operations = 512
+const OpCount Operations = 4
+const OpCountQuery Operations = 8
+const OpCreate Operations = 32
+const OpDelete Operations = 256
+const OpGet Operations = 16
+const OpList Operations = 1
+const OpQuery Operations = 2
+const OpReplace Operations = 128
+const OpUpdate Operations = 64
 type Operations uint16
-    const OpList Operations = 1 << iota ...
-type PathBuilder[M any] struct{ ... }
-    func Paths[M any]() *PathBuilder[M]
-type PathMap map[string]errs.Path
-    func MustPathMap[M any](m PathMap, except ...string) PathMap
-    func NewPathMap[M any](m PathMap, except ...string) (PathMap, error)
+func (Operations) Has(Operations) bool
+func (Operations) String() string
+type PathBuilder[M any] struct {
+	<unexported fields>
+}
+func (*PathBuilder[M]) Build() (PathMap, error)
+func (*PathBuilder[M]) Except(...string) *PathBuilder[M]
+func (*PathBuilder[M]) From(...string) *PathBuilder[M]
+func (*PathBuilder[M]) MustBuild() PathMap
+func (*PathBuilder[M]) OrFieldName() *PathBuilder[M]
+func (*PathBuilder[M]) Override(PathMap) *PathBuilder[M]
+type PathMap map[string]github.com/frostgrove/vv/errs.Path
+func (PathMap) Resolve(github.com/frostgrove/vv/errs.Path) (github.com/frostgrove/vv/errs.Path, bool)
+func Paths[M any]() *PathBuilder[M]
 type QuerySelector func(context.Context) string
-type ReplaceCommand[ID comparable, M any] struct{ ... }
-type Repository[M any, ID comparable, U any] interface{ ... }
-type RestorableService[ID comparable] interface{ ... }
-    func RestorableOf[ID comparable](service any) (RestorableService[ID], bool)
-type RestoreCommand[ID comparable] struct{ ... }
-type Rules struct{ ... }
-type Service[M any, ID comparable, U any] interface{ ... }
-    func ChainService[M any, ID comparable, U any](base Service[M, ID, U], middleware ...ServiceMiddleware[M, ID, U]) Service[M, ID, U]
+const Reads Operations = 31
+type ReplaceCommand[ID comparable, M any] struct {
+	ID ID
+	Model M
+	Before func(*M) error
+}
+type Repository[M any, ID comparable, U any] interface {
+	Count(context.Context, ...github.com/frostgrove/vv/crud.Option) (int64, error)
+	Delete(context.Context, ...ID) (int64, error)
+	Get(context.Context, ...github.com/frostgrove/vv/crud.Option) (github.com/frostgrove/vv/crud.PaginatedResponse[M], error)
+	GetAll(context.Context, ...github.com/frostgrove/vv/crud.Option) ([]M, error)
+	GetByID(context.Context, ID, ...github.com/frostgrove/vv/crud.Option) (M, error)
+	Meta() *github.com/frostgrove/vv/crud.Meta
+	Save(context.Context, *M) (M, error)
+	Update(context.Context, ID, U, ...github.com/frostgrove/vv/crud.Option) (M, error)
+}
+func RestorableOf[ID comparable](any) (RestorableService[ID], bool)
+type RestorableService[ID comparable] interface {
+	Restore(context.Context, RestoreCommand[ID]) (int64, error)
+	RestoreMany(context.Context, BulkRestoreCommand[ID]) (int64, error)
+}
+type RestoreCommand[ID comparable] struct {
+	ID ID
+}
+type Rules struct {
+	Query *github.com/frostgrove/vv/crud/query.Config
+	QueryVariants map[string]*github.com/frostgrove/vv/crud/query.Config
+	QuerySelector QuerySelector
+	ReadOnly bool
+	AllowClientID bool
+	MaxBulk int
+	Expose Operations
+	MaxBody int
+}
+func (*Rules) BulkCap() int
+func (*Rules) Mounted() Operations
+func (*Rules) RefuseContradictions(string)
+func (*Rules) RefuseServiceOptions(string)
+func (*Rules) Service() []ServiceOption
+func Sanitize[M any](*github.com/frostgrove/vv/crud.Meta, *M, bool) error
+type Service[M any, ID comparable, U any] interface {
+	Count(context.Context, CountCommand) (int64, error)
+	Create(context.Context, CreateCommand[M]) (M, error)
+	Delete(context.Context, DeleteCommand[ID]) (int64, error)
+	DeleteMany(context.Context, BulkDeleteCommand[ID]) (int64, error)
+	Get(context.Context, GetCommand[ID]) (M, error)
+	List(context.Context, ListCommand) (github.com/frostgrove/vv/crud.PaginatedResponse[M], error)
+	Meta() *github.com/frostgrove/vv/crud.Meta
+	Paths() github.com/frostgrove/vv/errs.Resolver
+	Replace(context.Context, ReplaceCommand[ID, M]) (M, error)
+	Update(context.Context, UpdateCommand[ID, U]) (M, error)
+}
 type ServiceMiddleware[M any, ID comparable, U any] func(Service[M, ID, U]) Service[M, ID, U]
 type ServiceOption func(*serviceConfig)
-    func AllowClientID() ServiceOption
-    func WithPaths(r errs.Resolver) ServiceOption
-    func WithQuery(config *query.Config) ServiceOption
-    func WithQueryFor(defaultConfig *query.Config, variants map[string]*query.Config, ...) ServiceOption
-type UpdateCommand[ID comparable, U any] struct{ ... }
-type ViolationOptions struct{ ... }
+type UpdateCommand[ID comparable, U any] struct {
+	ID ID
+	Patch U
+	Before func(*U) error
+}
+func ValidErrorCode(github.com/frostgrove/vv/errs.Code) bool
+func ValidMessageLocale(string) bool
+func ValidMessageText(string) bool
+type ViolationOptions struct {
+	Resolvers []github.com/frostgrove/vv/errs.Resolver
+	Fallback github.com/frostgrove/vv/errs.Resolver
+	Messages github.com/frostgrove/vv/errs.MessageSource
+	Codes *github.com/frostgrove/vv/errs.Codes
+	Max int
+}
+func Violations(context.Context, *github.com/frostgrove/vv/errs.Fault, *ViolationOptions) []github.com/frostgrove/vv/errs.Violation
+func WithHops(context.Context, []github.com/frostgrove/vv/errs.Resolver) context.Context
+func WithLocale(context.Context, string) context.Context
+func WithLogger(context.Context, *log/slog.Logger) context.Context
+func WithPaths(github.com/frostgrove/vv/errs.Resolver) ServiceOption
+func WithQuery(*github.com/frostgrove/vv/crud/query.Config) ServiceOption
+func WithQueryFor(*github.com/frostgrove/vv/crud/query.Config, map[string]*github.com/frostgrove/vv/crud/query.Config, QuerySelector) ServiceOption
+const Writes Operations = 224
 ```
 
 ## github.com/frostgrove/vv/port/porthttp
 ```go
-const DefaultRetryAfter = 1
-const MaxBody = 4 << 20
-const MaxKeptBody = 64 << 10
-const MaxViolations = port.MaxViolations
-var ErrBadRequest = port.ErrBadRequest
-func AcceptLanguage(header string) string
-func BadRequest(err error) error
-func BadRequestAs(code errs.Code, path errs.Path, format string, args ...any) error
-func BadRequestf(format string, args ...any) error
-func BodyFrom(ctx context.Context) []byte
-func BodyResolver(raw []byte) errs.Resolver
-func DecodeJSON(r io.Reader, v any) error
-func DecodeJSONKeep(r io.Reader, v any) ([]byte, error)
-func DecodeJSONKeepLimit(r io.Reader, v any, limit int) ([]byte, error)
-func KeepBody(b []byte) []byte
-func KindForStatus(code int) errs.Kind
-func KindOf(err error) errs.Kind
-func LocaleFrom(ctx context.Context) string
-func MalformedBody(err error) error
-func Routed(status int) error
-func Status(err error) int
-func StatusFor(k errs.Kind) int
-func TooLarge(limit int) error
-func WithBody(ctx context.Context, body []byte) context.Context
-func WithLocale(ctx context.Context, locale string) context.Context
-type Envelope struct{ ... }
-    func Internal() Envelope
-    func ParseEnvelope(body []byte) (Envelope, bool)
-type EnvelopeRenderer struct{ ... }
-    func NewRenderer(options ...RenderOption) *EnvelopeRenderer
-type Groups struct{ ... }
+func AcceptLanguage(string) string
+func BadRequest(error) error
+func BadRequestAs(github.com/frostgrove/vv/errs.Code, github.com/frostgrove/vv/errs.Path, string, ...any) error
+func BadRequestf(string, ...any) error
+func BodyFrom(context.Context) []byte
+func BodyResolver([]byte) github.com/frostgrove/vv/errs.Resolver
+func DecodeJSON(io.Reader, any) error
+func DecodeJSONKeep(io.Reader, any) ([]byte, error)
+func DecodeJSONKeepLimit(io.Reader, any, int) ([]byte, error)
+const DefaultRetryAfter untyped int = 1
+type Envelope struct {
+	Type string "json:\"type\""
+	Partial bool "json:\"partial,omitempty\""
+	Errors Groups "json:\"errors\""
+}
+func (Envelope) MarshalJSON() ([]byte, error)
+func (Envelope) Violations() []github.com/frostgrove/vv/errs.Violation
+type EnvelopeRenderer struct {
+	<unexported fields>
+}
+func (*EnvelopeRenderer) Render(context.Context, error) (int, net/http.Header, any)
+func (*EnvelopeRenderer) Status(error) int
+var ErrBadRequest error
+type Groups struct {
+	Validation []github.com/frostgrove/vv/errs.Violation "json:\"validation,omitempty\""
+	General []github.com/frostgrove/vv/errs.Violation "json:\"general,omitempty\""
+}
+func Internal() Envelope
+func KeepBody([]byte) []byte
+func KindForStatus(int) github.com/frostgrove/vv/errs.Kind
+func KindOf(error) github.com/frostgrove/vv/errs.Kind
+func LocaleFrom(context.Context) string
+func MalformedBody(error) error
+const MaxBody untyped int = 4194304
+const MaxEnvelopeBytes untyped int = 33554432
+const MaxKeptBody untyped int = 65536
+const MaxViolations untyped int = 100
+func NewRenderer(...RenderOption) *EnvelopeRenderer
+func ParseEnvelope([]byte) (Envelope, bool)
 type RenderOption func(*EnvelopeRenderer)
-    func WithCodes(c *errs.Codes) RenderOption
-    func WithMaxViolations(n int) RenderOption
-    func WithMessages(m errs.MessageSource) RenderOption
-    func WithObserver(fn func(context.Context, error)) RenderOption
-    func WithResolvers(rs ...errs.Resolver) RenderOption
-    func WithRetryAfter(seconds int) RenderOption
-type Renderer interface{ ... }
+type Renderer interface {
+	Render(context.Context, error) (int, net/http.Header, any)
+}
+func Routed(int) error
+func Status(error) int
+func StatusFor(github.com/frostgrove/vv/errs.Kind) int
+func TooLarge(int) error
+func WithBody(context.Context, []byte) context.Context
+func WithCodes(*github.com/frostgrove/vv/errs.Codes) RenderOption
+func WithLocale(context.Context, string) context.Context
+func WithMaxViolations(int) RenderOption
+func WithMessages(github.com/frostgrove/vv/errs.MessageSource) RenderOption
+func WithObserver(func(context.Context, error)) RenderOption
+func WithResolvers(...github.com/frostgrove/vv/errs.Resolver) RenderOption
+func WithRetryAfter(int) RenderOption
 ```
 
 ## github.com/frostgrove/vv/remote
 ```go
-var ErrPartialResult = errors.New("remote: GetAll received a partial result")
-func ToRequest(options ...crud.Option) (*query.Request, error)
-func Truncate(s string, max int) string
-type Call struct{ ... }
+type Call struct {
+	Method Method
+	ID string
+	IDs encoding/json.RawMessage
+	Query *github.com/frostgrove/vv/crud/query.Request
+	Body encoding/json.RawMessage
+}
+var ErrPartialResult error
 type Method string
-    const MethodList Method = "List" ...
-type OptionError struct{ ... }
-type PartialResultError struct{ ... }
-type ProtocolError struct{ ... }
-type Resource[M any, ID comparable, U any] struct{ ... }
-    func New[M any, ID comparable, U any](tr Transport) *Resource[M, ID, U]
-    func TryNew[M any, ID comparable, U any](tr Transport) (*Resource[M, ID, U], error)
-type Transport interface{ ... }
+const MethodBulkDelete Method = "BulkDelete"
+const MethodCount Method = "Count"
+const MethodCreate Method = "Create"
+const MethodDelete Method = "Delete"
+const MethodGet Method = "Get"
+const MethodList Method = "List"
+const MethodReplace Method = "Replace"
+const MethodUpdate Method = "Update"
+func New[M any, ID comparable, U any](Transport) *Resource[M, ID, U]
+type OptionError struct {
+	Option string
+	Reason string
+}
+func (*OptionError) Error() string
+type PartialResultError struct {
+	Received int
+	Total int64
+}
+func (*PartialResultError) Error() string
+func (*PartialResultError) Unwrap() error
+type ProtocolError struct {
+	Method Method
+	Where string
+	Status string
+	Body string
+}
+func (*ProtocolError) Error() string
+type Resource[M any, ID comparable, U any] struct {
+	<unexported fields>
+}
+func (*Resource[M, ID, U]) Count(context.Context, ...github.com/frostgrove/vv/crud.Option) (int64, error)
+func (*Resource[M, ID, U]) Delete(context.Context, ...ID) (int64, error)
+func (*Resource[M, ID, U]) First(context.Context, ...github.com/frostgrove/vv/crud.Option) (M, error)
+func (*Resource[M, ID, U]) Get(context.Context, ...github.com/frostgrove/vv/crud.Option) (github.com/frostgrove/vv/crud.PaginatedResponse[M], error)
+func (*Resource[M, ID, U]) GetAll(context.Context, ...github.com/frostgrove/vv/crud.Option) ([]M, error)
+func (*Resource[M, ID, U]) GetByID(context.Context, ID, ...github.com/frostgrove/vv/crud.Option) (M, error)
+func (*Resource[M, ID, U]) Meta() *github.com/frostgrove/vv/crud.Meta
+func (*Resource[M, ID, U]) Save(context.Context, *M) (M, error)
+func (*Resource[M, ID, U]) SaveOnly(context.Context, *M) error
+func (*Resource[M, ID, U]) Update(context.Context, ID, U, ...github.com/frostgrove/vv/crud.Option) (M, error)
+func ToRequest(...github.com/frostgrove/vv/crud.Option) (*github.com/frostgrove/vv/crud/query.Request, error)
+type Transport interface {
+	Do(context.Context, *Call) (encoding/json.RawMessage, error)
+}
+func Truncate(string, int) string
+func TryNew[M any, ID comparable, U any](Transport) (*Resource[M, ID, U], error)
 ```
 
 ## github.com/frostgrove/vv/remote/remotehttp
 ```go
-const DefaultTimeout = 30 * time.Second
-const MaxResponse = 32 << 20
-func Transport(baseURL string, options ...TransportOption) remote.Transport
+const DefaultTimeout time.Duration = 30000000000
+const MaxResponse untyped int = 33554432
+func Transport(string, ...TransportOption) github.com/frostgrove/vv/remote.Transport
 type TransportOption func(*transport)
-    func WithClient(c *http.Client) TransportOption
-    func WithMaxResponse(n int) TransportOption
-    func WithRequestHook(fn func(*http.Request) error) TransportOption
+func WithClient(*net/http.Client) TransportOption
+func WithMaxResponse(int) TransportOption
+func WithRequestHook(func(*net/http.Request) error) TransportOption
 ```
 
 ## github.com/frostgrove/vv/runtime
 ```go
-const DefaultDrainGrace = 15 * time.Second
-const MaxObservers = 8
-var ErrDuplicateRunner = errors.New("runtime: two runners share a name") ...
-var ErrTooManyObservers = errors.New("runtime: too many observers")
-var PerReplicaTimer = Declaration{ ... }
-type Declaration struct{ ... }
-    func DeclarationOf(runner Runner) Declaration
-type Declaring interface{ ... }
-type Drainer interface{ ... }
+func Auto(...Runner) (*Supervisor, error)
+type Declaration struct {
+	Placement Placement
+	Durability Durability
+}
+func DeclarationOf(Runner) Declaration
+type Declaring interface {
+	Declaration() Declaration
+}
+const DefaultDrainGrace time.Duration = 15000000000
+type Drainer interface {
+	Drain(context.Context) error
+}
 type Durability string
-    const NonDurable Durability = "non-durable" ...
-type LifecycleEvent struct{ ... }
-type LifecycleObserver interface{ ... }
+const Durable Durability = "durable"
+var ErrAlreadyStarted error
+var ErrDrainDeadline error
+var ErrDuplicateRunner error
+var ErrNotRunning error
+var ErrRunnerPanicked error
+var ErrRunnerReturned error
+var ErrStillStopping error
+var ErrTooManyObservers error
+func Every(string, time.Duration, func(ctx context.Context) error) (Runner, error)
+type LifecycleEvent struct {
+	<unexported fields>
+}
+func (LifecycleEvent) Declaration() Declaration
+func (LifecycleEvent) Elapsed() time.Duration
+func (LifecycleEvent) Err() error
+func (LifecycleEvent) Operation() LifecycleOperation
+func (LifecycleEvent) Outcome() LifecycleOutcome
+type LifecycleObserver interface {
+	ObservedLifecycle(context.Context, LifecycleEvent)
+}
 type LifecycleObserverFunc func(context.Context, LifecycleEvent)
+func (LifecycleObserverFunc) Observed(RunnerState)
+func (LifecycleObserverFunc) ObservedLifecycle(context.Context, LifecycleEvent)
 type LifecycleOperation uint8
-    const LifecycleOperationRun LifecycleOperation = iota + 1 ...
+const LifecycleOperationDrain LifecycleOperation = 2
+const LifecycleOperationRun LifecycleOperation = 1
 type LifecycleOutcome uint8
-    const LifecycleOutcomeOK LifecycleOutcome = iota + 1 ...
-type Loop struct{ ... }
-    func NewLoop(spec LoopSpec) *Loop
-type LoopSpec struct{ ... }
-type Observer interface{ ... }
-    func MustObservers(observers ...Observer) Observer
-    func Observers(observers ...Observer) (Observer, error)
+const LifecycleOutcomeCanceled LifecycleOutcome = 3
+const LifecycleOutcomeError LifecycleOutcome = 2
+const LifecycleOutcomeOK LifecycleOutcome = 1
+const LifecycleOutcomeTimeout LifecycleOutcome = 4
+type Loop struct {
+	<unexported fields>
+}
+func (*Loop) Start(context.Context) error
+func (*Loop) State() RunnerState
+func (*Loop) Stop(context.Context) error
+type LoopSpec struct {
+	Name string
+	Run func(ctx context.Context) error
+	Logger *log/slog.Logger
+	Observer Observer
+	StopGrace time.Duration
+}
+const MaxObservers untyped int = 8
+func MustObservers(...Observer) Observer
+func NewLoop(LoopSpec) *Loop
+func NewPeriodic(PeriodicSpec) (Runner, error)
+func NewSupervisor(Spec) (*Supervisor, error)
+const NonDurable Durability = "non-durable"
+type Observer interface {
+	Observed(RunnerState)
+}
 type ObserverFunc func(state RunnerState)
-type PeriodicSpec struct{ ... }
+func (ObserverFunc) Observed(RunnerState)
+func Observers(...Observer) (Observer, error)
+const PerReplica Placement = "per-replica"
+var PerReplicaTimer Declaration
+type PeriodicSpec struct {
+	Name string
+	Interval time.Duration
+	Timeout time.Duration
+	Immediate bool
+	Pass func(ctx context.Context) error
+	Logger *log/slog.Logger
+	Ticks Ticks
+}
 type Phase string
-    const PhaseIdle Phase = "idle" ...
+const PhaseFailed Phase = "failed"
+const PhaseIdle Phase = "idle"
+const PhaseRunning Phase = "running"
+const PhaseStopped Phase = "stopped"
 type Placement string
-    const PerReplica Placement = "per-replica" ...
-type Readier interface{ ... }
-type Runner interface{ ... }
-    func Every(name string, interval time.Duration, pass func(ctx context.Context) error) (Runner, error)
-    func NewPeriodic(spec PeriodicSpec) (Runner, error)
-type RunnerState struct{ ... }
-type Spec struct{ ... }
-type Supervisor struct{ ... }
-    func Auto(runners ...Runner) (*Supervisor, error)
-    func NewSupervisor(spec Spec) (*Supervisor, error)
-type Ticker interface{ ... }
-    func SystemTicks(interval time.Duration) Ticker
+type Readier interface {
+	Ready(context.Context) error
+}
+type Runner interface {
+	Name() string
+	Run(context.Context) error
+}
+type RunnerGenerationStarter interface {
+	Runner
+	BeginRunnerGeneration()
+}
+type RunnerState struct {
+	Name string
+	Declaration Declaration
+	Phase Phase
+	Err error
+	StartedAt time.Time
+	EndedAt time.Time
+}
+const Singleton Placement = "singleton"
+type Spec struct {
+	Runners []Runner
+	DrainGrace time.Duration
+	Logger *log/slog.Logger
+	Observer Observer
+}
+type Supervisor struct {
+	<unexported fields>
+}
+func (*Supervisor) Ready(context.Context) error
+func (*Supervisor) Start(context.Context) error
+func (*Supervisor) States() []RunnerState
+func (*Supervisor) Stop(context.Context) error
+func SystemTicks(time.Duration) Ticker
+type Ticker interface {
+	Stop()
+	Ticks() <-chan time.Time
+}
 type Ticks func(interval time.Duration) Ticker
 ```
 
 ## github.com/frostgrove/vv/runtime/runtimecheck
 ```go
-func SkipsHiddenAndVendored(name string) bool
-type Activation struct{ ... }
-    func EmptyInvokeActivations(root string) ([]Activation, error)
-type Scanner struct{ ... }
+type Activation struct {
+	File string
+	Line int
+	Name string
+}
+func (Activation) String() string
+func EmptyInvokeActivations(string) ([]Activation, error)
+type Scanner struct {
+	SkipDirectory func(name string) bool
+}
+func (Scanner) EmptyInvokeActivations(string) ([]Activation, error)
+func SkipsHiddenAndVendored(string) bool
+```
+
+## github.com/frostgrove/vv/scripts/api-surface
+```go
+type Attribute struct {
+	Name string "json:\"name\""
+	Type string "json:\"type\""
+	Source string "json:\"source\""
+	PrivacyClass string "json:\"privacy_class\""
+	MetricEligible bool "json:\"metric_eligible\""
+	Maturity string "json:\"maturity\""
+	MaxValues int "json:\"max_values,omitempty\""
+	MaxBytes int "json:\"max_bytes,omitempty\""
+	Charset string "json:\"charset,omitempty\""
+	Domains []string "json:\"domains,omitempty\""
+	Owner string "json:\"owner\""
+	Vocabulary string "json:\"vocabulary,omitempty\""
+}
+type Binding struct {
+	Const string "json:\"const,omitempty\""
+	Domain string "json:\"domain,omitempty\""
+	Values []string "json:\"values,omitempty\""
+	Declared bool "json:\"declared,omitempty\""
+	Optional bool "json:\"optional,omitempty\""
+}
+type Component struct {
+	SourceCoverage string "json:\"source_coverage\""
+	SourceRationale string "json:\"source_rationale\""
+	WireValue string "json:\"wire_value\""
+	Source string "json:\"source\""
+	Maturity string "json:\"maturity\""
+	SpanNameDomains []string "json:\"span_name_domains,omitempty\""
+	Operations Vocabulary "json:\"operations\""
+	Outcomes Vocabulary "json:\"outcomes\""
+	Vocabularies map[string]Vocabulary "json:\"vocabularies\""
+}
+type Domain struct {
+	Type string "json:\"type\""
+	Values []string "json:\"values\""
+}
+type Exports struct {
+	Constants map[string]string "json:\"constants\""
+	SpanHelpers map[string]SpanHelper "json:\"span_helpers\""
+	ErrorCodeDomain string "json:\"error_code_domain\""
+	DefaultHistogram string "json:\"default_histogram\""
+	ResourceAttribute string "json:\"resource_attribute\""
+}
+type InterfaceRef struct {
+	File string "json:\"file\""
+	Type string "json:\"type\""
+}
+type Inventory struct {
+	Kind string "json:\"kind\""
+	File string "json:\"file,omitempty\""
+	Type string "json:\"type,omitempty\""
+	Symbol string "json:\"symbol\""
+	Members []SourceMember "json:\"members\""
+	Excluded []SourceExclusion "json:\"excluded,omitempty\""
+	Interfaces []InterfaceRef "json:\"interfaces,omitempty\""
+}
+type LogCorrelation struct {
+	Provider string "json:\"provider\""
+	Selection string "json:\"selection\""
+	Collision string "json:\"collision\""
+	Keys map[string]LogKey "json:\"keys\""
+}
+type LogKey struct {
+	Name string "json:\"name\""
+	GoName string "json:\"go_name\""
+	Format string "json:\"format\""
+	Length int "json:\"length\""
+}
+type MappingEntry struct {
+	From string "json:\"from\""
+	To string "json:\"to\""
+}
+type MigrationMetadata struct {
+	From string "json:\"from\""
+	To string "json:\"to\""
+	Status string "json:\"status\""
+	Since string "json:\"since\""
+	Policy string "json:\"policy\""
+	Note string "json:\"note\""
+	WireChanges []string "json:\"wire_changes\""
+	SignalIDs map[string]int "json:\"signal_ids\""
+}
+type NumericBound string
+func (*NumericBound) UnmarshalJSON([]byte) error
+func (NumericBound) MarshalJSON() ([]byte, error)
+func (NumericBound) String() string
+type Registry struct {
+	ContractVersion string "json:\"contract_version\""
+	Scope ScopeConfig "json:\"scope\""
+	Domains map[string]Domain "json:\"domains\""
+	Attributes map[string]Attribute "json:\"attributes\""
+	Components map[string]Component "json:\"components\""
+	AttributeSets map[string]map[string]Binding "json:\"attribute_sets\""
+	Signals map[string]Signal "json:\"signals\""
+	Migration MigrationMetadata "json:\"migration\""
+	Exports Exports "json:\"exports\""
+	LogCorrelation LogCorrelation "json:\"log_correlation\""
+	RetiredSignals []string "json:\"retired_signals,omitempty\""
+	GlobalDomains []string "json:\"global_domains\""
+	SourceShapes map[string]SourceShape "json:\"source_shapes\""
+	SourceFacts map[string]SourceFact "json:\"source_facts\""
+}
+type ScopeConfig struct {
+	Name string "json:\"name\""
+	Version string "json:\"version\""
+}
+type ShapeMember struct {
+	Type string "json:\"type\""
+	Signals []string "json:\"signals,omitempty\""
+	Attributes []string "json:\"attributes,omitempty\""
+	Gates []string "json:\"gates,omitempty\""
+	Nested string "json:\"nested,omitempty\""
+	Excluded string "json:\"excluded,omitempty\""
+}
+type Signal struct {
+	Inputs []string "json:\"inputs\""
+	DeclaredSources map[string][]string "json:\"declared_sources,omitempty\""
+	ValueSource string "json:\"value_source,omitempty\""
+	ComputedSource string "json:\"computed_source,omitempty\""
+	SignalID int "json:\"signal_id\""
+	Provider string "json:\"provider\""
+	APIKind string "json:\"api_kind,omitempty\""
+	Kind string "json:\"kind\""
+	Name string "json:\"name\""
+	Component string "json:\"component\""
+	Instrument string "json:\"instrument,omitempty\""
+	NumberType string "json:\"number_type,omitempty\""
+	Unit string "json:\"unit,omitempty\""
+	Description string "json:\"description\""
+	Source string "json:\"source\""
+	PrivacyClass string "json:\"privacy_class\""
+	Maturity string "json:\"maturity\""
+	Semconv string "json:\"semconv\""
+	Availability string "json:\"availability\""
+	SpanKind string "json:\"span_kind,omitempty\""
+	NameDomain string "json:\"name_domain,omitempty\""
+	Boundaries []float64 "json:\"boundaries,omitempty\""
+	Min NumericBound "json:\"min,omitempty\""
+	Max NumericBound "json:\"max,omitempty\""
+	SeriesBudget int "json:\"series_budget,omitempty\""
+	RecordWhen string "json:\"record_when,omitempty\""
+	Variants []Variant "json:\"variants\""
+	GoName string "json:\"go_name,omitempty\""
+	BoundariesGoName string "json:\"boundaries_go_name,omitempty\""
+}
+type SignalAvailabilityHistory struct {
+	Format string "json:\"format\""
+	Signals map[string][]string "json:\"signals\""
+}
+type SignalHistory struct {
+	Format string "json:\"format\""
+	Assigned map[string]int "json:\"assigned\""
+}
+type SourceExclusion struct {
+	Value string "json:\"value\""
+	Reason string "json:\"reason\""
+}
+type SourceFact struct {
+	ID int "json:\"id\""
+	Component string "json:\"component\""
+	Shape string "json:\"shape\""
+	Member string "json:\"member\""
+}
+type SourceMember struct {
+	Symbol string "json:\"symbol\""
+	Value string "json:\"value\""
+}
+type SourcePredicate struct {
+	Fact string "json:\"fact\""
+	Operator string "json:\"operator\""
+	Value int64 "json:\"value\""
+}
+type SourceShape struct {
+	Availability string "json:\"availability\""
+	Evolution string "json:\"evolution,omitempty\""
+	Components []string "json:\"components\""
+	Kind string "json:\"kind\""
+	File string "json:\"file\""
+	Type string "json:\"type\""
+	Scope string "json:\"scope\""
+	Members map[string]ShapeMember "json:\"members\""
+}
+type SpanHelper struct {
+	Signal string "json:\"signal\""
+}
+type Variant struct {
+	Base string "json:\"base,omitempty\""
+	Attributes map[string]Binding "json:\"attributes\""
+	Absent []string "json:\"absent,omitempty\""
+	Status string "json:\"status,omitempty\""
+	When []SourcePredicate "json:\"when,omitempty\""
+}
+type Vocabulary struct {
+	Source Inventory "json:\"source\""
+	Domain string "json:\"domain\""
+	Mapping []MappingEntry "json:\"mapping\""
+	Unknown string "json:\"unknown\""
+	Fallback string "json:\"fallback,omitempty\""
+	GoHelper string "json:\"go_helper,omitempty\""
+	GoPrefix string "json:\"go_prefix,omitempty\""
+}
+type WireAttribute struct {
+	Type string "json:\"type\""
+	Values []string "json:\"values,omitempty\""
+	Optional bool "json:\"optional\""
+	Declared bool "json:\"declared\""
+	MaxValues int "json:\"max_values,omitempty\""
+	MaxBytes int "json:\"max_bytes,omitempty\""
+	Charset string "json:\"charset,omitempty\""
+}
+type WireManifest struct {
+	SourceFacts map[string]SourceFact "json:\"source_facts\""
+	SourceShapes map[string]SourceShape "json:\"source_shapes\""
+	LogCorrelation LogCorrelation "json:\"log_correlation\""
+	Migration MigrationMetadata "json:\"migration\""
+	ContractVersion string "json:\"contract_version\""
+	Scope ScopeConfig "json:\"scope\""
+	AdditionalAttributes bool "json:\"additional_attributes\""
+	Attributes map[string]Attribute "json:\"attributes\""
+	Signals map[string]WireSignal "json:\"signals\""
+}
+type WireSignal struct {
+	Signal
+	Names []string "json:\"names\""
+	CardinalityBound int "json:\"cardinality_bound\""
+	ResolvedVariants []WireVariant "json:\"resolved_variants\""
+}
+type WireVariant struct {
+	Attributes map[string]WireAttribute "json:\"attributes\""
+	Absent []string "json:\"absent\""
+	Status string "json:\"status,omitempty\""
+	When []SourcePredicate "json:\"when,omitempty\""
+}
+```
+
+## github.com/frostgrove/vv/scripts/otel-wire-validator
+```go
+type Attribute struct {
+	Name string "json:\"name\""
+	Type string "json:\"type\""
+	Source string "json:\"source\""
+	PrivacyClass string "json:\"privacy_class\""
+	MetricEligible bool "json:\"metric_eligible\""
+	Maturity string "json:\"maturity\""
+	MaxValues int "json:\"max_values,omitempty\""
+	MaxBytes int "json:\"max_bytes,omitempty\""
+	Charset string "json:\"charset,omitempty\""
+	Domains []string "json:\"domains,omitempty\""
+	Owner string "json:\"owner\""
+	Vocabulary string "json:\"vocabulary,omitempty\""
+}
+type Binding struct {
+	Const string "json:\"const,omitempty\""
+	Domain string "json:\"domain,omitempty\""
+	Values []string "json:\"values,omitempty\""
+	Declared bool "json:\"declared,omitempty\""
+	Optional bool "json:\"optional,omitempty\""
+}
+type Component struct {
+	SourceCoverage string "json:\"source_coverage\""
+	SourceRationale string "json:\"source_rationale\""
+	WireValue string "json:\"wire_value\""
+	Source string "json:\"source\""
+	Maturity string "json:\"maturity\""
+	SpanNameDomains []string "json:\"span_name_domains,omitempty\""
+	Operations Vocabulary "json:\"operations\""
+	Outcomes Vocabulary "json:\"outcomes\""
+	Vocabularies map[string]Vocabulary "json:\"vocabularies\""
+}
+type Domain struct {
+	Type string "json:\"type\""
+	Values []string "json:\"values\""
+}
+type Exports struct {
+	Constants map[string]string "json:\"constants\""
+	SpanHelpers map[string]SpanHelper "json:\"span_helpers\""
+	ErrorCodeDomain string "json:\"error_code_domain\""
+	DefaultHistogram string "json:\"default_histogram\""
+	ResourceAttribute string "json:\"resource_attribute\""
+}
+type InterfaceRef struct {
+	File string "json:\"file\""
+	Type string "json:\"type\""
+}
+type Inventory struct {
+	Kind string "json:\"kind\""
+	File string "json:\"file,omitempty\""
+	Type string "json:\"type,omitempty\""
+	Symbol string "json:\"symbol\""
+	Members []SourceMember "json:\"members\""
+	Excluded []SourceExclusion "json:\"excluded,omitempty\""
+	Interfaces []InterfaceRef "json:\"interfaces,omitempty\""
+}
+type LogCorrelation struct {
+	Provider string "json:\"provider\""
+	Selection string "json:\"selection\""
+	Collision string "json:\"collision\""
+	Keys map[string]LogKey "json:\"keys\""
+}
+type LogKey struct {
+	Name string "json:\"name\""
+	GoName string "json:\"go_name\""
+	Format string "json:\"format\""
+	Length int "json:\"length\""
+}
+type MappingEntry struct {
+	From string "json:\"from\""
+	To string "json:\"to\""
+}
+type MigrationMetadata struct {
+	From string "json:\"from\""
+	To string "json:\"to\""
+	Status string "json:\"status\""
+	Since string "json:\"since\""
+	Policy string "json:\"policy\""
+	Note string "json:\"note\""
+	WireChanges []string "json:\"wire_changes\""
+	SignalIDs map[string]int "json:\"signal_ids\""
+}
+type NumericBound string
+func (*NumericBound) UnmarshalJSON([]byte) error
+func (NumericBound) MarshalJSON() ([]byte, error)
+func (NumericBound) String() string
+type Registry struct {
+	ContractVersion string "json:\"contract_version\""
+	Scope ScopeConfig "json:\"scope\""
+	Domains map[string]Domain "json:\"domains\""
+	Attributes map[string]Attribute "json:\"attributes\""
+	Components map[string]Component "json:\"components\""
+	AttributeSets map[string]map[string]Binding "json:\"attribute_sets\""
+	Signals map[string]Signal "json:\"signals\""
+	Migration MigrationMetadata "json:\"migration\""
+	Exports Exports "json:\"exports\""
+	LogCorrelation LogCorrelation "json:\"log_correlation\""
+	RetiredSignals []string "json:\"retired_signals,omitempty\""
+	GlobalDomains []string "json:\"global_domains\""
+	SourceShapes map[string]SourceShape "json:\"source_shapes\""
+	SourceFacts map[string]SourceFact "json:\"source_facts\""
+}
+type ScopeConfig struct {
+	Name string "json:\"name\""
+	Version string "json:\"version\""
+}
+type ShapeMember struct {
+	Type string "json:\"type\""
+	Signals []string "json:\"signals,omitempty\""
+	Attributes []string "json:\"attributes,omitempty\""
+	Gates []string "json:\"gates,omitempty\""
+	Nested string "json:\"nested,omitempty\""
+	Excluded string "json:\"excluded,omitempty\""
+}
+type Signal struct {
+	Inputs []string "json:\"inputs\""
+	DeclaredSources map[string][]string "json:\"declared_sources,omitempty\""
+	ValueSource string "json:\"value_source,omitempty\""
+	ComputedSource string "json:\"computed_source,omitempty\""
+	SignalID int "json:\"signal_id\""
+	Provider string "json:\"provider\""
+	APIKind string "json:\"api_kind,omitempty\""
+	Kind string "json:\"kind\""
+	Name string "json:\"name\""
+	Component string "json:\"component\""
+	Instrument string "json:\"instrument,omitempty\""
+	NumberType string "json:\"number_type,omitempty\""
+	Unit string "json:\"unit,omitempty\""
+	Description string "json:\"description\""
+	Source string "json:\"source\""
+	PrivacyClass string "json:\"privacy_class\""
+	Maturity string "json:\"maturity\""
+	Semconv string "json:\"semconv\""
+	Availability string "json:\"availability\""
+	SpanKind string "json:\"span_kind,omitempty\""
+	NameDomain string "json:\"name_domain,omitempty\""
+	Boundaries []float64 "json:\"boundaries,omitempty\""
+	Min NumericBound "json:\"min,omitempty\""
+	Max NumericBound "json:\"max,omitempty\""
+	SeriesBudget int "json:\"series_budget,omitempty\""
+	RecordWhen string "json:\"record_when,omitempty\""
+	Variants []Variant "json:\"variants\""
+	GoName string "json:\"go_name,omitempty\""
+	BoundariesGoName string "json:\"boundaries_go_name,omitempty\""
+}
+type SignalAvailabilityHistory struct {
+	Format string "json:\"format\""
+	Signals map[string][]string "json:\"signals\""
+}
+type SignalHistory struct {
+	Format string "json:\"format\""
+	Assigned map[string]int "json:\"assigned\""
+}
+type SourceExclusion struct {
+	Value string "json:\"value\""
+	Reason string "json:\"reason\""
+}
+type SourceFact struct {
+	ID int "json:\"id\""
+	Component string "json:\"component\""
+	Shape string "json:\"shape\""
+	Member string "json:\"member\""
+}
+type SourceMember struct {
+	Symbol string "json:\"symbol\""
+	Value string "json:\"value\""
+}
+type SourcePredicate struct {
+	Fact string "json:\"fact\""
+	Operator string "json:\"operator\""
+	Value int64 "json:\"value\""
+}
+type SourceShape struct {
+	Availability string "json:\"availability\""
+	Evolution string "json:\"evolution,omitempty\""
+	Components []string "json:\"components\""
+	Kind string "json:\"kind\""
+	File string "json:\"file\""
+	Type string "json:\"type\""
+	Scope string "json:\"scope\""
+	Members map[string]ShapeMember "json:\"members\""
+}
+type SpanHelper struct {
+	Signal string "json:\"signal\""
+}
+type Variant struct {
+	Base string "json:\"base,omitempty\""
+	Attributes map[string]Binding "json:\"attributes\""
+	Absent []string "json:\"absent,omitempty\""
+	Status string "json:\"status,omitempty\""
+	When []SourcePredicate "json:\"when,omitempty\""
+}
+type Vocabulary struct {
+	Source Inventory "json:\"source\""
+	Domain string "json:\"domain\""
+	Mapping []MappingEntry "json:\"mapping\""
+	Unknown string "json:\"unknown\""
+	Fallback string "json:\"fallback,omitempty\""
+	GoHelper string "json:\"go_helper,omitempty\""
+	GoPrefix string "json:\"go_prefix,omitempty\""
+}
+type WireAttribute struct {
+	Type string "json:\"type\""
+	Values []string "json:\"values,omitempty\""
+	Optional bool "json:\"optional\""
+	Declared bool "json:\"declared\""
+	MaxValues int "json:\"max_values,omitempty\""
+	MaxBytes int "json:\"max_bytes,omitempty\""
+	Charset string "json:\"charset,omitempty\""
+}
+type WireManifest struct {
+	SourceFacts map[string]SourceFact "json:\"source_facts\""
+	SourceShapes map[string]SourceShape "json:\"source_shapes\""
+	LogCorrelation LogCorrelation "json:\"log_correlation\""
+	Migration MigrationMetadata "json:\"migration\""
+	ContractVersion string "json:\"contract_version\""
+	Scope ScopeConfig "json:\"scope\""
+	AdditionalAttributes bool "json:\"additional_attributes\""
+	Attributes map[string]Attribute "json:\"attributes\""
+	Signals map[string]WireSignal "json:\"signals\""
+}
+type WireSignal struct {
+	Signal
+	Names []string "json:\"names\""
+	CardinalityBound int "json:\"cardinality_bound\""
+	ResolvedVariants []WireVariant "json:\"resolved_variants\""
+}
+type WireVariant struct {
+	Attributes map[string]WireAttribute "json:\"attributes\""
+	Absent []string "json:\"absent\""
+	Status string "json:\"status,omitempty\""
+	When []SourcePredicate "json:\"when,omitempty\""
+}
 ```
 
 ## github.com/frostgrove/vv/storage
 ```go
-const MaxKeyBytes = 768 ...
-var ErrInvalid = kindError{ ... } ...
-func ExactSize(n int64) *int64
-func IfMatch(etag string) *string
-func NewError(operation string, kind Kind, cause error) error
-type Backend interface{ ... }
-type Capabilities struct{ ... }
-type CleanupOptions struct{ ... }
-type CleanupResult struct{ ... }
-type Config struct{ ... }
-type DeleteOptions struct{ ... }
-type Error struct{ ... }
-type Info struct{ ... }
-type Key struct{ ... }
-    func ParseKey(raw string) (Key, error)
+type Backend interface {
+	Abort(context.Context, Namespace, StageID) error
+	Capabilities() Capabilities
+	CleanupExpired(context.Context, Namespace, CleanupOptions) (CleanupResult, error)
+	Delete(context.Context, Namespace, Key, DeleteOptions) error
+	Head(context.Context, Namespace, Key) (Info, error)
+	Open(context.Context, Namespace, Key, ReadOptions) (io.ReadCloser, Info, error)
+	Promote(context.Context, Namespace, StageID, Key, PromoteOptions) (Info, error)
+	Put(context.Context, Namespace, Key, io.Reader, PutOptions) (Info, error)
+	Stage(context.Context, Namespace, io.Reader, StageOptions) (Staged, error)
+	TemporaryURL(context.Context, Namespace, Key, TemporaryURLOptions) (Link, error)
+}
+type Capabilities struct {
+	CreateOnly bool
+	Replace bool
+	Staging bool
+	TemporaryURL bool
+	ConditionalWrite bool
+	RangeRead bool
+}
+func Chain(Store, ...Middleware) Store
+type CleanupOptions struct {
+	Limit int
+}
+type CleanupResult struct {
+	Removed int
+	More bool
+}
+type Config struct {
+	Namespace string
+	Backend Backend
+}
+const CreateOnly WriteMode = 1
+const DefaultCleanupLimit untyped int = 100
+const DefaultStageClaimTTL time.Duration = 300000000000
+const DefaultStageTTL time.Duration = 86400000000000
+const DefaultTemporaryURLTTL time.Duration = 900000000000
+type DeleteOptions struct {
+	IfMatch *string
+}
+var ErrAlreadyExists kindError
+var ErrCancelled kindError
+var ErrConflict kindError
+var ErrExpired kindError
+var ErrForbidden kindError
+var ErrInternal kindError
+var ErrInvalid kindError
+var ErrNotFound kindError
+var ErrPreconditionFailed kindError
+var ErrSource kindError
+var ErrTemporary kindError
+var ErrUnavailable kindError
+var ErrUnsupported kindError
+type Error struct {
+	Operation string
+	Kind Kind
+	<unexported fields>
+}
+func (*Error) As(any) bool
+func (*Error) Error() string
+func (*Error) Format(fmt.State, rune)
+func (*Error) Is(error) bool
+func ExactSize(int64) *int64
+func IfMatch(string) *string
+type Info struct {
+	Size int64
+	ContentType string
+	Metadata Metadata
+	ModifiedAt time.Time
+	ETag string
+	Version string
+	MetadataTruncated bool
+}
+type Key struct {
+	<unexported fields>
+}
+func (Key) Format(fmt.State, rune)
+func (Key) String() string
+func (Key) Value() string
 type Kind string
-    const KindInvalid Kind = "invalid" ...
-    func KindOf(err error) Kind
-type Link struct{ ... }
-    func NewLink(rawURL string, expiresAt time.Time) (Link, error)
+const KindAlreadyExists Kind = "already_exists"
+const KindCancelled Kind = "cancelled"
+const KindConflict Kind = "conflict"
+const KindExpired Kind = "expired"
+const KindForbidden Kind = "forbidden"
+const KindInternal Kind = "internal"
+const KindInvalid Kind = "invalid"
+const KindNotFound Kind = "not_found"
+func KindOf(error) Kind
+const KindPreconditionFailed Kind = "precondition_failed"
+const KindSource Kind = "source"
+const KindTemporary Kind = "temporary"
+const KindUnavailable Kind = "unavailable"
+const KindUnsupported Kind = "unsupported"
+type Link struct {
+	<unexported fields>
+}
+func (Link) ExpiresAt() time.Time
+func (Link) Format(fmt.State, rune)
+func (Link) String() string
+func (Link) URL() string
+const MaxCleanupLimit untyped int = 1000
+const MaxKeyBytes untyped int = 768
+const MaxKeySegmentBytes untyped int = 128
+const MaxMetadataEntries untyped int = 32
+const MaxMetadataKeyBytes untyped int = 64
+const MaxMetadataTotalBytes untyped int = 1536
+const MaxMetadataValueBytes untyped int = 512
+const MaxStageClaimTTL time.Duration = 3600000000000
+const MaxStageTTL time.Duration = 604800000000000
+const MaxTemporaryURLTTL time.Duration = 604800000000000
 type Metadata map[string]string
 type Middleware func(Store) Store
-type Namespace struct{ ... }
-    func ParseNamespace(raw string) (Namespace, error)
-type PromoteOptions struct{ ... }
-type PutOptions struct{ ... }
-type ReadOptions struct{ ... }
-type StageID struct{ ... }
-    func NewStageID() (StageID, error)
-    func ParseStageID(raw string) (StageID, error)
-type StageOptions struct{ ... }
-type Staged struct{ ... }
-type Store interface{ ... }
-    func Chain(base Store, middleware ...Middleware) Store
-    func New(config *Config) (Store, error)
-type TemporaryURLOptions struct{ ... }
+type Namespace struct {
+	<unexported fields>
+}
+func (Namespace) Format(fmt.State, rune)
+func (Namespace) String() string
+func (Namespace) Value() string
+func New(*Config) (Store, error)
+func NewError(string, Kind, error) error
+func NewLink(string, time.Time) (Link, error)
+func NewStageID() (StageID, error)
+func ParseKey(string) (Key, error)
+func ParseNamespace(string) (Namespace, error)
+func ParseStageID(string) (StageID, error)
+type PromoteOptions struct {
+	Mode WriteMode
+	IfMatch *string
+}
+type PutOptions struct {
+	Mode WriteMode
+	Size *int64
+	ContentType string
+	Metadata Metadata
+	IfMatch *string
+}
+type ReadOptions struct {
+	Offset int64
+	Length *int64
+}
+const Replace WriteMode = 2
+type StageID struct {
+	<unexported fields>
+}
+func (StageID) Format(fmt.State, rune)
+func (StageID) String() string
+func (StageID) Value() string
+type StageOptions struct {
+	Size *int64
+	ContentType string
+	Metadata Metadata
+	ExpiresIn time.Duration
+}
+type Staged struct {
+	ID StageID
+	Info Info
+	ExpiresAt time.Time
+}
+type Store interface {
+	Abort(context.Context, StageID) error
+	Capabilities() Capabilities
+	CleanupExpired(context.Context, CleanupOptions) (CleanupResult, error)
+	Delete(context.Context, Key, DeleteOptions) error
+	Head(context.Context, Key) (Info, error)
+	Open(context.Context, Key, ReadOptions) (io.ReadCloser, Info, error)
+	Promote(context.Context, StageID, Key, PromoteOptions) (Info, error)
+	Put(context.Context, Key, io.Reader, PutOptions) (Info, error)
+	Stage(context.Context, io.Reader, StageOptions) (Staged, error)
+	TemporaryURL(context.Context, Key, TemporaryURLOptions) (Link, error)
+}
+type TemporaryURLOptions struct {
+	ExpiresIn time.Duration
+}
 type WriteMode uint8
-    const CreateOnly WriteMode = iota + 1 ...
 ```
 
 ## github.com/frostgrove/vv/storage/storagefs
 ```go
-const DefaultFileMode fs.FileMode = 0o600 ...
-type Backend struct{ ... }
-    func New(config *Config) (*Backend, error)
-type Config struct{ ... }
+type Backend struct {
+	<unexported fields>
+}
+func (*Backend) Abort(context.Context, github.com/frostgrove/vv/storage.Namespace, github.com/frostgrove/vv/storage.StageID) error
+func (*Backend) Capabilities() github.com/frostgrove/vv/storage.Capabilities
+func (*Backend) CleanupExpired(context.Context, github.com/frostgrove/vv/storage.Namespace, github.com/frostgrove/vv/storage.CleanupOptions) (github.com/frostgrove/vv/storage.CleanupResult, error)
+func (*Backend) Close() error
+func (*Backend) Delete(context.Context, github.com/frostgrove/vv/storage.Namespace, github.com/frostgrove/vv/storage.Key, github.com/frostgrove/vv/storage.DeleteOptions) error
+func (*Backend) Handler() net/http.Handler
+func (*Backend) Head(context.Context, github.com/frostgrove/vv/storage.Namespace, github.com/frostgrove/vv/storage.Key) (github.com/frostgrove/vv/storage.Info, error)
+func (*Backend) Open(context.Context, github.com/frostgrove/vv/storage.Namespace, github.com/frostgrove/vv/storage.Key, github.com/frostgrove/vv/storage.ReadOptions) (io.ReadCloser, github.com/frostgrove/vv/storage.Info, error)
+func (*Backend) Promote(context.Context, github.com/frostgrove/vv/storage.Namespace, github.com/frostgrove/vv/storage.StageID, github.com/frostgrove/vv/storage.Key, github.com/frostgrove/vv/storage.PromoteOptions) (github.com/frostgrove/vv/storage.Info, error)
+func (*Backend) Put(context.Context, github.com/frostgrove/vv/storage.Namespace, github.com/frostgrove/vv/storage.Key, io.Reader, github.com/frostgrove/vv/storage.PutOptions) (github.com/frostgrove/vv/storage.Info, error)
+func (*Backend) Stage(context.Context, github.com/frostgrove/vv/storage.Namespace, io.Reader, github.com/frostgrove/vv/storage.StageOptions) (github.com/frostgrove/vv/storage.Staged, error)
+func (*Backend) TemporaryURL(context.Context, github.com/frostgrove/vv/storage.Namespace, github.com/frostgrove/vv/storage.Key, github.com/frostgrove/vv/storage.TemporaryURLOptions) (github.com/frostgrove/vv/storage.Link, error)
+type Config struct {
+	Root string
+	FileMode io/fs.FileMode
+	DirMode io/fs.FileMode
+	Sync bool
+	BaseURL string
+	SigningKey []byte
+	MaxLinkTTL time.Duration
+	StageClaimTTL time.Duration
+}
+const DefaultDirMode io/fs.FileMode = 448
+const DefaultFileMode io/fs.FileMode = 384
+func New(*Config) (*Backend, error)
 ```
 
 ## github.com/frostgrove/vv/tenancy
 ```go
-const MaxPurposeBytes = 64 ...
-const MaxReferenceBytes = 128
-const MinDurableKeyBytes = 32
-var ErrMalformed = fmt.Errorf("tenancy: value is not a well-formed tenant reference: %w", crud.ErrBadRequest) ...
-func Classify(err error) error
-func Failures(outcomes []Member) int
-func Unbound(ctx context.Context) context.Context
-type Admission struct{ ... }
-    func Admit(class Class, states ...Lifecycle) Admission
-    func AdmitAll(states ...Lifecycle) Admission
-type Authority struct{ ... }
-    func Must(spec Spec) *Authority
-    func New(spec Spec) (*Authority, error)
+const Active Lifecycle = 2
+type Admission struct {
+	<unexported fields>
+}
+func (Admission) Admits(Class, Lifecycle) bool
+func (Admission) IsZero() bool
+func (Admission) Merge(Admission) Admission
+func Admit(Class, ...Lifecycle) Admission
+func AdmitAll(...Lifecycle) Admission
+type Authority struct {
+	<unexported fields>
+}
+func (*Authority) Accept(Purpose, []Reference, time.Time, ...Class) (*Grant, error)
+func (*Authority) Admits(Class, Lifecycle) bool
+func (*Authority) Bind(context.Context, Class) (context.Context, error)
+func (*Authority) Each(context.Context, *Grant, Class, func(context.Context) error) ([]Member, error)
+func (*Authority) Lookup(context.Context, Reference, Class) (Scope, error)
+func (*Authority) Scope(context.Context, Class) (Scope, error)
+func (*Authority) Sealer() (Sealer, error)
+func (*Authority) Verify(context.Context, Class) (Scope, error)
+func (*Authority) With(context.Context, Scope) (context.Context, error)
 type Class uint8
-    const ClassRead Class = iota ...
-    func Classes() []Class
+func (Class) String() string
+func (Class) Valid() bool
+const ClassDurable Class = 2
+const ClassRead Class = 0
+const ClassWrite Class = 1
+func Classes() []Class
+func Classify(error) error
+const Deleted Lifecycle = 6
+const Deleting Lifecycle = 5
 type Epoch uint64
-    func NewEpoch(value uint64) (Epoch, error)
-type Fixed Resolution
-type Grant struct{ ... }
+func (Epoch) IsZero() bool
+func (Epoch) Value() uint64
+var ErrCapacity error
+var ErrCohortFailed error
+var ErrGrantRequired error
+var ErrInactive error
+var ErrIncompatible error
+var ErrMalformed error
+var ErrNoScope error
+var ErrPinned error
+var ErrStale error
+var ErrUnavailable error
+var ErrUnmapped error
+var ErrUntrusted error
+func Failures([]Member) int
+type Fixed struct {
+	Reference Reference
+	Lifecycle Lifecycle
+	Epoch Epoch
+}
+func (Fixed) Lookup(context.Context, Reference) (Resolution, error)
+func (Fixed) Resolve(context.Context) (Resolution, error)
+func From(context.Context) (Scope, bool)
+type Grant struct {
+	<unexported fields>
+}
+func (*Grant) Format(fmt.State, rune)
+func (*Grant) LogValue() log/slog.Value
+func (*Grant) MarshalJSON() ([]byte, error)
+func (*Grant) Purpose() Purpose
+func (*Grant) Size() int
+func (*Grant) String() string
 type Lifecycle uint8
-    const LifecycleUnknown Lifecycle = iota ...
-type Member struct{ ... }
+func (Lifecycle) String() string
+func (Lifecycle) Valid() bool
+const LifecycleUnknown Lifecycle = 0
+const MaxCohortSize untyped int = 10000
+const MaxPurposeBytes untyped int = 64
+const MaxReferenceBytes untyped int = 128
+type Member struct {
+	Reference Reference
+	Outcome Outcome
+	Err error
+}
+const Migrating Lifecycle = 4
+const MinDurableKeyBytes untyped int = 32
+func Must(Spec) *Authority
+func New(Spec) (*Authority, error)
+func NewEpoch(uint64) (Epoch, error)
 type Outcome string
-    const OutcomeOk Outcome = "ok" ...
-    func OutcomeFor(err error) Outcome
-    func Outcomes() []Outcome
-type Purpose struct{ ... }
-    func ParsePurpose(raw string) (Purpose, error)
-type Reference struct{ ... }
-    func ParseReference(raw string) (Reference, error)
-type Resolution struct{ ... }
-type Resolver interface{ ... }
-type Scope struct{ ... }
-    func From(ctx context.Context) (Scope, bool)
-type Sealer struct{ ... }
-type Spec struct{ ... }
+const OutcomeAbsent Outcome = "absent"
+const OutcomeCapacity Outcome = "capacity"
+const OutcomeError Outcome = "error"
+func OutcomeFor(error) Outcome
+const OutcomeGrant Outcome = "grant"
+const OutcomeInactive Outcome = "inactive"
+const OutcomeIncompatible Outcome = "incompatible"
+const OutcomeOk Outcome = "ok"
+const OutcomePinned Outcome = "pinned"
+const OutcomeStale Outcome = "stale"
+const OutcomeUnavailable Outcome = "unavailable"
+const OutcomeUnmapped Outcome = "unmapped"
+const OutcomeUntrusted Outcome = "untrusted"
+func Outcomes() []Outcome
+func ParsePurpose(string) (Purpose, error)
+func ParseReference(string) (Reference, error)
+const Provisioning Lifecycle = 1
+type Purpose struct {
+	<unexported fields>
+}
+func (Purpose) IsZero() bool
+func (Purpose) String() string
+func (Purpose) Value() string
+type Reference struct {
+	<unexported fields>
+}
+func (Reference) Format(fmt.State, rune)
+func (Reference) IsZero() bool
+func (Reference) LogValue() log/slog.Value
+func (Reference) MarshalJSON() ([]byte, error)
+func (Reference) String() string
+func (Reference) Value() string
+type Resolution struct {
+	Reference Reference
+	Lifecycle Lifecycle
+	Epoch Epoch
+}
+func (Resolution) Format(fmt.State, rune)
+func (Resolution) String() string
+type Resolver interface {
+	Lookup(context.Context, Reference) (Resolution, error)
+	Resolve(context.Context) (Resolution, error)
+}
+type Scope struct {
+	<unexported fields>
+}
+func (Scope) Digest() [32]byte
+func (Scope) Epoch() Epoch
+func (Scope) Format(fmt.State, rune)
+func (Scope) IsZero() bool
+func (Scope) Lifecycle() Lifecycle
+func (Scope) LogValue() log/slog.Value
+func (Scope) MarshalJSON() ([]byte, error)
+func (Scope) Reference() Reference
+func (Scope) String() string
+type Sealer struct {
+	<unexported fields>
+}
+func (Sealer) Seal(context.Context, Scope, ...[]byte) ([]byte, error)
+func (Sealer) Unseal([]byte, ...[]byte) (Reference, Epoch, error)
+type Spec struct {
+	Resolver Resolver
+	Admission Admission
+	Origin string
+	DurableKey []byte
+	RetiredDurableKeys [][]byte
+	Revalidate bool
+	Now func() time.Time
+}
+const Suspended Lifecycle = 3
+func Unbound(context.Context) context.Context
 ```
 
 ## github.com/frostgrove/vv/tenancy/tenancycache
 ```go
-const MinPartitionBytes = 16 ...
-func Partition[K any]() cache.Partitioner[Key[K]]
-func Partitioned[K any](namespace cache.Namespace) cache.Scope[Key[K]]
-type Key[K any] struct{ ... }
-    func Keyed[K any](ctx context.Context, authority *tenancy.Authority, class tenancy.Class, key K) (Key[K], error)
+type Key[K any] struct {
+	<unexported fields>
+}
+func (Key[K]) Scope() github.com/frostgrove/vv/tenancy.Scope
+func (Key[K]) String() string
+func (Key[K]) Unwrap() K
+func Keyed[K any](context.Context, *github.com/frostgrove/vv/tenancy.Authority, github.com/frostgrove/vv/tenancy.Class, K) (Key[K], error)
+const MaxPartitionBytes untyped int = 32
+const MinPartitionBytes untyped int = 16
+func Partition[K any]() github.com/frostgrove/vv/cache.Partitioner[Key[K]]
+func Partitioned[K any](github.com/frostgrove/vv/cache.Namespace) github.com/frostgrove/vv/cache.Scope[Key[K]]
 ```
 
 ## github.com/frostgrove/vv/tenancy/tenancydb
 ```go
-const DefaultOpenTimeout = 30 * time.Second
-type Directory struct{ ... }
-    func NewDirectory(spec DirectorySpec) (*Directory, error)
-type DirectorySpec struct{ ... }
-type Lease struct{ ... }
-type Sources interface{ ... }
-type SourcesFunc func(context.Context, tenancy.Scope) (crud.Source, error)
+const DefaultOpenTimeout time.Duration = 30000000000
+type Directory struct {
+	<unexported fields>
+}
+func (*Directory) Borrow(context.Context, github.com/frostgrove/vv/tenancy.Class) (*Lease, error)
+func (*Directory) Cached() int
+func (*Directory) Close() error
+func (*Directory) Evict(github.com/frostgrove/vv/tenancy.Reference)
+type DirectorySpec struct {
+	Authority *github.com/frostgrove/vv/tenancy.Authority
+	Sources Sources
+	MaxCached int
+	TTL time.Duration
+	Fence func(ctx context.Context, source github.com/frostgrove/vv/crud.Source, scope github.com/frostgrove/vv/tenancy.Scope) error
+	Close func(github.com/frostgrove/vv/crud.Source) error
+	OpenTimeout time.Duration
+	Now func() time.Time
+}
+type Lease struct {
+	<unexported fields>
+}
+func (*Lease) Release()
+func (*Lease) Source() github.com/frostgrove/vv/crud.Source
+func NewDirectory(DirectorySpec) (*Directory, error)
+type Sources interface {
+	Source(context.Context, github.com/frostgrove/vv/tenancy.Scope) (github.com/frostgrove/vv/crud.Source, error)
+}
+type SourcesFunc func(context.Context, github.com/frostgrove/vv/tenancy.Scope) (github.com/frostgrove/vv/crud.Source, error)
+func (SourcesFunc) Source(context.Context, github.com/frostgrove/vv/tenancy.Scope) (github.com/frostgrove/vv/crud.Source, error)
 ```
 
 ## github.com/frostgrove/vv/tenancy/tenancyjobs
 ```go
-func ContextProvider(authority *tenancy.Authority, provenance jobs.IdentityProvenance, ...) (jobs.TrustedContextProvider, error)
-func IdentityRestorer(authority *tenancy.Authority) (jobs.TrustedIdentityRestorer, error)
+func ContextProvider(*github.com/frostgrove/vv/tenancy.Authority, github.com/frostgrove/vv/jobs.IdentityProvenance, github.com/frostgrove/vv/jobs.IdentityEpoch) (github.com/frostgrove/vv/jobs.TrustedContextProvider, error)
+func IdentityRestorer(*github.com/frostgrove/vv/tenancy.Authority) (github.com/frostgrove/vv/jobs.TrustedIdentityRestorer, error)
 ```
 
 ## github.com/frostgrove/vv/tenancy/tenancyrow
 ```go
-func Policy[M any, ID comparable](authority *tenancy.Authority, ownership Ownership[M]) security.Policy[M, ID]
-func PolicyIn[M any, ID comparable](authority *tenancy.Authority, ownership Ownership[M], classes Classes) security.Policy[M, ID]
-func Repository[M any, ID comparable](authority *tenancy.Authority, ownership Ownership[M]) crud.Middleware[M, ID]
-func RepositoryIn[M any, ID comparable](authority *tenancy.Authority, ownership Ownership[M], classes Classes) crud.Middleware[M, ID]
-type Classes struct{ ... }
-    func RequestClasses() Classes
+type Classes struct {
+	Read github.com/frostgrove/vv/tenancy.Class
+	Write github.com/frostgrove/vv/tenancy.Class
+}
+func Column[M any](string, Mode, Value, ...Relation) Ownership[M]
+const Derive Mode = 0
 type Mode uint8
-    const Derive Mode = iota ...
-type Ownership[M any] interface{ ... }
-    func Column[M any](field string, mode Mode, value Value, relations ...Relation) Ownership[M]
-    func Through[M any](path, field string, value Value) Ownership[M]
-type Relation struct{ ... }
-type Value func(tenancy.Reference) (any, error)
+type Ownership[M any] interface {
+	Apply(github.com/frostgrove/vv/tenancy.Reference, github.com/frostgrove/vv/crud.Action, *M) error
+	Frozen() []string
+	Narrow(github.com/frostgrove/vv/tenancy.Reference) (github.com/frostgrove/vv/crud.Predicate, error)
+	NarrowsRelations() bool
+	Relations(github.com/frostgrove/vv/tenancy.Reference) (*github.com/frostgrove/vv/crud.RelationScopes, error)
+}
+func Policy[M any, ID comparable](*github.com/frostgrove/vv/tenancy.Authority, Ownership[M]) github.com/frostgrove/vv/crud/decorators/security.Policy[M, ID]
+func PolicyIn[M any, ID comparable](*github.com/frostgrove/vv/tenancy.Authority, Ownership[M], Classes) github.com/frostgrove/vv/crud/decorators/security.Policy[M, ID]
+type Relation struct {
+	Path string
+	Field string
+}
+func Repository[M any, ID comparable](*github.com/frostgrove/vv/tenancy.Authority, Ownership[M]) github.com/frostgrove/vv/crud.Middleware[M, ID]
+func RepositoryIn[M any, ID comparable](*github.com/frostgrove/vv/tenancy.Authority, Ownership[M], Classes) github.com/frostgrove/vv/crud.Middleware[M, ID]
+func RequestClasses() Classes
+func Through[M any](string, string, Value) Ownership[M]
+const Validate Mode = 1
+type Value func(github.com/frostgrove/vv/tenancy.Reference) (any, error)
 ```
 
 ## github.com/frostgrove/vv/tenancy/tenancystorage
 ```go
-const MaxPrefixBytes = 30 ...
-func Namespace(ctx context.Context, authority *tenancy.Authority, prefix string, ...) (storage.Namespace, error)
-func Store(ctx context.Context, authority *tenancy.Authority, prefix string, ...) (storage.Store, error)
+const MaxPrefixBytes untyped int = 30
+func Namespace(context.Context, *github.com/frostgrove/vv/tenancy.Authority, string, github.com/frostgrove/vv/tenancy.Class) (github.com/frostgrove/vv/storage.Namespace, error)
+func Store(context.Context, *github.com/frostgrove/vv/tenancy.Authority, string, github.com/frostgrove/vv/tenancy.Class, github.com/frostgrove/vv/storage.Backend) (github.com/frostgrove/vv/storage.Store, error)
 ```
 
 ## github.com/frostgrove/vv/utils
 ```go
-func Inspect(v any) (value any, defined, null, ok bool)
-func IsOptType(t reflect.Type) bool
-func Must[T any](v T, err error) T
-func OptElem(t reflect.Type) reflect.Type
-func Ptr[T any](v T) *T
-type Opt[T any] struct{ ... }
-    func FromPtr[T any](p *T) Opt[T]
-    func Null[T any]() Opt[T]
-    func Set[T any](v T) Opt[T]
-    func Undefined[T any]() Opt[T]
-type Optional interface{ ... }
-```
-
-## github.com/frostgrove/vv/vvdb
-```go
-var ErrEngine = errors.New("vvdb: unknown engine") ...
-func DSN(c *Config) (string, error)
-func DriverName(c *Config) string
-func MariaDBDSN(c *Config) (string, error)
-func MustOpen(c *Config) *sql.DB
-func MustOpenReadWrite(c *Config) (primary, replica *sql.DB)
-func MySQLDSN(c *Config) (string, error)
-func Open(c *Config) (*sql.DB, error)
-func OpenReadWrite(c *Config) (primary, replica *sql.DB, err error)
-func PostgresDSN(config *Config) (string, error)
-func RedactError(operation string, cause error) error
-func RedactedDSN(c *Config) (string, error)
-func SQLiteDSN(config *Config) (string, error)
-type Config struct{ ... }
-type Engine string
-    const Postgres Engine = "postgres" ...
-type Migration struct{ ... }
-type Params map[string]string
-type Pool struct{ ... }
-type SQLitePragmas []string
-type Secret string
+func FromPtr[T any](*T) Opt[T]
+func Inspect(any) (any, bool, bool, bool)
+func IsOptType(reflect.Type) bool
+func Must[T any](T, error) T
+func Null[T any]() Opt[T]
+type Opt[T any] struct {
+	<unexported fields>
+}
+func (*Opt[T]) Scan(any) error
+func (*Opt[T]) UnmarshalJSON([]byte) error
+func (Opt[T]) Get() (T, bool)
+func (Opt[T]) IsDefined() bool
+func (Opt[T]) IsNull() bool
+func (Opt[T]) IsSet() bool
+func (Opt[T]) IsZero() bool
+func (Opt[T]) MarshalJSON() ([]byte, error)
+func (Opt[T]) MustGet() T
+func (Opt[T]) OrElse(T) T
+func (Opt[T]) Ptr() *T
+func (Opt[T]) String() string
+func (Opt[T]) Value() (database/sql/driver.Value, error)
+func OptElem(reflect.Type) reflect.Type
+type Optional interface {
+	IsDefined() bool
+	IsNull() bool
+	IsSet() bool
+}
+func Ptr[T any](T) *T
+func Set[T any](T) Opt[T]
+func Undefined[T any]() Opt[T]
 ```
 
 ## github.com/frostgrove/vv/utils/vvflag
 ```go
-var ErrAbsent = errors.New("vvflag: flag not present")
-func Lookup[T any](name string, def T) (T, error)
-func Or[T any](args []string, name string, def T) (T, error)
-func Parse[T any](args []string, name string, def T) (T, error)
+var ErrAbsent error
+func Lookup[T any](string, T) (T, error)
+func Or[T any]([]string, string, T) (T, error)
+func Parse[T any]([]string, string, T) (T, error)
+```
+
+## github.com/frostgrove/vv/vvdb
+```go
+type Config struct {
+	Engine Engine "yaml:\"engine\" env:\"DB_ENGINE\""
+	Driver string "yaml:\"driver\" env:\"DB_DRIVER\""
+	Host string "yaml:\"host\" env:\"DB_HOST\""
+	Port int "yaml:\"port\" env:\"DB_PORT\""
+	User string "yaml:\"user\" env:\"DB_USER\""
+	Password Secret "yaml:\"password\" env:\"DB_PASSWORD\""
+	Name string "yaml:\"name\" env:\"DB_NAME\""
+	SSLMode string "yaml:\"sslmode\" env:\"DB_SSLMODE\""
+	Path string "yaml:\"path\" env:\"DB_PATH\""
+	Pragmas SQLitePragmas "yaml:\"pragmas\" env:\"DB_SQLITE_PRAGMAS\""
+	Params Params "yaml:\"params\" env:\"DB_PARAMS\""
+	Pool Pool "yaml:\"pool\""
+	Migration Migration "yaml:\"migration\""
+	Replica *Config "yaml:\"replica\""
+	DSN Secret "yaml:\"dsn\" env:\"DB_DSN\""
+}
+func (*Config) ApplyEnvironment() error
+func (*Config) ApplyEnvironmentPrefix(string) error
+func (*Config) ReadReplica() (*Config, bool)
+func (*Config) Validate() error
+func (Config) Format(fmt.State, rune)
+func (Config) GoString() string
+func (Config) LogValue() log/slog.Value
+func (Config) String() string
+func DSN(*Config) (string, error)
+func DriverName(*Config) string
+type Engine string
+var ErrConflict error
+var ErrEngine error
+var ErrMissing error
+var ErrUnsupported error
+const MariaDB Engine = "mariadb"
+func MariaDBDSN(*Config) (string, error)
+type Migration struct {
+	Path string "yaml:\"path\" env:\"DB_MIGRATION_PATH\" env-default:\"./migrations\""
+	Models []string "yaml:\"models\" env:\"DB_MIGRATION_MODELS\" env-default:\".\""
+	Table string "yaml:\"table\" env:\"DB_MIGRATION_TABLE\" env-default:\"goose_db_version\""
+}
+func (*Migration) Validate() error
+func MustOpen(*Config) *database/sql.DB
+func MustOpenReadWrite(*Config) (*database/sql.DB, *database/sql.DB)
+const MySQL Engine = "mysql"
+func MySQLDSN(*Config) (string, error)
+func Open(*Config) (*database/sql.DB, error)
+func OpenReadWrite(*Config) (*database/sql.DB, *database/sql.DB, error)
+type Params map[string]string
+func (*Params) SetValue(string) error
+func (Params) Format(fmt.State, rune)
+func (Params) GoString() string
+func (Params) LogValue() log/slog.Value
+func (Params) MarshalJSON() ([]byte, error)
+func (Params) MarshalText() ([]byte, error)
+func (Params) MarshalYAML() (any, error)
+func (Params) String() string
+type Pool struct {
+	MaxOpen int "yaml:\"max_open\" env:\"DB_POOL_MAX_OPEN\""
+	MaxIdle int "yaml:\"max_idle\" env:\"DB_POOL_MAX_IDLE\""
+	MaxLifetime time.Duration "yaml:\"max_lifetime\" env:\"DB_POOL_MAX_LIFETIME\""
+	MaxIdleTime time.Duration "yaml:\"max_idle_time\" env:\"DB_POOL_MAX_IDLE_TIME\""
+	ConnectTimeout time.Duration "yaml:\"connect_timeout\" env:\"DB_POOL_CONNECT_TIMEOUT,DB_CONNECT_TIMEOUT\""
+}
+func (*Pool) Apply(*database/sql.DB) error
+func (*Pool) Validate() error
+const Postgres Engine = "postgres"
+func PostgresDSN(*Config) (string, error)
+func RedactError(string, error) error
+func RedactedDSN(*Config) (string, error)
+const SQLite Engine = "sqlite"
+func SQLiteDSN(*Config) (string, error)
+type SQLitePragmas []string
+func (*SQLitePragmas) SetValue(string) error
+func (SQLitePragmas) Validate() error
+type Secret string
+func (*Secret) SetValue(string) error
+func (*Secret) UnmarshalText([]byte) error
+func (Secret) Format(fmt.State, rune)
+func (Secret) GoString() string
+func (Secret) LogValue() log/slog.Value
+func (Secret) MarshalJSON() ([]byte, error)
+func (Secret) MarshalText() ([]byte, error)
+func (Secret) String() string
+```
+
+## github.com/frostgrove/vv/vvdb/lock
+```go
+var ErrDialectUnsupported error
+var ErrNoTransaction error
+func Exclusively(Key) Guard
+func For(github.com/frostgrove/vv/crud.Source, Policy) (*Locks, error)
+type Guard struct {
+	Key Key
+	Shared bool
+}
+type Key int64
+func KeyFrom(int64) Key
+func KeyOf(...string) Key
+type Locks struct {
+	<unexported fields>
+}
+func (*Locks) Guarded(context.Context, []Guard, func(ctx context.Context) error) error
+func (*Locks) Retry(context.Context, func(ctx context.Context) error) error
+func (*Locks) RetryCode(error) github.com/frostgrove/vv/errs.Code
+func (*Locks) Retryable(error) bool
+func (*Locks) Take(context.Context, github.com/frostgrove/vv/crud.Executor, ...Guard) error
+func (*Locks) TryTake(context.Context, github.com/frostgrove/vv/crud.Executor, Guard) (bool, error)
+type Policy struct {
+	Timeout time.Duration
+	Retries int
+}
+func Sharing(Key) Guard
+```
+
+## github.com/frostgrove/vv/vvdb/lock/locksql
+```go
+var ErrNotHeld error
+func Hold(context.Context, *database/sql.DB, github.com/frostgrove/vv/vvdb/lock.Key, func(*database/sql.Conn) error) error
+func In(*database/sql.Tx, github.com/frostgrove/vv/vvdb/lock.Policy) (*github.com/frostgrove/vv/vvdb/lock.Locks, github.com/frostgrove/vv/crud.Executor, error)
+func Take(context.Context, *database/sql.Tx, github.com/frostgrove/vv/vvdb/lock.Policy, ...github.com/frostgrove/vv/vvdb/lock.Guard) error
+func TryTake(context.Context, *database/sql.Tx, github.com/frostgrove/vv/vvdb/lock.Guard) (bool, error)
 ```
 
 ## github.com/frostgrove/vv/app/appfx
 ```go
-func AsSeeder(constructor any) any
-func Auto(catalog module.Catalog) fx.Option
-func Option(definition module.Definition, profile module.Profile) fx.Option
-func Options(catalog module.Catalog, profile module.Profile) fx.Option
-func Seeding(spec app.Seeding) fx.Option
-type Seeders struct{ ... }
+func AsSeeder(any) any
+func Auto(github.com/frostgrove/vv/app/module.Catalog) go.uber.org/fx.Option
+func Option(github.com/frostgrove/vv/app/module.Definition, github.com/frostgrove/vv/app/module.Profile) go.uber.org/fx.Option
+func Options(github.com/frostgrove/vv/app/module.Catalog, github.com/frostgrove/vv/app/module.Profile) go.uber.org/fx.Option
+type Seeders struct {
+	go.uber.org/fx.In
+	All []github.com/frostgrove/vv/app.Seeder "group:\"vv.app.seeders\""
+	Logger *log/slog.Logger "optional:\"true\""
+}
+func Seeding(github.com/frostgrove/vv/app.Seeding) go.uber.org/fx.Option
 ```
 
 ## github.com/frostgrove/vv/app/http/appfiber
 ```go
-const DefaultHealthPath = "/health"
-const OrderAuth = 100
-var ErrCombine = errors.New("routes cannot be contributed as one")
-var ErrRouteSet = errors.New("a route set was given an operation it cannot mount")
-var ErrUnchecked = errors.New("an operation declares a permission nothing in front of it checks")
-func AsMiddleware(constructor any) any
-func AsOperations(constructor any) any
-func AsResolver(constructor any) any
-func AsRoute(constructor any) any
-func Listen(lifecycle fx.Lifecycle, shutdowner fx.Shutdowner, fiberApp *fiber.App, ...)
-func Listening(spec Spec) fx.Option
-func Mount(fiberApp *fiber.App, mounted Mounted, prefix string) error
-func Mounting(spec Spec) fx.Option
-func NamingUnchecked(log *slog.Logger, unchecked []Unchecked) error
-func RefusingUnchecked(_ *slog.Logger, unchecked []Unchecked) error
-func Serving(spec Spec) fx.Option
-type HealthSpec struct{ ... }
-type Middleware = app.Ordered[fiber.Handler]
-    func Guarding(name string, guard *auth.Guard, options ...porthttp.RenderOption) Middleware
-type Mounted struct{ ... }
-type Operations interface{ ... }
-type Policy struct{ ... }
-    func Authenticated(why string) Policy
-    func Public(why string) Policy
-    func Requires(permissions ...auth.Permission) Policy
-type Resolvers struct{ ... }
-type RootRouteSetSpec struct{ ... }
-type Route interface{ ... }
-    func Combine(routes ...Route) (Route, error)
-    func Health(spec HealthSpec) (Route, error)
-    func MustCombine(routes ...Route) Route
-type RouteSet struct{ ... }
-    func MustRootRouteSet(spec RootRouteSetSpec) *RouteSet
-    func MustRouteSet(spec RouteSetSpec) *RouteSet
-    func NewRootRouteSet(spec RootRouteSetSpec) (*RouteSet, error)
-    func NewRouteSet(spec RouteSetSpec) (*RouteSet, error)
-    func RootRoutes(fiberApp *fiber.App, options ...porthttp.RenderOption) *RouteSet
-    func Routes(prefix string, options ...porthttp.RenderOption) *RouteSet
-type RouteSetSpec struct{ ... }
-type Spec struct{ ... }
-type Unchecked struct{ ... }
-type UncheckedRule func(log *slog.Logger, unchecked []Unchecked) error
-    func ExcusingUnchecked(reason string, contributors ...string) UncheckedRule
+func AsMiddleware(any) any
+func AsOperations(any) any
+func AsResolver(any) any
+func AsRoute(any) any
+func Authenticated(string) Policy
+func Combine(...Route) (Route, error)
+const DefaultHealthPath untyped string = "/health"
+var ErrCombine error
+var ErrRouteSet error
+var ErrUnchecked error
+func ExcusingUnchecked(string, ...string) UncheckedRule
+func Guarding(string, *github.com/frostgrove/vv/auth.Guard, ...github.com/frostgrove/vv/port/porthttp.RenderOption) Middleware
+func Health(HealthSpec) (Route, error)
+type HealthSpec struct {
+	Registry *github.com/frostgrove/vv/health.Registry
+	Path string
+	Operator []github.com/frostgrove/vv/auth.Permission
+	Render []github.com/frostgrove/vv/port/porthttp.RenderOption
+}
+func Listen(go.uber.org/fx.Lifecycle, go.uber.org/fx.Shutdowner, *github.com/gofiber/fiber/v3.App, Spec, *log/slog.Logger)
+func Listening(Spec) go.uber.org/fx.Option
+type Middleware = github.com/frostgrove/vv/app.Ordered[github.com/gofiber/fiber/v3.Handler]
+func Mount(*github.com/gofiber/fiber/v3.App, Mounted, string) error
+type Mounted struct {
+	go.uber.org/fx.In
+	Routes []Route "group:\"vv.appfiber.routes\""
+	Operations []Operations "group:\"vv.appfiber.operations\""
+	Middlewares []Middleware "group:\"vv.appfiber.middleware\""
+	Unchecked UncheckedRule "optional:\"true\""
+	Logger *log/slog.Logger "optional:\"true\""
+}
+func (Mounted) Contributions() ([]Route, error)
+func Mounting(Spec) go.uber.org/fx.Option
+func MustCombine(...Route) Route
+func MustRootRouteSet(RootRouteSetSpec) *RouteSet
+func MustRouteSet(RouteSetSpec) *RouteSet
+func NamingUnchecked(*log/slog.Logger, []Unchecked) error
+func NewRootRouteSet(RootRouteSetSpec) (*RouteSet, error)
+func NewRouteSet(RouteSetSpec) (*RouteSet, error)
+type Operations interface {
+	Operations() *RouteSet
+}
+const OrderAuth untyped int = 100
+type Policy struct {
+	<unexported fields>
+}
+func Public(string) Policy
+func RefusingUnchecked(*log/slog.Logger, []Unchecked) error
+func Requires(...github.com/frostgrove/vv/auth.Permission) Policy
+type Resolvers struct {
+	go.uber.org/fx.In
+	All []github.com/frostgrove/vv/errs.Resolver "group:\"vv.appfiber.resolvers\""
+}
+type RootRouteSetSpec struct {
+	App *github.com/gofiber/fiber/v3.App
+	Render []github.com/frostgrove/vv/port/porthttp.RenderOption
+}
+func RootRoutes(*github.com/gofiber/fiber/v3.App, ...github.com/frostgrove/vv/port/porthttp.RenderOption) *RouteSet
+type Route interface {
+	Access() []github.com/frostgrove/vv/auth/http/authhttp.Endpoint
+	Mount(github.com/gofiber/fiber/v3.Router)
+}
+type RouteSet struct {
+	<unexported fields>
+}
+func (*RouteSet) DELETE(string, Policy, github.com/gofiber/fiber/v3.Handler) *RouteSet
+func (*RouteSet) GET(string, Policy, github.com/gofiber/fiber/v3.Handler) *RouteSet
+func (*RouteSet) Handle(string, string, Policy, github.com/gofiber/fiber/v3.Handler) *RouteSet
+func (*RouteSet) MustRoute() Route
+func (*RouteSet) PATCH(string, Policy, github.com/gofiber/fiber/v3.Handler) *RouteSet
+func (*RouteSet) POST(string, Policy, github.com/gofiber/fiber/v3.Handler) *RouteSet
+func (*RouteSet) PUT(string, Policy, github.com/gofiber/fiber/v3.Handler) *RouteSet
+func (*RouteSet) Route() (Route, error)
+type RouteSetSpec struct {
+	Prefix string
+	Render []github.com/frostgrove/vv/port/porthttp.RenderOption
+}
+func Routes(string, ...github.com/frostgrove/vv/port/porthttp.RenderOption) *RouteSet
+func Serving(Spec) go.uber.org/fx.Option
+type Spec struct {
+	Prefix string
+	Addr string
+	Listen github.com/gofiber/fiber/v3.ListenConfig
+}
+type Unchecked struct {
+	Contributor string
+	Method string
+	Path string
+	Needs []github.com/frostgrove/vv/auth.Permission
+}
+func (Unchecked) String() string
+type UncheckedRule func(log *log/slog.Logger, unchecked []Unchecked) error
 ```
 
 ## github.com/frostgrove/vv/audit/auditpg
 ```go
-const DefaultSchema = "frostgrove_audit" ...
-var ErrSpec = errors.New("auditpg: invalid store specification") ...
-func MigrationStatements(schema Schema) ([]string, error)
-type Deployment struct{ ... }
-    func NewDeployment(spec DeploymentSpec) (*Deployment, error)
-type DeploymentSpec struct{ ... }
-type Schema struct{ ... }
+const DefaultSchema untyped string = "frostgrove_audit"
+type Deployment struct {
+	<unexported fields>
+}
+func (*Deployment) ActivateCatalog(context.Context, github.com/frostgrove/vv/audit.CatalogRef, github.com/frostgrove/vv/audit.CatalogRef, github.com/frostgrove/vv/audit.CatalogChangeRef, github.com/frostgrove/vv/audit.CatalogActivationProof) error
+func (*Deployment) Backing() github.com/frostgrove/vv/audit.Backing
+func (*Deployment) BackingID() github.com/frostgrove/vv/audit.BackingID
+func (*Deployment) Capabilities() github.com/frostgrove/vv/audit.Capabilities
+func (*Deployment) CatalogMutations(context.Context) (github.com/frostgrove/vv/audit.CatalogMutationLog, error)
+func (*Deployment) Catalogs() github.com/frostgrove/vv/audit.StoreCatalogState
+func (*Deployment) Close() error
+func (*Deployment) InstallCatalog(context.Context, github.com/frostgrove/vv/audit.Manifest, github.com/frostgrove/vv/audit.CatalogChangeRef) error
+func (*Deployment) Limits() github.com/frostgrove/vv/audit.Limits
+func (*Deployment) LogID() github.com/frostgrove/vv/audit.LogID
+func (*Deployment) Migrate(context.Context) error
+func (*Deployment) Prepare(context.Context) error
+func (*Deployment) Schema() Schema
+func (*Deployment) SchemaManagement() SchemaManagement
+func (*Deployment) Verify(context.Context) error
+func (*Deployment) VerifyCatalogs(context.Context, []github.com/frostgrove/vv/audit.Manifest) error
+type DeploymentSpec struct {
+	Runtime Spec
+	SchemaManagement SchemaManagement
+}
+var ErrNotReady error
+var ErrSchemaMismatch error
+var ErrSpec error
+const ManageSchema SchemaManagement = 2
+func MigrationStatements(Schema) ([]string, error)
+func New(Spec) (*Store, error)
+func NewDeployment(DeploymentSpec) (*Deployment, error)
+type Schema struct {
+	Name string
+}
+func (Schema) Fingerprint() (string, error)
+func (Schema) Resolved() (Schema, error)
 type SchemaManagement uint8
-    const UnsetSchemaManagement SchemaManagement = iota ...
-type Spec struct{ ... }
-type Store struct{ ... }
-    func New(spec Spec) (*Store, error)
+func (SchemaManagement) String() string
+func (SchemaManagement) Valid() bool
+const SchemaVersion untyped int = 2
+type Spec struct {
+	DB *database/sql.DB
+	Source github.com/frostgrove/vv/crud.Source
+	Schema Schema
+	Limits github.com/frostgrove/vv/audit.LimitSpec
+}
+type Store struct {
+	<unexported fields>
+}
+func (*Store) Append(context.Context, github.com/frostgrove/vv/audit.AppendRequest) (github.com/frostgrove/vv/audit.AppendResult, error)
+func (*Store) AttemptState(context.Context, github.com/frostgrove/vv/audit.AttemptStateQuery) (github.com/frostgrove/vv/audit.AttemptStateResult, error)
+func (*Store) AttemptTypeState(context.Context, github.com/frostgrove/vv/audit.AttemptTypeStateQuery) (github.com/frostgrove/vv/audit.AttemptTypeStateResult, error)
+func (*Store) Backing() github.com/frostgrove/vv/audit.Backing
+func (*Store) BackingID() github.com/frostgrove/vv/audit.BackingID
+func (*Store) BindTransaction(github.com/frostgrove/vv/crud.Executor) (github.com/frostgrove/vv/audit.Execution, error)
+func (*Store) Capabilities() github.com/frostgrove/vv/audit.Capabilities
+func (*Store) Catalogs() github.com/frostgrove/vv/audit.StoreCatalogState
+func (*Store) Check(context.Context) error
+func (*Store) Close() error
+func (*Store) Inspect(context.Context, github.com/frostgrove/vv/audit.ExactQuery) (github.com/frostgrove/vv/audit.ExactResult, error)
+func (*Store) Limits() github.com/frostgrove/vv/audit.Limits
+func (*Store) LockAttemptType(context.Context, github.com/frostgrove/vv/audit.AttemptTypeStateQuery) (github.com/frostgrove/vv/audit.AttemptTypeLease, error)
+func (*Store) LogID() github.com/frostgrove/vv/audit.LogID
+func (*Store) Lookup(context.Context, github.com/frostgrove/vv/audit.LookupRequest) (github.com/frostgrove/vv/audit.LookupResult, error)
+func (*Store) LookupIdempotency(context.Context, github.com/frostgrove/vv/audit.IdempotencyLookupRequest) (github.com/frostgrove/vv/audit.IdempotencyLookupResult, error)
+func (*Store) Schema() Schema
+func (*Store) Search(context.Context, github.com/frostgrove/vv/audit.StoreQuery) (github.com/frostgrove/vv/audit.StoredPage, error)
+func (*Store) TransactionSource() any
+const UnsetSchemaManagement SchemaManagement = 0
+const VerifySchema SchemaManagement = 1
 ```
 
 ## github.com/frostgrove/vv/auth/access
 ```go
-const PermRoleRead auth.Permission = "role.read" ...
-const AttrSubjectID = "subject_id" ...
-const DefaultSessionTTL = 30 * 24 * time.Hour ...
-const CodeBadCredentials errs.Code = "bad_credentials" ...
-const CodeTooManyAttempts errs.Code = "too_many_attempts" ...
-const DefaultAttemptsPerIdentifier = 10 ...
-const ReasonSignedOut = "signed out" ...
-const CodeUnknownRole errs.Code = "unknown_role" ...
-const CodeSystemRole errs.Code = "system_role"
-const CodeUnknownSubjectType errs.Code = "unknown_subject_type"
-const MaxUserAgent = 256
-const ProviderPassword = "password"
-const RoleAdmin auth.Role = "admin"
-const TokenBytes = 32
-var RolePaths = port.Paths[Role]().MustBuild() ...
-var AuthBodyPaths = port.Fields{ ... }
-var CredentialRepository = sqlrepo.Define[Credential, uuid.UUID, CredentialUpdate]("")
-var Credential_ = specs.Metamodel[Credential, CredentialAttrs]()
-var ErrNoRefresh = errors.New("access: this subject's strategy does not rotate")
-var ErrSecretFormat = errors.New("access: unreadable password hash")
-var PermissionRepository = sqlrepo.Define[Permission, uuid.UUID, PermissionUpdate]("")
-var Permission_ = specs.Metamodel[Permission, PermissionAttrs]()
-var RolePermissionRepository = sqlrepo.Define[RolePermission, uuid.UUID, RolePermissionUpdate]("")
-var RolePermission_ = specs.Metamodel[RolePermission, RolePermissionAttrs]()
-var RoleRepository = sqlrepo.Define[Role, uuid.UUID, RoleUpdate]("")
-var Role_ = specs.Metamodel[Role, RoleAttrs]()
-var SessionRepository = sqlrepo.Define[Session, uuid.UUID, SessionUpdate]("")
-var Session_ = specs.Metamodel[Session, SessionAttrs]()
-var SubjectDefaultRoleRepository = sqlrepo.Define[SubjectDefaultRole, uuid.UUID, SubjectDefaultRoleUpdate]("")
-var SubjectDefaultRole_ = specs.Metamodel[SubjectDefaultRole, SubjectDefaultRoleAttrs]()
-var SubjectPermissionRepository = sqlrepo.Define[SubjectPermission, uuid.UUID, SubjectPermissionUpdate]("")
-var SubjectPermission_ = specs.Metamodel[SubjectPermission, SubjectPermissionAttrs]()
-var SubjectRoleRepository = sqlrepo.Define[SubjectRole, uuid.UUID, SubjectRoleUpdate]("")
-var SubjectRole_ = specs.Metamodel[SubjectRole, SubjectRoleAttrs]()
-func BadSessionID(raw string) error
-func DummyHash() string
-func HashToken(token string) string
-func IsNotFound(err error) bool
-func Mount[P any](runtime *Runtime, spec SubjectSpec[P]) (*MountedSubject, *SignUpUseCase[P], error)
-func NewGuard(authenticator *SessionAuthenticator) *auth.Guard
-func NewPermissionService(store *Store) *port.DefaultService[Permission, uuid.UUID, PermissionUpdate]
-func NewToken() (string, error)
-func OfSubject(ref SubjectRef) crud.Option
-func Overloaded() error
-func PermissionPolicy() security.Policy[Permission, uuid.UUID]
-func PermissionQuery() *query.Config
-func RolePolicy() security.Policy[Role, uuid.UUID]
-func RoleQuery() *query.Config
-func Slugify(input string) string
-func Sync(ctx context.Context, store *Store, declared []ModuleGrants, ...) error
-func TooManyAttempts() error
-type Agent struct{ ... }
-type Argon2Hasher struct{ ... }
-    func NewHasher() *Argon2Hasher
-type AttachPermissionCommand struct{ ... }
-type Attempt struct{ ... }
-type AttemptLimiter interface{ ... }
-type AttemptObserver interface{ ... }
+type Agent struct {
+	UserAgent string
+	IP string
+}
+func (Agent) Truncated() Agent
+type Argon2Hasher struct {
+	Time uint32
+	Memory uint32
+	Threads uint8
+	KeyLen uint32
+}
+func (*Argon2Hasher) Hash(string) (string, error)
+func (*Argon2Hasher) NeedsRehash(string) bool
+func (*Argon2Hasher) Verify(string, string) (bool, error)
+type AttachPermissionCommand struct {
+	Role github.com/google/uuid.UUID
+	Permission github.com/frostgrove/vv/auth.Permission
+}
+type Attempt struct {
+	Subject SubjectType
+	Identifier string
+	IP string
+}
+const AttemptFailed AttemptOutcome = "failed"
+type AttemptLimiter interface {
+	Admit(context.Context, Attempt) error
+	Record(context.Context, Attempt, AttemptOutcome) error
+}
+type AttemptObserver interface {
+	AttemptObserved(context.Context, Attempt, AttemptOutcome)
+}
 type AttemptOutcome string
-    const AttemptSucceeded AttemptOutcome = "succeeded" ...
-type AttemptPolicy struct{ ... }
-type AuthResponse struct{ ... }
-type BulkheadHasher struct{ ... }
-    func Bulkhead(inner Hasher) *BulkheadHasher
-    func NewBulkhead(inner Hasher, permits, queue int) *BulkheadHasher
-type ChangePasswordCommand struct{ ... }
-type ChangePasswordUseCase struct{ ... }
-    func NewChangePassword(dependencies *Deps) *ChangePasswordUseCase
-type ChangeSecretRequest struct{ ... }
+type AttemptPolicy struct {
+	MaxPerIdentifier int
+	MaxPerIP int
+	Window time.Duration
+	LockFor time.Duration
+	Now func() time.Time
+}
+const AttemptRefused AttemptOutcome = "refused"
+const AttemptSucceeded AttemptOutcome = "succeeded"
+const AttrSessionID untyped string = "session_id"
+const AttrSubjectID untyped string = "subject_id"
+const AttrSubjectType untyped string = "subject_type"
+var AuthBodyPaths github.com/frostgrove/vv/port.Fields
+type AuthResponse struct {
+	Token string "json:\"token,omitzero\""
+	ExpiresAt time.Time "json:\"expiresAt,omitzero\""
+	Refresh string "json:\"refresh,omitzero\""
+	RefreshExpiresAt time.Time "json:\"refreshExpiresAt,omitzero\""
+	Principal PrincipalDto "json:\"principal\""
+}
+func BadSessionID(string) error
+func Bulkhead(Hasher) *BulkheadHasher
+type BulkheadHasher struct {
+	<unexported fields>
+}
+func (*BulkheadHasher) Hash(string) (string, error)
+func (*BulkheadHasher) Unwrap() Hasher
+func (*BulkheadHasher) Verify(string, string) (bool, error)
+type ChangePasswordCommand struct {
+	Subject SubjectRef
+	Current string
+	New string
+	Agent Agent
+	RevokeOthers bool
+	Keep github.com/google/uuid.UUID
+}
+type ChangePasswordUseCase struct {
+	*Deps
+}
+func (*ChangePasswordUseCase) Execute(context.Context, ChangePasswordCommand) (int64, error)
+func (ChangePasswordUseCase) DefaultRole(context.Context, SubjectType) (*Role, error)
+func (ChangePasswordUseCase) Now() time.Time
+func (ChangePasswordUseCase) ReannounceRevocations(context.Context, time.Time) error
+type ChangeSecretRequest struct {
+	Current string "json:\"current\""
+	New string "json:\"new\""
+	RevokeOthers bool "json:\"revokeOthers\""
+}
 type Clock func() time.Time
-type Config struct{ ... }
-type Credential struct{ ... }
-type CredentialAttrs struct{ ... }
-type CredentialRepo = crud.Repo[Credential, uuid.UUID, CredentialUpdate]
-    func NewCredentialRepository(src crud.Source) *CredentialRepo
-type CredentialUpdate struct{ ... }
-type Deps struct{ ... }
+const CodeBadCredentials github.com/frostgrove/vv/errs.Code = "bad_credentials"
+const CodeOverloaded github.com/frostgrove/vv/errs.Code = "overloaded"
+const CodeSystemRole github.com/frostgrove/vv/errs.Code = "system_role"
+const CodeTooManyAttempts github.com/frostgrove/vv/errs.Code = "too_many_attempts"
+const CodeUnknownPermission github.com/frostgrove/vv/errs.Code = "unknown_permission"
+const CodeUnknownRole github.com/frostgrove/vv/errs.Code = "unknown_role"
+const CodeUnknownSubjectType github.com/frostgrove/vv/errs.Code = "unknown_subject_type"
+const CodeWeakPassword github.com/frostgrove/vv/errs.Code = "weak_password"
+type Config struct {
+	Session SessionConfig "yaml:\"session\""
+	Password PasswordConfig "yaml:\"password\""
+	Login LoginConfig "yaml:\"login\""
+	Clock Clock "yaml:\"-\""
+}
+func (Config) MaxIdentifierLength() int
+func (Config) MaxPasswordLength() int
+func (Config) MinPasswordLength() int
+func (Config) Now() time.Time
+func (Config) Sessions() SessionConfig
+type Credential struct {
+	ID github.com/google/uuid.UUID "db:\"id,pk,auto\" json:\"id\""
+	SubjectType string "json:\"subjectType\""
+	SubjectID github.com/google/uuid.UUID "json:\"subjectId\""
+	Provider string "json:\"provider\""
+	Identifier string "json:\"identifier\""
+	SecretHash string "db:\"secret_hash\" json:\"-\""
+	CreatedAt time.Time "db:\"created_at,generated\" json:\"createdAt\""
+	UpdatedAt time.Time "db:\"updated_at,generated\" json:\"updatedAt\""
+}
+type CredentialAttrs struct {
+	ID github.com/frostgrove/vv/crud/decorators/specs.Attr[Credential, github.com/google/uuid.UUID]
+	SubjectType github.com/frostgrove/vv/crud/decorators/specs.Str[Credential]
+	SubjectID github.com/frostgrove/vv/crud/decorators/specs.Attr[Credential, github.com/google/uuid.UUID]
+	Provider github.com/frostgrove/vv/crud/decorators/specs.Str[Credential]
+	Identifier github.com/frostgrove/vv/crud/decorators/specs.Str[Credential]
+	SecretHash github.com/frostgrove/vv/crud/decorators/specs.Str[Credential]
+	CreatedAt github.com/frostgrove/vv/crud/decorators/specs.Cmp[Credential, time.Time]
+	UpdatedAt github.com/frostgrove/vv/crud/decorators/specs.Cmp[Credential, time.Time]
+}
+type CredentialRepo = github.com/frostgrove/vv/crud.Repo[Credential, github.com/google/uuid.UUID, CredentialUpdate]
+func (*CredentialRepo) Create(context.Context, *Credential) (Credential, error)
+func (*CredentialRepo) InsertBatch(context.Context, []*Credential, ...github.com/frostgrove/vv/crud.BatchOption) error
+func (*CredentialRepo) Replace(context.Context, *Credential) (Credential, error)
+func (*CredentialRepo) Restore(context.Context, ...github.com/google/uuid.UUID) (int64, error)
+func (*CredentialRepo) SupportsRestore() bool
+func (*CredentialRepo) Unwrap() github.com/frostgrove/vv/crud.Core[Credential, github.com/google/uuid.UUID]
+func (*CredentialRepo) Update(context.Context, github.com/google/uuid.UUID, CredentialUpdate, ...github.com/frostgrove/vv/crud.Option) (Credential, error)
+func (*CredentialRepo) UpdateAll(context.Context, CredentialUpdate, ...github.com/frostgrove/vv/crud.Option) (int64, error)
+func (CredentialRepo) Aggregate(context.Context, ...github.com/frostgrove/vv/crud.Option) ([]github.com/frostgrove/vv/crud.AggregateRow, error)
+func (CredentialRepo) Count(context.Context, ...github.com/frostgrove/vv/crud.Option) (int64, error)
+func (CredentialRepo) Delete(context.Context, ...github.com/google/uuid.UUID) (int64, error)
+func (CredentialRepo) DeleteAll(context.Context, ...github.com/frostgrove/vv/crud.Option) (int64, error)
+func (CredentialRepo) Exists(context.Context, ...github.com/frostgrove/vv/crud.Option) (bool, error)
+func (CredentialRepo) First(context.Context, ...github.com/frostgrove/vv/crud.Option) (Credential, error)
+func (CredentialRepo) Get(context.Context, ...github.com/frostgrove/vv/crud.Option) (github.com/frostgrove/vv/crud.PaginatedResponse[Credential], error)
+func (CredentialRepo) GetAll(context.Context, ...github.com/frostgrove/vv/crud.Option) ([]Credential, error)
+func (CredentialRepo) GetByID(context.Context, github.com/google/uuid.UUID, ...github.com/frostgrove/vv/crud.Option) (Credential, error)
+func (CredentialRepo) Meta() *github.com/frostgrove/vv/crud.Meta
+func (CredentialRepo) Save(context.Context, *Credential) (Credential, error)
+func (CredentialRepo) SaveAll(context.Context, []*Credential) error
+func (CredentialRepo) SaveOnly(context.Context, *Credential) error
+func (CredentialRepo) Tx(context.Context, func(context.Context) error) error
+var CredentialRepository *github.com/frostgrove/vv/crud/sqlrepo.Blueprint[Credential, github.com/google/uuid.UUID, CredentialUpdate]
+type CredentialUpdate struct {
+	SubjectType *string "json:\"subjectType,omitempty\""
+	SubjectID *github.com/google/uuid.UUID "json:\"subjectID,omitempty\""
+	Provider *string "json:\"provider,omitempty\""
+	Identifier *string "json:\"identifier,omitempty\""
+	SecretHash *string "json:\"secretHash,omitempty\""
+}
+var Credential_ CredentialAttrs
+const DefaultAttemptLock time.Duration = 900000000000
+const DefaultAttemptWindow time.Duration = 900000000000
+const DefaultAttemptsPerIP untyped int = 50
+const DefaultAttemptsPerIdentifier untyped int = 10
+const DefaultIdleTTL time.Duration = 604800000000000
+const DefaultMaxIdentifierLength untyped int = 320
+const DefaultMaxPasswordLength untyped int = 256
+func DefaultMemoryLimiter() *MemoryLimiter
+const DefaultMinPasswordLength untyped int = 10
+const DefaultSessionTTL time.Duration = 2592000000000000
+const DefaultTouchInterval time.Duration = 300000000000
+type Deps struct {
+	Store *Store
+	Grants *GrantsService
+	Hasher Hasher
+	Config Config
+	Log *log/slog.Logger
+	<unexported fields>
+}
+func (*Deps) DefaultRole(context.Context, SubjectType) (*Role, error)
+func (*Deps) Now() time.Time
+func (*Deps) ReannounceRevocations(context.Context, time.Time) error
 type Directories map[SubjectType]Directory
-    func MustDirectories(all ...Directory) Directories
-    func NewDirectories(all ...Directory) (Directories, error)
-type Directory interface{ ... }
-type DirectoryLookup interface{ ... }
-type Endpoints struct{ ... }
-type EnrollCommand struct{ ... }
-type EnrollUseCase struct{ ... }
-    func NewEnroll(dependencies *Deps) *EnrollUseCase
-type GrantPermissionCommand struct{ ... }
-type GrantRoleCommand struct{ ... }
-type GrantService struct{ ... }
-    func NewGrantService(store *Store) *GrantService
-    func NewUnguardedGrantService(store *Store) *GrantService
-type Grants interface{ ... }
-type GrantsDto struct{ ... }
-type GrantsService struct{ ... }
-    func NewGrants(store *Store, directories Directories) *GrantsService
-type Hasher interface{ ... }
-type Issued struct{ ... }
-type LoginCommand struct{ ... }
-type LoginConfig struct{ ... }
-type LoginUseCase struct{ ... }
-    func NewLogin(dependencies *Deps) *LoginUseCase
-type LogoutAllCommand struct{ ... }
-type LogoutAllUseCase struct{ ... }
-    func NewLogoutAll(dependencies *Deps) *LogoutAllUseCase
-type LogoutCommand struct{ ... }
-type LogoutResponse struct{ ... }
-type LogoutUseCase struct{ ... }
-    func NewLogout(dependencies *Deps) *LogoutUseCase
-type MemoryLimiter struct{ ... }
-    func DefaultMemoryLimiter() *MemoryLimiter
-    func NewMemoryLimiter(policy AttemptPolicy) *MemoryLimiter
-type ModuleGrants struct{ ... }
-    func OwnGrants() ModuleGrants
-type MountedSubject struct{ ... }
-type OpenSessionCommand struct{ ... }
-type PasswordConfig struct{ ... }
-type Permission struct{ ... }
-type PermissionAttrs struct{ ... }
-type PermissionDef struct{ ... }
-type PermissionRepo = crud.Repo[Permission, uuid.UUID, PermissionUpdate]
-    func NewPermissionRepository(src crud.Source) *PermissionRepo
-type PermissionUpdate struct{ ... }
-type Principal struct{ ... }
-    func PrincipalFrom(ctx context.Context) (*Principal, bool)
-    func Require(ctx context.Context, permissions ...auth.Permission) (*Principal, error)
-    func RequirePrincipal(ctx context.Context) (*Principal, error)
-type PrincipalDto struct{ ... }
-    func NewPrincipalDto(principal *Principal) PrincipalDto
-type Profile struct{ ... }
-type Protection struct{ ... }
-type RefreshRequest struct{ ... }
-type Registrar[P any] interface{ ... }
-type Rehasher interface{ ... }
-    func RehasherOf(hasher Hasher) (Rehasher, bool)
-type RevocationSink interface{ ... }
-type Role struct{ ... }
-type RoleAttrs struct{ ... }
-type RolePermission struct{ ... }
-type RolePermissionAttrs struct{ ... }
-type RolePermissionRepo = crud.Repo[RolePermission, uuid.UUID, RolePermissionUpdate]
-    func NewRolePermissionRepository(src crud.Source) *RolePermissionRepo
-type RolePermissionUpdate struct{ ... }
-type RolePermissionsAttrs struct{ ... }
-type RoleRepo = crud.Repo[Role, uuid.UUID, RoleUpdate]
-    func NewRoleRepository(src crud.Source) *RoleRepo
-type RoleService struct{ ... }
-    func NewRoleService(store *Store) *RoleService
-type RoleSpec struct{ ... }
-type RoleUpdate struct{ ... }
-type Runtime struct{ ... }
-    func New(spec RuntimeSpec) (*Runtime, error)
-type RuntimeSpec struct{ ... }
-type Seeder struct{ ... }
-    func NewSeeder(store *Store, logger *slog.Logger) *Seeder
-type Session struct{ ... }
-type SessionAttrs struct{ ... }
-type SessionAuthenticator struct{ ... }
-    func NewAuthenticator(store *Store, grants *GrantsService, configuration Config, logger *slog.Logger) *SessionAuthenticator
-type SessionConfig struct{ ... }
-type SessionDto struct{ ... }
-    func NewSessionDto(session Session, current uuid.UUID) SessionDto
-type SessionIssuer interface{ ... }
-type SessionRefresher interface{ ... }
-type SessionRepo = crud.Repo[Session, uuid.UUID, SessionUpdate]
-    func NewSessionRepository(src crud.Source) *SessionRepo
-type SessionUpdate struct{ ... }
-type SetPasswordCommand struct{ ... }
-type SetPasswordUseCase struct{ ... }
-    func NewSetPassword(dependencies *Deps) *SetPasswordUseCase
-type SignInRequest struct{ ... }
-type SignUpUseCase[P any] struct{ ... }
-    func NewSignUp[P any](dependencies *Deps, subject Subject, issuer SessionIssuer, ...) *SignUpUseCase[P]
-type Store struct{ ... }
-    func NewStore(src crud.Source) *Store
-type Strategy interface{ ... }
-    func OpaqueToken() Strategy
-type StrategyDeps struct{ ... }
-type Subject struct{ ... }
-type SubjectDefaultRole struct{ ... }
-type SubjectDefaultRoleAttrs struct{ ... }
-type SubjectDefaultRoleRepo = crud.Repo[SubjectDefaultRole, uuid.UUID, SubjectDefaultRoleUpdate]
-    func NewSubjectDefaultRoleRepository(src crud.Source) *SubjectDefaultRoleRepo
-type SubjectDefaultRoleRoleAttrs struct{ ... }
-type SubjectDefaultRoleUpdate struct{ ... }
-type SubjectPermission struct{ ... }
-type SubjectPermissionAttrs struct{ ... }
-type SubjectPermissionPermissionAttrs struct{ ... }
-type SubjectPermissionRepo = crud.Repo[SubjectPermission, uuid.UUID, SubjectPermissionUpdate]
-    func NewSubjectPermissionRepository(src crud.Source) *SubjectPermissionRepo
-type SubjectPermissionUpdate struct{ ... }
-type SubjectRef struct{ ... }
-    func SubjectParam(rawType, rawID string, directories DirectoryLookup) (SubjectRef, error)
-type SubjectRole struct{ ... }
-type SubjectRoleAttrs struct{ ... }
-type SubjectRoleRepo = crud.Repo[SubjectRole, uuid.UUID, SubjectRoleUpdate]
-    func NewSubjectRoleRepository(src crud.Source) *SubjectRoleRepo
-type SubjectRoleRoleAttrs struct{ ... }
-type SubjectRoleUpdate struct{ ... }
-type SubjectSpec[P any] struct{ ... }
+func (Directories) Directory(SubjectType) (Directory, bool)
+type Directory interface {
+	Active(context.Context, github.com/google/uuid.UUID) (bool, error)
+	Describe(context.Context, github.com/google/uuid.UUID) (Profile, error)
+	SubjectType() SubjectType
+	Touch(context.Context, github.com/google/uuid.UUID) error
+}
+type DirectoryLookup interface {
+	Directory(SubjectType) (Directory, bool)
+}
+func DummyHash() string
+type Endpoints struct {
+	<unexported fields>
+}
+func (Endpoints) ChangeSecret(context.Context, ChangeSecretRequest, Agent) (LogoutResponse, error)
+func (Endpoints) KillSession(context.Context, string) error
+func (Endpoints) ListSessions(context.Context) ([]SessionDto, error)
+func (Endpoints) Refresh(context.Context, RefreshRequest, Agent) (AuthResponse, error)
+func (Endpoints) SignIn(context.Context, SignInRequest, Agent) (AuthResponse, error)
+func (Endpoints) SignOut(context.Context) (LogoutResponse, error)
+func (Endpoints) SignOutAll(context.Context, bool) (LogoutResponse, error)
+func (Endpoints) Subject() Subject
+func (Endpoints) WhoAmI(context.Context) (PrincipalDto, error)
+type EnrollCommand struct {
+	Subject SubjectRef
+	Identifier string
+	Password string
+	Role github.com/frostgrove/vv/auth.Role
+}
+type EnrollUseCase struct {
+	*Deps
+}
+func (*EnrollUseCase) Execute(context.Context, EnrollCommand) error
+func (EnrollUseCase) DefaultRole(context.Context, SubjectType) (*Role, error)
+func (EnrollUseCase) Now() time.Time
+func (EnrollUseCase) ReannounceRevocations(context.Context, time.Time) error
+var ErrNoRefresh error
+var ErrSecretFormat error
+type GrantPermissionCommand struct {
+	Subject SubjectRef
+	Permission github.com/frostgrove/vv/auth.Permission
+}
+type GrantRoleCommand struct {
+	Subject SubjectRef
+	Role github.com/frostgrove/vv/auth.Role
+}
+type GrantService struct {
+	<unexported fields>
+}
+func (*GrantService) AttachToRole(context.Context, AttachPermissionCommand) error
+func (*GrantService) Describe(context.Context, *GrantsService, SubjectRef) (GrantsDto, error)
+func (*GrantService) DetachFromRole(context.Context, AttachPermissionCommand) error
+func (*GrantService) GrantPermission(context.Context, GrantPermissionCommand) error
+func (*GrantService) GrantRole(context.Context, GrantRoleCommand) error
+func (*GrantService) RevokePermission(context.Context, GrantPermissionCommand) error
+func (*GrantService) RevokeRole(context.Context, GrantRoleCommand) error
+type Grants interface {
+	For(context.Context, SubjectRef) (*Principal, error)
+}
+type GrantsDto struct {
+	Subject SubjectRef "json:\"subject\""
+	Roles []string "json:\"roles\""
+	DirectPermissions []string "json:\"directPermissions\""
+	Effective []string "json:\"effective\""
+}
+type GrantsService struct {
+	<unexported fields>
+}
+func (*GrantsService) Directory(SubjectType) (Directory, bool)
+func (*GrantsService) For(context.Context, SubjectRef) (*Principal, error)
+func HashToken(string) string
+type Hasher interface {
+	Hash(string) (string, error)
+	Verify(string, string) (bool, error)
+}
+func IsNotFound(error) bool
+type Issued struct {
+	Issuer SessionIssuer
+	Authenticator github.com/frostgrove/vv/auth.Authenticator
+	Refresher SessionRefresher
+	Revocations RevocationSink
+}
+type LoginCommand struct {
+	Subject SubjectType
+	Identifier string
+	Password string
+	Agent Agent
+}
+type LoginConfig struct {
+	MaxIdentifierLength int "yaml:\"max_identifier_length\" env:\"ACCESS_LOGIN_MAX_IDENTIFIER_LENGTH\" env-default:\"320\""
+}
+type LoginUseCase struct {
+	*Deps
+	<unexported fields>
+}
+func (*LoginUseCase) Execute(context.Context, LoginCommand) (AuthResponse, error)
+func (*LoginUseCase) Issuing(SessionIssuer) *LoginUseCase
+func (LoginUseCase) DefaultRole(context.Context, SubjectType) (*Role, error)
+func (LoginUseCase) Now() time.Time
+func (LoginUseCase) ReannounceRevocations(context.Context, time.Time) error
+type LogoutAllCommand struct {
+	Subject SubjectRef
+	Except github.com/google/uuid.UUID
+}
+type LogoutAllUseCase struct {
+	*Deps
+}
+func (*LogoutAllUseCase) Execute(context.Context, LogoutAllCommand) (int64, error)
+func (*LogoutAllUseCase) RevokeOne(context.Context, SubjectRef, github.com/google/uuid.UUID) (int64, error)
+func (LogoutAllUseCase) DefaultRole(context.Context, SubjectType) (*Role, error)
+func (LogoutAllUseCase) Now() time.Time
+func (LogoutAllUseCase) ReannounceRevocations(context.Context, time.Time) error
+type LogoutCommand struct {
+	SessionID github.com/google/uuid.UUID
+}
+type LogoutResponse struct {
+	Revoked int64 "json:\"revoked\""
+}
+type LogoutUseCase struct {
+	*Deps
+}
+func (*LogoutUseCase) Execute(context.Context, LogoutCommand) (int64, error)
+func (LogoutUseCase) DefaultRole(context.Context, SubjectType) (*Role, error)
+func (LogoutUseCase) Now() time.Time
+func (LogoutUseCase) ReannounceRevocations(context.Context, time.Time) error
+const MaxUserAgent untyped int = 256
+type MemoryLimiter struct {
+	<unexported fields>
+}
+func (*MemoryLimiter) Admit(context.Context, Attempt) error
+func (*MemoryLimiter) Record(context.Context, Attempt, AttemptOutcome) error
+type ModuleGrants struct {
+	Module string
+	Permissions []PermissionDef
+	Roles map[github.com/frostgrove/vv/auth.Role][]github.com/frostgrove/vv/auth.Permission
+}
+func Mount[P any](*Runtime, SubjectSpec[P]) (*MountedSubject, *SignUpUseCase[P], error)
+type MountedSubject struct {
+	<unexported fields>
+}
+func (*MountedSubject) Authenticator() github.com/frostgrove/vv/auth.Authenticator
+func (*MountedSubject) Endpoints() Endpoints
+func (*MountedSubject) Guard(...github.com/frostgrove/vv/auth.Option) *github.com/frostgrove/vv/auth.Guard
+func (*MountedSubject) Issuer() SessionIssuer
+func (*MountedSubject) Prefix() string
+func (*MountedSubject) Refreshes() bool
+func (*MountedSubject) Registers() bool
+func (*MountedSubject) Subject() Subject
+func MustDirectories(...Directory) Directories
+func New(RuntimeSpec) (*Runtime, error)
+func NewAuthenticator(*Store, *GrantsService, Config, *log/slog.Logger) *SessionAuthenticator
+func NewBulkhead(Hasher, int, int) *BulkheadHasher
+func NewChangePassword(*Deps) *ChangePasswordUseCase
+func NewCredentialRepository(github.com/frostgrove/vv/crud.Source) *CredentialRepo
+func NewDirectories(...Directory) (Directories, error)
+func NewEnroll(*Deps) *EnrollUseCase
+func NewGrantService(*Store) *GrantService
+func NewGrants(*Store, Directories) *GrantsService
+func NewGuard(*SessionAuthenticator) *github.com/frostgrove/vv/auth.Guard
+func NewHasher() *Argon2Hasher
+func NewLogin(*Deps) *LoginUseCase
+func NewLogout(*Deps) *LogoutUseCase
+func NewLogoutAll(*Deps) *LogoutAllUseCase
+func NewMemoryLimiter(AttemptPolicy) *MemoryLimiter
+func NewPermissionRepository(github.com/frostgrove/vv/crud.Source) *PermissionRepo
+func NewPermissionService(*Store) *github.com/frostgrove/vv/port.DefaultService[Permission, github.com/google/uuid.UUID, PermissionUpdate]
+func NewPrincipalDto(*Principal) PrincipalDto
+func NewRolePermissionRepository(github.com/frostgrove/vv/crud.Source) *RolePermissionRepo
+func NewRoleRepository(github.com/frostgrove/vv/crud.Source) *RoleRepo
+func NewRoleService(*Store) *RoleService
+func NewSeeder(*Store, *log/slog.Logger) *Seeder
+func NewSessionDto(Session, github.com/google/uuid.UUID) SessionDto
+func NewSessionRepository(github.com/frostgrove/vv/crud.Source) *SessionRepo
+func NewSetPassword(*Deps) *SetPasswordUseCase
+func NewSignUp[P any](*Deps, Subject, SessionIssuer, Registrar[P]) *SignUpUseCase[P]
+func NewStore(github.com/frostgrove/vv/crud.Source) *Store
+func NewSubjectDefaultRoleRepository(github.com/frostgrove/vv/crud.Source) *SubjectDefaultRoleRepo
+func NewSubjectPermissionRepository(github.com/frostgrove/vv/crud.Source) *SubjectPermissionRepo
+func NewSubjectRoleRepository(github.com/frostgrove/vv/crud.Source) *SubjectRoleRepo
+func NewToken() (string, error)
+func NewUnguardedGrantService(*Store) *GrantService
+func OfSubject(SubjectRef) github.com/frostgrove/vv/crud.Option
+func OpaqueToken() Strategy
+type OpenSessionCommand struct {
+	Subject SubjectRef
+	Agent Agent
+}
+func Overloaded() error
+func OwnGrants() ModuleGrants
+type PasswordConfig struct {
+	MinLength int "yaml:\"min_length\" env:\"ACCESS_PASSWORD_MIN_LENGTH\" env-default:\"10\""
+	MaxLength int "yaml:\"max_length\" env:\"ACCESS_PASSWORD_MAX_LENGTH\" env-default:\"256\""
+	KeepOtherSessions bool "yaml:\"keep_other_sessions\" env:\"ACCESS_PASSWORD_KEEP_OTHER_SESSIONS\" env-default:\"false\""
+}
+const PermCredentialWrite github.com/frostgrove/vv/auth.Permission = "credential.write"
+const PermGrantRead github.com/frostgrove/vv/auth.Permission = "grant.read"
+const PermGrantWrite github.com/frostgrove/vv/auth.Permission = "grant.write"
+const PermRoleDelete github.com/frostgrove/vv/auth.Permission = "role.delete"
+const PermRoleRead github.com/frostgrove/vv/auth.Permission = "role.read"
+const PermRoleWrite github.com/frostgrove/vv/auth.Permission = "role.write"
+const PermSessionKill github.com/frostgrove/vv/auth.Permission = "session.revoke"
+const PermSessionRead github.com/frostgrove/vv/auth.Permission = "session.read"
+type Permission struct {
+	ID github.com/google/uuid.UUID "db:\"id,pk,auto\" json:\"id\""
+	Code string "json:\"code\""
+	Name string "json:\"name\""
+	Module string "json:\"module\""
+	CreatedAt time.Time "db:\"created_at,generated\" json:\"createdAt\""
+}
+type PermissionAttrs struct {
+	ID github.com/frostgrove/vv/crud/decorators/specs.Attr[Permission, github.com/google/uuid.UUID]
+	Code github.com/frostgrove/vv/crud/decorators/specs.Str[Permission]
+	Name github.com/frostgrove/vv/crud/decorators/specs.Str[Permission]
+	Module github.com/frostgrove/vv/crud/decorators/specs.Str[Permission]
+	CreatedAt github.com/frostgrove/vv/crud/decorators/specs.Cmp[Permission, time.Time]
+}
+type PermissionDef struct {
+	Code github.com/frostgrove/vv/auth.Permission
+	Name string
+}
+var PermissionPaths github.com/frostgrove/vv/port.PathMap
+func PermissionPolicy() github.com/frostgrove/vv/crud/decorators/security.Policy[Permission, github.com/google/uuid.UUID]
+func PermissionQuery() *github.com/frostgrove/vv/crud/query.Config
+type PermissionRepo = github.com/frostgrove/vv/crud.Repo[Permission, github.com/google/uuid.UUID, PermissionUpdate]
+func (*PermissionRepo) Create(context.Context, *Permission) (Permission, error)
+func (*PermissionRepo) InsertBatch(context.Context, []*Permission, ...github.com/frostgrove/vv/crud.BatchOption) error
+func (*PermissionRepo) Replace(context.Context, *Permission) (Permission, error)
+func (*PermissionRepo) Restore(context.Context, ...github.com/google/uuid.UUID) (int64, error)
+func (*PermissionRepo) SupportsRestore() bool
+func (*PermissionRepo) Unwrap() github.com/frostgrove/vv/crud.Core[Permission, github.com/google/uuid.UUID]
+func (*PermissionRepo) Update(context.Context, github.com/google/uuid.UUID, PermissionUpdate, ...github.com/frostgrove/vv/crud.Option) (Permission, error)
+func (*PermissionRepo) UpdateAll(context.Context, PermissionUpdate, ...github.com/frostgrove/vv/crud.Option) (int64, error)
+func (PermissionRepo) Aggregate(context.Context, ...github.com/frostgrove/vv/crud.Option) ([]github.com/frostgrove/vv/crud.AggregateRow, error)
+func (PermissionRepo) Count(context.Context, ...github.com/frostgrove/vv/crud.Option) (int64, error)
+func (PermissionRepo) Delete(context.Context, ...github.com/google/uuid.UUID) (int64, error)
+func (PermissionRepo) DeleteAll(context.Context, ...github.com/frostgrove/vv/crud.Option) (int64, error)
+func (PermissionRepo) Exists(context.Context, ...github.com/frostgrove/vv/crud.Option) (bool, error)
+func (PermissionRepo) First(context.Context, ...github.com/frostgrove/vv/crud.Option) (Permission, error)
+func (PermissionRepo) Get(context.Context, ...github.com/frostgrove/vv/crud.Option) (github.com/frostgrove/vv/crud.PaginatedResponse[Permission], error)
+func (PermissionRepo) GetAll(context.Context, ...github.com/frostgrove/vv/crud.Option) ([]Permission, error)
+func (PermissionRepo) GetByID(context.Context, github.com/google/uuid.UUID, ...github.com/frostgrove/vv/crud.Option) (Permission, error)
+func (PermissionRepo) Meta() *github.com/frostgrove/vv/crud.Meta
+func (PermissionRepo) Save(context.Context, *Permission) (Permission, error)
+func (PermissionRepo) SaveAll(context.Context, []*Permission) error
+func (PermissionRepo) SaveOnly(context.Context, *Permission) error
+func (PermissionRepo) Tx(context.Context, func(context.Context) error) error
+var PermissionRepository *github.com/frostgrove/vv/crud/sqlrepo.Blueprint[Permission, github.com/google/uuid.UUID, PermissionUpdate]
+type PermissionUpdate struct {
+	Code *string "json:\"code,omitempty\""
+	Name *string "json:\"name,omitempty\""
+	Module *string "json:\"module,omitempty\""
+}
+var Permission_ PermissionAttrs
+type Principal struct {
+	Ref SubjectRef
+	SessionID github.com/google/uuid.UUID
+	Roles []github.com/frostgrove/vv/auth.Role
+	Permissions []github.com/frostgrove/vv/auth.Permission
+	Profile Profile
+	ProfileUnresolved bool
+}
+func (*Principal) Attr(string) (any, bool)
+func (*Principal) Has(github.com/frostgrove/vv/auth.Permission) bool
+func (*Principal) In(github.com/frostgrove/vv/auth.Role) bool
+func (*Principal) Subject() string
+type PrincipalDto struct {
+	Subject SubjectRef "json:\"subject\""
+	Profile Profile "json:\"profile\""
+	Roles []string "json:\"roles\""
+	Permissions []string "json:\"permissions\""
+}
+func PrincipalFrom(context.Context) (*Principal, bool)
+type Profile struct {
+	DisplayName string "json:\"displayName\""
+	Identifier string "json:\"identifier\""
+	Attributes map[string]any "json:\"attributes,omitempty\""
+}
+type Protection struct {
+	Limiter AttemptLimiter
+	Observer AttemptObserver
+}
+const ProviderPassword untyped string = "password"
+const ReasonPasswordChanged untyped string = "password changed"
+const ReasonRefreshReplayed untyped string = "a spent refresh credential was replayed"
+const ReasonRevokedByAdmin untyped string = "revoked by an administrator"
+const ReasonSignedOut untyped string = "signed out"
+const ReasonSignedOutEverywhere untyped string = "signed out everywhere"
+type RefreshRequest struct {
+	Refresh string "json:\"refresh\""
+}
+type Registrar[P any] interface {
+	Create(context.Context, P) (github.com/google/uuid.UUID, string, error)
+	Password(P) string
+}
+type Rehasher interface {
+	NeedsRehash(string) bool
+}
+func RehasherOf(Hasher) (Rehasher, bool)
+func Require(context.Context, ...github.com/frostgrove/vv/auth.Permission) (*Principal, error)
+func RequirePrincipal(context.Context) (*Principal, error)
+type RevocationSink interface {
+	SessionsRevoked(context.Context, []github.com/google/uuid.UUID) error
+}
+type Role struct {
+	ID github.com/google/uuid.UUID "db:\"id,pk,auto\" json:\"id\""
+	Slug string "json:\"slug\""
+	Name string "json:\"name\""
+	IsSystem bool "db:\"is_system,immutable\" json:\"isSystem\""
+	CreatedAt time.Time "db:\"created_at,generated\" json:\"createdAt\""
+	Permissions []Permission "rel:\"many_to_many,join=role_permissions\" json:\"permissions,omitempty\""
+}
+const RoleAdmin github.com/frostgrove/vv/auth.Role = "admin"
+type RoleAttrs struct {
+	ID github.com/frostgrove/vv/crud/decorators/specs.Attr[Role, github.com/google/uuid.UUID]
+	Slug github.com/frostgrove/vv/crud/decorators/specs.Str[Role]
+	Name github.com/frostgrove/vv/crud/decorators/specs.Str[Role]
+	IsSystem github.com/frostgrove/vv/crud/decorators/specs.Attr[Role, bool]
+	CreatedAt github.com/frostgrove/vv/crud/decorators/specs.Cmp[Role, time.Time]
+	Permissions RolePermissionsAttrs
+}
+var RolePaths github.com/frostgrove/vv/port.PathMap
+type RolePermission struct {
+	ID github.com/google/uuid.UUID "db:\"id,pk,auto\" json:\"id\""
+	RoleID github.com/google/uuid.UUID "json:\"roleId\""
+	PermissionID github.com/google/uuid.UUID "json:\"permissionId\""
+}
+type RolePermissionAttrs struct {
+	ID github.com/frostgrove/vv/crud/decorators/specs.Attr[RolePermission, github.com/google/uuid.UUID]
+	RoleID github.com/frostgrove/vv/crud/decorators/specs.Attr[RolePermission, github.com/google/uuid.UUID]
+	PermissionID github.com/frostgrove/vv/crud/decorators/specs.Attr[RolePermission, github.com/google/uuid.UUID]
+}
+type RolePermissionRepo = github.com/frostgrove/vv/crud.Repo[RolePermission, github.com/google/uuid.UUID, RolePermissionUpdate]
+func (*RolePermissionRepo) Create(context.Context, *RolePermission) (RolePermission, error)
+func (*RolePermissionRepo) InsertBatch(context.Context, []*RolePermission, ...github.com/frostgrove/vv/crud.BatchOption) error
+func (*RolePermissionRepo) Replace(context.Context, *RolePermission) (RolePermission, error)
+func (*RolePermissionRepo) Restore(context.Context, ...github.com/google/uuid.UUID) (int64, error)
+func (*RolePermissionRepo) SupportsRestore() bool
+func (*RolePermissionRepo) Unwrap() github.com/frostgrove/vv/crud.Core[RolePermission, github.com/google/uuid.UUID]
+func (*RolePermissionRepo) Update(context.Context, github.com/google/uuid.UUID, RolePermissionUpdate, ...github.com/frostgrove/vv/crud.Option) (RolePermission, error)
+func (*RolePermissionRepo) UpdateAll(context.Context, RolePermissionUpdate, ...github.com/frostgrove/vv/crud.Option) (int64, error)
+func (RolePermissionRepo) Aggregate(context.Context, ...github.com/frostgrove/vv/crud.Option) ([]github.com/frostgrove/vv/crud.AggregateRow, error)
+func (RolePermissionRepo) Count(context.Context, ...github.com/frostgrove/vv/crud.Option) (int64, error)
+func (RolePermissionRepo) Delete(context.Context, ...github.com/google/uuid.UUID) (int64, error)
+func (RolePermissionRepo) DeleteAll(context.Context, ...github.com/frostgrove/vv/crud.Option) (int64, error)
+func (RolePermissionRepo) Exists(context.Context, ...github.com/frostgrove/vv/crud.Option) (bool, error)
+func (RolePermissionRepo) First(context.Context, ...github.com/frostgrove/vv/crud.Option) (RolePermission, error)
+func (RolePermissionRepo) Get(context.Context, ...github.com/frostgrove/vv/crud.Option) (github.com/frostgrove/vv/crud.PaginatedResponse[RolePermission], error)
+func (RolePermissionRepo) GetAll(context.Context, ...github.com/frostgrove/vv/crud.Option) ([]RolePermission, error)
+func (RolePermissionRepo) GetByID(context.Context, github.com/google/uuid.UUID, ...github.com/frostgrove/vv/crud.Option) (RolePermission, error)
+func (RolePermissionRepo) Meta() *github.com/frostgrove/vv/crud.Meta
+func (RolePermissionRepo) Save(context.Context, *RolePermission) (RolePermission, error)
+func (RolePermissionRepo) SaveAll(context.Context, []*RolePermission) error
+func (RolePermissionRepo) SaveOnly(context.Context, *RolePermission) error
+func (RolePermissionRepo) Tx(context.Context, func(context.Context) error) error
+var RolePermissionRepository *github.com/frostgrove/vv/crud/sqlrepo.Blueprint[RolePermission, github.com/google/uuid.UUID, RolePermissionUpdate]
+type RolePermissionUpdate struct {
+	RoleID *github.com/google/uuid.UUID "json:\"roleID,omitempty\""
+	PermissionID *github.com/google/uuid.UUID "json:\"permissionID,omitempty\""
+}
+var RolePermission_ RolePermissionAttrs
+type RolePermissionsAttrs struct {
+	github.com/frostgrove/vv/crud/decorators/specs.Rel[Role, Permission]
+	ID github.com/frostgrove/vv/crud/decorators/specs.Attr[Role, github.com/google/uuid.UUID]
+	Code github.com/frostgrove/vv/crud/decorators/specs.Str[Role]
+	Name github.com/frostgrove/vv/crud/decorators/specs.Str[Role]
+	Module github.com/frostgrove/vv/crud/decorators/specs.Str[Role]
+	CreatedAt github.com/frostgrove/vv/crud/decorators/specs.Cmp[Role, time.Time]
+}
+func (RolePermissionsAttrs) Path() string
+func (RolePermissionsAttrs) RelPath() string
+func (RolePermissionsAttrs) String() string
+func RolePolicy() github.com/frostgrove/vv/crud/decorators/security.Policy[Role, github.com/google/uuid.UUID]
+func RoleQuery() *github.com/frostgrove/vv/crud/query.Config
+type RoleRepo = github.com/frostgrove/vv/crud.Repo[Role, github.com/google/uuid.UUID, RoleUpdate]
+func (*RoleRepo) Create(context.Context, *Role) (Role, error)
+func (*RoleRepo) InsertBatch(context.Context, []*Role, ...github.com/frostgrove/vv/crud.BatchOption) error
+func (*RoleRepo) Replace(context.Context, *Role) (Role, error)
+func (*RoleRepo) Restore(context.Context, ...github.com/google/uuid.UUID) (int64, error)
+func (*RoleRepo) SupportsRestore() bool
+func (*RoleRepo) Unwrap() github.com/frostgrove/vv/crud.Core[Role, github.com/google/uuid.UUID]
+func (*RoleRepo) Update(context.Context, github.com/google/uuid.UUID, RoleUpdate, ...github.com/frostgrove/vv/crud.Option) (Role, error)
+func (*RoleRepo) UpdateAll(context.Context, RoleUpdate, ...github.com/frostgrove/vv/crud.Option) (int64, error)
+func (RoleRepo) Aggregate(context.Context, ...github.com/frostgrove/vv/crud.Option) ([]github.com/frostgrove/vv/crud.AggregateRow, error)
+func (RoleRepo) Count(context.Context, ...github.com/frostgrove/vv/crud.Option) (int64, error)
+func (RoleRepo) Delete(context.Context, ...github.com/google/uuid.UUID) (int64, error)
+func (RoleRepo) DeleteAll(context.Context, ...github.com/frostgrove/vv/crud.Option) (int64, error)
+func (RoleRepo) Exists(context.Context, ...github.com/frostgrove/vv/crud.Option) (bool, error)
+func (RoleRepo) First(context.Context, ...github.com/frostgrove/vv/crud.Option) (Role, error)
+func (RoleRepo) Get(context.Context, ...github.com/frostgrove/vv/crud.Option) (github.com/frostgrove/vv/crud.PaginatedResponse[Role], error)
+func (RoleRepo) GetAll(context.Context, ...github.com/frostgrove/vv/crud.Option) ([]Role, error)
+func (RoleRepo) GetByID(context.Context, github.com/google/uuid.UUID, ...github.com/frostgrove/vv/crud.Option) (Role, error)
+func (RoleRepo) Meta() *github.com/frostgrove/vv/crud.Meta
+func (RoleRepo) Save(context.Context, *Role) (Role, error)
+func (RoleRepo) SaveAll(context.Context, []*Role) error
+func (RoleRepo) SaveOnly(context.Context, *Role) error
+func (RoleRepo) Tx(context.Context, func(context.Context) error) error
+var RoleRepository *github.com/frostgrove/vv/crud/sqlrepo.Blueprint[Role, github.com/google/uuid.UUID, RoleUpdate]
+type RoleService struct {
+	*github.com/frostgrove/vv/port.DefaultService[Role, github.com/google/uuid.UUID, RoleUpdate]
+	<unexported fields>
+}
+func (*RoleService) Create(context.Context, github.com/frostgrove/vv/port.CreateCommand[Role]) (Role, error)
+func (*RoleService) Delete(context.Context, github.com/frostgrove/vv/port.DeleteCommand[github.com/google/uuid.UUID]) (int64, error)
+func (*RoleService) DeleteMany(context.Context, github.com/frostgrove/vv/port.BulkDeleteCommand[github.com/google/uuid.UUID]) (int64, error)
+func (*RoleService) Update(context.Context, github.com/frostgrove/vv/port.UpdateCommand[github.com/google/uuid.UUID, RoleUpdate]) (Role, error)
+func (RoleService) Count(context.Context, github.com/frostgrove/vv/port.CountCommand) (int64, error)
+func (RoleService) Get(context.Context, github.com/frostgrove/vv/port.GetCommand[github.com/google/uuid.UUID]) (Role, error)
+func (RoleService) List(context.Context, github.com/frostgrove/vv/port.ListCommand) (github.com/frostgrove/vv/crud.PaginatedResponse[Role], error)
+func (RoleService) Meta() *github.com/frostgrove/vv/crud.Meta
+func (RoleService) Paths() github.com/frostgrove/vv/errs.Resolver
+func (RoleService) Replace(context.Context, github.com/frostgrove/vv/port.ReplaceCommand[github.com/google/uuid.UUID, Role]) (Role, error)
+func (RoleService) Restorable() (github.com/frostgrove/vv/port.RestorableService[github.com/google/uuid.UUID], bool)
+type RoleSpec struct {
+	Slug github.com/frostgrove/vv/auth.Role
+	Name string
+	System bool
+	Permissions []github.com/frostgrove/vv/auth.Permission
+}
+type RoleUpdate struct {
+	Slug *string "json:\"slug,omitempty\""
+	Name *string "json:\"name,omitempty\""
+}
+var Role_ RoleAttrs
+type Runtime struct {
+	<unexported fields>
+}
+func (*Runtime) AdminGuard(...github.com/frostgrove/vv/auth.Option) *github.com/frostgrove/vv/auth.Guard
+func (*Runtime) Config() Config
+func (*Runtime) Declare(...ModuleGrants)
+func (*Runtime) Grants() *GrantsService
+func (*Runtime) ReannounceRevocations(context.Context, time.Time) error
+func (*Runtime) Seeder() *Seeder
+func (*Runtime) SetPassword() *SetPasswordUseCase
+func (*Runtime) Store() *Store
+func (*Runtime) Subjects() []*MountedSubject
+func (*Runtime) Sync(context.Context) error
+type RuntimeSpec struct {
+	Source github.com/frostgrove/vv/crud.Source
+	Config Config
+	Logger *log/slog.Logger
+	Hasher Hasher
+	Protection Protection
+}
+type Seeder struct {
+	<unexported fields>
+}
+func (*Seeder) ClearDefaultRole(context.Context, SubjectType) error
+func (*Seeder) DefaultRole(context.Context, SubjectType) (Role, bool, error)
+func (*Seeder) EnsureRole(context.Context, RoleSpec) (Role, error)
+func (*Seeder) SetDefaultRole(context.Context, SubjectType, github.com/frostgrove/vv/auth.Role) (Role, error)
+type Session struct {
+	ID github.com/google/uuid.UUID "db:\"id,pk,auto\" json:\"id\""
+	SubjectType string "json:\"subjectType\""
+	SubjectID github.com/google/uuid.UUID "json:\"subjectId\""
+	TokenHash string "db:\"token_hash\" json:\"-\""
+	UserAgent string "db:\"user_agent\" json:\"userAgent\""
+	IP string "db:\"ip\" json:\"ip\""
+	CreatedAt time.Time "db:\"created_at,generated\" json:\"createdAt\""
+	LastUsedAt time.Time "db:\"last_used_at\" json:\"lastUsedAt\""
+	ExpiresAt time.Time "db:\"expires_at\" json:\"expiresAt\""
+	RevokedAt *time.Time "db:\"revoked_at\" json:\"revokedAt,omitempty\""
+	RevokedReason string "db:\"revoked_reason\" json:\"revokedReason,omitempty\""
+}
+func (Session) Live(time.Time, time.Duration) bool
+type SessionAttrs struct {
+	ID github.com/frostgrove/vv/crud/decorators/specs.Attr[Session, github.com/google/uuid.UUID]
+	SubjectType github.com/frostgrove/vv/crud/decorators/specs.Str[Session]
+	SubjectID github.com/frostgrove/vv/crud/decorators/specs.Attr[Session, github.com/google/uuid.UUID]
+	TokenHash github.com/frostgrove/vv/crud/decorators/specs.Str[Session]
+	UserAgent github.com/frostgrove/vv/crud/decorators/specs.Str[Session]
+	IP github.com/frostgrove/vv/crud/decorators/specs.Str[Session]
+	CreatedAt github.com/frostgrove/vv/crud/decorators/specs.Cmp[Session, time.Time]
+	LastUsedAt github.com/frostgrove/vv/crud/decorators/specs.Cmp[Session, time.Time]
+	ExpiresAt github.com/frostgrove/vv/crud/decorators/specs.Cmp[Session, time.Time]
+	RevokedAt github.com/frostgrove/vv/crud/decorators/specs.Cmp[Session, time.Time]
+	RevokedReason github.com/frostgrove/vv/crud/decorators/specs.Str[Session]
+}
+type SessionAuthenticator struct {
+	<unexported fields>
+}
+func (*SessionAuthenticator) Authenticate(context.Context, github.com/frostgrove/vv/auth.Credential) (github.com/frostgrove/vv/auth.Principal, error)
+func (*SessionAuthenticator) For(SubjectType) *SessionAuthenticator
+type SessionConfig struct {
+	TTL time.Duration "yaml:\"ttl\" env:\"ACCESS_SESSION_TTL\" env-default:\"720h\""
+	IdleTTL time.Duration "yaml:\"idle_ttl\" env:\"ACCESS_SESSION_IDLE_TTL\" env-default:\"168h\""
+	TouchInterval time.Duration "yaml:\"touch_interval\" env:\"ACCESS_SESSION_TOUCH_INTERVAL\" env-default:\"5m\""
+}
+type SessionDto struct {
+	ID github.com/google/uuid.UUID "json:\"id\""
+	Current bool "json:\"current\""
+	UserAgent string "json:\"userAgent,omitempty\""
+	IP string "json:\"ip,omitempty\""
+	CreatedAt time.Time "json:\"createdAt\""
+	LastUsedAt time.Time "json:\"lastUsedAt\""
+	ExpiresAt time.Time "json:\"expiresAt\""
+}
+type SessionIssuer interface {
+	Issue(context.Context, SubjectRef, Agent) (AuthResponse, error)
+}
+type SessionRefresher interface {
+	Refresh(context.Context, string, Agent) (AuthResponse, error)
+}
+type SessionRepo = github.com/frostgrove/vv/crud.Repo[Session, github.com/google/uuid.UUID, SessionUpdate]
+func (*SessionRepo) Create(context.Context, *Session) (Session, error)
+func (*SessionRepo) InsertBatch(context.Context, []*Session, ...github.com/frostgrove/vv/crud.BatchOption) error
+func (*SessionRepo) Replace(context.Context, *Session) (Session, error)
+func (*SessionRepo) Restore(context.Context, ...github.com/google/uuid.UUID) (int64, error)
+func (*SessionRepo) SupportsRestore() bool
+func (*SessionRepo) Unwrap() github.com/frostgrove/vv/crud.Core[Session, github.com/google/uuid.UUID]
+func (*SessionRepo) Update(context.Context, github.com/google/uuid.UUID, SessionUpdate, ...github.com/frostgrove/vv/crud.Option) (Session, error)
+func (*SessionRepo) UpdateAll(context.Context, SessionUpdate, ...github.com/frostgrove/vv/crud.Option) (int64, error)
+func (SessionRepo) Aggregate(context.Context, ...github.com/frostgrove/vv/crud.Option) ([]github.com/frostgrove/vv/crud.AggregateRow, error)
+func (SessionRepo) Count(context.Context, ...github.com/frostgrove/vv/crud.Option) (int64, error)
+func (SessionRepo) Delete(context.Context, ...github.com/google/uuid.UUID) (int64, error)
+func (SessionRepo) DeleteAll(context.Context, ...github.com/frostgrove/vv/crud.Option) (int64, error)
+func (SessionRepo) Exists(context.Context, ...github.com/frostgrove/vv/crud.Option) (bool, error)
+func (SessionRepo) First(context.Context, ...github.com/frostgrove/vv/crud.Option) (Session, error)
+func (SessionRepo) Get(context.Context, ...github.com/frostgrove/vv/crud.Option) (github.com/frostgrove/vv/crud.PaginatedResponse[Session], error)
+func (SessionRepo) GetAll(context.Context, ...github.com/frostgrove/vv/crud.Option) ([]Session, error)
+func (SessionRepo) GetByID(context.Context, github.com/google/uuid.UUID, ...github.com/frostgrove/vv/crud.Option) (Session, error)
+func (SessionRepo) Meta() *github.com/frostgrove/vv/crud.Meta
+func (SessionRepo) Save(context.Context, *Session) (Session, error)
+func (SessionRepo) SaveAll(context.Context, []*Session) error
+func (SessionRepo) SaveOnly(context.Context, *Session) error
+func (SessionRepo) Tx(context.Context, func(context.Context) error) error
+var SessionRepository *github.com/frostgrove/vv/crud/sqlrepo.Blueprint[Session, github.com/google/uuid.UUID, SessionUpdate]
+type SessionUpdate struct {
+	SubjectType *string "json:\"subjectType,omitempty\""
+	SubjectID *github.com/google/uuid.UUID "json:\"subjectID,omitempty\""
+	TokenHash *string "json:\"tokenHash,omitempty\""
+	UserAgent *string "json:\"userAgent,omitempty\""
+	IP *string "json:\"ip,omitempty\""
+	LastUsedAt *time.Time "json:\"lastUsedAt,omitempty\""
+	ExpiresAt *time.Time "json:\"expiresAt,omitempty\""
+	RevokedAt github.com/frostgrove/vv/utils.Opt[time.Time] "json:\"revokedAt,omitzero\""
+	RevokedReason *string "json:\"revokedReason,omitempty\""
+}
+var Session_ SessionAttrs
+type SetPasswordCommand struct {
+	Subject SubjectRef
+	Password string
+}
+type SetPasswordUseCase struct {
+	*Deps
+	<unexported fields>
+}
+func (*SetPasswordUseCase) Execute(context.Context, SetPasswordCommand) (int64, error)
+func (*SetPasswordUseCase) Unguarded() *SetPasswordUseCase
+func (SetPasswordUseCase) DefaultRole(context.Context, SubjectType) (*Role, error)
+func (SetPasswordUseCase) Now() time.Time
+func (SetPasswordUseCase) ReannounceRevocations(context.Context, time.Time) error
+type SignInRequest struct {
+	Email string "json:\"email\""
+	Password string "json:\"password\""
+}
+type SignUpUseCase[P any] struct {
+	*Deps
+	<unexported fields>
+}
+func (*SignUpUseCase[P]) Execute(context.Context, P, Agent) (AuthResponse, error)
+func (SignUpUseCase[P]) DefaultRole(context.Context, SubjectType) (*Role, error)
+func (SignUpUseCase[P]) Now() time.Time
+func (SignUpUseCase[P]) ReannounceRevocations(context.Context, time.Time) error
+func Slugify(string) string
+type Store struct {
+	Permissions *PermissionRepo
+	Roles *RoleRepo
+	RolePermissions *RolePermissionRepo
+	SubjectRoles *SubjectRoleRepo
+	SubjectPermissions *SubjectPermissionRepo
+	DefaultRoles *SubjectDefaultRoleRepo
+	Credentials *CredentialRepo
+	Sessions *SessionRepo
+	<unexported fields>
+}
+func (*Store) CredentialFor(context.Context, SubjectType, string, string) (Credential, error)
+func (*Store) DefaultRoleRow(context.Context, SubjectType) (SubjectDefaultRole, error)
+func (*Store) FenceSessionIssue(context.Context, Credential) error
+func (*Store) LiveSessionsOf(context.Context, SubjectRef, time.Time, time.Duration) ([]Session, error)
+func (*Store) LockCredentialFor(context.Context, SubjectType, string, string) (Credential, error)
+func (*Store) LockCredentialsOf(context.Context, SubjectRef, string) ([]Credential, error)
+func (*Store) LockPasswordCredentials(context.Context, SubjectRef) ([]Credential, error)
+func (*Store) OwnedTx(context.Context, func(context.Context) error) error
+func (*Store) PermissionByCode(context.Context, github.com/frostgrove/vv/auth.Permission) (Permission, error)
+func (*Store) RoleBySlug(context.Context, github.com/frostgrove/vv/auth.Role) (Role, error)
+func (*Store) SessionByToken(context.Context, string) (Session, error)
+func (*Store) SessionsRevokedSince(context.Context, time.Time, time.Time) ([]Session, error)
+func (*Store) Tx(context.Context, func(context.Context) error) error
+type Strategy interface {
+	Build(StrategyDeps) (Issued, error)
+}
+type StrategyDeps struct {
+	Subject Subject
+	Store *Store
+	Source github.com/frostgrove/vv/crud.Source
+	Grants *GrantsService
+	Config Config
+	Logger *log/slog.Logger
+}
+type Subject struct {
+	Type SubjectType
+	Directory Directory
+	Normalize func(identifier string) string
+}
+func (Subject) Identifier(string) string
+func (Subject) Ref(github.com/google/uuid.UUID) SubjectRef
+type SubjectDefaultRole struct {
+	ID github.com/google/uuid.UUID "db:\"id,pk,auto\" json:\"id\""
+	SubjectType string "json:\"subjectType\""
+	RoleID github.com/google/uuid.UUID "json:\"roleId\""
+	UpdatedAt time.Time "db:\"updated_at,generated\" json:\"updatedAt\""
+	Role *Role "rel:\"belongs_to\" json:\"role,omitempty\""
+}
+type SubjectDefaultRoleAttrs struct {
+	ID github.com/frostgrove/vv/crud/decorators/specs.Attr[SubjectDefaultRole, github.com/google/uuid.UUID]
+	SubjectType github.com/frostgrove/vv/crud/decorators/specs.Str[SubjectDefaultRole]
+	RoleID github.com/frostgrove/vv/crud/decorators/specs.Attr[SubjectDefaultRole, github.com/google/uuid.UUID]
+	UpdatedAt github.com/frostgrove/vv/crud/decorators/specs.Cmp[SubjectDefaultRole, time.Time]
+	Role SubjectDefaultRoleRoleAttrs
+}
+type SubjectDefaultRoleRepo = github.com/frostgrove/vv/crud.Repo[SubjectDefaultRole, github.com/google/uuid.UUID, SubjectDefaultRoleUpdate]
+func (*SubjectDefaultRoleRepo) Create(context.Context, *SubjectDefaultRole) (SubjectDefaultRole, error)
+func (*SubjectDefaultRoleRepo) InsertBatch(context.Context, []*SubjectDefaultRole, ...github.com/frostgrove/vv/crud.BatchOption) error
+func (*SubjectDefaultRoleRepo) Replace(context.Context, *SubjectDefaultRole) (SubjectDefaultRole, error)
+func (*SubjectDefaultRoleRepo) Restore(context.Context, ...github.com/google/uuid.UUID) (int64, error)
+func (*SubjectDefaultRoleRepo) SupportsRestore() bool
+func (*SubjectDefaultRoleRepo) Unwrap() github.com/frostgrove/vv/crud.Core[SubjectDefaultRole, github.com/google/uuid.UUID]
+func (*SubjectDefaultRoleRepo) Update(context.Context, github.com/google/uuid.UUID, SubjectDefaultRoleUpdate, ...github.com/frostgrove/vv/crud.Option) (SubjectDefaultRole, error)
+func (*SubjectDefaultRoleRepo) UpdateAll(context.Context, SubjectDefaultRoleUpdate, ...github.com/frostgrove/vv/crud.Option) (int64, error)
+func (SubjectDefaultRoleRepo) Aggregate(context.Context, ...github.com/frostgrove/vv/crud.Option) ([]github.com/frostgrove/vv/crud.AggregateRow, error)
+func (SubjectDefaultRoleRepo) Count(context.Context, ...github.com/frostgrove/vv/crud.Option) (int64, error)
+func (SubjectDefaultRoleRepo) Delete(context.Context, ...github.com/google/uuid.UUID) (int64, error)
+func (SubjectDefaultRoleRepo) DeleteAll(context.Context, ...github.com/frostgrove/vv/crud.Option) (int64, error)
+func (SubjectDefaultRoleRepo) Exists(context.Context, ...github.com/frostgrove/vv/crud.Option) (bool, error)
+func (SubjectDefaultRoleRepo) First(context.Context, ...github.com/frostgrove/vv/crud.Option) (SubjectDefaultRole, error)
+func (SubjectDefaultRoleRepo) Get(context.Context, ...github.com/frostgrove/vv/crud.Option) (github.com/frostgrove/vv/crud.PaginatedResponse[SubjectDefaultRole], error)
+func (SubjectDefaultRoleRepo) GetAll(context.Context, ...github.com/frostgrove/vv/crud.Option) ([]SubjectDefaultRole, error)
+func (SubjectDefaultRoleRepo) GetByID(context.Context, github.com/google/uuid.UUID, ...github.com/frostgrove/vv/crud.Option) (SubjectDefaultRole, error)
+func (SubjectDefaultRoleRepo) Meta() *github.com/frostgrove/vv/crud.Meta
+func (SubjectDefaultRoleRepo) Save(context.Context, *SubjectDefaultRole) (SubjectDefaultRole, error)
+func (SubjectDefaultRoleRepo) SaveAll(context.Context, []*SubjectDefaultRole) error
+func (SubjectDefaultRoleRepo) SaveOnly(context.Context, *SubjectDefaultRole) error
+func (SubjectDefaultRoleRepo) Tx(context.Context, func(context.Context) error) error
+var SubjectDefaultRoleRepository *github.com/frostgrove/vv/crud/sqlrepo.Blueprint[SubjectDefaultRole, github.com/google/uuid.UUID, SubjectDefaultRoleUpdate]
+type SubjectDefaultRoleRoleAttrs struct {
+	github.com/frostgrove/vv/crud/decorators/specs.Rel[SubjectDefaultRole, Role]
+	ID github.com/frostgrove/vv/crud/decorators/specs.Attr[SubjectDefaultRole, github.com/google/uuid.UUID]
+	Slug github.com/frostgrove/vv/crud/decorators/specs.Str[SubjectDefaultRole]
+	Name github.com/frostgrove/vv/crud/decorators/specs.Str[SubjectDefaultRole]
+	IsSystem github.com/frostgrove/vv/crud/decorators/specs.Attr[SubjectDefaultRole, bool]
+	CreatedAt github.com/frostgrove/vv/crud/decorators/specs.Cmp[SubjectDefaultRole, time.Time]
+}
+func (SubjectDefaultRoleRoleAttrs) Path() string
+func (SubjectDefaultRoleRoleAttrs) RelPath() string
+func (SubjectDefaultRoleRoleAttrs) String() string
+type SubjectDefaultRoleUpdate struct {
+	SubjectType *string "json:\"subjectType,omitempty\""
+	RoleID *github.com/google/uuid.UUID "json:\"roleID,omitempty\""
+}
+var SubjectDefaultRole_ SubjectDefaultRoleAttrs
+func SubjectParam(string, string, DirectoryLookup) (SubjectRef, error)
+type SubjectPermission struct {
+	ID github.com/google/uuid.UUID "db:\"id,pk,auto\" json:\"id\""
+	SubjectType string "json:\"subjectType\""
+	SubjectID github.com/google/uuid.UUID "json:\"subjectId\""
+	PermissionID github.com/google/uuid.UUID "json:\"permissionId\""
+	GrantedAt time.Time "db:\"granted_at,generated\" json:\"grantedAt\""
+	Permission *Permission "rel:\"belongs_to\" json:\"permission,omitempty\""
+}
+type SubjectPermissionAttrs struct {
+	ID github.com/frostgrove/vv/crud/decorators/specs.Attr[SubjectPermission, github.com/google/uuid.UUID]
+	SubjectType github.com/frostgrove/vv/crud/decorators/specs.Str[SubjectPermission]
+	SubjectID github.com/frostgrove/vv/crud/decorators/specs.Attr[SubjectPermission, github.com/google/uuid.UUID]
+	PermissionID github.com/frostgrove/vv/crud/decorators/specs.Attr[SubjectPermission, github.com/google/uuid.UUID]
+	GrantedAt github.com/frostgrove/vv/crud/decorators/specs.Cmp[SubjectPermission, time.Time]
+	Permission SubjectPermissionPermissionAttrs
+}
+type SubjectPermissionPermissionAttrs struct {
+	github.com/frostgrove/vv/crud/decorators/specs.Rel[SubjectPermission, Permission]
+	ID github.com/frostgrove/vv/crud/decorators/specs.Attr[SubjectPermission, github.com/google/uuid.UUID]
+	Code github.com/frostgrove/vv/crud/decorators/specs.Str[SubjectPermission]
+	Name github.com/frostgrove/vv/crud/decorators/specs.Str[SubjectPermission]
+	Module github.com/frostgrove/vv/crud/decorators/specs.Str[SubjectPermission]
+	CreatedAt github.com/frostgrove/vv/crud/decorators/specs.Cmp[SubjectPermission, time.Time]
+}
+func (SubjectPermissionPermissionAttrs) Path() string
+func (SubjectPermissionPermissionAttrs) RelPath() string
+func (SubjectPermissionPermissionAttrs) String() string
+type SubjectPermissionRepo = github.com/frostgrove/vv/crud.Repo[SubjectPermission, github.com/google/uuid.UUID, SubjectPermissionUpdate]
+func (*SubjectPermissionRepo) Create(context.Context, *SubjectPermission) (SubjectPermission, error)
+func (*SubjectPermissionRepo) InsertBatch(context.Context, []*SubjectPermission, ...github.com/frostgrove/vv/crud.BatchOption) error
+func (*SubjectPermissionRepo) Replace(context.Context, *SubjectPermission) (SubjectPermission, error)
+func (*SubjectPermissionRepo) Restore(context.Context, ...github.com/google/uuid.UUID) (int64, error)
+func (*SubjectPermissionRepo) SupportsRestore() bool
+func (*SubjectPermissionRepo) Unwrap() github.com/frostgrove/vv/crud.Core[SubjectPermission, github.com/google/uuid.UUID]
+func (*SubjectPermissionRepo) Update(context.Context, github.com/google/uuid.UUID, SubjectPermissionUpdate, ...github.com/frostgrove/vv/crud.Option) (SubjectPermission, error)
+func (*SubjectPermissionRepo) UpdateAll(context.Context, SubjectPermissionUpdate, ...github.com/frostgrove/vv/crud.Option) (int64, error)
+func (SubjectPermissionRepo) Aggregate(context.Context, ...github.com/frostgrove/vv/crud.Option) ([]github.com/frostgrove/vv/crud.AggregateRow, error)
+func (SubjectPermissionRepo) Count(context.Context, ...github.com/frostgrove/vv/crud.Option) (int64, error)
+func (SubjectPermissionRepo) Delete(context.Context, ...github.com/google/uuid.UUID) (int64, error)
+func (SubjectPermissionRepo) DeleteAll(context.Context, ...github.com/frostgrove/vv/crud.Option) (int64, error)
+func (SubjectPermissionRepo) Exists(context.Context, ...github.com/frostgrove/vv/crud.Option) (bool, error)
+func (SubjectPermissionRepo) First(context.Context, ...github.com/frostgrove/vv/crud.Option) (SubjectPermission, error)
+func (SubjectPermissionRepo) Get(context.Context, ...github.com/frostgrove/vv/crud.Option) (github.com/frostgrove/vv/crud.PaginatedResponse[SubjectPermission], error)
+func (SubjectPermissionRepo) GetAll(context.Context, ...github.com/frostgrove/vv/crud.Option) ([]SubjectPermission, error)
+func (SubjectPermissionRepo) GetByID(context.Context, github.com/google/uuid.UUID, ...github.com/frostgrove/vv/crud.Option) (SubjectPermission, error)
+func (SubjectPermissionRepo) Meta() *github.com/frostgrove/vv/crud.Meta
+func (SubjectPermissionRepo) Save(context.Context, *SubjectPermission) (SubjectPermission, error)
+func (SubjectPermissionRepo) SaveAll(context.Context, []*SubjectPermission) error
+func (SubjectPermissionRepo) SaveOnly(context.Context, *SubjectPermission) error
+func (SubjectPermissionRepo) Tx(context.Context, func(context.Context) error) error
+var SubjectPermissionRepository *github.com/frostgrove/vv/crud/sqlrepo.Blueprint[SubjectPermission, github.com/google/uuid.UUID, SubjectPermissionUpdate]
+type SubjectPermissionUpdate struct {
+	SubjectType *string "json:\"subjectType,omitempty\""
+	SubjectID *github.com/google/uuid.UUID "json:\"subjectID,omitempty\""
+	PermissionID *github.com/google/uuid.UUID "json:\"permissionID,omitempty\""
+}
+var SubjectPermission_ SubjectPermissionAttrs
+type SubjectRef struct {
+	Type SubjectType "json:\"type\""
+	ID github.com/google/uuid.UUID "json:\"id\""
+}
+func (SubjectRef) String() string
+func (SubjectRef) Zero() bool
+type SubjectRole struct {
+	ID github.com/google/uuid.UUID "db:\"id,pk,auto\" json:\"id\""
+	SubjectType string "json:\"subjectType\""
+	SubjectID github.com/google/uuid.UUID "json:\"subjectId\""
+	RoleID github.com/google/uuid.UUID "json:\"roleId\""
+	GrantedAt time.Time "db:\"granted_at,generated\" json:\"grantedAt\""
+	Role *Role "rel:\"belongs_to\" json:\"role,omitempty\""
+}
+type SubjectRoleAttrs struct {
+	ID github.com/frostgrove/vv/crud/decorators/specs.Attr[SubjectRole, github.com/google/uuid.UUID]
+	SubjectType github.com/frostgrove/vv/crud/decorators/specs.Str[SubjectRole]
+	SubjectID github.com/frostgrove/vv/crud/decorators/specs.Attr[SubjectRole, github.com/google/uuid.UUID]
+	RoleID github.com/frostgrove/vv/crud/decorators/specs.Attr[SubjectRole, github.com/google/uuid.UUID]
+	GrantedAt github.com/frostgrove/vv/crud/decorators/specs.Cmp[SubjectRole, time.Time]
+	Role SubjectRoleRoleAttrs
+}
+type SubjectRoleRepo = github.com/frostgrove/vv/crud.Repo[SubjectRole, github.com/google/uuid.UUID, SubjectRoleUpdate]
+func (*SubjectRoleRepo) Create(context.Context, *SubjectRole) (SubjectRole, error)
+func (*SubjectRoleRepo) InsertBatch(context.Context, []*SubjectRole, ...github.com/frostgrove/vv/crud.BatchOption) error
+func (*SubjectRoleRepo) Replace(context.Context, *SubjectRole) (SubjectRole, error)
+func (*SubjectRoleRepo) Restore(context.Context, ...github.com/google/uuid.UUID) (int64, error)
+func (*SubjectRoleRepo) SupportsRestore() bool
+func (*SubjectRoleRepo) Unwrap() github.com/frostgrove/vv/crud.Core[SubjectRole, github.com/google/uuid.UUID]
+func (*SubjectRoleRepo) Update(context.Context, github.com/google/uuid.UUID, SubjectRoleUpdate, ...github.com/frostgrove/vv/crud.Option) (SubjectRole, error)
+func (*SubjectRoleRepo) UpdateAll(context.Context, SubjectRoleUpdate, ...github.com/frostgrove/vv/crud.Option) (int64, error)
+func (SubjectRoleRepo) Aggregate(context.Context, ...github.com/frostgrove/vv/crud.Option) ([]github.com/frostgrove/vv/crud.AggregateRow, error)
+func (SubjectRoleRepo) Count(context.Context, ...github.com/frostgrove/vv/crud.Option) (int64, error)
+func (SubjectRoleRepo) Delete(context.Context, ...github.com/google/uuid.UUID) (int64, error)
+func (SubjectRoleRepo) DeleteAll(context.Context, ...github.com/frostgrove/vv/crud.Option) (int64, error)
+func (SubjectRoleRepo) Exists(context.Context, ...github.com/frostgrove/vv/crud.Option) (bool, error)
+func (SubjectRoleRepo) First(context.Context, ...github.com/frostgrove/vv/crud.Option) (SubjectRole, error)
+func (SubjectRoleRepo) Get(context.Context, ...github.com/frostgrove/vv/crud.Option) (github.com/frostgrove/vv/crud.PaginatedResponse[SubjectRole], error)
+func (SubjectRoleRepo) GetAll(context.Context, ...github.com/frostgrove/vv/crud.Option) ([]SubjectRole, error)
+func (SubjectRoleRepo) GetByID(context.Context, github.com/google/uuid.UUID, ...github.com/frostgrove/vv/crud.Option) (SubjectRole, error)
+func (SubjectRoleRepo) Meta() *github.com/frostgrove/vv/crud.Meta
+func (SubjectRoleRepo) Save(context.Context, *SubjectRole) (SubjectRole, error)
+func (SubjectRoleRepo) SaveAll(context.Context, []*SubjectRole) error
+func (SubjectRoleRepo) SaveOnly(context.Context, *SubjectRole) error
+func (SubjectRoleRepo) Tx(context.Context, func(context.Context) error) error
+var SubjectRoleRepository *github.com/frostgrove/vv/crud/sqlrepo.Blueprint[SubjectRole, github.com/google/uuid.UUID, SubjectRoleUpdate]
+type SubjectRoleRoleAttrs struct {
+	github.com/frostgrove/vv/crud/decorators/specs.Rel[SubjectRole, Role]
+	ID github.com/frostgrove/vv/crud/decorators/specs.Attr[SubjectRole, github.com/google/uuid.UUID]
+	Slug github.com/frostgrove/vv/crud/decorators/specs.Str[SubjectRole]
+	Name github.com/frostgrove/vv/crud/decorators/specs.Str[SubjectRole]
+	IsSystem github.com/frostgrove/vv/crud/decorators/specs.Attr[SubjectRole, bool]
+	CreatedAt github.com/frostgrove/vv/crud/decorators/specs.Cmp[SubjectRole, time.Time]
+}
+func (SubjectRoleRoleAttrs) Path() string
+func (SubjectRoleRoleAttrs) RelPath() string
+func (SubjectRoleRoleAttrs) String() string
+type SubjectRoleUpdate struct {
+	SubjectType *string "json:\"subjectType,omitempty\""
+	SubjectID *github.com/google/uuid.UUID "json:\"subjectID,omitempty\""
+	RoleID *github.com/google/uuid.UUID "json:\"roleID,omitempty\""
+}
+var SubjectRole_ SubjectRoleAttrs
+type SubjectSpec[P any] struct {
+	Type SubjectType
+	Prefix string
+	Directory Directory
+	Normalize func(identifier string) string
+	Registrar Registrar[P]
+	Strategy Strategy
+}
 type SubjectType string
+func Sync(context.Context, *Store, []ModuleGrants, *log/slog.Logger) error
+const TokenBytes untyped int = 32
+func TooManyAttempts() error
 ```
 
 ## github.com/frostgrove/vv/auth/access/http/accesshttp
 ```go
-const Register = "register" ...
-const HeaderOrigin = "Origin" ...
-const CodeCrossSite errs.Code = "cross_site_request"
-const DeliveryHeader = "X-Auth-Delivery"
-type Cookie struct{ ... }
-type Cookies struct{ ... }
-type Credentials struct{ ... }
-    func NewCredentials(table Table, policy Cookies) Credentials
-type CrossSite struct{ ... }
+const ChangeSecret untyped string = "password"
+const CodeCrossSite github.com/frostgrove/vv/errs.Code = "cross_site_request"
+type Cookie struct {
+	Name string
+	Value string
+	Path string
+	Domain string
+	Expires time.Time
+	Secure bool
+	SameSite SameSite
+}
+func (Cookie) Clearing() bool
+func (Cookie) HTTP() *net/http.Cookie
+type Cookies struct {
+	Prefix string
+	Secure bool
+	Domain string
+	SameSite SameSite
+	CrossSite CrossSite
+}
+type Credentials struct {
+	<unexported fields>
+}
+func (Credentials) Answer(github.com/frostgrove/vv/auth/access.AuthResponse, Delivery) (github.com/frostgrove/vv/auth/access.AuthResponse, []Cookie)
+func (Credentials) Clear() []Cookie
+func (Credentials) ClearRefresh() []Cookie
+func (Credentials) Default() Delivery
+func (Credentials) InCookies() bool
+func (Credentials) Protect(string, func(name string) string, func(name string) string) error
+func (Credentials) RefreshCookie() string
+func (Credentials) Requested(func(name string) string) (Delivery, error)
+type CrossSite struct {
+	Origins []string "yaml:\"origins\""
+	Unsafely string "yaml:\"unsafely\""
+}
+const DeliverBody Delivery = "body"
+const DeliverCookies Delivery = "cookies"
+const DeliverRefreshCookie Delivery = "refresh-cookie"
 type Delivery string
-    const DeliverCookies Delivery = "cookies" ...
-    func Rotating(requested Delivery, byCookie bool) Delivery
-type Route struct{ ... }
+func (Delivery) AccessInCookie() bool
+func (Delivery) RefreshInCookie() bool
+const DeliveryHeader untyped string = "X-Auth-Delivery"
+func For(*github.com/frostgrove/vv/auth/access.MountedSubject) Table
+const HeaderFetchSite untyped string = "Sec-Fetch-Site"
+const HeaderOrigin untyped string = "Origin"
+const KillSession untyped string = "session"
+const ListSessions untyped string = "sessions"
+func NewCredentials(Table, Cookies) Credentials
+const Refresh untyped string = "refresh"
+const Register untyped string = "register"
+func Rotating(Delivery, bool) Delivery
+type Route struct {
+	Method string
+	Path string
+	Name string
+	Anonymous bool
+}
 type SameSite string
-    const SameSiteStrict SameSite = "Strict" ...
-type Table struct{ ... }
-    func For(mounted *access.MountedSubject) Table
+func (SameSite) HTTP() net/http.SameSite
+const SameSiteLax SameSite = "Lax"
+const SameSiteNone SameSite = "None"
+const SameSiteStrict SameSite = "Strict"
+const SignIn untyped string = "login"
+const SignOut untyped string = "logout"
+const SignOutAll untyped string = "logout-all"
+type Table struct {
+	Prefix string
+}
+func (Table) AccessCookie() string
+func (Table) Path(string) string
+func (Table) RefreshCookie() string
+func (Table) RefreshRoute() Route
+func (Table) RegisterRoute() Route
+func (Table) Routes() []Route
+const WhoAmI untyped string = "me"
 ```
 
 ## github.com/frostgrove/vv/auth/access/http/accessnet
 ```go
-type Handler struct{ ... }
-    func New(mounted *access.MountedSubject, options ...Option) *Handler
+func Delivering(github.com/frostgrove/vv/auth/access/http/accesshttp.Cookies) Option
+type Handler struct {
+	<unexported fields>
+}
+func (*Handler) ChangeSecret(net/http.ResponseWriter, *net/http.Request)
+func (*Handler) KillSession(net/http.ResponseWriter, *net/http.Request)
+func (*Handler) ListSessions(net/http.ResponseWriter, *net/http.Request)
+func (*Handler) Mount(*net/http.ServeMux)
+func (*Handler) SignIn(net/http.ResponseWriter, *net/http.Request)
+func (*Handler) SignOut(net/http.ResponseWriter, *net/http.Request)
+func (*Handler) SignOutAll(net/http.ResponseWriter, *net/http.Request)
+func (*Handler) WhoAmI(net/http.ResponseWriter, *net/http.Request)
+func New(*github.com/frostgrove/vv/auth/access.MountedSubject, ...Option) *Handler
+func NewRefresh(*github.com/frostgrove/vv/auth/access.MountedSubject, ...Option) *RefreshHandler
+func NewRegister[P any](*github.com/frostgrove/vv/auth/access.MountedSubject, *github.com/frostgrove/vv/auth/access.SignUpUseCase[P], ...Option) *RegisterHandler[P]
 type Option func(*settings)
-    func Delivering(cookies accesshttp.Cookies) Option
-    func Rendering(options ...porthttp.RenderOption) Option
-type RefreshHandler struct{ ... }
-    func NewRefresh(mounted *access.MountedSubject, options ...Option) *RefreshHandler
-type RegisterHandler[P any] struct{ ... }
-    func NewRegister[P any](mounted *access.MountedSubject, signUp *access.SignUpUseCase[P], ...) *RegisterHandler[P]
+type RefreshHandler struct {
+	<unexported fields>
+}
+func (*RefreshHandler) Mount(*net/http.ServeMux)
+func (*RefreshHandler) Refresh(net/http.ResponseWriter, *net/http.Request)
+func (*RefreshHandler) Route() github.com/frostgrove/vv/auth/access/http/accesshttp.Route
+type RegisterHandler[P any] struct {
+	<unexported fields>
+}
+func (*RegisterHandler[P]) Mount(*net/http.ServeMux)
+func (*RegisterHandler[P]) Register(net/http.ResponseWriter, *net/http.Request)
+func (*RegisterHandler[P]) Route() github.com/frostgrove/vv/auth/access/http/accesshttp.Route
+func Rendering(...github.com/frostgrove/vv/port/porthttp.RenderOption) Option
 ```
 
 ## github.com/frostgrove/vv/auth/access/accessfx
 ```go
-func AsGrants(constructor any) any
-func AsSubject(constructor any) any
-func Module(configuration access.Config, options ...auth.Option) fx.Option
-type Protection struct{ ... }
-type Registered struct{ ... }
+func AsGrants(any) any
+func AsSubject(any) any
+func Module(github.com/frostgrove/vv/auth/access.Config, ...github.com/frostgrove/vv/auth.Option) go.uber.org/fx.Option
+type Protection struct {
+	go.uber.org/fx.In
+	Limiter github.com/frostgrove/vv/auth/access.AttemptLimiter "optional:\"true\""
+	Observer github.com/frostgrove/vv/auth/access.AttemptObserver "optional:\"true\""
+}
+type Registered struct {
+	go.uber.org/fx.In
+	Subjects []*github.com/frostgrove/vv/auth/access.MountedSubject "group:\"vv.access.subjects\""
+	Declared []github.com/frostgrove/vv/auth/access.ModuleGrants "group:\"vv.access.grants\""
+}
 ```
 
 ## github.com/frostgrove/vv/auth/access/accessjwt
 ```go
-const DefaultAccessTTL = 5 * time.Minute ...
-func Strategy(spec Spec) access.Strategy
-type Claims struct{ ... }
+type Claims struct {
+	Subject string "json:\"sub\""
+	SubjectType string "json:\"sty\""
+	SessionID string "json:\"sid\""
+	Issuer string "json:\"iss\""
+	IssuedAt int64 "json:\"iat\""
+	ExpiresAt int64 "json:\"exp\""
+}
+func Classify(Presented, time.Time, Window) Outcome
+const DefaultAccessTTL time.Duration = 300000000000
+const DefaultRefreshGrace time.Duration = 10000000000
 type Outcome int
-    const Rotate Outcome = iota ...
-    func Classify(presented Presented, now time.Time, window Window) Outcome
-type Presented struct{ ... }
-type RevocationList interface{ ... }
-type Spec struct{ ... }
-type Window struct{ ... }
+func (Outcome) String() string
+type Presented struct {
+	Digest string
+	Current string
+	Previous string
+	RotatedAt *time.Time
+	LastUsedAt time.Time
+	Generation int64
+	CurrentGeneration int64
+	Revoked bool
+	ExpiresAt time.Time
+}
+const Replay Outcome = 2
+type RevocationList interface {
+	Revoke(context.Context, github.com/google/uuid.UUID, time.Time) error
+	Revoked(context.Context, github.com/google/uuid.UUID) (bool, error)
+}
+const Rotate Outcome = 0
+const RotateAgain Outcome = 1
+type Spec struct {
+	Method github.com/golang-jwt/jwt/v5.SigningMethod
+	Key any
+	Verify github.com/frostgrove/vv/auth/authjwt.KeySource
+	Issuer string
+	Audience string
+	UnsafeAnyAudience bool
+	AccessTTL time.Duration
+	RefreshTTL time.Duration
+	RefreshGrace time.Duration
+	Revocation RevocationList
+}
+func Strategy(Spec) github.com/frostgrove/vv/auth/access.Strategy
+const Unusable Outcome = 3
+type Window struct {
+	Grace time.Duration
+	Idle time.Duration
+}
 ```
 
 ## github.com/frostgrove/vv/auth/access/accessjwt/revokeredis
 ```go
-const EvictionParameter = "maxmemory-policy" ...
-const DefaultPrefix = "access:revoked:"
-const MinimumTTL = time.Second
-var ErrEvicting = errors.New("the revocation list is on a server that evicts keys") ...
-var ErrUnreachable = errors.New("the revocation list is not reachable")
-type EvictionPolicy struct{ ... }
-type List struct{ ... }
-    func New(client redis.UniversalClient, options ...Option) (*List, error)
+const DefaultPrefix untyped string = "access:revoked:"
+var ErrEvicting error
+var ErrUnknownPolicy error
+var ErrUnreachable error
+const Evicting Verdict = "evicting"
+const EvictionParameter untyped string = "maxmemory-policy"
+type EvictionPolicy struct {
+	Verdict Verdict
+	Name string
+	Reason error
+}
+func (EvictionPolicy) String() string
+type List struct {
+	<unexported fields>
+}
+func (*List) EvictionPolicy(context.Context) EvictionPolicy
+func (*List) Ping(context.Context) error
+func (*List) Revoke(context.Context, github.com/google/uuid.UUID, time.Time) error
+func (*List) Revoked(context.Context, github.com/google/uuid.UUID) (bool, error)
+func (*List) VerifyEvictionPolicy(context.Context) (EvictionPolicy, error)
+func Logger(*log/slog.Logger) Option
+const MinimumTTL time.Duration = 1000000000
+func New(github.com/redis/go-redis/v9.UniversalClient, ...Option) (*List, error)
+func OnUnknownPolicy(UnknownPolicy) Option
 type Option func(*List)
-    func Logger(logger *slog.Logger) Option
-    func OnUnknownPolicy(choice UnknownPolicy) Option
-    func Prefix(prefix string) Option
+func Prefix(string) Option
+const Refused UnknownPolicy = "refused"
+const Reported UnknownPolicy = "reported"
+const Retaining Verdict = "retaining"
+const RetainingPolicy untyped string = "noeviction"
+const Unknown Verdict = "unknown"
 type UnknownPolicy string
-    const Reported UnknownPolicy = "reported" ...
 type Verdict string
-    const Retaining Verdict = "retaining" ...
 ```
 
 ## github.com/frostgrove/vv/auth/access/accessjwt/revokeredis/revokeredisfx
 ```go
-func Auto() fx.Option
-func Revoking(options ...revokeredis.Option) fx.Option
-func Verifying() fx.Option
-type Dependencies struct{ ... }
+func Auto() go.uber.org/fx.Option
+type Dependencies struct {
+	go.uber.org/fx.In
+	Client github.com/redis/go-redis/v9.UniversalClient
+	Logger *log/slog.Logger "optional:\"true\""
+}
+func Revoking(...github.com/frostgrove/vv/auth/access/accessjwt/revokeredis.Option) go.uber.org/fx.Option
+func Verifying() go.uber.org/fx.Option
 ```
 
 ## github.com/frostgrove/vv/auth/access/http/accessfiber
 ```go
-type Handler struct{ ... }
-    func New(mounted *access.MountedSubject, options ...Option) *Handler
+func Delivering(github.com/frostgrove/vv/auth/access/http/accesshttp.Cookies) Option
+type Handler struct {
+	<unexported fields>
+}
+func (*Handler) ChangeSecret(github.com/gofiber/fiber/v3.Ctx) error
+func (*Handler) KillSession(github.com/gofiber/fiber/v3.Ctx) error
+func (*Handler) ListSessions(github.com/gofiber/fiber/v3.Ctx) error
+func (*Handler) Mount(github.com/gofiber/fiber/v3.Router)
+func (*Handler) SignIn(github.com/gofiber/fiber/v3.Ctx) error
+func (*Handler) SignOut(github.com/gofiber/fiber/v3.Ctx) error
+func (*Handler) SignOutAll(github.com/gofiber/fiber/v3.Ctx) error
+func (*Handler) WhoAmI(github.com/gofiber/fiber/v3.Ctx) error
+func New(*github.com/frostgrove/vv/auth/access.MountedSubject, ...Option) *Handler
+func NewRefresh(*github.com/frostgrove/vv/auth/access.MountedSubject, ...Option) *RefreshHandler
+func NewRegister[P any](*github.com/frostgrove/vv/auth/access.MountedSubject, *github.com/frostgrove/vv/auth/access.SignUpUseCase[P], ...Option) *RegisterHandler[P]
 type Option func(*settings)
-    func Delivering(cookies accesshttp.Cookies) Option
-type RefreshHandler struct{ ... }
-    func NewRefresh(mounted *access.MountedSubject, options ...Option) *RefreshHandler
-type RegisterHandler[P any] struct{ ... }
-    func NewRegister[P any](mounted *access.MountedSubject, signUp *access.SignUpUseCase[P], ...) *RegisterHandler[P]
+type RefreshHandler struct {
+	<unexported fields>
+}
+func (*RefreshHandler) Mount(github.com/gofiber/fiber/v3.Router)
+func (*RefreshHandler) Refresh(github.com/gofiber/fiber/v3.Ctx) error
+func (*RefreshHandler) Route() github.com/frostgrove/vv/auth/access/http/accesshttp.Route
+type RegisterHandler[P any] struct {
+	<unexported fields>
+}
+func (*RegisterHandler[P]) Mount(github.com/gofiber/fiber/v3.Router)
+func (*RegisterHandler[P]) Register(github.com/gofiber/fiber/v3.Ctx) error
+func (*RegisterHandler[P]) Route() github.com/frostgrove/vv/auth/access/http/accesshttp.Route
 ```
 
 ## github.com/frostgrove/vv/auth/access/http/accessgin
 ```go
-type Handler struct{ ... }
-    func New(mounted *access.MountedSubject, options ...Option) *Handler
+func Delivering(github.com/frostgrove/vv/auth/access/http/accesshttp.Cookies) Option
+type Handler struct {
+	<unexported fields>
+}
+func (*Handler) ChangeSecret(*github.com/gin-gonic/gin.Context)
+func (*Handler) KillSession(*github.com/gin-gonic/gin.Context)
+func (*Handler) ListSessions(*github.com/gin-gonic/gin.Context)
+func (*Handler) Mount(github.com/gin-gonic/gin.IRouter)
+func (*Handler) SignIn(*github.com/gin-gonic/gin.Context)
+func (*Handler) SignOut(*github.com/gin-gonic/gin.Context)
+func (*Handler) SignOutAll(*github.com/gin-gonic/gin.Context)
+func (*Handler) WhoAmI(*github.com/gin-gonic/gin.Context)
+func New(*github.com/frostgrove/vv/auth/access.MountedSubject, ...Option) *Handler
+func NewRefresh(*github.com/frostgrove/vv/auth/access.MountedSubject, ...Option) *RefreshHandler
+func NewRegister[P any](*github.com/frostgrove/vv/auth/access.MountedSubject, *github.com/frostgrove/vv/auth/access.SignUpUseCase[P], ...Option) *RegisterHandler[P]
 type Option func(*settings)
-    func Delivering(cookies accesshttp.Cookies) Option
-type RefreshHandler struct{ ... }
-    func NewRefresh(mounted *access.MountedSubject, options ...Option) *RefreshHandler
-type RegisterHandler[P any] struct{ ... }
-    func NewRegister[P any](mounted *access.MountedSubject, signUp *access.SignUpUseCase[P], ...) *RegisterHandler[P]
+type RefreshHandler struct {
+	<unexported fields>
+}
+func (*RefreshHandler) Mount(github.com/gin-gonic/gin.IRouter)
+func (*RefreshHandler) Refresh(*github.com/gin-gonic/gin.Context)
+func (*RefreshHandler) Route() github.com/frostgrove/vv/auth/access/http/accesshttp.Route
+type RegisterHandler[P any] struct {
+	<unexported fields>
+}
+func (*RegisterHandler[P]) Mount(github.com/gin-gonic/gin.IRouter)
+func (*RegisterHandler[P]) Register(*github.com/gin-gonic/gin.Context)
+func (*RegisterHandler[P]) Route() github.com/frostgrove/vv/auth/access/http/accesshttp.Route
 ```
 
 ## github.com/frostgrove/vv/auth/authjwt
 ```go
-const JWKSFetchTimeout = 10 * time.Second
-const JWKSFreshness = 5 * time.Minute
-const JWKSMaxBody = 1 << 20
-const JWKSMinRefresh = time.Minute
-var ErrKeySourceUnavailable = errors.New("authjwt: verification key source unavailable")
-func Authenticator[C any](p *Parser[C], to func(ctx context.Context, c C) (auth.Principal, error)) auth.Authenticator
-func Standard(k KeySource, roles auth.RoleMap, options ...Option) auth.Authenticator
-type Claims struct{ ... }
-type JWKSDegraded struct{ ... }
+func AllowAnyAudience() Option
+func AllowAnyIssuer() Option
+func AllowNoExpiry() Option
+func Audience(...string) Option
+func Authenticator[C any](*Parser[C], func(ctx context.Context, c C) (github.com/frostgrove/vv/auth.Principal, error)) github.com/frostgrove/vv/auth.Authenticator
+type Claims struct {
+	Sub string "json:\"sub\""
+	Issuer string "json:\"iss\""
+	Roles []string "json:\"roles,omitempty\""
+	Permissions []string "json:\"permissions,omitempty\""
+	Scope string "json:\"scope,omitempty\""
+	Extra map[string]any "json:\"-\""
+}
+func (*Claims) UnmarshalJSON([]byte) error
+func (Claims) Attr(string) (any, bool)
+func (Claims) Grant(github.com/frostgrove/vv/auth.RoleMap) github.com/frostgrove/vv/auth.Claims
+func (Claims) Has(github.com/frostgrove/vv/auth.Permission) bool
+func (Claims) In(github.com/frostgrove/vv/auth.Role) bool
+func (Claims) Subject() string
+func Custom([]string, Keyfunc) KeySource
+func ECDSA(*crypto/ecdsa.PublicKey) KeySource
+func EdDSA(crypto/ed25519.PublicKey) KeySource
+var ErrKeySourceUnavailable error
+func HMAC([]byte) KeySource
+func HMAC256([]byte) KeySource
+func HMAC384([]byte) KeySource
+func HMAC512([]byte) KeySource
+func Issuer(string) Option
+func JWKS(string, ...JWKSOption) KeySource
+func JWKSClient(*net/http.Client) JWKSOption
+func JWKSClock(func() time.Time) JWKSOption
+type JWKSDegraded struct {
+	Cause error
+	FetchedAt time.Time
+	Age time.Duration
+	FreshFor time.Duration
+	MaxStaleFor time.Duration
+}
 type JWKSDegradedObserver func(context.Context, JWKSDegraded)
+const JWKSFetchTimeout time.Duration = 10000000000
+const JWKSFreshness time.Duration = 300000000000
+const JWKSMaxBody untyped int = 1048576
+const JWKSMinRefresh time.Duration = 60000000000
+func JWKSMinRefreshEvery(time.Duration) JWKSOption
 type JWKSOption func(*jwks)
-    func JWKSClient(c *http.Client) JWKSOption
-    func JWKSClock(now func() time.Time) JWKSOption
-    func JWKSMinRefreshEvery(d time.Duration) JWKSOption
-    func JWKSServeStaleFor(d time.Duration, observe JWKSDegradedObserver) JWKSOption
-    func JWKSStaleAfter(d time.Duration) JWKSOption
-    func UnsafeJWKSNoFreshness() JWKSOption
-    func UnsafeJWKSNoMinRefresh() JWKSOption
-type KeySource struct{ ... }
-    func Custom(methods []string, keyfunc Keyfunc) KeySource
-    func ECDSA(pub *ecdsa.PublicKey) KeySource
-    func EdDSA(pub ed25519.PublicKey) KeySource
-    func HMAC(secret []byte) KeySource
-    func HMAC256(secret []byte) KeySource
-    func HMAC384(secret []byte) KeySource
-    func HMAC512(secret []byte) KeySource
-    func JWKS(rawURL string, options ...JWKSOption) KeySource
-    func RSA(pub *rsa.PublicKey) KeySource
-type Keyfunc func(ctx context.Context, t *jwt.Token) (any, error)
+func JWKSServeStaleFor(time.Duration, JWKSDegradedObserver) JWKSOption
+func JWKSStaleAfter(time.Duration) JWKSOption
+type KeySource struct {
+	<unexported fields>
+}
+type Keyfunc func(ctx context.Context, t *github.com/golang-jwt/jwt/v5.Token) (any, error)
+func Leeway(time.Duration) Option
+func New[C any](KeySource, ...Option) *Parser[C]
 type Option func(*settings)
-    func AllowAnyAudience() Option
-    func AllowAnyIssuer() Option
-    func AllowNoExpiry() Option
-    func Audience(aud ...string) Option
-    func Issuer(iss string) Option
-    func Leeway(d time.Duration) Option
-type Parser[C any] struct{ ... }
-    func New[C any](k KeySource, options ...Option) *Parser[C]
+type Parser[C any] struct {
+	<unexported fields>
+}
+func (*Parser[C]) Parse(context.Context, string) (C, error)
+func (*Parser[C]) Warm(context.Context) error
+func RSA(*crypto/rsa.PublicKey) KeySource
+func Standard(KeySource, github.com/frostgrove/vv/auth.RoleMap, ...Option) github.com/frostgrove/vv/auth.Authenticator
+func UnsafeJWKSNoFreshness() JWKSOption
+func UnsafeJWKSNoMinRefresh() JWKSOption
 ```
 
 ## github.com/frostgrove/vv/auth/http/authfiber
 ```go
-func AnswerPreflight(handler fiber.Handler, preflight fiber.Handler) fiber.Handler
-func Middleware(guard *auth.Guard, options ...porthttp.RenderOption) fiber.Handler
-func Routes(app *fiber.App) []authhttp.Route
-func SkipPreflight(handler fiber.Handler) fiber.Handler
-func Verify(app *fiber.App, declared []authhttp.Endpoint, options ...authhttp.VerifyOption) error
-func VerifyAreas(app *fiber.App, areas ...authhttp.Area) error
+func AnswerPreflight(github.com/gofiber/fiber/v3.Handler, github.com/gofiber/fiber/v3.Handler) github.com/gofiber/fiber/v3.Handler
+func Middleware(*github.com/frostgrove/vv/auth.Guard, ...github.com/frostgrove/vv/port/porthttp.RenderOption) github.com/gofiber/fiber/v3.Handler
+func Routes(*github.com/gofiber/fiber/v3.App) []github.com/frostgrove/vv/auth/http/authhttp.Route
+func SkipPreflight(github.com/gofiber/fiber/v3.Handler) github.com/gofiber/fiber/v3.Handler
+func Verify(*github.com/gofiber/fiber/v3.App, []github.com/frostgrove/vv/auth/http/authhttp.Endpoint, ...github.com/frostgrove/vv/auth/http/authhttp.VerifyOption) error
+func VerifyAreas(*github.com/gofiber/fiber/v3.App, ...github.com/frostgrove/vv/auth/http/authhttp.Area) error
 ```
 
 ## github.com/frostgrove/vv/auth/http/authgin
 ```go
-func AnswerPreflight(middleware gin.HandlerFunc, preflight gin.HandlerFunc) gin.HandlerFunc
-func Middleware(guard *auth.Guard, options ...porthttp.RenderOption) gin.HandlerFunc
-func Routes(engine *gin.Engine) []authhttp.Route
-func SkipPreflight(middleware gin.HandlerFunc) gin.HandlerFunc
-func Verify(engine *gin.Engine, declared []authhttp.Endpoint, ...) error
-func VerifyAreas(engine *gin.Engine, areas ...authhttp.Area) error
+func AnswerPreflight(github.com/gin-gonic/gin.HandlerFunc, github.com/gin-gonic/gin.HandlerFunc) github.com/gin-gonic/gin.HandlerFunc
+func Middleware(*github.com/frostgrove/vv/auth.Guard, ...github.com/frostgrove/vv/port/porthttp.RenderOption) github.com/gin-gonic/gin.HandlerFunc
+func Routes(*github.com/gin-gonic/gin.Engine) []github.com/frostgrove/vv/auth/http/authhttp.Route
+func SkipPreflight(github.com/gin-gonic/gin.HandlerFunc) github.com/gin-gonic/gin.HandlerFunc
+func Verify(*github.com/gin-gonic/gin.Engine, []github.com/frostgrove/vv/auth/http/authhttp.Endpoint, ...github.com/frostgrove/vv/auth/http/authhttp.VerifyOption) error
+func VerifyAreas(*github.com/gin-gonic/gin.Engine, ...github.com/frostgrove/vv/auth/http/authhttp.Area) error
 ```
 
 ## github.com/frostgrove/vv/auth/rpc/authgrpc
 ```go
-func Stream(guard *auth.Guard, options ...Option) grpc.StreamServerInterceptor
-func Unary(guard *auth.Guard, options ...Option) grpc.UnaryServerInterceptor
 type Option func(*config)
-    func Skip(fullMethods ...string) Option
+func Skip(...string) Option
+func Stream(*github.com/frostgrove/vv/auth.Guard, ...Option) google.golang.org/grpc.StreamServerInterceptor
+func Unary(*github.com/frostgrove/vv/auth.Guard, ...Option) google.golang.org/grpc.UnaryServerInterceptor
 ```
 
 ## github.com/frostgrove/vv/cache/cachefx
 ```go
-func Activating(constructor any) fx.Option
-func AsObserver(constructor any) any
-func AsProvider(constructor any) any
-func AsResource(constructor any) any
-func AsSet(constructor any) any
-func Auto(application, environment string) fx.Option
-func Caching(spec Spec) fx.Option
-func Resources(declarations ...cache.ResourceDeclaration) fx.Option
-type Contributions struct{ ... }
-type Spec struct{ ... }
+const Accepted Undeclared = "accepted"
+func Activating(any) go.uber.org/fx.Option
+func AsObserver(any) any
+func AsProvider(any) any
+func AsResource(any) any
+func AsSet(any) any
+func Auto(string, string) go.uber.org/fx.Option
+func Caching(Spec) go.uber.org/fx.Option
+type Contributions struct {
+	go.uber.org/fx.In
+	Sets []github.com/frostgrove/vv/cache.Set "group:\"vv.cache.sets\""
+	Providers []github.com/frostgrove/vv/cache.Provider "group:\"vv.cache.providers\""
+	Resources []github.com/frostgrove/vv/cache.ResourceDeclaration "group:\"vv.cache.resources\""
+	Observer github.com/frostgrove/vv/cache.Observer "optional:\"true\""
+	Observers []github.com/frostgrove/vv/cache.Observer "group:\"vv.cache.observers\""
+}
+const Refused Undeclared = "refused"
+func Resources(...github.com/frostgrove/vv/cache.ResourceDeclaration) go.uber.org/fx.Option
+type Spec struct {
+	Application string
+	Environment string
+	Runtime github.com/frostgrove/vv/cache.Runtime
+	Sets []github.com/frostgrove/vv/cache.Set
+	Providers []github.com/frostgrove/vv/cache.Provider
+	Resources []github.com/frostgrove/vv/cache.ResourceDeclaration
+	Undeclared Undeclared
+}
 type Undeclared string
-    const Refused Undeclared = "refused" ...
 ```
 
 ## github.com/frostgrove/vv/crud/adapter/crudpgx
 ```go
-func Transaction(executor crud.Executor) (pgx.Tx, bool)
-func TransactionFor(ctx context.Context, source any) (pgx.Tx, bool)
-type Executor struct{ ... }
-    func From(q Queryer, options ...Option) Executor
-    func Open(q Queryer, options ...Option) Executor
+type Executor struct {
+	<unexported fields>
+}
+func (Executor) Begin(context.Context) (github.com/frostgrove/vv/crud.Tx, error)
+func (Executor) BindExecutor(context.Context, Queryer, ...Option) context.Context
+func (Executor) DataSource() any
+func (Executor) Dialect() github.com/frostgrove/vv/crud.Dialect
+func (Executor) Exec(context.Context, string, ...any) (github.com/frostgrove/vv/crud.Result, error)
+func (Executor) InTransaction() bool
+func (Executor) Query(context.Context, string, ...any) (github.com/frostgrove/vv/crud.Rows, error)
+func (Executor) UnsafeBulkInsert(context.Context, github.com/frostgrove/vv/crud.Executor, github.com/frostgrove/vv/crud.TableRef, []string, [][]any) (int64, error)
+func (Executor) UnsafeCopyFrom(context.Context, string, []string, [][]any) (int64, error)
+func (Executor) UnsafeCopyFromTable(context.Context, github.com/frostgrove/vv/crud.TableRef, []string, [][]any) (int64, error)
+func (Executor) Unwrap() Queryer
+func From(Queryer, ...Option) Executor
+func Open(Queryer, ...Option) Executor
 type Option func(*config)
-    func WithFaults(c errs.Classifier) Option
-type Queryer interface{ ... }
-type Tx struct{ ... }
+type Queryer interface {
+	Exec(context.Context, string, ...any) (github.com/jackc/pgx/v5/pgconn.CommandTag, error)
+	Query(context.Context, string, ...any) (github.com/jackc/pgx/v5.Rows, error)
+}
+func Transaction(github.com/frostgrove/vv/crud.Executor) (github.com/jackc/pgx/v5.Tx, bool)
+func TransactionFor(context.Context, any) (github.com/jackc/pgx/v5.Tx, bool)
+type Tx struct {
+	Executor
+	<unexported fields>
+}
+func (Tx) Begin(context.Context) (github.com/frostgrove/vv/crud.Tx, error)
+func (Tx) BindExecutor(context.Context, Queryer, ...Option) context.Context
+func (Tx) Commit(context.Context) error
+func (Tx) DataSource() any
+func (Tx) Dialect() github.com/frostgrove/vv/crud.Dialect
+func (Tx) Exec(context.Context, string, ...any) (github.com/frostgrove/vv/crud.Result, error)
+func (Tx) InTransaction() bool
+func (Tx) Query(context.Context, string, ...any) (github.com/frostgrove/vv/crud.Rows, error)
+func (Tx) Rollback(context.Context) error
+func (Tx) Tx() github.com/jackc/pgx/v5.Tx
+func (Tx) UnsafeBulkInsert(context.Context, github.com/frostgrove/vv/crud.Executor, github.com/frostgrove/vv/crud.TableRef, []string, [][]any) (int64, error)
+func (Tx) UnsafeCopyFrom(context.Context, string, []string, [][]any) (int64, error)
+func (Tx) UnsafeCopyFromTable(context.Context, github.com/frostgrove/vv/crud.TableRef, []string, [][]any) (int64, error)
+func (Tx) Unwrap() Queryer
+func WithFaults(github.com/frostgrove/vv/errs.Classifier) Option
 ```
 
 ## github.com/frostgrove/vv/crud/adapter/crudsql/crudsqlfx
 ```go
-const DefaultSchemaTimeout = 15 * time.Second
-func Module(configuration *vvdb.Config) fx.Option
-func Open(lifecycle fx.Lifecycle, configuration *vvdb.Config) (*sql.DB, error)
+func AsWrapping(any) any
+func Base(github.com/frostgrove/vv/crud.Source) go.uber.org/fx.Option
+const DefaultSchemaTimeout time.Duration = 15000000000
+var ErrWrappingDropped error
+var ErrWrappingEmpty error
+var ErrWrappingMissing error
+var ErrWrappingTwice error
+var ErrWrappingUndeclared error
+var ErrWrappingUnnamed error
+func Layers(...string) Option
+func Module(*github.com/frostgrove/vv/vvdb.Config, ...Option) go.uber.org/fx.Option
+func Open(go.uber.org/fx.Lifecycle, *github.com/frostgrove/vv/vvdb.Config) (*database/sql.DB, error)
+type Option func(*declaration)
+type Wrapping struct {
+	Name string
+	Wrap func(github.com/frostgrove/vv/crud.Source) github.com/frostgrove/vv/crud.Source
+}
 ```
 
 ## github.com/frostgrove/vv/crud/http/crudfiber
 ```go
-func DefaultErrorHandler(c fiber.Ctx, err error) error
-func ErrorHandler(options ...crudhttp.RenderOption) fiber.ErrorHandler
-func Errors(options ...crudhttp.RenderOption) fiber.Handler
-func Status(err error) int
-type BulkDeleteRequest[ID comparable] = crudhttp.BulkDeleteRequest[ID]
-type Envelope = crudhttp.Envelope
+func AllowClientID[M any, ID comparable, U any]() Option[M, ID, U]
+func BeforeSave[M any, ID comparable, U any](func(github.com/gofiber/fiber/v3.Ctx, *M) error) Option[M, ID, U]
+func BeforeUpdate[M any, ID comparable, U any](func(github.com/gofiber/fiber/v3.Ctx, ID, *U) error) Option[M, ID, U]
+type BulkDeleteRequest[ID comparable] = github.com/frostgrove/vv/crud/http/crudhttp.BulkDeleteRequest[ID]
+func DefaultErrorHandler(github.com/gofiber/fiber/v3.Ctx, error) error
+type Envelope = github.com/frostgrove/vv/crud/http/crudhttp.Envelope
+func (Envelope) MarshalJSON() ([]byte, error)
+func (Envelope) Violations() []github.com/frostgrove/vv/errs.Violation
+func ErrorHandler(...github.com/frostgrove/vv/crud/http/crudhttp.RenderOption) github.com/gofiber/fiber/v3.ErrorHandler
+func Errors(...github.com/frostgrove/vv/crud/http/crudhttp.RenderOption) github.com/gofiber/fiber/v3.Handler
+func Exposing[M any, ID comparable, U any](github.com/frostgrove/vv/port.Operations) Option[M, ID, U]
 type Handler[M any, ID comparable, U any] = ResourceFor[M, ID, U, M, U, M]
-    func New[M any, ID comparable, U any](repository Repository[M, ID, U], options ...Option[M, ID, U]) *Handler[M, ID, U]
-    func Serving[M any, ID comparable, U any](service Service[M, ID, U], options ...Option[M, ID, U]) *Handler[M, ID, U]
+func (*Handler[M, ID, U]) BulkDelete(github.com/gofiber/fiber/v3.Ctx) error
+func (*Handler[M, ID, U]) CountGet(github.com/gofiber/fiber/v3.Ctx) error
+func (*Handler[M, ID, U]) CountPost(github.com/gofiber/fiber/v3.Ctx) error
+func (*Handler[M, ID, U]) Create(github.com/gofiber/fiber/v3.Ctx) error
+func (*Handler[M, ID, U]) Delete(github.com/gofiber/fiber/v3.Ctx) error
+func (*Handler[M, ID, U]) GetByID(github.com/gofiber/fiber/v3.Ctx) error
+func (*Handler[M, ID, U]) List(github.com/gofiber/fiber/v3.Ctx) error
+func (*Handler[M, ID, U]) Query(github.com/gofiber/fiber/v3.Ctx) error
+func (*Handler[M, ID, U]) Register(github.com/gofiber/fiber/v3.Router)
+func (*Handler[M, ID, U]) Rendering(...github.com/frostgrove/vv/crud/http/crudhttp.RenderOption) *ResourceFor[M, ID, U, M, U, M]
+func (*Handler[M, ID, U]) Replace(github.com/gofiber/fiber/v3.Ctx) error
+func (*Handler[M, ID, U]) Routes() *github.com/gofiber/fiber/v3.App
+func (*Handler[M, ID, U]) Update(github.com/gofiber/fiber/v3.Ctx) error
 type HandlerFor[M any, ID comparable, U any, In any] = ResourceFor[M, ID, U, In, U, M]
-    func NewFor[In, M any, ID comparable, U any](repository Repository[M, ID, U], mapper Mapper[In, M], ...) *HandlerFor[M, ID, U, In]
-    func ServingFor[In, M any, ID comparable, U any](service Service[M, ID, U], mapper Mapper[In, M], options ...Option[M, ID, U]) *HandlerFor[M, ID, U, In]
-type Mapper[In, M any] = port.Mapper[In, M]
+func (*HandlerFor[M, ID, U, In]) BulkDelete(github.com/gofiber/fiber/v3.Ctx) error
+func (*HandlerFor[M, ID, U, In]) CountGet(github.com/gofiber/fiber/v3.Ctx) error
+func (*HandlerFor[M, ID, U, In]) CountPost(github.com/gofiber/fiber/v3.Ctx) error
+func (*HandlerFor[M, ID, U, In]) Create(github.com/gofiber/fiber/v3.Ctx) error
+func (*HandlerFor[M, ID, U, In]) Delete(github.com/gofiber/fiber/v3.Ctx) error
+func (*HandlerFor[M, ID, U, In]) GetByID(github.com/gofiber/fiber/v3.Ctx) error
+func (*HandlerFor[M, ID, U, In]) List(github.com/gofiber/fiber/v3.Ctx) error
+func (*HandlerFor[M, ID, U, In]) Query(github.com/gofiber/fiber/v3.Ctx) error
+func (*HandlerFor[M, ID, U, In]) Register(github.com/gofiber/fiber/v3.Router)
+func (*HandlerFor[M, ID, U, In]) Rendering(...github.com/frostgrove/vv/crud/http/crudhttp.RenderOption) *ResourceFor[M, ID, U, In, U, M]
+func (*HandlerFor[M, ID, U, In]) Replace(github.com/gofiber/fiber/v3.Ctx) error
+func (*HandlerFor[M, ID, U, In]) Routes() *github.com/gofiber/fiber/v3.App
+func (*HandlerFor[M, ID, U, In]) Update(github.com/gofiber/fiber/v3.Ctx) error
+type Mapper[In any, M any] = github.com/frostgrove/vv/port.Mapper[In, M]
+func (Mapper[In, M]) Model(context.Context, In) (M, error)
+func MaxBody[M any, ID comparable, U any](int) Option[M, ID, U]
+func MaxBulk[M any, ID comparable, U any](int) Option[M, ID, U]
+func New[M any, ID comparable, U any](Repository[M, ID, U], ...Option[M, ID, U]) *Handler[M, ID, U]
+func NewFor[In any, M any, ID comparable, U any](Repository[M, ID, U], Mapper[In, M], ...Option[M, ID, U]) *HandlerFor[M, ID, U, In]
+func NewWire[In any, P any, R any, M any, ID comparable, U any](Repository[M, ID, U], Mapper[In, M], PatchMapper[P, U], Presenter[M, R], ...Option[M, ID, U]) *ResourceFor[M, ID, U, In, P, R]
 type Option[M any, ID comparable, U any] func(*options[M, ID, U])
-    func AllowClientID[M any, ID comparable, U any]() Option[M, ID, U]
-    func BeforeSave[M any, ID comparable, U any](fn func(fiber.Ctx, *M) error) Option[M, ID, U]
-    func BeforeUpdate[M any, ID comparable, U any](fn func(fiber.Ctx, ID, *U) error) Option[M, ID, U]
-    func Exposing[M any, ID comparable, U any](operations port.Operations) Option[M, ID, U]
-    func MaxBody[M any, ID comparable, U any](n int) Option[M, ID, U]
-    func MaxBulk[M any, ID comparable, U any](n int) Option[M, ID, U]
-    func ReadOnly[M any, ID comparable, U any]() Option[M, ID, U]
-    func WithErrorHandler[M any, ID comparable, U any](fn func(fiber.Ctx, error) error) Option[M, ID, U]
-    func WithQuery[M any, ID comparable, U any](config *query.Config) Option[M, ID, U]
-    func WithQueryFor[M any, ID comparable, U any](defaultConfig *query.Config, variants map[string]*query.Config, ...) Option[M, ID, U]
-    func WithRenderer[M any, ID comparable, U any](r crudhttp.Renderer) Option[M, ID, U]
-    func WithScope[M any, ID comparable, U any](fn func(fiber.Ctx) ([]crud.Option, error)) Option[M, ID, U]
-    func WithTransform[M any, ID comparable, U any](fn func(fiber.Ctx, M) any) Option[M, ID, U]
-type PatchMapper[P, U any] = wire.PatchMapper[P, U]
-type Presenter[M, R any] = wire.Presenter[M, R]
-type Renderer = crudhttp.Renderer
-type Repository[M any, ID comparable, U any] = crudhttp.Repository[M, ID, U]
-type ResourceFor[M any, ID comparable, U any, In any, P any, R any] struct{ ... }
-    func NewWire[In, P, R, M any, ID comparable, U any](repository Repository[M, ID, U], mapper Mapper[In, M], ...) *ResourceFor[M, ID, U, In, P, R]
-    func ServingWire[In, P, R, M any, ID comparable, U any](service Service[M, ID, U], mapper Mapper[In, M], patcher PatchMapper[P, U], ...) *ResourceFor[M, ID, U, In, P, R]
-type Service[M any, ID comparable, U any] = port.Service[M, ID, U]
+type PatchMapper[P any, U any] = github.com/frostgrove/vv/crud/wire.PatchMapper[P, U]
+func (PatchMapper[P, U]) Update(P) U
+type Presenter[M any, R any] = github.com/frostgrove/vv/crud/wire.Presenter[M, R]
+func (Presenter[M, R]) Response(M) R
+func ReadOnly[M any, ID comparable, U any]() Option[M, ID, U]
+type Renderer = github.com/frostgrove/vv/crud/http/crudhttp.Renderer
+func (Renderer) Render(context.Context, error) (int, net/http.Header, any)
+type Repository[M any, ID comparable, U any] = github.com/frostgrove/vv/crud/http/crudhttp.Repository[M, ID, U]
+func (Repository[M, ID, U]) Count(context.Context, ...github.com/frostgrove/vv/crud.Option) (int64, error)
+func (Repository[M, ID, U]) Delete(context.Context, ...ID) (int64, error)
+func (Repository[M, ID, U]) Get(context.Context, ...github.com/frostgrove/vv/crud.Option) (github.com/frostgrove/vv/crud.PaginatedResponse[M], error)
+func (Repository[M, ID, U]) GetAll(context.Context, ...github.com/frostgrove/vv/crud.Option) ([]M, error)
+func (Repository[M, ID, U]) GetByID(context.Context, ID, ...github.com/frostgrove/vv/crud.Option) (M, error)
+func (Repository[M, ID, U]) Meta() *github.com/frostgrove/vv/crud.Meta
+func (Repository[M, ID, U]) Save(context.Context, *M) (M, error)
+func (Repository[M, ID, U]) Update(context.Context, ID, U, ...github.com/frostgrove/vv/crud.Option) (M, error)
+type ResourceFor[M any, ID comparable, U any, In any, P any, R any] struct {
+	<unexported fields>
+}
+func (*ResourceFor[M, ID, U, In, P, R]) BulkDelete(github.com/gofiber/fiber/v3.Ctx) error
+func (*ResourceFor[M, ID, U, In, P, R]) CountGet(github.com/gofiber/fiber/v3.Ctx) error
+func (*ResourceFor[M, ID, U, In, P, R]) CountPost(github.com/gofiber/fiber/v3.Ctx) error
+func (*ResourceFor[M, ID, U, In, P, R]) Create(github.com/gofiber/fiber/v3.Ctx) error
+func (*ResourceFor[M, ID, U, In, P, R]) Delete(github.com/gofiber/fiber/v3.Ctx) error
+func (*ResourceFor[M, ID, U, In, P, R]) GetByID(github.com/gofiber/fiber/v3.Ctx) error
+func (*ResourceFor[M, ID, U, In, P, R]) List(github.com/gofiber/fiber/v3.Ctx) error
+func (*ResourceFor[M, ID, U, In, P, R]) Query(github.com/gofiber/fiber/v3.Ctx) error
+func (*ResourceFor[M, ID, U, In, P, R]) Register(github.com/gofiber/fiber/v3.Router)
+func (*ResourceFor[M, ID, U, In, P, R]) Rendering(...github.com/frostgrove/vv/crud/http/crudhttp.RenderOption) *ResourceFor[M, ID, U, In, P, R]
+func (*ResourceFor[M, ID, U, In, P, R]) Replace(github.com/gofiber/fiber/v3.Ctx) error
+func (*ResourceFor[M, ID, U, In, P, R]) Routes() *github.com/gofiber/fiber/v3.App
+func (*ResourceFor[M, ID, U, In, P, R]) Update(github.com/gofiber/fiber/v3.Ctx) error
+type Service[M any, ID comparable, U any] = github.com/frostgrove/vv/port.Service[M, ID, U]
+func (Service[M, ID, U]) Count(context.Context, github.com/frostgrove/vv/port.CountCommand) (int64, error)
+func (Service[M, ID, U]) Create(context.Context, github.com/frostgrove/vv/port.CreateCommand[M]) (M, error)
+func (Service[M, ID, U]) Delete(context.Context, github.com/frostgrove/vv/port.DeleteCommand[ID]) (int64, error)
+func (Service[M, ID, U]) DeleteMany(context.Context, github.com/frostgrove/vv/port.BulkDeleteCommand[ID]) (int64, error)
+func (Service[M, ID, U]) Get(context.Context, github.com/frostgrove/vv/port.GetCommand[ID]) (M, error)
+func (Service[M, ID, U]) List(context.Context, github.com/frostgrove/vv/port.ListCommand) (github.com/frostgrove/vv/crud.PaginatedResponse[M], error)
+func (Service[M, ID, U]) Meta() *github.com/frostgrove/vv/crud.Meta
+func (Service[M, ID, U]) Paths() github.com/frostgrove/vv/errs.Resolver
+func (Service[M, ID, U]) Replace(context.Context, github.com/frostgrove/vv/port.ReplaceCommand[ID, M]) (M, error)
+func (Service[M, ID, U]) Update(context.Context, github.com/frostgrove/vv/port.UpdateCommand[ID, U]) (M, error)
+func Serving[M any, ID comparable, U any](Service[M, ID, U], ...Option[M, ID, U]) *Handler[M, ID, U]
+func ServingFor[In any, M any, ID comparable, U any](Service[M, ID, U], Mapper[In, M], ...Option[M, ID, U]) *HandlerFor[M, ID, U, In]
+func ServingWire[In any, P any, R any, M any, ID comparable, U any](Service[M, ID, U], Mapper[In, M], PatchMapper[P, U], Presenter[M, R], ...Option[M, ID, U]) *ResourceFor[M, ID, U, In, P, R]
+func Status(error) int
+func WithErrorHandler[M any, ID comparable, U any](func(github.com/gofiber/fiber/v3.Ctx, error) error) Option[M, ID, U]
+func WithQuery[M any, ID comparable, U any](*github.com/frostgrove/vv/crud/query.Config) Option[M, ID, U]
+func WithQueryFor[M any, ID comparable, U any](*github.com/frostgrove/vv/crud/query.Config, map[string]*github.com/frostgrove/vv/crud/query.Config, github.com/frostgrove/vv/port.QuerySelector) Option[M, ID, U]
+func WithRenderer[M any, ID comparable, U any](github.com/frostgrove/vv/crud/http/crudhttp.Renderer) Option[M, ID, U]
+func WithScope[M any, ID comparable, U any](func(github.com/gofiber/fiber/v3.Ctx) ([]github.com/frostgrove/vv/crud.Option, error)) Option[M, ID, U]
+func WithTransform[M any, ID comparable, U any](func(github.com/gofiber/fiber/v3.Ctx, M) any) Option[M, ID, U]
 ```
 
 ## github.com/frostgrove/vv/crud/http/crudgin
 ```go
-func DefaultErrorHandler(c *gin.Context, err error)
-func Errors(options ...crudhttp.RenderOption) gin.HandlerFunc
-func Routing(engine *gin.Engine, options ...crudhttp.RenderOption)
-func Status(err error) int
-type BulkDeleteRequest[ID comparable] = crudhttp.BulkDeleteRequest[ID]
-type Envelope = crudhttp.Envelope
+func AllowClientID[M any, ID comparable, U any]() Option[M, ID, U]
+func BeforeSave[M any, ID comparable, U any](func(*github.com/gin-gonic/gin.Context, *M) error) Option[M, ID, U]
+func BeforeUpdate[M any, ID comparable, U any](func(*github.com/gin-gonic/gin.Context, ID, *U) error) Option[M, ID, U]
+type BulkDeleteRequest[ID comparable] = github.com/frostgrove/vv/crud/http/crudhttp.BulkDeleteRequest[ID]
+func DefaultErrorHandler(*github.com/gin-gonic/gin.Context, error)
+type Envelope = github.com/frostgrove/vv/crud/http/crudhttp.Envelope
+func (Envelope) MarshalJSON() ([]byte, error)
+func (Envelope) Violations() []github.com/frostgrove/vv/errs.Violation
+func Errors(...github.com/frostgrove/vv/crud/http/crudhttp.RenderOption) github.com/gin-gonic/gin.HandlerFunc
+func Exposing[M any, ID comparable, U any](github.com/frostgrove/vv/port.Operations) Option[M, ID, U]
 type Handler[M any, ID comparable, U any] = ResourceFor[M, ID, U, M, U, M]
-    func New[M any, ID comparable, U any](repository Repository[M, ID, U], options ...Option[M, ID, U]) *Handler[M, ID, U]
-    func Serving[M any, ID comparable, U any](service Service[M, ID, U], options ...Option[M, ID, U]) *Handler[M, ID, U]
+func (*Handler[M, ID, U]) BulkDelete(*github.com/gin-gonic/gin.Context)
+func (*Handler[M, ID, U]) CountGet(*github.com/gin-gonic/gin.Context)
+func (*Handler[M, ID, U]) CountPost(*github.com/gin-gonic/gin.Context)
+func (*Handler[M, ID, U]) Create(*github.com/gin-gonic/gin.Context)
+func (*Handler[M, ID, U]) Delete(*github.com/gin-gonic/gin.Context)
+func (*Handler[M, ID, U]) GetByID(*github.com/gin-gonic/gin.Context)
+func (*Handler[M, ID, U]) List(*github.com/gin-gonic/gin.Context)
+func (*Handler[M, ID, U]) Mount(github.com/gin-gonic/gin.IRouter, string)
+func (*Handler[M, ID, U]) Query(*github.com/gin-gonic/gin.Context)
+func (*Handler[M, ID, U]) Register(github.com/gin-gonic/gin.IRoutes)
+func (*Handler[M, ID, U]) Rendering(...github.com/frostgrove/vv/crud/http/crudhttp.RenderOption) *ResourceFor[M, ID, U, M, U, M]
+func (*Handler[M, ID, U]) Replace(*github.com/gin-gonic/gin.Context)
+func (*Handler[M, ID, U]) Update(*github.com/gin-gonic/gin.Context)
 type HandlerFor[M any, ID comparable, U any, In any] = ResourceFor[M, ID, U, In, U, M]
-    func NewFor[In, M any, ID comparable, U any](repository Repository[M, ID, U], mapper Mapper[In, M], ...) *HandlerFor[M, ID, U, In]
-    func ServingFor[In, M any, ID comparable, U any](service Service[M, ID, U], mapper Mapper[In, M], options ...Option[M, ID, U]) *HandlerFor[M, ID, U, In]
-type Mapper[In, M any] = port.Mapper[In, M]
+func (*HandlerFor[M, ID, U, In]) BulkDelete(*github.com/gin-gonic/gin.Context)
+func (*HandlerFor[M, ID, U, In]) CountGet(*github.com/gin-gonic/gin.Context)
+func (*HandlerFor[M, ID, U, In]) CountPost(*github.com/gin-gonic/gin.Context)
+func (*HandlerFor[M, ID, U, In]) Create(*github.com/gin-gonic/gin.Context)
+func (*HandlerFor[M, ID, U, In]) Delete(*github.com/gin-gonic/gin.Context)
+func (*HandlerFor[M, ID, U, In]) GetByID(*github.com/gin-gonic/gin.Context)
+func (*HandlerFor[M, ID, U, In]) List(*github.com/gin-gonic/gin.Context)
+func (*HandlerFor[M, ID, U, In]) Mount(github.com/gin-gonic/gin.IRouter, string)
+func (*HandlerFor[M, ID, U, In]) Query(*github.com/gin-gonic/gin.Context)
+func (*HandlerFor[M, ID, U, In]) Register(github.com/gin-gonic/gin.IRoutes)
+func (*HandlerFor[M, ID, U, In]) Rendering(...github.com/frostgrove/vv/crud/http/crudhttp.RenderOption) *ResourceFor[M, ID, U, In, U, M]
+func (*HandlerFor[M, ID, U, In]) Replace(*github.com/gin-gonic/gin.Context)
+func (*HandlerFor[M, ID, U, In]) Update(*github.com/gin-gonic/gin.Context)
+type Mapper[In any, M any] = github.com/frostgrove/vv/port.Mapper[In, M]
+func (Mapper[In, M]) Model(context.Context, In) (M, error)
+func MaxBody[M any, ID comparable, U any](int) Option[M, ID, U]
+func MaxBulk[M any, ID comparable, U any](int) Option[M, ID, U]
+func New[M any, ID comparable, U any](Repository[M, ID, U], ...Option[M, ID, U]) *Handler[M, ID, U]
+func NewFor[In any, M any, ID comparable, U any](Repository[M, ID, U], Mapper[In, M], ...Option[M, ID, U]) *HandlerFor[M, ID, U, In]
+func NewWire[In any, P any, R any, M any, ID comparable, U any](Repository[M, ID, U], Mapper[In, M], PatchMapper[P, U], Presenter[M, R], ...Option[M, ID, U]) *ResourceFor[M, ID, U, In, P, R]
 type Option[M any, ID comparable, U any] func(*options[M, ID, U])
-    func AllowClientID[M any, ID comparable, U any]() Option[M, ID, U]
-    func BeforeSave[M any, ID comparable, U any](fn func(*gin.Context, *M) error) Option[M, ID, U]
-    func BeforeUpdate[M any, ID comparable, U any](fn func(*gin.Context, ID, *U) error) Option[M, ID, U]
-    func Exposing[M any, ID comparable, U any](operations port.Operations) Option[M, ID, U]
-    func MaxBody[M any, ID comparable, U any](n int) Option[M, ID, U]
-    func MaxBulk[M any, ID comparable, U any](n int) Option[M, ID, U]
-    func ReadOnly[M any, ID comparable, U any]() Option[M, ID, U]
-    func WithErrorHandler[M any, ID comparable, U any](fn func(*gin.Context, error)) Option[M, ID, U]
-    func WithQuery[M any, ID comparable, U any](config *query.Config) Option[M, ID, U]
-    func WithQueryFor[M any, ID comparable, U any](defaultConfig *query.Config, variants map[string]*query.Config, ...) Option[M, ID, U]
-    func WithRenderer[M any, ID comparable, U any](r crudhttp.Renderer) Option[M, ID, U]
-    func WithScope[M any, ID comparable, U any](fn func(*gin.Context) ([]crud.Option, error)) Option[M, ID, U]
-    func WithTransform[M any, ID comparable, U any](fn func(*gin.Context, M) any) Option[M, ID, U]
-type PatchMapper[P, U any] = wire.PatchMapper[P, U]
-type Presenter[M, R any] = wire.Presenter[M, R]
-type Renderer = crudhttp.Renderer
-type Repository[M any, ID comparable, U any] = crudhttp.Repository[M, ID, U]
-type ResourceFor[M any, ID comparable, U any, In any, P any, R any] struct{ ... }
-    func NewWire[In, P, R, M any, ID comparable, U any](repository Repository[M, ID, U], mapper Mapper[In, M], ...) *ResourceFor[M, ID, U, In, P, R]
-    func ServingWire[In, P, R, M any, ID comparable, U any](service Service[M, ID, U], mapper Mapper[In, M], patcher PatchMapper[P, U], ...) *ResourceFor[M, ID, U, In, P, R]
-type Service[M any, ID comparable, U any] = port.Service[M, ID, U]
+type PatchMapper[P any, U any] = github.com/frostgrove/vv/crud/wire.PatchMapper[P, U]
+func (PatchMapper[P, U]) Update(P) U
+type Presenter[M any, R any] = github.com/frostgrove/vv/crud/wire.Presenter[M, R]
+func (Presenter[M, R]) Response(M) R
+func ReadOnly[M any, ID comparable, U any]() Option[M, ID, U]
+type Renderer = github.com/frostgrove/vv/crud/http/crudhttp.Renderer
+func (Renderer) Render(context.Context, error) (int, net/http.Header, any)
+type Repository[M any, ID comparable, U any] = github.com/frostgrove/vv/crud/http/crudhttp.Repository[M, ID, U]
+func (Repository[M, ID, U]) Count(context.Context, ...github.com/frostgrove/vv/crud.Option) (int64, error)
+func (Repository[M, ID, U]) Delete(context.Context, ...ID) (int64, error)
+func (Repository[M, ID, U]) Get(context.Context, ...github.com/frostgrove/vv/crud.Option) (github.com/frostgrove/vv/crud.PaginatedResponse[M], error)
+func (Repository[M, ID, U]) GetAll(context.Context, ...github.com/frostgrove/vv/crud.Option) ([]M, error)
+func (Repository[M, ID, U]) GetByID(context.Context, ID, ...github.com/frostgrove/vv/crud.Option) (M, error)
+func (Repository[M, ID, U]) Meta() *github.com/frostgrove/vv/crud.Meta
+func (Repository[M, ID, U]) Save(context.Context, *M) (M, error)
+func (Repository[M, ID, U]) Update(context.Context, ID, U, ...github.com/frostgrove/vv/crud.Option) (M, error)
+type ResourceFor[M any, ID comparable, U any, In any, P any, R any] struct {
+	<unexported fields>
+}
+func (*ResourceFor[M, ID, U, In, P, R]) BulkDelete(*github.com/gin-gonic/gin.Context)
+func (*ResourceFor[M, ID, U, In, P, R]) CountGet(*github.com/gin-gonic/gin.Context)
+func (*ResourceFor[M, ID, U, In, P, R]) CountPost(*github.com/gin-gonic/gin.Context)
+func (*ResourceFor[M, ID, U, In, P, R]) Create(*github.com/gin-gonic/gin.Context)
+func (*ResourceFor[M, ID, U, In, P, R]) Delete(*github.com/gin-gonic/gin.Context)
+func (*ResourceFor[M, ID, U, In, P, R]) GetByID(*github.com/gin-gonic/gin.Context)
+func (*ResourceFor[M, ID, U, In, P, R]) List(*github.com/gin-gonic/gin.Context)
+func (*ResourceFor[M, ID, U, In, P, R]) Mount(github.com/gin-gonic/gin.IRouter, string)
+func (*ResourceFor[M, ID, U, In, P, R]) Query(*github.com/gin-gonic/gin.Context)
+func (*ResourceFor[M, ID, U, In, P, R]) Register(github.com/gin-gonic/gin.IRoutes)
+func (*ResourceFor[M, ID, U, In, P, R]) Rendering(...github.com/frostgrove/vv/crud/http/crudhttp.RenderOption) *ResourceFor[M, ID, U, In, P, R]
+func (*ResourceFor[M, ID, U, In, P, R]) Replace(*github.com/gin-gonic/gin.Context)
+func (*ResourceFor[M, ID, U, In, P, R]) Update(*github.com/gin-gonic/gin.Context)
+func Routing(*github.com/gin-gonic/gin.Engine, ...github.com/frostgrove/vv/crud/http/crudhttp.RenderOption)
+type Service[M any, ID comparable, U any] = github.com/frostgrove/vv/port.Service[M, ID, U]
+func (Service[M, ID, U]) Count(context.Context, github.com/frostgrove/vv/port.CountCommand) (int64, error)
+func (Service[M, ID, U]) Create(context.Context, github.com/frostgrove/vv/port.CreateCommand[M]) (M, error)
+func (Service[M, ID, U]) Delete(context.Context, github.com/frostgrove/vv/port.DeleteCommand[ID]) (int64, error)
+func (Service[M, ID, U]) DeleteMany(context.Context, github.com/frostgrove/vv/port.BulkDeleteCommand[ID]) (int64, error)
+func (Service[M, ID, U]) Get(context.Context, github.com/frostgrove/vv/port.GetCommand[ID]) (M, error)
+func (Service[M, ID, U]) List(context.Context, github.com/frostgrove/vv/port.ListCommand) (github.com/frostgrove/vv/crud.PaginatedResponse[M], error)
+func (Service[M, ID, U]) Meta() *github.com/frostgrove/vv/crud.Meta
+func (Service[M, ID, U]) Paths() github.com/frostgrove/vv/errs.Resolver
+func (Service[M, ID, U]) Replace(context.Context, github.com/frostgrove/vv/port.ReplaceCommand[ID, M]) (M, error)
+func (Service[M, ID, U]) Update(context.Context, github.com/frostgrove/vv/port.UpdateCommand[ID, U]) (M, error)
+func Serving[M any, ID comparable, U any](Service[M, ID, U], ...Option[M, ID, U]) *Handler[M, ID, U]
+func ServingFor[In any, M any, ID comparable, U any](Service[M, ID, U], Mapper[In, M], ...Option[M, ID, U]) *HandlerFor[M, ID, U, In]
+func ServingWire[In any, P any, R any, M any, ID comparable, U any](Service[M, ID, U], Mapper[In, M], PatchMapper[P, U], Presenter[M, R], ...Option[M, ID, U]) *ResourceFor[M, ID, U, In, P, R]
+func Status(error) int
+func WithErrorHandler[M any, ID comparable, U any](func(*github.com/gin-gonic/gin.Context, error)) Option[M, ID, U]
+func WithQuery[M any, ID comparable, U any](*github.com/frostgrove/vv/crud/query.Config) Option[M, ID, U]
+func WithQueryFor[M any, ID comparable, U any](*github.com/frostgrove/vv/crud/query.Config, map[string]*github.com/frostgrove/vv/crud/query.Config, github.com/frostgrove/vv/port.QuerySelector) Option[M, ID, U]
+func WithRenderer[M any, ID comparable, U any](github.com/frostgrove/vv/crud/http/crudhttp.Renderer) Option[M, ID, U]
+func WithScope[M any, ID comparable, U any](func(*github.com/gin-gonic/gin.Context) ([]github.com/frostgrove/vv/crud.Option, error)) Option[M, ID, U]
+func WithTransform[M any, ID comparable, U any](func(*github.com/gin-gonic/gin.Context, M) any) Option[M, ID, U]
 ```
 
 ## github.com/frostgrove/vv/crud/rpc/crudgrpc
 ```go
-const DefaultRetryDelay = time.Second
-const ErrorDomain = "vv"
-const MaxViolations = port.MaxViolations
-const PartialKey = "partial"
-const ServicePrefix = "vv.crud.v1."
-func Code(err error) codes.Code
-func CodeFor(k errs.Kind) codes.Code
-func ContextError(ctx context.Context, err error) error
-func Errors(options ...RenderOption) grpc.UnaryServerInterceptor
-func KindForCode(c codes.Code) errs.Kind
-func LocaleKeys() []string
-func ServiceName(name string) string
-func StreamErrors(options ...RenderOption) grpc.StreamServerInterceptor
-func Transport(conn grpc.ClientConnInterface, name string, options ...TransportOption) remote.Transport
-func WithLocale(ctx context.Context, locale string) context.Context
+func AllowClientID[M any, ID comparable, U any]() Option[M, ID, U]
+func BeforeSave[M any, ID comparable, U any](func(context.Context, *M) error) Option[M, ID, U]
+func BeforeUpdate[M any, ID comparable, U any](func(context.Context, ID, *U) error) Option[M, ID, U]
+func Code(error) google.golang.org/grpc/codes.Code
+func CodeFor(github.com/frostgrove/vv/errs.Kind) google.golang.org/grpc/codes.Code
+func ContextError(context.Context, error) error
+const DefaultRetryDelay time.Duration = 1000000000
+const ErrorDomain untyped string = "vv"
+func Errors(...RenderOption) google.golang.org/grpc.UnaryServerInterceptor
+func Exposing[M any, ID comparable, U any](github.com/frostgrove/vv/port.Operations) Option[M, ID, U]
 type Handler[M any, ID comparable, U any] = ResourceFor[M, ID, U, M, U, M]
-    func New[M any, ID comparable, U any](repository Repository[M, ID, U], options ...Option[M, ID, U]) *Handler[M, ID, U]
-    func Serving[M any, ID comparable, U any](service Service[M, ID, U], options ...Option[M, ID, U]) *Handler[M, ID, U]
+func (*Handler[M, ID, U]) BulkDelete(context.Context, *google.golang.org/protobuf/types/known/structpb.Struct) (*google.golang.org/protobuf/types/known/structpb.Struct, error)
+func (*Handler[M, ID, U]) Count(context.Context, *google.golang.org/protobuf/types/known/structpb.Struct) (*google.golang.org/protobuf/types/known/structpb.Struct, error)
+func (*Handler[M, ID, U]) Create(context.Context, *google.golang.org/protobuf/types/known/structpb.Struct) (*google.golang.org/protobuf/types/known/structpb.Struct, error)
+func (*Handler[M, ID, U]) Delete(context.Context, *google.golang.org/protobuf/types/known/structpb.Struct) (*google.golang.org/protobuf/types/known/structpb.Struct, error)
+func (*Handler[M, ID, U]) Desc(string) *google.golang.org/grpc.ServiceDesc
+func (*Handler[M, ID, U]) Get(context.Context, *google.golang.org/protobuf/types/known/structpb.Struct) (*google.golang.org/protobuf/types/known/structpb.Struct, error)
+func (*Handler[M, ID, U]) List(context.Context, *google.golang.org/protobuf/types/known/structpb.Struct) (*google.golang.org/protobuf/types/known/structpb.Struct, error)
+func (*Handler[M, ID, U]) Register(google.golang.org/grpc.ServiceRegistrar, string)
+func (*Handler[M, ID, U]) Rendering(...RenderOption) *ResourceFor[M, ID, U, M, U, M]
+func (*Handler[M, ID, U]) Replace(context.Context, *google.golang.org/protobuf/types/known/structpb.Struct) (*google.golang.org/protobuf/types/known/structpb.Struct, error)
+func (*Handler[M, ID, U]) Update(context.Context, *google.golang.org/protobuf/types/known/structpb.Struct) (*google.golang.org/protobuf/types/known/structpb.Struct, error)
 type HandlerFor[M any, ID comparable, U any, In any] = ResourceFor[M, ID, U, In, U, M]
-    func NewFor[In, M any, ID comparable, U any](repository Repository[M, ID, U], mapper Mapper[In, M], ...) *HandlerFor[M, ID, U, In]
-    func ServingFor[In, M any, ID comparable, U any](service Service[M, ID, U], mapper Mapper[In, M], options ...Option[M, ID, U]) *HandlerFor[M, ID, U, In]
-type Mapper[In, M any] = port.Mapper[In, M]
+func (*HandlerFor[M, ID, U, In]) BulkDelete(context.Context, *google.golang.org/protobuf/types/known/structpb.Struct) (*google.golang.org/protobuf/types/known/structpb.Struct, error)
+func (*HandlerFor[M, ID, U, In]) Count(context.Context, *google.golang.org/protobuf/types/known/structpb.Struct) (*google.golang.org/protobuf/types/known/structpb.Struct, error)
+func (*HandlerFor[M, ID, U, In]) Create(context.Context, *google.golang.org/protobuf/types/known/structpb.Struct) (*google.golang.org/protobuf/types/known/structpb.Struct, error)
+func (*HandlerFor[M, ID, U, In]) Delete(context.Context, *google.golang.org/protobuf/types/known/structpb.Struct) (*google.golang.org/protobuf/types/known/structpb.Struct, error)
+func (*HandlerFor[M, ID, U, In]) Desc(string) *google.golang.org/grpc.ServiceDesc
+func (*HandlerFor[M, ID, U, In]) Get(context.Context, *google.golang.org/protobuf/types/known/structpb.Struct) (*google.golang.org/protobuf/types/known/structpb.Struct, error)
+func (*HandlerFor[M, ID, U, In]) List(context.Context, *google.golang.org/protobuf/types/known/structpb.Struct) (*google.golang.org/protobuf/types/known/structpb.Struct, error)
+func (*HandlerFor[M, ID, U, In]) Register(google.golang.org/grpc.ServiceRegistrar, string)
+func (*HandlerFor[M, ID, U, In]) Rendering(...RenderOption) *ResourceFor[M, ID, U, In, U, M]
+func (*HandlerFor[M, ID, U, In]) Replace(context.Context, *google.golang.org/protobuf/types/known/structpb.Struct) (*google.golang.org/protobuf/types/known/structpb.Struct, error)
+func (*HandlerFor[M, ID, U, In]) Update(context.Context, *google.golang.org/protobuf/types/known/structpb.Struct) (*google.golang.org/protobuf/types/known/structpb.Struct, error)
+func KindForCode(google.golang.org/grpc/codes.Code) github.com/frostgrove/vv/errs.Kind
+func LocaleKeys() []string
+type Mapper[In any, M any] = github.com/frostgrove/vv/port.Mapper[In, M]
+func (Mapper[In, M]) Model(context.Context, In) (M, error)
+func MaxBulk[M any, ID comparable, U any](int) Option[M, ID, U]
+const MaxViolations untyped int = 100
+func New[M any, ID comparable, U any](Repository[M, ID, U], ...Option[M, ID, U]) *Handler[M, ID, U]
+func NewFor[In any, M any, ID comparable, U any](Repository[M, ID, U], Mapper[In, M], ...Option[M, ID, U]) *HandlerFor[M, ID, U, In]
+func NewRenderer(...RenderOption) *StatusRenderer
+func NewWire[In any, P any, R any, M any, ID comparable, U any](Repository[M, ID, U], Mapper[In, M], PatchMapper[P, U], Presenter[M, R], ...Option[M, ID, U]) *ResourceFor[M, ID, U, In, P, R]
 type Option[M any, ID comparable, U any] func(*options[M, ID, U])
-    func AllowClientID[M any, ID comparable, U any]() Option[M, ID, U]
-    func BeforeSave[M any, ID comparable, U any](fn func(context.Context, *M) error) Option[M, ID, U]
-    func BeforeUpdate[M any, ID comparable, U any](fn func(context.Context, ID, *U) error) Option[M, ID, U]
-    func Exposing[M any, ID comparable, U any](operations port.Operations) Option[M, ID, U]
-    func MaxBulk[M any, ID comparable, U any](n int) Option[M, ID, U]
-    func ReadOnly[M any, ID comparable, U any]() Option[M, ID, U]
-    func WithQuery[M any, ID comparable, U any](config *query.Config) Option[M, ID, U]
-    func WithQueryFor[M any, ID comparable, U any](defaultConfig *query.Config, variants map[string]*query.Config, ...) Option[M, ID, U]
-    func WithRenderer[M any, ID comparable, U any](r Renderer) Option[M, ID, U]
-    func WithScope[M any, ID comparable, U any](fn func(context.Context) ([]crud.Option, error)) Option[M, ID, U]
-    func WithTransform[M any, ID comparable, U any](fn func(context.Context, M) any) Option[M, ID, U]
-type PatchMapper[P, U any] = wire.PatchMapper[P, U]
-type Presenter[M, R any] = wire.Presenter[M, R]
+const PartialKey untyped string = "partial"
+type PatchMapper[P any, U any] = github.com/frostgrove/vv/crud/wire.PatchMapper[P, U]
+func (PatchMapper[P, U]) Update(P) U
+type Presenter[M any, R any] = github.com/frostgrove/vv/crud/wire.Presenter[M, R]
+func (Presenter[M, R]) Response(M) R
+func ReadOnly[M any, ID comparable, U any]() Option[M, ID, U]
 type RenderOption func(*StatusRenderer)
-    func WithCodes(c *errs.Codes) RenderOption
-    func WithMaxViolations(n int) RenderOption
-    func WithMessages(m errs.MessageSource) RenderOption
-    func WithResolvers(rs ...errs.Resolver) RenderOption
-    func WithRetryDelay(d time.Duration) RenderOption
-type Renderer interface{ ... }
-type Repository[M any, ID comparable, U any] = port.Repository[M, ID, U]
-type ResourceFor[M any, ID comparable, U any, In any, P any, R any] struct{ ... }
-    func NewWire[In, P, R, M any, ID comparable, U any](repository Repository[M, ID, U], mapper Mapper[In, M], ...) *ResourceFor[M, ID, U, In, P, R]
-    func ServingWire[In, P, R, M any, ID comparable, U any](service Service[M, ID, U], mapper Mapper[In, M], patcher PatchMapper[P, U], ...) *ResourceFor[M, ID, U, In, P, R]
-type Service[M any, ID comparable, U any] = port.Service[M, ID, U]
-type StatusRenderer struct{ ... }
-    func NewRenderer(options ...RenderOption) *StatusRenderer
+type Renderer interface {
+	Render(context.Context, error) *google.golang.org/grpc/status.Status
+}
+type Repository[M any, ID comparable, U any] = github.com/frostgrove/vv/port.Repository[M, ID, U]
+func (Repository[M, ID, U]) Count(context.Context, ...github.com/frostgrove/vv/crud.Option) (int64, error)
+func (Repository[M, ID, U]) Delete(context.Context, ...ID) (int64, error)
+func (Repository[M, ID, U]) Get(context.Context, ...github.com/frostgrove/vv/crud.Option) (github.com/frostgrove/vv/crud.PaginatedResponse[M], error)
+func (Repository[M, ID, U]) GetAll(context.Context, ...github.com/frostgrove/vv/crud.Option) ([]M, error)
+func (Repository[M, ID, U]) GetByID(context.Context, ID, ...github.com/frostgrove/vv/crud.Option) (M, error)
+func (Repository[M, ID, U]) Meta() *github.com/frostgrove/vv/crud.Meta
+func (Repository[M, ID, U]) Save(context.Context, *M) (M, error)
+func (Repository[M, ID, U]) Update(context.Context, ID, U, ...github.com/frostgrove/vv/crud.Option) (M, error)
+type ResourceFor[M any, ID comparable, U any, In any, P any, R any] struct {
+	<unexported fields>
+}
+func (*ResourceFor[M, ID, U, In, P, R]) BulkDelete(context.Context, *google.golang.org/protobuf/types/known/structpb.Struct) (*google.golang.org/protobuf/types/known/structpb.Struct, error)
+func (*ResourceFor[M, ID, U, In, P, R]) Count(context.Context, *google.golang.org/protobuf/types/known/structpb.Struct) (*google.golang.org/protobuf/types/known/structpb.Struct, error)
+func (*ResourceFor[M, ID, U, In, P, R]) Create(context.Context, *google.golang.org/protobuf/types/known/structpb.Struct) (*google.golang.org/protobuf/types/known/structpb.Struct, error)
+func (*ResourceFor[M, ID, U, In, P, R]) Delete(context.Context, *google.golang.org/protobuf/types/known/structpb.Struct) (*google.golang.org/protobuf/types/known/structpb.Struct, error)
+func (*ResourceFor[M, ID, U, In, P, R]) Desc(string) *google.golang.org/grpc.ServiceDesc
+func (*ResourceFor[M, ID, U, In, P, R]) Get(context.Context, *google.golang.org/protobuf/types/known/structpb.Struct) (*google.golang.org/protobuf/types/known/structpb.Struct, error)
+func (*ResourceFor[M, ID, U, In, P, R]) List(context.Context, *google.golang.org/protobuf/types/known/structpb.Struct) (*google.golang.org/protobuf/types/known/structpb.Struct, error)
+func (*ResourceFor[M, ID, U, In, P, R]) Register(google.golang.org/grpc.ServiceRegistrar, string)
+func (*ResourceFor[M, ID, U, In, P, R]) Rendering(...RenderOption) *ResourceFor[M, ID, U, In, P, R]
+func (*ResourceFor[M, ID, U, In, P, R]) Replace(context.Context, *google.golang.org/protobuf/types/known/structpb.Struct) (*google.golang.org/protobuf/types/known/structpb.Struct, error)
+func (*ResourceFor[M, ID, U, In, P, R]) Update(context.Context, *google.golang.org/protobuf/types/known/structpb.Struct) (*google.golang.org/protobuf/types/known/structpb.Struct, error)
+type Service[M any, ID comparable, U any] = github.com/frostgrove/vv/port.Service[M, ID, U]
+func (Service[M, ID, U]) Count(context.Context, github.com/frostgrove/vv/port.CountCommand) (int64, error)
+func (Service[M, ID, U]) Create(context.Context, github.com/frostgrove/vv/port.CreateCommand[M]) (M, error)
+func (Service[M, ID, U]) Delete(context.Context, github.com/frostgrove/vv/port.DeleteCommand[ID]) (int64, error)
+func (Service[M, ID, U]) DeleteMany(context.Context, github.com/frostgrove/vv/port.BulkDeleteCommand[ID]) (int64, error)
+func (Service[M, ID, U]) Get(context.Context, github.com/frostgrove/vv/port.GetCommand[ID]) (M, error)
+func (Service[M, ID, U]) List(context.Context, github.com/frostgrove/vv/port.ListCommand) (github.com/frostgrove/vv/crud.PaginatedResponse[M], error)
+func (Service[M, ID, U]) Meta() *github.com/frostgrove/vv/crud.Meta
+func (Service[M, ID, U]) Paths() github.com/frostgrove/vv/errs.Resolver
+func (Service[M, ID, U]) Replace(context.Context, github.com/frostgrove/vv/port.ReplaceCommand[ID, M]) (M, error)
+func (Service[M, ID, U]) Update(context.Context, github.com/frostgrove/vv/port.UpdateCommand[ID, U]) (M, error)
+func ServiceName(string) string
+const ServicePrefix untyped string = "vv.crud.v1."
+func Serving[M any, ID comparable, U any](Service[M, ID, U], ...Option[M, ID, U]) *Handler[M, ID, U]
+func ServingFor[In any, M any, ID comparable, U any](Service[M, ID, U], Mapper[In, M], ...Option[M, ID, U]) *HandlerFor[M, ID, U, In]
+func ServingWire[In any, P any, R any, M any, ID comparable, U any](Service[M, ID, U], Mapper[In, M], PatchMapper[P, U], Presenter[M, R], ...Option[M, ID, U]) *ResourceFor[M, ID, U, In, P, R]
+type StatusRenderer struct {
+	<unexported fields>
+}
+func (*StatusRenderer) Code(error) google.golang.org/grpc/codes.Code
+func (*StatusRenderer) Render(context.Context, error) *google.golang.org/grpc/status.Status
+func StreamErrors(...RenderOption) google.golang.org/grpc.StreamServerInterceptor
+func Transport(google.golang.org/grpc.ClientConnInterface, string, ...TransportOption) github.com/frostgrove/vv/remote.Transport
 type TransportOption func(*transport)
-    func WithCallOptions(options ...grpc.CallOption) TransportOption
-    func WithVocabulary(c *errs.Codes) TransportOption
+func WithCallOptions(...google.golang.org/grpc.CallOption) TransportOption
+func WithCodes(*github.com/frostgrove/vv/errs.Codes) RenderOption
+func WithLocale(context.Context, string) context.Context
+func WithMaxViolations(int) RenderOption
+func WithMessages(github.com/frostgrove/vv/errs.MessageSource) RenderOption
+func WithQuery[M any, ID comparable, U any](*github.com/frostgrove/vv/crud/query.Config) Option[M, ID, U]
+func WithQueryFor[M any, ID comparable, U any](*github.com/frostgrove/vv/crud/query.Config, map[string]*github.com/frostgrove/vv/crud/query.Config, github.com/frostgrove/vv/port.QuerySelector) Option[M, ID, U]
+func WithRenderer[M any, ID comparable, U any](Renderer) Option[M, ID, U]
+func WithResolvers(...github.com/frostgrove/vv/errs.Resolver) RenderOption
+func WithRetryDelay(time.Duration) RenderOption
+func WithScope[M any, ID comparable, U any](func(context.Context) ([]github.com/frostgrove/vv/crud.Option, error)) Option[M, ID, U]
+func WithTransform[M any, ID comparable, U any](func(context.Context, M) any) Option[M, ID, U]
+func WithVocabulary(*github.com/frostgrove/vv/errs.Codes) TransportOption
 ```
 
 ## github.com/frostgrove/vv/event/eventpg
 ```go
-const DefaultSchema = "frostgrove_events" ...
-var ErrSpec = errors.New("eventpg: this store cannot be assembled from this spec") ...
-func MigrationStatements(schema Schema) ([]string, error)
-type CheckpointSpec struct{ ... }
-type Checkpoints struct{ ... }
-    func NewCheckpoints(spec CheckpointSpec) (*Checkpoints, error)
-type Schema struct{ ... }
+type CheckpointSpec struct {
+	DB *database/sql.DB
+	Source github.com/frostgrove/vv/crud.Source
+	Schema Schema
+	SchemaManagement SchemaManagement
+}
+type Checkpoints struct {
+	<unexported fields>
+}
+func (*Checkpoints) Backing() github.com/frostgrove/vv/event.Backing
+func (*Checkpoints) Capabilities() github.com/frostgrove/vv/event.CheckpointCapabilities
+func (*Checkpoints) Check(context.Context) error
+func (*Checkpoints) Close() error
+func (*Checkpoints) Forget(context.Context, string) error
+func (*Checkpoints) Load(context.Context, string) (github.com/frostgrove/vv/event.Checkpoint, error)
+func (*Checkpoints) Prepare(context.Context) error
+func (*Checkpoints) Save(context.Context, github.com/frostgrove/vv/event.Checkpoint) error
+func (*Checkpoints) Schema() Schema
+func (*Checkpoints) SchemaManagement() SchemaManagement
+func (*Checkpoints) Transaction(context.Context) (github.com/frostgrove/vv/event.Authority, error)
+const DefaultMaxBatch untyped int = 64
+const DefaultMaxKey untyped int = 512
+const DefaultMaxPayload untyped int = 65536
+const DefaultPage untyped int = 256
+const DefaultSchema untyped string = "frostgrove_events"
+var ErrNotReady error
+var ErrSchemaMismatch error
+var ErrSpec error
+const ManageSchema SchemaManagement = 2
+func MigrationStatements(Schema) ([]string, error)
+func New(Spec) (*Store, error)
+func NewCheckpoints(CheckpointSpec) (*Checkpoints, error)
+type Schema struct {
+	Name string
+	MaxPayload int
+	MaxKey int
+}
+func (Schema) Fingerprint() (string, error)
+func (Schema) Resolved() (Schema, error)
 type SchemaManagement uint8
-    const UnsetSchemaManagement SchemaManagement = iota ...
-type Spec struct{ ... }
-type Store struct{ ... }
-    func New(spec Spec) (*Store, error)
+func (SchemaManagement) String() string
+func (SchemaManagement) Valid() bool
+const SchemaVersion untyped int = 2
+type Spec struct {
+	DB *database/sql.DB
+	Source github.com/frostgrove/vv/crud.Source
+	Schema Schema
+	SchemaManagement SchemaManagement
+	MaxBatch int
+	StreamPage int
+	MaxRead int
+}
+type Store struct {
+	<unexported fields>
+}
+func (*Store) Append(context.Context, github.com/frostgrove/vv/event.AppendRequest) error
+func (*Store) Backing() github.com/frostgrove/vv/event.Backing
+func (*Store) Capabilities() github.com/frostgrove/vv/event.Capabilities
+func (*Store) Check(context.Context) error
+func (*Store) Close() error
+func (*Store) Limits() github.com/frostgrove/vv/event.Limits
+func (*Store) Migrate(context.Context) error
+func (*Store) Prepare(context.Context) error
+func (*Store) ReadAll(context.Context, github.com/frostgrove/vv/event.Cursor) ([]github.com/frostgrove/vv/event.Envelope, github.com/frostgrove/vv/event.Cursor, error)
+func (*Store) ReadStream(context.Context, github.com/frostgrove/vv/event.Stream, github.com/frostgrove/vv/event.Version) ([]github.com/frostgrove/vv/event.Envelope, error)
+func (*Store) Schema() Schema
+func (*Store) SchemaManagement() SchemaManagement
+func (*Store) Transaction(context.Context) (github.com/frostgrove/vv/event.Authority, error)
+func (*Store) Verify(context.Context) error
+const UnsetSchemaManagement SchemaManagement = 0
+const VerifySchema SchemaManagement = 1
 ```
 
 ## github.com/frostgrove/vv/health/healthfx
 ```go
-func AsCheck(constructor any) any
-func Auto() fx.Option
-func Checking(spec Spec) fx.Option
-type Registered struct{ ... }
-type Spec struct{ ... }
+func AsCheck(any) any
+func Auto() go.uber.org/fx.Option
+func Checking(Spec) go.uber.org/fx.Option
+type Registered struct {
+	go.uber.org/fx.In
+	All []github.com/frostgrove/vv/health.Contribution "group:\"vv.health.checks\""
+}
+type Spec struct {
+	Timeout time.Duration
+	Freshness time.Duration
+}
 ```
 
 ## github.com/frostgrove/vv/i18n
 ```go
-const GrammarProfile = "frostgrove-mf2/v1" ...
-const PublicTypeScriptGenerator = "frostgrove.i18n.typescript/v1" ...
-const ArtifactVersion = "frostgrove.i18n.catalog/v1"
-const GoUsageAnalyzerV1 = "frostgrove.vv-i18n/go-ast/v1"
-const GoUsageAnalyzerV2 = "frostgrove.vv-i18n/go-list/v2"
-const PublicContractSchema = "frostgrove.i18n.public-contract/v1"
-const SourceVersion = "frostgrove.i18n.source/v1"
-var ErrInvalidArtifact = errors.New("i18n: invalid compiled artifact") ...
-var ErrConflict = errors.New("i18n: snapshot conflict") ...
-var ErrInvalidCatalog = errors.New("i18n: invalid catalog") ...
-var ErrInvalidSource = errors.New("i18n: invalid source") ...
-var ErrCheckFailed = errors.New("i18n: source check failed")
-var ErrFormatNotFound = errors.New("i18n: format not found")
-var ErrMergeWouldDiscard = errors.New("i18n: source merge would discard previous work")
-func Compile(spec CatalogSpec) ([]byte, error)
-func CompileContext(ctx context.Context, spec CatalogSpec) ([]byte, error)
-func Encode(snapshot *Snapshot) ([]byte, error)
-func EncodeContext(ctx context.Context, snapshot *Snapshot) ([]byte, error)
-func EncodeSource(spec CatalogSpec) ([]byte, error)
-func EncodeSourceContext(ctx context.Context, spec CatalogSpec) ([]byte, error)
-func ExpectedPublicExportAddress(manifest, typeScript []byte) string
-func ExpectedPublicExportAddressContext(ctx context.Context, manifest, typeScript []byte) (string, error)
-func ExpectedReviewDigest(sourceDigest, locale, text string) (string, error)
-func ExpectedSourceDigestForLocale(profile, sourceLocale, module string, message MessageSpec) (string, error)
-func ExpectedUsageManifestDigest(manifest UsageManifest) string
-func ExpectedUsageManifestDigestContext(ctx context.Context, manifest UsageManifest) (string, error)
-func ExpectedUsageSourceDigest(scope GoUsageScope) string
-func ExpectedUsageSourceDigestContext(ctx context.Context, scope GoUsageScope) (string, error)
-func GenerateGo(snapshot *Snapshot, spec GoGeneratorSpec) ([]byte, error)
-func GenerateGoContext(ctx context.Context, snapshot *Snapshot, spec GoGeneratorSpec) ([]byte, error)
-type Argument struct{ ... }
-    func BigInteger(name string, value *big.Int) Argument
-    func Bool(name string, value bool) Argument
-    func Date(name string, year int, month time.Month, day int) Argument
-    func Decimal(name, lexical string) Argument
-    func Enum(name, value string) Argument
-    func Instant(name string, value time.Time) Argument
-    func Integer(name string, value int64) Argument
-    func Money(name, lexical, currency string) Argument
-    func Null(name string) Argument
-    func Text(name, value string) Argument
-    func UnsignedInteger(name string, value uint64) Argument
+func AcceptLanguage(ChoiceSource, ...string) Choice
+func ApplicationOverlay(string, ...Override) OverlaySpec
+type Argument struct {
+	<unexported fields>
+}
+func (Argument) IsNull() bool
+func (Argument) Name() string
+func (Argument) Type() ArgumentType
 type ArgumentEncoder[A any] func(A) ([]Argument, error)
-type ArgumentSpec struct{ ... }
+type ArgumentSpec struct {
+	Name string
+	Type ArgumentType
+	Required bool
+	Nullable bool
+	Values []string
+}
 type ArgumentType uint8
-    const TypeText ArgumentType = iota + 1 ...
-type ArtifactLimits struct{ ... }
-    func DefaultArtifactLimits() ArtifactLimits
-type BigIntegerNumber struct{ ... }
-    func NewBigIntegerNumber(value *big.Int) BigIntegerNumber
+func (ArgumentType) String() string
+func (ArgumentType) Valid() bool
+type ArtifactLimits struct {
+	MaxBytes int
+	MaxDepth int
+	MaxMembers int
+}
+const ArtifactVersion untyped string = "frostgrove.i18n.catalog/v1"
+func BigInteger(string, *math/big.Int) Argument
+type BigIntegerNumber struct {
+	<unexported fields>
+}
+func Bool(string, bool) Argument
 type Capability uint8
-    const CapabilityDateTime Capability = iota + 1 ...
-type CatalogSpec struct{ ... }
-    func DecodeSource(ctx context.Context, source io.Reader) (CatalogSpec, error)
-    func MergeSource(source, previous CatalogSpec, policy SourceMergePolicy) (CatalogSpec, error)
-    func MergeSourceContext(ctx context.Context, source, previous CatalogSpec, policy SourceMergePolicy) (CatalogSpec, error)
-    func Pseudo(spec CatalogSpec, pseudo PseudoSpec) (result CatalogSpec, err error)
-    func PseudoContext(ctx context.Context, spec CatalogSpec, pseudo PseudoSpec) (result CatalogSpec, err error)
-type CheckPolicy struct{ ... }
+func (Capability) String() string
+func (Capability) Valid() bool
+const CapabilityDateTime Capability = 1
+const CapabilityUnit Capability = 2
+type CatalogSpec struct {
+	Revision string
+	Profile string
+	SourceLocale string
+	DefaultLocale string
+	Supported []string
+	Required []string
+	Parents []LocaleEdge
+	Modules []Module
+	Overrides []Override
+	Capabilities []Capability
+	MatchMode MatchMode
+	DefaultOnMiss bool
+	DefaultTimeZone string
+	TimeZoneDataVersion string
+	Limits Limits
+	Observer Observer
+}
+func Check(CatalogSpec, CheckPolicy) Report
+func CheckContext(context.Context, CatalogSpec, CheckPolicy) Report
+const CheckInvalid CheckStatus = "invalid"
+const CheckMissing CheckStatus = "missing"
+type CheckPolicy struct {
+	Usage UsageManifest "json:\"usage\""
+	UsageLimits UsageLimits "json:\"usage_limits\""
+	StrictOptional bool "json:\"strict_optional\""
+	MaxFindings int "json:\"max_findings\""
+}
+const CheckRejected CheckStatus = "rejected"
+const CheckReviewRequired CheckStatus = "review_required"
 type CheckSeverity string
-    const SeverityError CheckSeverity = "error" ...
+func (CheckSeverity) String() string
+func (CheckSeverity) Valid() bool
+const CheckStale CheckStatus = "stale"
 type CheckStatus string
-    const CheckMissing CheckStatus = "missing" ...
-type Choice struct{ ... }
-    func AcceptLanguage(source ChoiceSource, values ...string) Choice
-    func Exact(source ChoiceSource, locale string) Choice
+func (CheckStatus) String() string
+func (CheckStatus) Valid() bool
+const CheckUnused CheckStatus = "unused"
+type Choice struct {
+	<unexported fields>
+}
 type ChoiceSource uint8
-    const SourceExplicit ChoiceSource = iota + 1 ...
+func (ChoiceSource) String() string
+func (ChoiceSource) Valid() bool
 type Clock func() time.Time
-type Compiler struct{ ... }
-type ContractRef struct{ ... }
-type Controller struct{ ... }
-    func NewController(spec ControllerSpec) (*Controller, error)
-type ControllerSpec struct{ ... }
+func Compile(CatalogSpec) ([]byte, error)
+func CompileContext(context.Context, CatalogSpec) ([]byte, error)
+type Compiler struct {
+	Limits ArtifactLimits
+	CatalogLimits Limits
+	Observer Observer
+}
+func (Compiler) Compile(CatalogSpec) ([]byte, error)
+func (Compiler) CompileContext(context.Context, CatalogSpec) ([]byte, error)
+func (Compiler) Encode(*Snapshot) ([]byte, error)
+func (Compiler) EncodeContext(context.Context, *Snapshot) ([]byte, error)
+type ContractRef struct {
+	Key Key
+	Revision string
+	Digest string
+}
+type Controller struct {
+	<unexported fields>
+}
+func (*Controller) Activate(Head, *Snapshot) (Head, error)
+func (*Controller) ActivateContext(context.Context, Head, *Snapshot) (Head, error)
+func (*Controller) Current() Head
+func (*Controller) Pin(SnapshotRef, time.Duration) (*Lease, error)
+func (*Controller) PinCurrent(time.Duration) (*Lease, error)
+func (*Controller) Prune(SnapshotRef) error
+func (*Controller) Retained() []SnapshotRef
+func (*Controller) Rollback(Head, SnapshotRef) (Head, error)
+func (*Controller) RollbackContext(context.Context, Head, SnapshotRef) (Head, error)
+type ControllerSpec struct {
+	Initial *Snapshot
+	MaxRetained int
+	MaxPins int
+	MaxPinLifetime time.Duration
+	MaxSnapshotBytes int64
+	Clock Clock
+	Observer Observer
+}
 type CurrencyDisplay uint8
-    const CurrencyDisplayDefault CurrencyDisplay = iota ...
+func (CurrencyDisplay) String() string
+func (CurrencyDisplay) Valid() bool
+const CurrencyDisplayCode CurrencyDisplay = 1
+const CurrencyDisplayDefault CurrencyDisplay = 0
+const CurrencyDisplayName CurrencyDisplay = 2
+const CurrencyDisplayNarrowSymbol CurrencyDisplay = 3
 type CurrencySign uint8
-    const CurrencySignDefault CurrencySign = iota ...
-type DateComponents struct{ ... }
+func (CurrencySign) String() string
+func (CurrencySign) Valid() bool
+const CurrencySignAccounting CurrencySign = 1
+const CurrencySignDefault CurrencySign = 0
+func Date(string, int, time.Month, int) Argument
+type DateComponents struct {
+	Weekday DateFieldStyle
+	Era DateFieldStyle
+	Year DateNumericStyle
+	Month DateMonthStyle
+	Day DateNumericStyle
+}
+const DateFieldDefault DateFieldStyle = 0
+const DateFieldLong DateFieldStyle = 1
+const DateFieldNarrow DateFieldStyle = 3
+const DateFieldShort DateFieldStyle = 2
 type DateFieldStyle uint8
-    const DateFieldDefault DateFieldStyle = iota ...
-type DateFormatSpec struct{ ... }
+func (DateFieldStyle) String() string
+func (DateFieldStyle) Valid() bool
+type DateFormatSpec struct {
+	Style DateTimeStyle
+	Calendar string
+	NumberingSystem string
+	FormatMatcher DateTimeFormatMatcher
+	Components DateComponents
+}
 type DateFractionalSecondDigits uint8
-    const DateFractionalSecondDigitsDefault DateFractionalSecondDigits = iota ...
+func (DateFractionalSecondDigits) String() string
+func (DateFractionalSecondDigits) Valid() bool
+const DateFractionalSecondDigits1 DateFractionalSecondDigits = 1
+const DateFractionalSecondDigits2 DateFractionalSecondDigits = 2
+const DateFractionalSecondDigits3 DateFractionalSecondDigits = 3
+const DateFractionalSecondDigitsDefault DateFractionalSecondDigits = 0
 type DateHour12 uint8
-    const DateHour12Default DateHour12 = iota ...
+func (DateHour12) String() string
+func (DateHour12) Valid() bool
+const DateHour12Default DateHour12 = 0
+const DateHour12Disabled DateHour12 = 2
+const DateHour12Enabled DateHour12 = 1
+const DateMonthDefault DateMonthStyle = 0
+const DateMonthLong DateMonthStyle = 3
+const DateMonthNarrow DateMonthStyle = 5
+const DateMonthNumeric DateMonthStyle = 1
+const DateMonthShort DateMonthStyle = 4
 type DateMonthStyle uint8
-    const DateMonthDefault DateMonthStyle = iota ...
+func (DateMonthStyle) String() string
+func (DateMonthStyle) Valid() bool
+const DateMonthTwoDigit DateMonthStyle = 2
+const DateNumeric DateNumericStyle = 1
+const DateNumericDefault DateNumericStyle = 0
 type DateNumericStyle uint8
-    const DateNumericDefault DateNumericStyle = iota ...
+func (DateNumericStyle) String() string
+func (DateNumericStyle) Valid() bool
 type DateTimeFormatMatcher uint8
-    const DateTimeMatcherDefault DateTimeFormatMatcher = iota ...
-type DateTimeFormatSpec struct{ ... }
+func (DateTimeFormatMatcher) String() string
+func (DateTimeFormatMatcher) Valid() bool
+type DateTimeFormatSpec struct {
+	DateStyle DateTimeStyle
+	TimeStyle DateTimeStyle
+	Calendar string
+	NumberingSystem string
+	HourCycle HourCycle
+	Hour12 DateHour12
+	FormatMatcher DateTimeFormatMatcher
+	DateComponents DateComponents
+	TimeComponents TimeComponents
+}
+const DateTimeMatcherBasic DateTimeFormatMatcher = 1
+const DateTimeMatcherBestFit DateTimeFormatMatcher = 2
+const DateTimeMatcherDefault DateTimeFormatMatcher = 0
 type DateTimeStyle uint8
-    const DateTimeStyleDefault DateTimeStyle = iota ...
+func (DateTimeStyle) String() string
+func (DateTimeStyle) Valid() bool
+const DateTimeStyleDefault DateTimeStyle = 0
+const DateTimeStyleFull DateTimeStyle = 1
+const DateTimeStyleLong DateTimeStyle = 2
+const DateTimeStyleMedium DateTimeStyle = 3
+const DateTimeStyleShort DateTimeStyle = 4
+const DateTimeZoneNameDefault DateTimeZoneNameStyle = 0
+const DateTimeZoneNameLong DateTimeZoneNameStyle = 1
+const DateTimeZoneNameLongGeneric DateTimeZoneNameStyle = 5
+const DateTimeZoneNameLongOffset DateTimeZoneNameStyle = 3
+const DateTimeZoneNameShort DateTimeZoneNameStyle = 2
+const DateTimeZoneNameShortGeneric DateTimeZoneNameStyle = 6
+const DateTimeZoneNameShortOffset DateTimeZoneNameStyle = 4
 type DateTimeZoneNameStyle uint8
-    const DateTimeZoneNameDefault DateTimeZoneNameStyle = iota ...
-type DateValue struct{ ... }
+func (DateTimeZoneNameStyle) String() string
+func (DateTimeZoneNameStyle) Valid() bool
+const DateTwoDigit DateNumericStyle = 2
+type DateValue struct {
+	Year int
+	Month time.Month
+	Day int
+}
+func Decimal(string, string) Argument
 type DecimalNumber string
-type Definition[A any] struct{ ... }
-    func Define[A any](snapshot *Snapshot, spec DefinitionSpec[A]) (Definition[A], error)
-    func DefineStruct[A any](snapshot *Snapshot, contract ContractRef) (Definition[A], error)
-    func NewDefinition[A any](snapshot *Snapshot, key Key, encode ArgumentEncoder[A]) (Definition[A], error)
-    func NewStructDefinition[A any](snapshot *Snapshot, key Key) (Definition[A], error)
-type DefinitionSpec[A any] struct{ ... }
-type Descriptor struct{ ... }
-type DigitRange struct{ ... }
-    func Digits(minimum, maximum int) DigitRange
-    func MaximumDigits(maximum int) DigitRange
-    func MinimumDigits(minimum int) DigitRange
+func DecodeSource(context.Context, io.Reader) (CatalogSpec, error)
+func DefaultArtifactLimits() ArtifactLimits
+func DefaultLimits() Limits
+func DefaultUsageLimits() UsageLimits
+func Define[A any](*Snapshot, DefinitionSpec[A]) (Definition[A], error)
+func DefineStruct[A any](*Snapshot, ContractRef) (Definition[A], error)
+type Definition[A any] struct {
+	<unexported fields>
+}
+func (Definition[A]) Bind(A) (Message, error)
+func (Definition[A]) Key() Key
+type DefinitionSpec[A any] struct {
+	Contract ContractRef
+	Encode ArgumentEncoder[A]
+}
+type Descriptor struct {
+	Key Key
+	Revision string
+	Description string
+	Arguments []ArgumentSpec
+	Output OutputKind
+	Markup []string
+	Override OverridePolicy
+	AllowEmpty bool
+	Public bool
+}
+func (Descriptor) ContractRef() ContractRef
+type DigitRange struct {
+	<unexported fields>
+}
+func (DigitRange) Maximum() int
+func (DigitRange) Minimum() int
+func Digits(int, int) DigitRange
+const DisplayCalendar DisplayNameType = 5
+const DisplayCurrency DisplayNameType = 4
+const DisplayDateTimeField DisplayNameType = 6
+const DisplayLanguage DisplayNameType = 1
+const DisplayNameCode DisplayNameFallback = 0
 type DisplayNameFallback uint8
-    const DisplayNameCode DisplayNameFallback = iota ...
-type DisplayNameSpec struct{ ... }
+func (DisplayNameFallback) String() string
+func (DisplayNameFallback) Valid() bool
+const DisplayNameNone DisplayNameFallback = 1
+type DisplayNameSpec struct {
+	Type DisplayNameType
+	Width FormatWidth
+	Fallback DisplayNameFallback
+	LanguageDisplay LanguageDisplay
+}
 type DisplayNameType uint8
-    const DisplayLanguage DisplayNameType = iota + 1 ...
+func (DisplayNameType) String() string
+func (DisplayNameType) Valid() bool
+const DisplayRegion DisplayNameType = 2
+const DisplayScript DisplayNameType = 3
+const DurationDigital DurationStyle = 3
 type DurationDisplay uint8
-    const DurationDisplayDefault DurationDisplay = iota ...
-type DurationFormatSpec struct{ ... }
+func (DurationDisplay) String() string
+func (DurationDisplay) Valid() bool
+const DurationDisplayAlways DurationDisplay = 2
+const DurationDisplayAuto DurationDisplay = 1
+const DurationDisplayDefault DurationDisplay = 0
+type DurationFormatSpec struct {
+	Style DurationStyle
+	NumberingSystem string
+	FractionalDigits DurationFractionalDigits
+	Years DurationUnitSpec
+	Months DurationUnitSpec
+	Weeks DurationUnitSpec
+	Days DurationUnitSpec
+	Hours DurationUnitSpec
+	Minutes DurationUnitSpec
+	Seconds DurationUnitSpec
+	Milliseconds DurationUnitSpec
+	Microseconds DurationUnitSpec
+	Nanoseconds DurationUnitSpec
+}
 type DurationFractionalDigits uint8
-    const DurationFractionalDigitsDefault DurationFractionalDigits = iota ...
+func (DurationFractionalDigits) String() string
+func (DurationFractionalDigits) Valid() bool
+const DurationFractionalDigits0 DurationFractionalDigits = 1
+const DurationFractionalDigits1 DurationFractionalDigits = 2
+const DurationFractionalDigits2 DurationFractionalDigits = 3
+const DurationFractionalDigits3 DurationFractionalDigits = 4
+const DurationFractionalDigits4 DurationFractionalDigits = 5
+const DurationFractionalDigits5 DurationFractionalDigits = 6
+const DurationFractionalDigits6 DurationFractionalDigits = 7
+const DurationFractionalDigits7 DurationFractionalDigits = 8
+const DurationFractionalDigits8 DurationFractionalDigits = 9
+const DurationFractionalDigits9 DurationFractionalDigits = 10
+const DurationFractionalDigitsDefault DurationFractionalDigits = 0
+const DurationLong DurationStyle = 1
+const DurationNarrow DurationStyle = 2
+const DurationShort DurationStyle = 0
 type DurationStyle uint8
-    const DurationShort DurationStyle = iota ...
-type DurationUnitSpec struct{ ... }
+func (DurationStyle) String() string
+func (DurationStyle) Valid() bool
+const DurationUnitDefault DurationUnitStyle = 0
+const DurationUnitLong DurationUnitStyle = 1
+const DurationUnitNarrow DurationUnitStyle = 3
+const DurationUnitNumeric DurationUnitStyle = 4
+const DurationUnitShort DurationUnitStyle = 2
+type DurationUnitSpec struct {
+	Style DurationUnitStyle
+	Display DurationDisplay
+}
 type DurationUnitStyle uint8
-    const DurationUnitDefault DurationUnitStyle = iota ...
-type DurationValue struct{ ... }
-type DynamicUsage struct{ ... }
-type ErrorMapping struct{ ... }
-type ErrorParam struct{ ... }
-type ErrorPlan struct{ ... }
-type ErrorPlanSpec struct{ ... }
-type ErrorSpec struct{ ... }
-type ExplainStep struct{ ... }
-type Explanation struct{ ... }
-type FieldLabel struct{ ... }
-type Finding struct{ ... }
+func (DurationUnitStyle) String() string
+func (DurationUnitStyle) Valid() bool
+const DurationUnitTwoDigit DurationUnitStyle = 5
+type DurationValue struct {
+	Years int64
+	Months int64
+	Weeks int64
+	Days int64
+	Hours int64
+	Minutes int64
+	Seconds int64
+	Milliseconds int64
+	Microseconds int64
+	Nanoseconds int64
+}
+type DynamicUsage struct {
+	Domain string "json:\"domain\""
+	Prefix string "json:\"prefix\""
+}
+func Encode(*Snapshot) ([]byte, error)
+func EncodeContext(context.Context, *Snapshot) ([]byte, error)
+func EncodeSource(CatalogSpec) ([]byte, error)
+func EncodeSourceContext(context.Context, CatalogSpec) ([]byte, error)
+const EngineVersion untyped string = "messageformat-go/v0.8.6"
+func Enum(string, string) Argument
+var ErrArtifactIO error
+var ErrCheckFailed error
+var ErrConflict error
+var ErrFormatNotFound error
+var ErrIncompatibleArtifact error
+var ErrInvalidArtifact error
+var ErrInvalidCatalog error
+var ErrInvalidLocale error
+var ErrInvalidMessage error
+var ErrInvalidSource error
+var ErrLimitExceeded error
+var ErrMergeWouldDiscard error
+var ErrNotFound error
+var ErrPinUnavailable error
+var ErrSnapshotNotFound error
+var ErrSourceIO error
+type ErrorMapping struct {
+	Ladder string
+	Key Key
+	Params []ErrorParam
+	FieldArgument string
+}
+type ErrorParam struct {
+	Param string
+	Argument string
+	Currency string
+}
+type ErrorPlan struct {
+	<unexported fields>
+}
+type ErrorPlanSpec struct {
+	Mappings []ErrorMapping
+	FieldLabels []FieldLabel
+}
+type ErrorSource struct {
+	<unexported fields>
+}
+func (*ErrorSource) Message(context.Context, github.com/frostgrove/vv/errs.Violation, string) (string, bool)
+func (*ErrorSource) MessageWithLocale(context.Context, github.com/frostgrove/vv/errs.Violation, string) (string, string, bool)
+type ErrorSpec struct {
+	Mappings []ErrorMapping
+	FieldLabels []FieldLabel
+	FormattingLocale string
+	TimeZone string
+	Presentation Presentation
+}
+func Exact(ChoiceSource, string) Choice
+func ExpectedPublicExportAddress([]byte, []byte) string
+func ExpectedPublicExportAddressContext(context.Context, []byte, []byte) (string, error)
+func ExpectedReviewDigest(string, string, string) (string, error)
+func ExpectedSourceDigestForLocale(string, string, string, MessageSpec) (string, error)
+func ExpectedUsageManifestDigest(UsageManifest) string
+func ExpectedUsageManifestDigestContext(context.Context, UsageManifest) (string, error)
+func ExpectedUsageSourceDigest(GoUsageScope) string
+func ExpectedUsageSourceDigestContext(context.Context, GoUsageScope) (string, error)
+type ExplainStep struct {
+	Locale string
+	Present bool
+}
+type Explanation struct {
+	Key Key
+	Source ChoiceSource
+	ResolvedLocale string
+	TemplateLocale string
+	Layer Layer
+	ResolutionOutcome Outcome
+	ResolutionReason Reason
+	TemplateOutcome Outcome
+	TemplateReason Reason
+	Profile string
+	Revision string
+	PreferenceSteps []PreferenceStep
+	Steps []ExplainStep
+	Truncated bool
+}
+func ExportPublic(*Snapshot) (PublicExport, error)
+func ExportPublicContext(context.Context, *Snapshot, PublicExportSpec) (PublicExport, error)
+type FieldLabel struct {
+	Field string
+	Key Key
+}
+type Finding struct {
+	Status CheckStatus "json:\"status\""
+	Severity CheckSeverity "json:\"severity\""
+	Path string "json:\"path\""
+	Key Key "json:\"key\""
+	Locale string "json:\"locale\""
+	Detail string "json:\"detail\""
+}
 type FormatWidth uint8
-    const FormatWidthDefault FormatWidth = iota ...
-type Formats struct{ ... }
-type FormattedRange struct{ ... }
-type FormattedValue struct{ ... }
-type Formatter struct{ ... }
-    func NewFormatter(spec FormatterSpec) (*Formatter, error)
-type FormatterSpec struct{ ... }
-type GoGeneratorSpec struct{ ... }
-type GoUsageScope struct{ ... }
-type Head struct{ ... }
+func (FormatWidth) String() string
+func (FormatWidth) Valid() bool
+const FormatWidthDefault FormatWidth = 0
+const FormatWidthLong FormatWidth = 1
+const FormatWidthNarrow FormatWidth = 3
+const FormatWidthShort FormatWidth = 2
+type Formats struct {
+	Numbers []NamedNumberFormat
+	Money []NamedMoneyFormat
+	Percents []NamedPercentFormat
+	Units []NamedUnitFormat
+	Plurals []NamedPluralFormat
+	Dates []NamedDateFormat
+	Times []NamedTimeFormat
+	DateTimes []NamedDateTimeFormat
+	Lists []NamedListFormat
+	Relatives []NamedRelativeFormat
+	Durations []NamedDurationFormat
+	DisplayNames []NamedDisplayNameFormat
+}
+type FormattedRange struct {
+	Text string
+	Parts []RangePart
+	Locale string
+}
+type FormattedValue struct {
+	Text string
+	Parts []Part
+	Locale string
+}
+type Formatter struct {
+	<unexported fields>
+}
+func (*Formatter) FormatDate(context.Context, DateValue, DateFormatSpec) (FormattedValue, error)
+func (*Formatter) FormatDateRange(context.Context, DateValue, DateValue, DateFormatSpec) (FormattedRange, error)
+func (*Formatter) FormatDateTime(context.Context, time.Time, DateTimeFormatSpec) (FormattedValue, error)
+func (*Formatter) FormatDateTimeRange(context.Context, time.Time, time.Time, DateTimeFormatSpec) (FormattedRange, error)
+func (*Formatter) FormatDisplayName(context.Context, string, DisplayNameSpec) (FormattedValue, bool, error)
+func (*Formatter) FormatDuration(context.Context, DurationValue, DurationFormatSpec) (FormattedValue, error)
+func (*Formatter) FormatInstantDate(context.Context, time.Time, DateFormatSpec) (FormattedValue, error)
+func (*Formatter) FormatInstantDateRange(context.Context, time.Time, time.Time, DateFormatSpec) (FormattedRange, error)
+func (*Formatter) FormatList(context.Context, []string, ListFormatSpec) (FormattedValue, error)
+func (*Formatter) FormatMoney(context.Context, MoneyValue, MoneyFormatSpec) (FormattedValue, error)
+func (*Formatter) FormatMoneyRange(context.Context, MoneyValue, MoneyValue, MoneyFormatSpec) (FormattedRange, error)
+func (*Formatter) FormatNamedDate(context.Context, string, DateValue) (FormattedValue, error)
+func (*Formatter) FormatNamedDateRange(context.Context, string, DateValue, DateValue) (FormattedRange, error)
+func (*Formatter) FormatNamedDateTime(context.Context, string, time.Time) (FormattedValue, error)
+func (*Formatter) FormatNamedDateTimeRange(context.Context, string, time.Time, time.Time) (FormattedRange, error)
+func (*Formatter) FormatNamedDisplayName(context.Context, string, string) (FormattedValue, bool, error)
+func (*Formatter) FormatNamedDuration(context.Context, string, DurationValue) (FormattedValue, error)
+func (*Formatter) FormatNamedInstantDate(context.Context, string, time.Time) (FormattedValue, error)
+func (*Formatter) FormatNamedInstantDateRange(context.Context, string, time.Time, time.Time) (FormattedRange, error)
+func (*Formatter) FormatNamedList(context.Context, string, []string) (FormattedValue, error)
+func (*Formatter) FormatNamedMoney(context.Context, string, MoneyValue) (FormattedValue, error)
+func (*Formatter) FormatNamedMoneyRange(context.Context, string, MoneyValue, MoneyValue) (FormattedRange, error)
+func (*Formatter) FormatNamedNumber(context.Context, string, NumericValue) (FormattedValue, error)
+func (*Formatter) FormatNamedNumberRange(context.Context, string, NumericValue, NumericValue) (FormattedRange, error)
+func (*Formatter) FormatNamedPercent(context.Context, string, NumericValue) (FormattedValue, error)
+func (*Formatter) FormatNamedPercentRange(context.Context, string, NumericValue, NumericValue) (FormattedRange, error)
+func (*Formatter) FormatNamedRelative(context.Context, string, int64, RelativeUnit) (FormattedValue, error)
+func (*Formatter) FormatNamedTime(context.Context, string, time.Time) (FormattedValue, error)
+func (*Formatter) FormatNamedTimeRange(context.Context, string, time.Time, time.Time) (FormattedRange, error)
+func (*Formatter) FormatNamedUnit(context.Context, string, NumericValue) (FormattedValue, error)
+func (*Formatter) FormatNamedUnitRange(context.Context, string, NumericValue, NumericValue) (FormattedRange, error)
+func (*Formatter) FormatNumber(context.Context, NumericValue, NumberFormatSpec) (FormattedValue, error)
+func (*Formatter) FormatNumberRange(context.Context, NumericValue, NumericValue, NumberFormatSpec) (FormattedRange, error)
+func (*Formatter) FormatPercent(context.Context, NumericValue, PercentFormatSpec) (FormattedValue, error)
+func (*Formatter) FormatPercentRange(context.Context, NumericValue, NumericValue, PercentFormatSpec) (FormattedRange, error)
+func (*Formatter) FormatRelative(context.Context, int64, RelativeUnit, RelativeFormatSpec) (FormattedValue, error)
+func (*Formatter) FormatTime(context.Context, time.Time, TimeFormatSpec) (FormattedValue, error)
+func (*Formatter) FormatTimeRange(context.Context, time.Time, time.Time, TimeFormatSpec) (FormattedRange, error)
+func (*Formatter) FormatUnit(context.Context, NumericValue, UnitFormatSpec) (FormattedValue, error)
+func (*Formatter) FormatUnitRange(context.Context, NumericValue, NumericValue, UnitFormatSpec) (FormattedRange, error)
+func (*Formatter) SelectNamedPlural(context.Context, string, NumericValue) (PluralCategory, error)
+func (*Formatter) SelectNamedPluralRange(context.Context, string, NumericValue, NumericValue) (PluralCategory, error)
+func (*Formatter) SelectPlural(context.Context, NumericValue, PluralFormatSpec) (PluralCategory, error)
+func (*Formatter) SelectPluralRange(context.Context, NumericValue, NumericValue, PluralFormatSpec) (PluralCategory, error)
+type FormatterSpec struct {
+	Locale string
+	TimeZone string
+	TimeZoneDataVersion string
+	Capabilities []Capability
+	Presentation Presentation
+	Limits Limits
+	Observer Observer
+	Formats Formats
+}
+func GenerateGo(*Snapshot, GoGeneratorSpec) ([]byte, error)
+func GenerateGoContext(context.Context, *Snapshot, GoGeneratorSpec) ([]byte, error)
+type GoGeneratorSpec struct {
+	Package string
+	MaxOutputBytes int
+}
+const GoUsageAnalyzer untyped string = "frostgrove.vv-i18n/go-list/v1"
+type GoUsageScope struct {
+	Analyzer string "json:\"analyzer\""
+	GOOS string "json:\"goos\""
+	GOARCH string "json:\"goarch\""
+	Compiler string "json:\"compiler\""
+	CgoEnabled bool "json:\"cgo_enabled\""
+	GoVersion string "json:\"go_version,omitempty\""
+	Toolchain string "json:\"toolchain,omitempty\""
+	GoExperiment string "json:\"go_experiment,omitempty\""
+	GoFlags string "json:\"go_flags,omitempty\""
+	GoWork string "json:\"go_work,omitempty\""
+	GoEnv string "json:\"go_env,omitempty\""
+	Environment []UsageSetting "json:\"environment,omitempty\""
+	BuildTags []string "json:\"build_tags\""
+	ToolTags []string "json:\"tool_tags\""
+	ReleaseTags []string "json:\"release_tags\""
+	Roots []UsageRoot "json:\"roots\""
+	Files []UsageFile "json:\"files,omitempty\""
+	Metadata []UsageMetadata "json:\"metadata,omitempty\""
+	SourceDigest string "json:\"source_digest\""
+	SelectedFiles int "json:\"selected_files\""
+	ExcludedFiles int "json:\"excluded_files\""
+}
+const GrammarProfile untyped string = "frostgrove-mf2/v1"
+type Head struct {
+	<unexported fields>
+}
+func (Head) Reference() SnapshotRef
+func (Head) Snapshot() *Snapshot
+func (Head) Valid() bool
 type HourCycle uint8
-    const HourCycleDefault HourCycle = iota ...
+func (HourCycle) String() string
+func (HourCycle) Valid() bool
+const HourCycleDefault HourCycle = 0
+const HourCycleH11 HourCycle = 1
+const HourCycleH12 HourCycle = 2
+const HourCycleH23 HourCycle = 3
+const HourCycleH24 HourCycle = 4
+func Instant(string, time.Time) Argument
+func Integer(string, int64) Argument
 type Key string
-    func Qualify(module, id string) Key
+const LanguageDialect LanguageDisplay = 0
 type LanguageDisplay uint8
-    const LanguageDialect LanguageDisplay = iota ...
+func (LanguageDisplay) String() string
+func (LanguageDisplay) Valid() bool
+const LanguageStandard LanguageDisplay = 1
 type Layer uint8
-    const LayerModule Layer = iota + 1 ...
-type Lease struct{ ... }
-type Limits struct{ ... }
-    func DefaultLimits() Limits
-type ListFormatSpec struct{ ... }
+func (Layer) String() string
+func (Layer) Valid() bool
+const LayerApplication Layer = 2
+const LayerModule Layer = 1
+const LayerTenant Layer = 3
+type Lease struct {
+	<unexported fields>
+}
+func (*Lease) ExpiresAt() time.Time
+func (*Lease) Reference() SnapshotRef
+func (*Lease) Release()
+func (*Lease) Snapshot() (*Snapshot, error)
+type Limits struct {
+	Locale LocaleLimits
+	MaxModules int
+	MaxMessages int
+	MaxTranslations int
+	MaxLocales int
+	MaxArguments int
+	MaxEnumValues int
+	MaxMarkupNames int
+	MaxCatalogItems int
+	MaxIdentifierBytes int
+	MaxRevisionBytes int
+	MaxDescriptionBytes int
+	MaxEnumValueBytes int
+	MaxArgumentBytes int
+	MaxBigIntegerBits int
+	MaxTemplateBytes int
+	MaxCatalogBytes int
+	MaxDeclarations int
+	MaxSelectors int
+	MaxVariants int
+	MaxLocalDepth int
+	MaxTemplateParts int
+	MaxMarkupDepth int
+	MaxOutputBytes int
+	MaxOutputParts int
+	MaxExplainSteps int
+}
+const ListConjunction ListType = 0
+const ListDisjunction ListType = 1
+type ListFormatSpec struct {
+	Type ListType
+	Width FormatWidth
+}
 type ListType uint8
-    const ListConjunction ListType = iota ...
-type Loader struct{ ... }
-type LocaleCoverage struct{ ... }
-type LocaleEdge struct{ ... }
-type LocaleLimits struct{ ... }
-type LocalePolicy struct{ ... }
-type LocalizedMessageSource interface{ ... }
+func (ListType) String() string
+func (ListType) Valid() bool
+const ListUnit ListType = 2
+func Load(context.Context, io.Reader) (*Snapshot, error)
+func LoadFS(context.Context, io/fs.FS, string) (*Snapshot, error)
+type Loader struct {
+	Limits ArtifactLimits
+	CatalogLimits Limits
+	Observer Observer
+}
+func (Loader) Load(context.Context, io.Reader) (*Snapshot, error)
+func (Loader) LoadFS(context.Context, io/fs.FS, string) (*Snapshot, error)
+type LocaleCoverage struct {
+	Locale string "json:\"locale\""
+	Required bool "json:\"required\""
+	Total int "json:\"total\""
+	Approved int "json:\"approved\""
+	Missing int "json:\"missing\""
+	Stale int "json:\"stale\""
+	ReviewRequired int "json:\"review_required\""
+	Rejected int "json:\"rejected\""
+	Invalid int "json:\"invalid\""
+}
+func (LocaleCoverage) Complete() bool
+const LocaleDataVersion untyped string = "go-intl/v0.4.1:cldr/48.1.0+icu/78;x-text/v0.41.0"
+type LocaleEdge struct {
+	Locale string
+	Parent string
+}
+type LocaleLimits struct {
+	MaxChoices int
+	MaxHeaderBytes int
+	MaxRanges int
+	MaxSupported int
+	MaxTagBytes int
+	MaxFallbackDepth int
+}
+type LocalePolicy struct {
+	Supported []string
+	Default string
+	Parents []LocaleEdge
+	Mode MatchMode
+	DefaultOnMiss bool
+	Limits LocaleLimits
+	Observer Observer
+}
+const MatchBestFit MatchMode = 1
+const MatchLookup MatchMode = 0
 type MatchMode uint8
-    const MatchLookup MatchMode = iota ...
-type Message struct{ ... }
-type MessageSpec struct{ ... }
-type Module struct{ ... }
-type MoneyFormatSpec struct{ ... }
-type MoneyValue struct{ ... }
-type NamedDateFormat struct{ ... }
-type NamedDateTimeFormat struct{ ... }
-type NamedDisplayNameFormat struct{ ... }
-type NamedDurationFormat struct{ ... }
-type NamedListFormat struct{ ... }
-type NamedMoneyFormat struct{ ... }
-type NamedNumberFormat struct{ ... }
-type NamedPercentFormat struct{ ... }
-type NamedPluralFormat struct{ ... }
-type NamedRelativeFormat struct{ ... }
-type NamedTimeFormat struct{ ... }
-type NamedUnitFormat struct{ ... }
+func (MatchMode) String() string
+func (MatchMode) Valid() bool
+func MaximumDigits(int) DigitRange
+func MergeSource(CatalogSpec, CatalogSpec, SourceMergePolicy) (CatalogSpec, error)
+func MergeSourceContext(context.Context, CatalogSpec, CatalogSpec, SourceMergePolicy) (CatalogSpec, error)
+type Message struct {
+	<unexported fields>
+}
+func (Message) Arguments() []Argument
+func (Message) ContractRevision() string
+func (Message) Key() Key
+const MessageFormatSpec untyped string = "unicode-messageformat/48.2"
+type MessageSpec struct {
+	ID string
+	Key Key
+	Revision string
+	Source string
+	Description string
+	Arguments []ArgumentSpec
+	Output OutputKind
+	Markup []string
+	Override OverridePolicy
+	Translations []Translation
+	AllowEmpty bool
+	Public bool
+}
+func MinimumDigits(int) DigitRange
+type Module struct {
+	Name string
+	Messages []MessageSpec
+}
+func Money(string, string, string) Argument
+type MoneyFormatSpec struct {
+	Number NumberFormatSpec
+	Display CurrencyDisplay
+	Sign CurrencySign
+}
+type MoneyValue struct {
+	Amount DecimalNumber
+	Currency string
+}
+type NamedDateFormat struct {
+	Name string
+	Spec DateFormatSpec
+}
+type NamedDateTimeFormat struct {
+	Name string
+	Spec DateTimeFormatSpec
+}
+type NamedDisplayNameFormat struct {
+	Name string
+	Spec DisplayNameSpec
+}
+type NamedDurationFormat struct {
+	Name string
+	Spec DurationFormatSpec
+}
+type NamedListFormat struct {
+	Name string
+	Spec ListFormatSpec
+}
+type NamedMoneyFormat struct {
+	Name string
+	Spec MoneyFormatSpec
+}
+type NamedNumberFormat struct {
+	Name string
+	Spec NumberFormatSpec
+}
+type NamedPercentFormat struct {
+	Name string
+	Spec PercentFormatSpec
+}
+type NamedPluralFormat struct {
+	Name string
+	Spec PluralFormatSpec
+}
+type NamedRelativeFormat struct {
+	Name string
+	Spec RelativeFormatSpec
+}
+type NamedTimeFormat struct {
+	Name string
+	Spec TimeFormatSpec
+}
+type NamedUnitFormat struct {
+	Name string
+	Spec UnitFormatSpec
+}
+func New(CatalogSpec) (*Snapshot, error)
+func NewBigIntegerNumber(*math/big.Int) BigIntegerNumber
+func NewContext(context.Context, CatalogSpec) (*Snapshot, error)
+func NewController(ControllerSpec) (*Controller, error)
+func NewDefinition[A any](*Snapshot, Key, ArgumentEncoder[A]) (Definition[A], error)
+func NewFormatter(FormatterSpec) (*Formatter, error)
+func NewResolver(LocalePolicy) (*Resolver, error)
+func NewStructDefinition[A any](*Snapshot, Key) (Definition[A], error)
+func Null(string) Argument
+func NullValue[T any]() Optional[T]
+const NumberCompactDefault NumberCompactDisplay = 0
 type NumberCompactDisplay uint8
-    const NumberCompactDefault NumberCompactDisplay = iota ...
-type NumberFormatSpec struct{ ... }
+func (NumberCompactDisplay) String() string
+func (NumberCompactDisplay) Valid() bool
+const NumberCompactLong NumberCompactDisplay = 2
+const NumberCompactShort NumberCompactDisplay = 1
+type NumberFormatSpec struct {
+	Grouping NumberGrouping
+	Sign NumberSignDisplay
+	Notation NumberNotation
+	Compact NumberCompactDisplay
+	RoundingMode NumberRoundingMode
+	RoundingPriority NumberRoundingPriority
+	TrailingZeroDisplay NumberTrailingZeroDisplay
+	RoundingIncrement NumberRoundingIncrement
+	MinimumIntegerDigits int
+	FractionDigits DigitRange
+	SignificantDigits DigitRange
+	NumberingSystem string
+}
 type NumberGrouping uint8
-    const NumberGroupingDefault NumberGrouping = iota ...
+func (NumberGrouping) String() string
+func (NumberGrouping) Valid() bool
+const NumberGroupingAlways NumberGrouping = 1
+const NumberGroupingDefault NumberGrouping = 0
+const NumberGroupingMin2 NumberGrouping = 3
+const NumberGroupingNever NumberGrouping = 2
 type NumberNotation uint8
-    const NumberNotationDefault NumberNotation = iota ...
+func (NumberNotation) String() string
+func (NumberNotation) Valid() bool
+const NumberNotationCompact NumberNotation = 3
+const NumberNotationDefault NumberNotation = 0
+const NumberNotationEngineering NumberNotation = 2
+const NumberNotationScientific NumberNotation = 1
 type NumberRoundingIncrement uint16
-    const NumberRoundingIncrementDefault NumberRoundingIncrement = 0 ...
+func (NumberRoundingIncrement) String() string
+func (NumberRoundingIncrement) Valid() bool
+const NumberRoundingIncrement1 NumberRoundingIncrement = 1
+const NumberRoundingIncrement10 NumberRoundingIncrement = 10
+const NumberRoundingIncrement100 NumberRoundingIncrement = 100
+const NumberRoundingIncrement1000 NumberRoundingIncrement = 1000
+const NumberRoundingIncrement2 NumberRoundingIncrement = 2
+const NumberRoundingIncrement20 NumberRoundingIncrement = 20
+const NumberRoundingIncrement200 NumberRoundingIncrement = 200
+const NumberRoundingIncrement2000 NumberRoundingIncrement = 2000
+const NumberRoundingIncrement25 NumberRoundingIncrement = 25
+const NumberRoundingIncrement250 NumberRoundingIncrement = 250
+const NumberRoundingIncrement2500 NumberRoundingIncrement = 2500
+const NumberRoundingIncrement5 NumberRoundingIncrement = 5
+const NumberRoundingIncrement50 NumberRoundingIncrement = 50
+const NumberRoundingIncrement500 NumberRoundingIncrement = 500
+const NumberRoundingIncrement5000 NumberRoundingIncrement = 5000
+const NumberRoundingIncrementDefault NumberRoundingIncrement = 0
 type NumberRoundingMode uint8
-    const NumberRoundingModeDefault NumberRoundingMode = iota ...
+func (NumberRoundingMode) String() string
+func (NumberRoundingMode) Valid() bool
+const NumberRoundingModeCeil NumberRoundingMode = 1
+const NumberRoundingModeDefault NumberRoundingMode = 0
+const NumberRoundingModeExpand NumberRoundingMode = 3
+const NumberRoundingModeFloor NumberRoundingMode = 2
+const NumberRoundingModeHalfCeil NumberRoundingMode = 5
+const NumberRoundingModeHalfEven NumberRoundingMode = 9
+const NumberRoundingModeHalfExpand NumberRoundingMode = 7
+const NumberRoundingModeHalfFloor NumberRoundingMode = 6
+const NumberRoundingModeHalfTrunc NumberRoundingMode = 8
+const NumberRoundingModeTrunc NumberRoundingMode = 4
 type NumberRoundingPriority uint8
-    const NumberRoundingPriorityDefault NumberRoundingPriority = iota ...
+func (NumberRoundingPriority) String() string
+func (NumberRoundingPriority) Valid() bool
+const NumberRoundingPriorityAuto NumberRoundingPriority = 1
+const NumberRoundingPriorityDefault NumberRoundingPriority = 0
+const NumberRoundingPriorityLessPrecision NumberRoundingPriority = 3
+const NumberRoundingPriorityMorePrecision NumberRoundingPriority = 2
+const NumberSignAlways NumberSignDisplay = 1
+const NumberSignDefault NumberSignDisplay = 0
 type NumberSignDisplay uint8
-    const NumberSignDefault NumberSignDisplay = iota ...
+func (NumberSignDisplay) String() string
+func (NumberSignDisplay) Valid() bool
+const NumberSignExceptZero NumberSignDisplay = 3
+const NumberSignNegative NumberSignDisplay = 4
+const NumberSignNever NumberSignDisplay = 2
+const NumberTrailingZeroAuto NumberTrailingZeroDisplay = 1
+const NumberTrailingZeroDefault NumberTrailingZeroDisplay = 0
 type NumberTrailingZeroDisplay uint8
-    const NumberTrailingZeroDefault NumberTrailingZeroDisplay = iota ...
-type NumericValue interface{ ... }
-type Observation struct{ ... }
+func (NumberTrailingZeroDisplay) String() string
+func (NumberTrailingZeroDisplay) Valid() bool
+const NumberTrailingZeroStripIfInteger NumberTrailingZeroDisplay = 2
+type NumericValue interface {
+	<unexported methods>
+}
+type Observation struct {
+	Operation Operation
+	Outcome Outcome
+	Reason Reason
+	Duration time.Duration
+	Count int
+}
 type Observer func(context.Context, Observation)
 type Operation uint8
-    const OperationResolve Operation = iota + 1 ...
-type Optional[T any] struct{ ... }
-    func NullValue[T any]() Optional[T]
-    func Some[T any](value T) Optional[T]
+func (Operation) String() string
+func (Operation) Valid() bool
+const OperationActivate Operation = 5
+const OperationCompile Operation = 3
+const OperationLoad Operation = 4
+const OperationRender Operation = 2
+const OperationResolve Operation = 1
+const OperationRollback Operation = 6
+type Optional[T any] struct {
+	<unexported fields>
+}
+func (Optional[T]) Get() (T, bool)
+func (Optional[T]) IsNull() bool
+func (Optional[T]) Present() bool
 type Outcome uint8
-    const OutcomeSuccess Outcome = iota + 1 ...
+func (Outcome) String() string
+func (Outcome) Valid() bool
+const OutcomeCanceled Outcome = 8
+const OutcomeDefault Outcome = 3
+const OutcomeFallback Outcome = 2
+const OutcomeInvalid Outcome = 6
+const OutcomeLimited Outcome = 7
+const OutcomeMissing Outcome = 5
+const OutcomeNoMatch Outcome = 4
+const OutcomeSuccess Outcome = 1
+const OutcomeTimedOut Outcome = 9
 type OutputKind uint8
-    const OutputPlain OutputKind = iota ...
-type OverlaySpec struct{ ... }
-    func ApplicationOverlay(revision string, overrides ...Override) OverlaySpec
-    func TenantOverlay(revision string, overrides ...Override) OverlaySpec
-type Override struct{ ... }
+func (OutputKind) String() string
+func (OutputKind) Valid() bool
+const OutputPlain OutputKind = 0
+const OutputRich OutputKind = 1
+type OverlaySpec struct {
+	Layer Layer
+	Revision string
+	Overrides []Override
+}
+type Override struct {
+	Key Key
+	Locale string
+	Text string
+	ContractRevision string
+	SourceDigest string
+	ReviewDigest string
+	Review ReviewState
+}
+const OverrideAny OverridePolicy = 3
+const OverrideApplication OverridePolicy = 1
+const OverrideDenied OverridePolicy = 0
 type OverridePolicy uint8
-    const OverrideDenied OverridePolicy = 0 ...
-type Part struct{ ... }
+func (OverridePolicy) String() string
+func (OverridePolicy) Valid() bool
+const OverrideTenant OverridePolicy = 2
+type Part struct {
+	Kind PartKind
+	Type string
+	Text string
+	Name string
+	ID string
+	Locale string
+	Direction string
+	Subparts []Subpart
+}
+const PartBidiIsolation PartKind = 6
 type PartKind uint8
-    const PartText PartKind = iota + 1 ...
-type PercentFormatSpec struct{ ... }
+func (PartKind) String() string
+func (PartKind) Valid() bool
+const PartMarkupClose PartKind = 4
+const PartMarkupOpen PartKind = 3
+const PartMarkupStandalone PartKind = 5
+const PartText PartKind = 1
+const PartValue PartKind = 2
+type PercentFormatSpec struct {
+	Number NumberFormatSpec
+}
+const PluralCardinal PluralType = 0
 type PluralCategory uint8
-    const PluralZero PluralCategory = iota ...
-type PluralFormatSpec struct{ ... }
+func (PluralCategory) String() string
+func (PluralCategory) Valid() bool
+const PluralFew PluralCategory = 3
+type PluralFormatSpec struct {
+	Type PluralType
+	Number NumberFormatSpec
+}
+const PluralMany PluralCategory = 4
+const PluralOne PluralCategory = 1
+const PluralOrdinal PluralType = 1
+const PluralOther PluralCategory = 5
+const PluralTwo PluralCategory = 2
 type PluralType uint8
-    const PluralCardinal PluralType = iota ...
-type PreferenceStep struct{ ... }
+func (PluralType) String() string
+func (PluralType) Valid() bool
+const PluralZero PluralCategory = 0
+type PreferenceStep struct {
+	Source ChoiceSource
+	Outcome Outcome
+	Reason Reason
+}
 type Presentation uint8
-    const PresentationDefault Presentation = iota ...
-type Problem struct{ ... }
+func (Presentation) String() string
+func (Presentation) Valid() bool
+const PresentationDefault Presentation = 0
+const PresentationNoIsolation Presentation = 1
+type Problem struct {
+	Code ProblemCode
+	Path string
+	Detail string
+}
 type ProblemCode string
-    const ProblemInvalid ProblemCode = "invalid" ...
-type Problems struct{ ... }
+func (ProblemCode) String() string
+func (ProblemCode) Valid() bool
+const ProblemCollision ProblemCode = "canonical_collision"
+const ProblemCycle ProblemCode = "cycle"
+const ProblemDuplicate ProblemCode = "duplicate"
+const ProblemInvalid ProblemCode = "invalid"
+const ProblemInvalidSyntax ProblemCode = "invalid_syntax"
+const ProblemLimit ProblemCode = "limit"
+const ProblemMissing ProblemCode = "missing"
+const ProblemSchema ProblemCode = "schema"
+const ProblemSecurity ProblemCode = "security"
+const ProblemStale ProblemCode = "stale"
+const ProblemUnsupported ProblemCode = "unsupported"
+type Problems struct {
+	<unexported fields>
+}
+func (*Problems) Error() string
+func (*Problems) Items() []Problem
+func (*Problems) Unwrap() []error
+func Pseudo(CatalogSpec, PseudoSpec) (CatalogSpec, error)
+const PseudoAccent PseudoMode = 1
+func PseudoContext(context.Context, CatalogSpec, PseudoSpec) (CatalogSpec, error)
 type PseudoMode uint8
-    const PseudoAccent PseudoMode = iota + 1 ...
-type PseudoSpec struct{ ... }
-type PublicExport struct{ ... }
-    func ExportPublic(snapshot *Snapshot) (PublicExport, error)
-    func ExportPublicContext(ctx context.Context, snapshot *Snapshot, spec PublicExportSpec) (PublicExport, error)
-type PublicExportSpec struct{ ... }
-type RangePart struct{ ... }
+func (PseudoMode) String() string
+func (PseudoMode) Valid() bool
+const PseudoRTL PseudoMode = 2
+type PseudoSpec struct {
+	Locale string
+	Mode PseudoMode
+	MaxOutputBytes int
+}
+const PublicContractSchema untyped string = "frostgrove.i18n.public-contract/v1"
+type PublicExport struct {
+	TypeScript []byte
+	Manifest []byte
+	Address string
+}
+type PublicExportSpec struct {
+	MaxOutputBytes int
+}
+const PublicTypeScriptGenerator untyped string = "frostgrove.i18n.typescript/v1"
+const PublicTypeScriptTarget untyped string = "ES2020"
+const PublicValueContract untyped string = "frostgrove.i18n.json-scalars/v1"
+const PublicWireFormat untyped string = "json"
+func Qualify(string, string) Key
+type RangePart struct {
+	Kind PartKind
+	Type string
+	Text string
+	Locale string
+	Direction string
+	Source RangeSource
+}
 type RangeSource uint8
-    const RangeSourceStart RangeSource = iota + 1 ...
+func (RangeSource) String() string
+func (RangeSource) Valid() bool
+const RangeSourceEnd RangeSource = 3
+const RangeSourceShared RangeSource = 2
+const RangeSourceStart RangeSource = 1
 type Reason uint8
-    const ReasonNone Reason = iota ...
-type RelativeFormatSpec struct{ ... }
+func (Reason) String() string
+func (Reason) Valid() bool
+const ReasonArtifactIO Reason = 20
+const ReasonBestFit Reason = 3
+const ReasonConflict Reason = 17
+const ReasonContextCanceled Reason = 14
+const ReasonContextDeadline Reason = 15
+const ReasonExact Reason = 1
+const ReasonExcluded Reason = 7
+const ReasonIncompatibleArtifact Reason = 21
+const ReasonInvalidArgument Reason = 12
+const ReasonInvalidArtifact Reason = 19
+const ReasonLimit Reason = 9
+const ReasonLookup Reason = 2
+const ReasonMalformed Reason = 6
+const ReasonMissingTemplate Reason = 10
+const ReasonNone Reason = 0
+const ReasonOutputLimit Reason = 13
+const ReasonPolicyDefault Reason = 5
+const ReasonSchemaMismatch Reason = 11
+const ReasonSnapshotMissing Reason = 18
+const ReasonTemplateFailure Reason = 16
+const ReasonUnsupported Reason = 8
+const ReasonWildcard Reason = 4
+const RelativeDay RelativeUnit = 4
+type RelativeFormatSpec struct {
+	Width FormatWidth
+	Numeric RelativeNumeric
+	NumberingSystem string
+}
+const RelativeHour RelativeUnit = 3
+const RelativeMinute RelativeUnit = 2
+const RelativeMonth RelativeUnit = 6
 type RelativeNumeric uint8
-    const RelativeNumericAlways RelativeNumeric = iota ...
+func (RelativeNumeric) String() string
+func (RelativeNumeric) Valid() bool
+const RelativeNumericAlways RelativeNumeric = 0
+const RelativeNumericAuto RelativeNumeric = 1
+const RelativeQuarter RelativeUnit = 7
+const RelativeSecond RelativeUnit = 1
 type RelativeUnit uint8
-    const RelativeSecond RelativeUnit = iota + 1 ...
-type Rendered struct{ ... }
-type Report struct{ ... }
-    func Check(spec CatalogSpec, policy CheckPolicy) Report
-    func CheckContext(ctx context.Context, spec CatalogSpec, policy CheckPolicy) Report
-type Resolution struct{ ... }
-type Resolver struct{ ... }
-    func NewResolver(policy LocalePolicy) (*Resolver, error)
+func (RelativeUnit) String() string
+func (RelativeUnit) Valid() bool
+const RelativeWeek RelativeUnit = 5
+const RelativeYear RelativeUnit = 8
+type Rendered struct {
+	Text string
+	Parts []Part
+	TemplateLocale string
+	ResolvedLocale string
+	ResolutionSource ChoiceSource
+	ResolutionReason Reason
+	Revision string
+	Digest string
+	Layer Layer
+	Outcome Outcome
+	RenderKey string
+}
+type Report struct {
+	SourceDigest string "json:\"source_digest\""
+	Findings []Finding "json:\"findings\""
+	Coverage []LocaleCoverage "json:\"coverage\""
+	Errors int "json:\"errors\""
+	Warnings int "json:\"warnings\""
+	StructuralErrors int "json:\"structural_errors\""
+	FirstStructural *Finding "json:\"first_structural,omitempty\""
+	Truncated bool "json:\"truncated\""
+}
+func (Report) Err() error
+func (Report) Error() string
+func (Report) FirstStructuralError() (Finding, bool)
+func (Report) OK() bool
+func (Report) Summary() string
+func (Report) Unwrap() error
+type Resolution struct {
+	Locale string
+	Source ChoiceSource
+	Outcome Outcome
+	Reason Reason
+	<unexported fields>
+}
+func (Resolution) Matched() bool
+type Resolver struct {
+	<unexported fields>
+}
+func (*Resolver) Default() string
+func (*Resolver) Resolve(...Choice) Resolution
+func (*Resolver) ResolveContext(context.Context, ...Choice) Resolution
+func (*Resolver) Supported() []string
+const ReviewApproved ReviewState = 1
+const ReviewRejected ReviewState = 3
+const ReviewRequired ReviewState = 2
 type ReviewState uint8
-    const ReviewUnset ReviewState = iota ...
+func (ReviewState) String() string
+func (ReviewState) Valid() bool
+const ReviewUnset ReviewState = 0
+const SeverityError CheckSeverity = "error"
+const SeverityWarning CheckSeverity = "warning"
 type SignedNumber int64
-type Snapshot struct{ ... }
-    func Load(ctx context.Context, source io.Reader) (*Snapshot, error)
-    func LoadFS(ctx context.Context, filesystem fs.FS, name string) (*Snapshot, error)
-    func New(spec CatalogSpec) (*Snapshot, error)
-    func NewContext(ctx context.Context, spec CatalogSpec) (*Snapshot, error)
-type SnapshotRef struct{ ... }
-type SourceCodec struct{ ... }
-type SourceMergePolicy struct{ ... }
-type SourceMerger struct{ ... }
-type Subpart struct{ ... }
-type TimeComponents struct{ ... }
-type TimeFormatSpec struct{ ... }
-type Translation struct{ ... }
-type UnitFormatSpec struct{ ... }
+type Snapshot struct {
+	<unexported fields>
+}
+func (*Snapshot) Bind(Key, ...Argument) (Message, error)
+func (*Snapshot) ContractRef(Key) (ContractRef, bool)
+func (*Snapshot) Descriptor(Key) (Descriptor, bool)
+func (*Snapshot) Digest() string
+func (*Snapshot) ErrorMessages(ErrorSpec) (*ErrorSource, error)
+func (*Snapshot) ErrorPlan(ErrorPlanSpec) (*ErrorPlan, error)
+func (*Snapshot) For(string) (*View, error)
+func (*Snapshot) ForContext(context.Context, ...Choice) (*View, error)
+func (*Snapshot) Keys() []Key
+func (*Snapshot) Overlay(OverlaySpec) (*Snapshot, error)
+func (*Snapshot) Profile() string
+func (*Snapshot) Reference() SnapshotRef
+func (*Snapshot) Resolve(...Choice) Resolution
+func (*Snapshot) ResolveContext(context.Context, ...Choice) Resolution
+func (*Snapshot) Revision() string
+func (*Snapshot) SourceDigest(Key) (string, bool)
+func (*Snapshot) Supported() []string
+func (*Snapshot) TimeZoneDataVersion() string
+func (*Snapshot) View(ViewSpec) (*View, error)
+type SnapshotRef struct {
+	Revision string
+	Digest string
+}
+func (SnapshotRef) Valid() bool
+func Some[T any](T) Optional[T]
+const SourceApplication ChoiceSource = 5
+type SourceCodec struct {
+	Limits ArtifactLimits
+	CatalogLimits Limits
+}
+func (SourceCodec) Decode(context.Context, io.Reader) (CatalogSpec, error)
+func (SourceCodec) Encode(CatalogSpec) ([]byte, error)
+func (SourceCodec) EncodeContext(context.Context, CatalogSpec) ([]byte, error)
+func (SourceCodec) EncodedSize(CatalogSpec) (int, error)
+func (SourceCodec) EncodedSizeContext(context.Context, CatalogSpec) (int, error)
+const SourceExplicit ChoiceSource = 1
+type SourceMergePolicy struct {
+	PruneObsolete bool
+}
+type SourceMerger struct {
+	CatalogLimits Limits
+	SourceLimits ArtifactLimits
+}
+func (SourceMerger) Merge(CatalogSpec, CatalogSpec, SourceMergePolicy) (CatalogSpec, error)
+func (SourceMerger) MergeContext(context.Context, CatalogSpec, CatalogSpec, SourceMergePolicy) (CatalogSpec, error)
+const SourceProtocol ChoiceSource = 3
+const SourceTenant ChoiceSource = 4
+const SourceUser ChoiceSource = 2
+const SourceVersion untyped string = "frostgrove.i18n.source/v1"
+type Subpart struct {
+	Type string
+	Text string
+}
+func TenantOverlay(string, ...Override) OverlaySpec
+func Text(string, string) Argument
+type TimeComponents struct {
+	DayPeriod DateFieldStyle
+	Hour DateNumericStyle
+	Minute DateNumericStyle
+	Second DateNumericStyle
+	FractionalSecondDigits DateFractionalSecondDigits
+	TimeZoneName DateTimeZoneNameStyle
+}
+type TimeFormatSpec struct {
+	Style DateTimeStyle
+	Calendar string
+	NumberingSystem string
+	HourCycle HourCycle
+	Hour12 DateHour12
+	FormatMatcher DateTimeFormatMatcher
+	Components TimeComponents
+}
+const TimeZoneDataModel untyped string = "go/time.LoadLocation:runtime-selected"
+type Translation struct {
+	Locale string
+	Text string
+	Review ReviewState
+	ContractRevision string
+	SourceDigest string
+	ReviewDigest string
+}
+const TypeBigInteger ArgumentType = 5
+const TypeBool ArgumentType = 2
+const TypeDate ArgumentType = 8
+const TypeDecimal ArgumentType = 6
+const TypeEnum ArgumentType = 10
+const TypeInstant ArgumentType = 9
+const TypeInteger ArgumentType = 3
+const TypeMoney ArgumentType = 7
+const TypeText ArgumentType = 1
+const TypeUnsignedInteger ArgumentType = 4
+type UnitFormatSpec struct {
+	Number NumberFormatSpec
+	Unit string
+	Width FormatWidth
+}
+func UnsignedInteger(string, uint64) Argument
 type UnsignedNumber uint64
-type UsageFile struct{ ... }
-type UsageLimits struct{ ... }
-    func DefaultUsageLimits() UsageLimits
-type UsageManifest struct{ ... }
-type UsageMetadata struct{ ... }
-type UsageOccurrence struct{ ... }
-type UsageRoot struct{ ... }
+type UsageFile struct {
+	Root string "json:\"root\""
+	Path string "json:\"path\""
+	LogicalPath string "json:\"logical_path\""
+	SHA256 string "json:\"sha256\""
+	Selected bool "json:\"selected\""
+}
+type UsageLimits struct {
+	MaxKeys int
+	MaxDynamic int
+	MaxOccurrences int
+	MaxRoots int
+	MaxFiles int
+	MaxMetadata int
+	MaxTags int
+	MaxEnvironment int
+	MaxStringBytes int
+	MaxMaterialBytes int
+}
+type UsageManifest struct {
+	Keys []Key "json:\"keys\""
+	Dynamic []DynamicUsage "json:\"dynamic\""
+	Occurrences []UsageOccurrence "json:\"occurrences,omitempty\""
+	GoScope *GoUsageScope "json:\"go_scope,omitempty\""
+	ManifestDigest string "json:\"manifest_digest,omitempty\""
+	Complete bool "json:\"complete\""
+}
+type UsageMetadata struct {
+	Kind string "json:\"kind\""
+	Path string "json:\"path\""
+	SHA256 string "json:\"sha256\""
+}
+type UsageOccurrence struct {
+	Key Key "json:\"key,omitempty\""
+	Domain string "json:\"domain,omitempty\""
+	Prefix string "json:\"prefix,omitempty\""
+	Path string "json:\"path\""
+	Line int "json:\"line\""
+	Column int "json:\"column\""
+}
+type UsageRoot struct {
+	Path string "json:\"path\""
+	Kind UsageRootKind "json:\"kind\""
+}
+const UsageRootDirectory UsageRootKind = "directory"
+const UsageRootFile UsageRootKind = "file"
 type UsageRootKind string
-    const UsageRootDirectory UsageRootKind = "directory" ...
-type UsageSetting struct{ ... }
-type View struct{ ... }
-type ViewSpec struct{ ... }
+func (UsageRootKind) String() string
+func (UsageRootKind) Valid() bool
+type UsageSetting struct {
+	Name string "json:\"name\""
+	Value string "json:\"value\""
+}
+type View struct {
+	<unexported fields>
+}
+func (*View) ErrorMessages(*ErrorPlan) (*ErrorSource, error)
+func (*View) Explain(Message) (Explanation, error)
+func (*View) FormatDate(context.Context, DateValue, DateFormatSpec) (FormattedValue, error)
+func (*View) FormatDateRange(context.Context, DateValue, DateValue, DateFormatSpec) (FormattedRange, error)
+func (*View) FormatDateTime(context.Context, time.Time, DateTimeFormatSpec) (FormattedValue, error)
+func (*View) FormatDateTimeRange(context.Context, time.Time, time.Time, DateTimeFormatSpec) (FormattedRange, error)
+func (*View) FormatDisplayName(context.Context, string, DisplayNameSpec) (FormattedValue, bool, error)
+func (*View) FormatDuration(context.Context, DurationValue, DurationFormatSpec) (FormattedValue, error)
+func (*View) FormatInstantDate(context.Context, time.Time, DateFormatSpec) (FormattedValue, error)
+func (*View) FormatInstantDateRange(context.Context, time.Time, time.Time, DateFormatSpec) (FormattedRange, error)
+func (*View) FormatList(context.Context, []string, ListFormatSpec) (FormattedValue, error)
+func (*View) FormatMoney(context.Context, MoneyValue, MoneyFormatSpec) (FormattedValue, error)
+func (*View) FormatMoneyRange(context.Context, MoneyValue, MoneyValue, MoneyFormatSpec) (FormattedRange, error)
+func (*View) FormatNumber(context.Context, NumericValue, NumberFormatSpec) (FormattedValue, error)
+func (*View) FormatNumberRange(context.Context, NumericValue, NumericValue, NumberFormatSpec) (FormattedRange, error)
+func (*View) FormatPercent(context.Context, NumericValue, PercentFormatSpec) (FormattedValue, error)
+func (*View) FormatPercentRange(context.Context, NumericValue, NumericValue, PercentFormatSpec) (FormattedRange, error)
+func (*View) FormatRelative(context.Context, int64, RelativeUnit, RelativeFormatSpec) (FormattedValue, error)
+func (*View) FormatTime(context.Context, time.Time, TimeFormatSpec) (FormattedValue, error)
+func (*View) FormatTimeRange(context.Context, time.Time, time.Time, TimeFormatSpec) (FormattedRange, error)
+func (*View) FormatUnit(context.Context, NumericValue, UnitFormatSpec) (FormattedValue, error)
+func (*View) FormatUnitRange(context.Context, NumericValue, NumericValue, UnitFormatSpec) (FormattedRange, error)
+func (*View) Formatter(Formats) (*Formatter, error)
+func (*View) Render(context.Context, Message) (Rendered, error)
+func (*View) RenderKey(Message) (string, error)
+func (*View) SelectPlural(context.Context, NumericValue, PluralFormatSpec) (PluralCategory, error)
+func (*View) SelectPluralRange(context.Context, NumericValue, NumericValue, PluralFormatSpec) (PluralCategory, error)
+type ViewSpec struct {
+	Resolution Resolution
+	FormattingLocale string
+	TimeZone string
+	Presentation Presentation
+}
 ```
 
 ## github.com/frostgrove/vv/jobs/jobsfx
 ```go
-const WorkersRunnerName = "vv.jobs.workers" ...
-func AsBackend(constructor any) any
-func AsConsumer(constructor any) any
-func AsDeclaration(constructor any) any
-func AsSchedule(constructor any) any
-func Bundle(catalog jobs.Catalog, optionValues []BundleOption, ...) fx.Option
-func Module(spec Spec) fx.Option
-func SchedulerRunner(scheduler *jobs.Scheduler, ready <-chan struct{}) (runtime.Runner, error)
-func WorkersRunner(workers *jobs.Workers, ready <-chan struct{}) (runtime.Runner, error)
 type Activation string
-    const Enabled Activation = "enabled" ...
-type AdmissionProvider interface{ ... }
-type Backend interface{ ... }
-type Binding[D, P any] struct{ ... }
-    func Auto[D, P any](handler func(D, context.Context, P) error, profiles ...jobs.Profile) *Binding[D, P]
-    func AutoAdapter[D, P any](...) *Binding[D, P]
-    func AutoAdapterFor[D adapterFor[P], P any](profiles ...jobs.Profile) *Binding[D, P]
-    func AutoFor[D handlerFor[P], P any](profiles ...jobs.Profile) *Binding[D, P]
-type BundleOption interface{ ... }
-    func Concurrency(overrides map[jobs.Name]int) BundleOption
-type HandlerOptions interface{ ... }
-type Option = fx.Option
-type Registration interface{ ... }
-type Registry struct{ ... }
-    func MustRegistry(registrations ...Registration) Registry
-    func NewRegistry(registrations ...Registration) (Registry, error)
-type Spec struct{ ... }
+type AdmissionProvider interface {
+	JobAdmission() github.com/frostgrove/vv/jobs.AdmissionReader
+}
+func AsBackend(any) any
+func AsConsumer(any) any
+func AsDeclaration(any) any
+func AsSchedule(any) any
+func Auto[D any, P any](func(D, context.Context, P) error, ...github.com/frostgrove/vv/jobs.Profile) *Binding[D, P]
+func AutoAdapter[D any, P any](func(D, context.Context, P, github.com/frostgrove/vv/jobs.DeliveryMeta, github.com/frostgrove/vv/jobs.AttemptController) error, ...github.com/frostgrove/vv/jobs.Profile) *Binding[D, P]
+func AutoAdapterFor[D adapterFor[P], P any](...github.com/frostgrove/vv/jobs.Profile) *Binding[D, P]
+func AutoFor[D handlerFor[P], P any](...github.com/frostgrove/vv/jobs.Profile) *Binding[D, P]
+type Backend interface {
+	github.com/frostgrove/vv/jobs.Sender
+	github.com/frostgrove/vv/jobs.DeliveryDriver
+}
+type Binding[D any, P any] struct {
+	*github.com/frostgrove/vv/jobs.Automatic[P]
+	<unexported fields>
+}
+func (*Binding[D, P]) Declaration() github.com/frostgrove/vv/jobs.Declaration
+func (*Binding[D, P]) Go(context.Context, P, ...github.com/frostgrove/vv/jobs.EnqueueOption) error
+func (*Binding[D, P]) JSON(string, github.com/frostgrove/vv/jobs.SchemaVersion) *Binding[D, P]
+func (*Binding[D, P]) TrustedJSON(string, github.com/frostgrove/vv/jobs.SchemaVersion) *Binding[D, P]
+func (*Binding[D, P]) Wire(github.com/frostgrove/vv/jobs.WireSpec[P]) *Binding[D, P]
+func (Binding[D, P]) Decode(github.com/frostgrove/vv/jobs.EncodedPayload) (P, error)
+func (Binding[D, P]) Definition() (*github.com/frostgrove/vv/jobs.Definition[P], bool)
+func (Binding[D, P]) Describe() github.com/frostgrove/vv/jobs.Descriptor
+func (Binding[D, P]) Digest(P) (github.com/frostgrove/vv/jobs.PayloadDigest, error)
+func (Binding[D, P]) Encode(P) (github.com/frostgrove/vv/jobs.EncodedPayload, error)
+func (Binding[D, P]) Format(fmt.State, rune)
+func (Binding[D, P]) Handler() github.com/frostgrove/vv/jobs.Handler[P]
+func (Binding[D, P]) Name() github.com/frostgrove/vv/jobs.Name
+func (Binding[D, P]) Partition() github.com/frostgrove/vv/jobs.PartitionMode
+func (Binding[D, P]) PayloadIdentity() github.com/frostgrove/vv/jobs.PayloadIdentityDescription
+func (Binding[D, P]) Policy() github.com/frostgrove/vv/jobs.Policy
+func (Binding[D, P]) String() string
+func Bundle(github.com/frostgrove/vv/jobs.Catalog, []BundleOption, ...Registration) go.uber.org/fx.Option
+type BundleOption interface {
+	<unexported methods>
+}
+func Concurrency(map[github.com/frostgrove/vv/jobs.Name]int) BundleOption
+const Disabled Activation = "disabled"
+const Enabled Activation = "enabled"
+type HandlerOptions interface {
+	JobOptions(github.com/frostgrove/vv/jobs.Name) []github.com/frostgrove/vv/jobs.WorkerOption
+}
+func Module(Spec) go.uber.org/fx.Option
+func MustRegistry(...Registration) Registry
+func NewRegistry(...Registration) (Registry, error)
+type Option = go.uber.org/fx.Option
+func (Option) String() string
+type Registration interface {
+	Declaration() github.com/frostgrove/vv/jobs.Declaration
+	<unexported methods>
+}
+type Registry struct {
+	<unexported fields>
+}
+func (Registry) Catalog() github.com/frostgrove/vv/jobs.Catalog
+func (Registry) Module(...BundleOption) Option
+func SchedulerRunner(*github.com/frostgrove/vv/jobs.Scheduler, <-chan struct{}) (github.com/frostgrove/vv/runtime.Runner, error)
+const SchedulerRunnerName untyped string = "vv.jobs.scheduler"
+type Spec struct {
+	Namespace github.com/frostgrove/vv/jobs.Namespace
+	Catalog github.com/frostgrove/vv/jobs.Catalog
+	Queue github.com/frostgrove/vv/jobs.QueueSpec
+	Workers github.com/frostgrove/vv/jobs.WorkersSpec
+	Scheduler github.com/frostgrove/vv/jobs.SchedulerSpec
+	Consuming Activation
+	Scheduling Activation
+}
+func WorkersRunner(*github.com/frostgrove/vv/jobs.Workers, <-chan struct{}) (github.com/frostgrove/vv/runtime.Runner, error)
+const WorkersRunnerName untyped string = "vv.jobs.workers"
 ```
 
 ## github.com/frostgrove/vv/jobs/jobspg
 ```go
-const DefaultListLimit = jobs.DefaultListLimit
-const DefaultPurgeLimit = jobs.DefaultPurgeLimit
-const DefaultSchema = "frostgrove_jobs"
-const MaxListDefinitions = jobs.MaxListDefinitions
-const MaxListLimit = jobs.MaxListLimit
-const MaxListOffset = jobs.MaxListOffset
-const MaxPurgeLimit = jobs.MaxPurgeLimit
-const SchemaVersion = 5
-var ErrCatalogMismatch = errors.New("jobspg: catalog mismatch")
-var ErrNotReady = errors.New("jobspg: driver is not ready")
-var ErrSchemaMismatch = errors.New("jobspg: schema mismatch")
-func MigrationStatements(schema string) ([]string, error)
-type Driver struct{ ... }
-    func New(spec Spec) (*Driver, error)
-    func Open(ctx context.Context, db *sql.DB, namespace jobs.Namespace, ...) (*Driver, error)
-type ListSpec = jobs.ListSpec
+const DefaultListLimit untyped int = 100
+const DefaultPurgeLimit untyped int = 100
+const DefaultSchema untyped string = "frostgrove_jobs"
+type Driver struct {
+	<unexported fields>
+}
+func (*Driver) Apply(context.Context, github.com/frostgrove/vv/jobs.ApplyRequest) (github.com/frostgrove/vv/jobs.ApplyResult, error)
+func (*Driver) BindCatalog(context.Context) error
+func (*Driver) Cancel(context.Context, github.com/frostgrove/vv/jobs.InvocationID) (github.com/frostgrove/vv/jobs.DeliveryView, error)
+func (*Driver) Catalog() github.com/frostgrove/vv/jobs.Catalog
+func (*Driver) Check(context.Context) error
+func (*Driver) CheckSchema(context.Context) error
+func (*Driver) Claim(context.Context, github.com/frostgrove/vv/jobs.ClaimRequest) (github.com/frostgrove/vv/jobs.ClaimBatch, error)
+func (*Driver) Count(context.Context, ListSpec) (int64, error)
+func (*Driver) Description() github.com/frostgrove/vv/jobs.BackendDescription
+func (*Driver) Fencer(*database/sql.Tx) (*TxFencer, error)
+func (*Driver) Format(fmt.State, rune)
+func (*Driver) Get(context.Context, github.com/frostgrove/vv/jobs.InvocationID) (github.com/frostgrove/vv/jobs.DeliveryView, error)
+func (*Driver) InFencedTx(context.Context, github.com/frostgrove/vv/jobs.AttemptController, func(context.Context) error, func(context.Context) error) error
+func (*Driver) List(context.Context, ListSpec) ([]github.com/frostgrove/vv/jobs.DeliveryView, error)
+func (*Driver) Migrate(context.Context) error
+func (*Driver) Namespace() github.com/frostgrove/vv/jobs.Namespace
+func (*Driver) Place(context.Context, github.com/frostgrove/vv/jobs.Placement) (github.com/frostgrove/vv/jobs.PlacementResult, error)
+func (*Driver) Prepare(context.Context) error
+func (*Driver) PurgeTerminal(context.Context, time.Time, int) (int, error)
+func (*Driver) Recover(context.Context, github.com/frostgrove/vv/jobs.RecoverRequest) (github.com/frostgrove/vv/jobs.RecoverResult, error)
+func (*Driver) Redrive(context.Context, github.com/frostgrove/vv/jobs.InvocationID) (github.com/frostgrove/vv/jobs.DeliveryView, error)
+func (*Driver) Renew(context.Context, github.com/frostgrove/vv/jobs.RenewRequest) (github.com/frostgrove/vv/jobs.RenewResult, error)
+func (*Driver) SchemaManagement() SchemaManagement
+func (*Driver) StageIn(context.Context, func(*TxStager) error) error
+func (*Driver) Stager(*database/sql.DB, *database/sql.Tx) (*TxStager, error)
+func (*Driver) String() string
+func (*Driver) SweepTerminalRetention(context.Context, int) (int, error)
+func (*Driver) Terminate(context.Context, github.com/frostgrove/vv/jobs.InvocationID) (github.com/frostgrove/vv/jobs.DeliveryView, error)
+var ErrCatalogMismatch error
+var ErrNotReady error
+var ErrSchemaMismatch error
+type ListSpec = github.com/frostgrove/vv/jobs.ListSpec
+const ManageSchema SchemaManagement = 2
+const MaxListDefinitions untyped int = 128
+const MaxListLimit untyped int = 1000
+const MaxListOffset untyped int = 1000000
+const MaxPurgeLimit untyped int = 1000
+func MigrationStatements(string) ([]string, error)
+func New(Spec) (*Driver, error)
+func Open(context.Context, *database/sql.DB, github.com/frostgrove/vv/jobs.Namespace, github.com/frostgrove/vv/jobs.Catalog) (*Driver, error)
 type SchemaManagement uint8
-    const UnsetSchemaManagement SchemaManagement = iota ...
-type Spec struct{ ... }
-type TxFencer struct{ ... }
-type TxStager struct{ ... }
+func (SchemaManagement) Valid() bool
+const SchemaVersion untyped int = 6
+type Spec struct {
+	DB *database/sql.DB
+	Source github.com/frostgrove/vv/crud.Source
+	Namespace github.com/frostgrove/vv/jobs.Namespace
+	Catalog github.com/frostgrove/vv/jobs.Catalog
+	Schema string
+	Backend github.com/frostgrove/vv/jobs.BackendID
+	Entropy io.Reader
+	SchemaManagement SchemaManagement
+}
+type TxFencer struct {
+	<unexported fields>
+}
+func (*TxFencer) Fence(context.Context, github.com/frostgrove/vv/jobs.LeaseRef) error
+type TxStager struct {
+	<unexported fields>
+}
+func (*TxStager) Format(fmt.State, rune)
+func (*TxStager) Stage(context.Context, github.com/frostgrove/vv/jobs.Placement) (github.com/frostgrove/vv/jobs.Staged, error)
+func (*TxStager) String() string
+func (*TxStager) Transaction() github.com/frostgrove/vv/jobs.TransactionContext
+const UnsetSchemaManagement SchemaManagement = 0
+const VerifySchema SchemaManagement = 1
 ```
 
 ## github.com/frostgrove/vv/jobs/jobspg/jobspgfx
 ```go
-const DefaultHousekeepingInterval = time.Minute
-const DefaultHousekeepingMaxBatches = 64
-const DefaultHousekeepingSweepTimeout = 30 * time.Second
-const MaxHousekeepingBatches = 1024
-const RetentionRunnerName = "vv.jobspg.retention"
-func Application(settings ApplicationSettings) fx.Option
-func Module(settings Settings) fx.Option
-func New(settings Settings, database *sql.DB, source crud.Source, catalog jobs.Catalog) (*jobspg.Driver, error)
-func RetentionRunner(sweeper jobs.RetentionSweeper, settings HousekeepingSettings) (runtime.Runner, error)
-type ApplicationSettings struct{ ... }
+func Application(ApplicationSettings) go.uber.org/fx.Option
+type ApplicationSettings struct {
+	Application string
+	Environment string
+	Schema string
+	Backend github.com/frostgrove/vv/jobs.BackendID
+	Entropy io.Reader
+	SchemaManagement github.com/frostgrove/vv/jobs/jobspg.SchemaManagement
+	AllowManagedSchemaInProduction bool
+	Housekeeping HousekeepingSettings
+	Catalog github.com/frostgrove/vv/jobs.Catalog
+	Queue github.com/frostgrove/vv/jobs.QueueSpec
+	Workers github.com/frostgrove/vv/jobs.WorkersSpec
+	Scheduler github.com/frostgrove/vv/jobs.SchedulerSpec
+	Consuming github.com/frostgrove/vv/jobs/jobsfx.Activation
+	Scheduling github.com/frostgrove/vv/jobs/jobsfx.Activation
+}
+func (ApplicationSettings) SchemaManagementDecision() (SchemaManagementDecision, error)
+const DefaultHousekeepingInterval time.Duration = 60000000000
+const DefaultHousekeepingMaxBatches untyped int = 64
+const DefaultHousekeepingSweepTimeout time.Duration = 30000000000
 type DeploymentProfile string
-    const DevelopmentProfile DeploymentProfile = "development" ...
-    func ProfileOf(environment string) DeploymentProfile
-type HousekeepingSettings struct{ ... }
-type SchemaManagementDecision struct{ ... }
-type Settings struct{ ... }
+func (DeploymentProfile) SchemaManagement() github.com/frostgrove/vv/jobs/jobspg.SchemaManagement
+const DevelopmentProfile DeploymentProfile = "development"
+type HousekeepingSettings struct {
+	Disabled bool
+	Interval time.Duration
+	SweepTimeout time.Duration
+	BatchSize int
+	MaxBatches int
+}
+const MaxHousekeepingBatches untyped int = 1024
+func Module(Settings) go.uber.org/fx.Option
+func New(Settings, *database/sql.DB, github.com/frostgrove/vv/crud.Source, github.com/frostgrove/vv/jobs.Catalog) (*github.com/frostgrove/vv/jobs/jobspg.Driver, error)
+const ProductionProfile DeploymentProfile = "production"
+func ProfileOf(string) DeploymentProfile
+func RetentionRunner(github.com/frostgrove/vv/jobs.RetentionSweeper, HousekeepingSettings) (github.com/frostgrove/vv/runtime.Runner, error)
+const RetentionRunnerName untyped string = "vv.jobspg.retention"
+type SchemaManagementDecision struct {
+	Profile DeploymentProfile
+	Management github.com/frostgrove/vv/jobs/jobspg.SchemaManagement
+	Overridden bool
+}
+type Settings struct {
+	Namespace github.com/frostgrove/vv/jobs.Namespace
+	Schema string
+	Backend github.com/frostgrove/vv/jobs.BackendID
+	Entropy io.Reader
+	SchemaManagement github.com/frostgrove/vv/jobs/jobspg.SchemaManagement
+	Housekeeping HousekeepingSettings
+}
+const TestProfile DeploymentProfile = "test"
 ```
 
 ## github.com/frostgrove/vv/jobs/jobsredis
 ```go
-const DefaultPrefix = "frostgrove:jobs"
-const FormatVersion = "1"
-var ErrFormatMismatch = errors.New("jobsredis: format mismatch")
-var ErrNotReady = errors.New("jobsredis: driver is not ready")
-var ErrRevisionChanged = fmt.Errorf("%w: delivery changed under this operation", jobs.ErrConflict)
-type Driver struct{ ... }
-    func New(spec Spec) (*Driver, error)
-    func Open(ctx context.Context, client redis.UniversalClient, namespace jobs.Namespace) (*Driver, error)
-type Spec struct{ ... }
+const DefaultPrefix untyped string = "frostgrove:jobs"
+type Driver struct {
+	<unexported fields>
+}
+func (*Driver) Apply(context.Context, github.com/frostgrove/vv/jobs.ApplyRequest) (github.com/frostgrove/vv/jobs.ApplyResult, error)
+func (*Driver) Cancel(context.Context, github.com/frostgrove/vv/jobs.InvocationID) (github.com/frostgrove/vv/jobs.DeliveryView, error)
+func (*Driver) Check(context.Context) error
+func (*Driver) Claim(context.Context, github.com/frostgrove/vv/jobs.ClaimRequest) (github.com/frostgrove/vv/jobs.ClaimBatch, error)
+func (*Driver) Description() github.com/frostgrove/vv/jobs.BackendDescription
+func (*Driver) Format(fmt.State, rune)
+func (*Driver) Namespace() github.com/frostgrove/vv/jobs.Namespace
+func (*Driver) Place(context.Context, github.com/frostgrove/vv/jobs.Placement) (github.com/frostgrove/vv/jobs.PlacementResult, error)
+func (*Driver) Prepare(context.Context) error
+func (*Driver) Recover(context.Context, github.com/frostgrove/vv/jobs.RecoverRequest) (github.com/frostgrove/vv/jobs.RecoverResult, error)
+func (*Driver) Renew(context.Context, github.com/frostgrove/vv/jobs.RenewRequest) (github.com/frostgrove/vv/jobs.RenewResult, error)
+func (*Driver) String() string
+func (*Driver) Terminate(context.Context, github.com/frostgrove/vv/jobs.InvocationID) (github.com/frostgrove/vv/jobs.DeliveryView, error)
+var ErrFormatMismatch error
+var ErrNotReady error
+var ErrRevisionChanged error
+const FormatVersion untyped string = "1"
+func New(Spec) (*Driver, error)
+func Open(context.Context, github.com/redis/go-redis/v9.UniversalClient, github.com/frostgrove/vv/jobs.Namespace) (*Driver, error)
+type Spec struct {
+	Client github.com/redis/go-redis/v9.UniversalClient
+	Namespace github.com/frostgrove/vv/jobs.Namespace
+	Prefix string
+	Backend github.com/frostgrove/vv/jobs.BackendID
+	Entropy io.Reader
+	OperationTimeout time.Duration
+}
 ```
 
 ## github.com/frostgrove/vv/otel
 ```go
-const ScopeName = "github.com/frostgrove/vv/otel" ...
-const AttrAdmissionSignal = attribute.Key("vv.jobs.admission.signal") ...
-const MaxCacheMemoryStatsBackends = 64
-var ErrInvalidRegistration = errors.New("vvotel: invalid registration") ...
-var ErrNilConfig = errors.New("vvotel: config is nil") ...
-var AttributeMetadataByKey = map[string]AttributeMetadata{ ... }
-var ErrInvalidApprovedName = errors.New("vvotel: invalid approved name")
-var MetricMetadataByKey = map[string]MetricMetadata{ ... }
-func AllowedErrorCode(value string) (string, bool)
-func Auth(t *Telemetry) auth.Observer
-func AuthEvents(t *Telemetry) auth.Observer
-func AuthRefusalReasonName(value string) (string, bool)
-func AuthenticationOperationsName(value string) (string, bool)
-func AuthenticationOutcomeName(value string) (string, bool)
-func Authenticator(t *Telemetry, next auth.Authenticator) auth.Authenticator
-func Cache(t *Telemetry, opts ...CacheOption) cache.Observer
-func CacheBackendOperationName(value string) (string, bool)
-func CacheBackendOutcomeName(value string) (string, bool)
-func CacheBackendReasonName(value string) (string, bool)
-func CacheMemoizedName(value string) (string, bool)
-func CacheMemory(t *Telemetry, opts ...CacheMemoryOption) cachememory.Observer
-func CacheOperationName(value string) (string, bool)
-func CacheOutcomeName(value string) (string, bool)
-func CacheReasonName(value string) (string, bool)
-func CommandFailureName(value string) (string, bool)
-func CommandOperationsName(value string) (string, bool)
-func CommandSpanName(op string) string
-func CrudSourceOperationsName(value string) (string, bool)
-func Enqueue[P any](ctx context.Context, t *Telemetry, queue *jobs.Queue, ...) (jobs.InvocationID, error)
-func EnqueueIn[P any](ctx context.Context, t *Telemetry, queue *jobs.Queue, stager jobs.Stager, ...) (jobs.Staged, error)
-func EnqueueOnce[P any](ctx context.Context, t *Telemetry, queue *jobs.Queue, ...) (jobs.InvocationID, jobs.EnqueueOnceOutcome, error)
-func EnqueueOnceIn[P any](ctx context.Context, t *Telemetry, queue *jobs.Queue, stager jobs.Stager, ...) (jobs.Staged, error)
-func Health(t *Telemetry, contribution health.Contribution, options ...HealthOption) health.Contribution
-func HealthImportanceName(value string) (string, bool)
-func HealthOperationsName(value string) (string, bool)
-func HealthStateName(value string) (string, bool)
-func Job[P any](t *Telemetry, definition jobs.DefinitionOf[P], handler jobs.Handler[P], ...) jobs.Consumer
-func JobAdapter[P any](t *Telemetry, adapter jobs.AdapterHandler[P], options ...JobAdapterOption) jobs.AdapterHandler[P]
-func JobContext(t *Telemetry, next jobs.TrustedContextProvider) jobs.TrustedContextProvider
-func JobIdentity(t *Telemetry, next jobs.TrustedIdentityRestorer) jobs.TrustedIdentityRestorer
-func JobsEnqueueOnceOutcomeName(value string) (string, bool)
-func JobsEnqueueOperationsName(value string) (string, bool)
-func JobsEnqueueOutcomeName(value string) (string, bool)
-func JobsOnceOutcomeName(value string) (string, bool)
-func JobsPlacementOutcomeName(value string) (string, bool)
-func JobsPropagationOperationName(value string) (string, bool)
-func JobsPropagationOutcomeName(value string) (string, bool)
-func JobsSchedulerOperationName(value string) (string, bool)
-func JobsSchedulerResultName(value string) (string, bool)
-func JobsWorkerAdmissionSignalName(value string) (string, bool)
-func JobsWorkerCommandKindName(value string) (string, bool)
-func JobsWorkerControlName(value string) (string, bool)
-func JobsWorkerDispositionName(value string) (string, bool)
-func JobsWorkerFailureName(value string) (string, bool)
-func JobsWorkerMutationName(value string) (string, bool)
-func JobsWorkerOperationName(value string) (string, bool)
-func JobsWorkerOutcomeName(value string) (string, bool)
-func JobsWorkerReasonName(value string) (string, bool)
-func MetricAuthenticationDurationBoundaries() []float64
-func MetricCacheChargedBytesBoundaries() []float64
-func MetricCacheEncodedBytesBoundaries() []float64
-func MetricCacheItemsBoundaries() []float64
-func MetricCachePayloadBytesBoundaries() []float64
-func MetricCacheValueBytesBoundaries() []float64
-func MetricCommandDurationBoundaries() []float64
-func MetricCrudSourceDurationBoundaries() []float64
-func MetricHealthDurationBoundaries() []float64
-func MetricJobsEnqueueDurationBoundaries() []float64
-func MetricJobsHandlerAttemptBoundaries() []float64
-func MetricJobsHandlerDurationBoundaries() []float64
-func MetricJobsQueueDelayBoundaries() []float64
-func MetricJobsSchedulerDurationBoundaries() []float64
-func MetricJobsSchedulerResultsBoundaries() []float64
-func MetricJobsWorkerBytesBoundaries() []float64
-func MetricJobsWorkerDurationBoundaries() []float64
-func MetricJobsWorkerItemsBoundaries() []float64
-func MetricJobsWorkerReleasedBoundaries() []float64
-func MetricRemoteDurationBoundaries() []float64
-func MetricRuntimeDurationBoundaries() []float64
-func MetricRuntimePeriodicDurationBoundaries() []float64
-func MetricStorageCleanupRemovedBoundaries() []float64
-func MetricStorageDurationBoundaries() []float64
-func MetricStorageOperationBytesBoundaries() []float64
-func MetricStorageStreamBytesBoundaries() []float64
-func MetricStorageStreamDurationBoundaries() []float64
-func MigrationWireChanges() []string
-func Periodic(t *Telemetry, pass func(context.Context) error, options ...PeriodicOption) func(context.Context) error
-func Remote(t *Telemetry, next remote.Transport) remote.Transport
-func RemoteOperationName(value string) (string, bool)
-func Runtime(t *Telemetry) vvruntime.Observer
-func RuntimeDurabilityName(value string) (string, bool)
-func RuntimeLifecycleOperationName(value string) (string, bool)
-func RuntimePhaseName(value string) (string, bool)
-func RuntimePlacementName(value string) (string, bool)
-func Scheduler(t *Telemetry) jobs.ScheduleObserver
-func Service[M any, ID comparable, U any](t *Telemetry, opts ...ServiceOption) port.ServiceMiddleware[M, ID, U]
-func Source(t *Telemetry, next crud.Source) crud.Source
-func SpanCommandName(value string) (string, bool)
-func SpanCrudSourceName(value string) (string, bool)
-func SpanJobsEnqueueName(value string) (string, bool)
-func SpanJobsEnqueueStagedName(value string) (string, bool)
-func SpanRemoteName(value string) (string, bool)
-func SpanStorageName(value string) (string, bool)
-func StorageFailureName(value string) (string, bool)
-func StorageOperationsName(value string) (string, bool)
-func StorageSpanName(op string) string
-func StorageStreamOutcomeName(value string) (string, bool)
-func Store(t *Telemetry, opts ...StorageOption) storage.Middleware
-func TraceHandler(next slog.Handler) slog.Handler
-func ValidResourceName(value string) bool
-func Workers(t *Telemetry) jobs.WorkerObserver
-func WrapService[M any, ID comparable, U any](t *Telemetry, next port.Service[M, ID, U], opts ...ServiceOption) port.Service[M, ID, U]
+func AllSignals() Signals
+func AllowedErrorCode(string) (string, bool)
+func ApproveName(string) (ApprovedName, error)
 type ApprovedName string
-    func ApproveName(value string) (ApprovedName, error)
-    func MustApproveName(value string) ApprovedName
-type AssemblyError struct{ ... }
-type AttributeMetadata struct{ ... }
+func (ApprovedName) Valid() bool
+func (ApprovedName) Value() string
+type AssemblyError struct {
+	<unexported fields>
+}
+func (*AssemblyError) Error() string
+func (*AssemblyError) Format(fmt.State, rune)
+func (*AssemblyError) GoString() string
+func (*AssemblyError) Is(error) bool
+func (*AssemblyError) Provider() string
+func (*AssemblyError) Signal() Signal
+func (*AssemblyError) SignalName() string
+func (*AssemblyError) Unwrap() error
+const AttrAdmissionSignal go.opentelemetry.io/otel/attribute.Key = "vv.jobs.admission.signal"
+const AttrCacheLayer go.opentelemetry.io/otel/attribute.Key = "vv.cache.layer"
+const AttrCommandKind go.opentelemetry.io/otel/attribute.Key = "vv.jobs.command.kind"
+const AttrComponent go.opentelemetry.io/otel/attribute.Key = "vv.component"
+const AttrControl go.opentelemetry.io/otel/attribute.Key = "vv.jobs.delivery.control"
+const AttrDisposition go.opentelemetry.io/otel/attribute.Key = "vv.jobs.disposition"
+const AttrDurability go.opentelemetry.io/otel/attribute.Key = "vv.runtime.durability"
+const AttrErrorCode go.opentelemetry.io/otel/attribute.Key = "vv.error.code"
+const AttrErrorType go.opentelemetry.io/otel/attribute.Key = "error.type"
+const AttrFailure go.opentelemetry.io/otel/attribute.Key = "vv.jobs.failure"
+const AttrImportance go.opentelemetry.io/otel/attribute.Key = "vv.health.importance"
+const AttrMemoized go.opentelemetry.io/otel/attribute.Key = "vv.cache.memoized"
+const AttrMore go.opentelemetry.io/otel/attribute.Key = "vv.operation.more"
+const AttrMutation go.opentelemetry.io/otel/attribute.Key = "vv.jobs.delivery.mutation"
+const AttrOperationName go.opentelemetry.io/otel/attribute.Key = "vv.operation.name"
+const AttrOperationOutcome go.opentelemetry.io/otel/attribute.Key = "vv.operation.outcome"
+const AttrPhase go.opentelemetry.io/otel/attribute.Key = "vv.runtime.phase"
+const AttrPlacement go.opentelemetry.io/otel/attribute.Key = "vv.runtime.placement"
+const AttrReason go.opentelemetry.io/otel/attribute.Key = "vv.reason"
+const AttrResourceName go.opentelemetry.io/otel/attribute.Key = "vv.resource.name"
+const AttrResultKind go.opentelemetry.io/otel/attribute.Key = "vv.jobs.scheduler.result"
+const AttrState go.opentelemetry.io/otel/attribute.Key = "vv.health.state"
+type AttributeMetadata struct {
+	Name go.opentelemetry.io/otel/attribute.Key
+	Source string
+	PrivacyClass string
+	CardinalityBound int
+	MetricEligible bool
+}
+var AttributeMetadataByKey map[string]AttributeMetadata
+func Auth(*Telemetry) github.com/frostgrove/vv/auth.Observer
+func AuthEvents(*Telemetry) github.com/frostgrove/vv/auth.Observer
+func AuthRefusalReasonName(string) (string, bool)
+func AuthenticationOperationsName(string) (string, bool)
+func AuthenticationOutcomeName(string) (string, bool)
+func Authenticator(*Telemetry, github.com/frostgrove/vv/auth.Authenticator) github.com/frostgrove/vv/auth.Authenticator
+func Cache(*Telemetry, ...CacheOption) github.com/frostgrove/vv/cache.Observer
+const CacheBackendLayerMemoryBackend untyped string = "memory_backend"
+func CacheBackendOperationName(string) (string, bool)
+func CacheBackendOutcomeName(string) (string, bool)
+func CacheBackendReasonName(string) (string, bool)
+const CacheLayerFacade untyped string = "facade"
+func CacheMemoizedName(string) (string, bool)
+func CacheMemory(*Telemetry, ...CacheMemoryOption) github.com/frostgrove/vv/cache/cachememory.Observer
 type CacheMemoryOption func(*cacheMemorySettings)
-    func WithCacheMemorySpanEvents(enabled bool) CacheMemoryOption
+func CacheMemoryStats(*Telemetry, ...*github.com/frostgrove/vv/cache/cachememory.Backend) (Registration, error)
+func CacheOperationName(string) (string, bool)
 type CacheOption func(*cacheSettings)
-    func WithCacheSpanEvents(enabled bool) CacheOption
-type Config struct{ ... }
+func CacheOutcomeName(string) (string, bool)
+func CacheReasonName(string) (string, bool)
+func CommandFailureName(string) (string, bool)
+func CommandOperationsName(string) (string, bool)
+func CommandSpanName(string) string
+const ComponentAuthRefusal untyped string = "auth_refusal"
+const ComponentAuthentication untyped string = "authentication"
+const ComponentCache untyped string = "cache"
+const ComponentCacheBackend untyped string = "cache_backend"
+const ComponentCacheMemory untyped string = "cache_memory"
+const ComponentCommand untyped string = "command"
+const ComponentCrudSource untyped string = "crud_source"
+const ComponentHealth untyped string = "health"
+const ComponentJobsEnqueue untyped string = "jobs_enqueue"
+const ComponentJobsHandler untyped string = "jobs_handler"
+const ComponentJobsPropagation untyped string = "jobs_propagation"
+const ComponentJobsScheduler untyped string = "jobs_scheduler"
+const ComponentJobsWorker untyped string = "jobs_worker"
+const ComponentRemote untyped string = "remote"
+const ComponentRuntimeLifecycle untyped string = "runtime_lifecycle"
+const ComponentRuntimePeriodic untyped string = "runtime_periodic"
+const ComponentStorage untyped string = "storage"
+const ComponentStorageStream untyped string = "storage_stream"
+type Config struct {
+	TracerProvider go.opentelemetry.io/otel/trace.TracerProvider
+	MeterProvider go.opentelemetry.io/otel/metric.MeterProvider
+	Disabled bool
+	ResourceName ApprovedName
+	Disable Signals
+}
+const ContractVersion untyped string = "vv-otel/v2"
+func CrudSourceOperationsName(string) (string, bool)
+func Enqueue[P any](context.Context, *Telemetry, *github.com/frostgrove/vv/jobs.Queue, github.com/frostgrove/vv/jobs.DefinitionOf[P], P, ...github.com/frostgrove/vv/jobs.EnqueueOption) (github.com/frostgrove/vv/jobs.InvocationID, error)
+func EnqueueIn[P any](context.Context, *Telemetry, *github.com/frostgrove/vv/jobs.Queue, github.com/frostgrove/vv/jobs.Stager, github.com/frostgrove/vv/jobs.DefinitionOf[P], P, ...github.com/frostgrove/vv/jobs.EnqueueOption) (github.com/frostgrove/vv/jobs.Staged, error)
+func EnqueueOnce[P any](context.Context, *Telemetry, *github.com/frostgrove/vv/jobs.Queue, github.com/frostgrove/vv/jobs.DefinitionOf[P], github.com/frostgrove/vv/jobs.ProducerIntent, P, ...github.com/frostgrove/vv/jobs.EnqueueOption) (github.com/frostgrove/vv/jobs.InvocationID, github.com/frostgrove/vv/jobs.EnqueueOnceOutcome, error)
+func EnqueueOnceIn[P any](context.Context, *Telemetry, *github.com/frostgrove/vv/jobs.Queue, github.com/frostgrove/vv/jobs.Stager, github.com/frostgrove/vv/jobs.DefinitionOf[P], github.com/frostgrove/vv/jobs.ProducerIntent, P, ...github.com/frostgrove/vv/jobs.EnqueueOption) (github.com/frostgrove/vv/jobs.Staged, error)
+var ErrAssembly error
+var ErrCallbackRegistration error
+var ErrCallbackUnregister error
+var ErrDuplicateRegistration error
+var ErrDuplicateSignal error
+var ErrInstrument error
+var ErrInvalidApprovedName error
+var ErrInvalidRegistration error
+var ErrInvalidSignal error
+var ErrNilConfig error
+var ErrNilInstrument error
+var ErrNilProvider error
+var ErrProviderPanic error
+const ErrorCodeBadQuery untyped string = "bad_query"
+const ErrorCodeCheck untyped string = "check"
+const ErrorCodeConflict untyped string = "conflict"
+const ErrorCodeDeadlock untyped string = "deadlock"
+const ErrorCodeExclusion untyped string = "exclusion"
+const ErrorCodeForbidden untyped string = "forbidden"
+const ErrorCodeForeignKey untyped string = "foreign_key"
+const ErrorCodeInternal untyped string = "internal"
+const ErrorCodeInvalidEnum untyped string = "invalid_enum"
+const ErrorCodeInvalidFormat untyped string = "invalid_format"
+const ErrorCodeInvalidId untyped string = "invalid_id"
+const ErrorCodeLockTimeout untyped string = "lock_timeout"
+const ErrorCodeMalformedBody untyped string = "malformed_body"
+const ErrorCodeMethodNotAllowed untyped string = "method_not_allowed"
+const ErrorCodeNotFound untyped string = "not_found"
+const ErrorCodeNotUnique untyped string = "not_unique"
+const ErrorCodeOutOfRange untyped string = "out_of_range"
+const ErrorCodeRequired untyped string = "required"
+const ErrorCodeRestrict untyped string = "restrict"
+const ErrorCodeSchemaNotReady untyped string = "schema_not_ready"
+const ErrorCodeSerializationFailure untyped string = "serialization_failure"
+const ErrorCodeStaleVersion untyped string = "stale_version"
+const ErrorCodeTooLarge untyped string = "too_large"
+const ErrorCodeTooLong untyped string = "too_long"
+const ErrorCodeTransactionAborted untyped string = "transaction_aborted"
+const ErrorCodeUnauthenticated untyped string = "unauthenticated"
+const ErrorCodeUnavailable untyped string = "unavailable"
+const ErrorCodeUnique untyped string = "unique"
+const ErrorCodeUnknownField untyped string = "unknown_field"
+const ErrorTypeCanceled untyped string = "canceled"
+const ErrorTypeConflict untyped string = "conflict"
+const ErrorTypeForbidden untyped string = "forbidden"
+const ErrorTypeInternal untyped string = "internal"
+const ErrorTypeInvalid untyped string = "invalid"
+const ErrorTypeNotFound untyped string = "not_found"
+const ErrorTypePanic untyped string = "panic"
+const ErrorTypeStaleVersion untyped string = "stale_version"
+const ErrorTypeTimeout untyped string = "timeout"
+const EventAuthRefusal untyped string = "auth.refusal"
+const EventCache untyped string = "cache.event"
+const EventCacheBackend untyped string = "cache_backend.event"
+func Health(*Telemetry, github.com/frostgrove/vv/health.Contribution, ...HealthOption) github.com/frostgrove/vv/health.Contribution
+func HealthImportanceName(string) (string, bool)
+func HealthOperationsName(string) (string, bool)
 type HealthOption func(*healthSettings)
-    func WithHealthResource(name ApprovedName) HealthOption
-type JobAdapterOption interface{ ... }
-    func ParentChild() JobAdapterOption
-type MetricMetadata struct{ ... }
+func HealthStateName(string) (string, bool)
+func Job[P any](*Telemetry, github.com/frostgrove/vv/jobs.DefinitionOf[P], github.com/frostgrove/vv/jobs.Handler[P], ...github.com/frostgrove/vv/jobs.WorkerOption) github.com/frostgrove/vv/jobs.Consumer
+func JobAdapter[P any](*Telemetry, github.com/frostgrove/vv/jobs.AdapterHandler[P], ...JobAdapterOption) github.com/frostgrove/vv/jobs.AdapterHandler[P]
+type JobAdapterOption interface {
+	<unexported methods>
+}
+func JobContext(*Telemetry, github.com/frostgrove/vv/jobs.TrustedContextProvider) github.com/frostgrove/vv/jobs.TrustedContextProvider
+func JobIdentity(*Telemetry, github.com/frostgrove/vv/jobs.TrustedIdentityRestorer) github.com/frostgrove/vv/jobs.TrustedIdentityRestorer
+func JobsEnqueueOnceOutcomeName(string) (string, bool)
+func JobsEnqueueOperationsName(string) (string, bool)
+func JobsEnqueueOutcomeName(string) (string, bool)
+func JobsOnceOutcomeName(string) (string, bool)
+func JobsPlacementOutcomeName(string) (string, bool)
+func JobsPropagationOperationName(string) (string, bool)
+func JobsPropagationOutcomeName(string) (string, bool)
+func JobsSchedulerOperationName(string) (string, bool)
+func JobsSchedulerResultName(string) (string, bool)
+func JobsWorkerAdmissionSignalName(string) (string, bool)
+func JobsWorkerCommandKindName(string) (string, bool)
+func JobsWorkerControlName(string) (string, bool)
+func JobsWorkerDispositionName(string) (string, bool)
+func JobsWorkerFailureName(string) (string, bool)
+func JobsWorkerMutationName(string) (string, bool)
+func JobsWorkerOperationName(string) (string, bool)
+func JobsWorkerOutcomeName(string) (string, bool)
+func JobsWorkerReasonName(string) (string, bool)
+const LogSpanIDKey untyped string = "span_id"
+const LogTraceFlagsKey untyped string = "trace_flags"
+const LogTraceIDKey untyped string = "trace_id"
+const MaxCacheMemoryStatsBackends untyped int = 64
+const MaxResourceNameBytes untyped int = 64
+const MaxResourceNameValues untyped int = 32
+const MetricAuthRefusals untyped string = "vv.auth.refusals"
+const MetricAuthRefusalsDescription untyped string = "Authentication refusals by closed reason, independent of event sampling"
+const MetricAuthRefusalsUnit untyped string = "{refusal}"
+const MetricAuthenticationDuration untyped string = "vv.authentication.duration"
+func MetricAuthenticationDurationBoundaries() []float64
+const MetricAuthenticationDurationDescription untyped string = "Duration of the complete authenticator chain"
+const MetricAuthenticationDurationUnit untyped string = "s"
+const MetricCacheChargedBytes untyped string = "vv.cache.event.charged_bytes"
+func MetricCacheChargedBytesBoundaries() []float64
+const MetricCacheChargedBytesDescription untyped string = "Charged bytes reported by a memory backend phase event; field-present zero sizes are recorded"
+const MetricCacheChargedBytesUnit untyped string = "By"
+const MetricCacheEncodedBytes untyped string = "vv.cache.event.encoded_bytes"
+func MetricCacheEncodedBytesBoundaries() []float64
+const MetricCacheEncodedBytesDescription untyped string = "Encoded bytes reported by a facade phase event; field-present zero sizes are recorded"
+const MetricCacheEncodedBytesUnit untyped string = "By"
+const MetricCacheEvents untyped string = "vv.cache.events"
+const MetricCacheEventsDescription untyped string = "Terminal cache phase events with closed reasons and facade memoization"
+const MetricCacheEventsUnit untyped string = "{event}"
+const MetricCacheItems untyped string = "vv.cache.event.items"
+func MetricCacheItemsBoundaries() []float64
+const MetricCacheItemsDescription untyped string = "Items affected by one facade or memory-backend phase event"
+const MetricCacheItemsUnit untyped string = "{item}"
+const MetricCacheMemoryActive untyped string = "vv.cache.memory.active_backends"
+const MetricCacheMemoryActiveDescription untyped string = "Count of active backends in the fixed registration"
+const MetricCacheMemoryActiveUnit untyped string = "{backend}"
+const MetricCacheMemoryByteLimit untyped string = "vv.cache.memory.byte_limit"
+const MetricCacheMemoryByteLimitDescription untyped string = "Aggregate declared byte limits of active backends; omitted when none is active"
+const MetricCacheMemoryByteLimitUnit untyped string = "By"
+const MetricCacheMemoryBytes untyped string = "vv.cache.memory.charged_bytes"
+const MetricCacheMemoryBytesDescription untyped string = "Aggregate charged bytes of active registered backends; omitted when none is active"
+const MetricCacheMemoryBytesUnit untyped string = "By"
+const MetricCacheMemoryClosed untyped string = "vv.cache.memory.closed_backends"
+const MetricCacheMemoryClosedDescription untyped string = "Count of closed backends in the fixed registration"
+const MetricCacheMemoryClosedUnit untyped string = "{backend}"
+const MetricCacheMemoryEntries untyped string = "vv.cache.memory.entries"
+const MetricCacheMemoryEntriesDescription untyped string = "Aggregate resident entries of active registered backends; omitted when none is active"
+const MetricCacheMemoryEntriesUnit untyped string = "{entry}"
+const MetricCacheMemoryEntryLimit untyped string = "vv.cache.memory.entry_limit"
+const MetricCacheMemoryEntryLimitDescription untyped string = "Aggregate declared entry limits of active backends; omitted when none is active"
+const MetricCacheMemoryEntryLimitUnit untyped string = "{entry}"
+const MetricCacheOperations untyped string = "vv.cache.operations"
+const MetricCacheOperationsDescription untyped string = "Count of cache terminal phase events"
+const MetricCacheOperationsUnit untyped string = "{operation}"
+const MetricCachePayloadBytes untyped string = "vv.cache.event.payload_bytes"
+func MetricCachePayloadBytesBoundaries() []float64
+const MetricCachePayloadBytesDescription untyped string = "Payload bytes reported by a facade phase event; field-present zero sizes are recorded"
+const MetricCachePayloadBytesUnit untyped string = "By"
+const MetricCacheValueBytes untyped string = "vv.cache.event.value_bytes"
+func MetricCacheValueBytesBoundaries() []float64
+const MetricCacheValueBytesDescription untyped string = "Value bytes reported by a memory backend phase event; field-present zero sizes are recorded"
+const MetricCacheValueBytesUnit untyped string = "By"
+const MetricCommandDuration untyped string = "vv.command.duration"
+func MetricCommandDurationBoundaries() []float64
+const MetricCommandDurationDescription untyped string = "Duration of service command operations in seconds"
+const MetricCommandDurationUnit untyped string = "s"
+const MetricCrudSourceDuration untyped string = "vv.crud_source.operation.duration"
+func MetricCrudSourceDurationBoundaries() []float64
+const MetricCrudSourceDurationDescription untyped string = "Duration of a logical crud_source call, excluding rows or wire transport lifetime"
+const MetricCrudSourceDurationUnit untyped string = "s"
+const MetricHealthChecks untyped string = "vv.health.checks"
+const MetricHealthChecksDescription untyped string = "Probe invocations already initiated by the health registry"
+const MetricHealthChecksUnit untyped string = "{check}"
+const MetricHealthDuration untyped string = "vv.health.check.duration"
+func MetricHealthDurationBoundaries() []float64
+const MetricHealthDurationDescription untyped string = "Duration of actual enabled probe invocations"
+const MetricHealthDurationUnit untyped string = "s"
+const MetricJobsEnqueueDuration untyped string = "vv.jobs.enqueue.duration"
+func MetricJobsEnqueueDurationBoundaries() []float64
+const MetricJobsEnqueueDurationDescription untyped string = "Duration of one enqueue call; staged success does not assert commit"
+const MetricJobsEnqueueDurationUnit untyped string = "s"
+const MetricJobsHandlerAttempt untyped string = "vv.jobs.handler.attempt"
+func MetricJobsHandlerAttemptBoundaries() []float64
+const MetricJobsHandlerAttemptDescription untyped string = "Attempt ordinal as a measurement, never a metric label"
+const MetricJobsHandlerAttemptUnit untyped string = "{attempt}"
+const MetricJobsHandlerDuration untyped string = "vv.jobs.handler.duration"
+func MetricJobsHandlerDurationBoundaries() []float64
+const MetricJobsHandlerDurationDescription untyped string = "Duration of the handler body until return, excluding worker arbitration and final Apply"
+const MetricJobsHandlerDurationUnit untyped string = "s"
+const MetricJobsPropagation untyped string = "vv.jobs.propagation"
+const MetricJobsPropagationDescription untyped string = "Trace Context capture and restoration results; trace degradation does not reject identity"
+const MetricJobsPropagationUnit untyped string = "{operation}"
+const MetricJobsQueueDelay untyped string = "vv.jobs.handler.queue_delay"
+func MetricJobsQueueDelayBoundaries() []float64
+const MetricJobsQueueDelayDescription untyped string = "Time between eligibility and this handler invocation starting"
+const MetricJobsQueueDelayUnit untyped string = "s"
+const MetricJobsSchedulerCycles untyped string = "vv.jobs.scheduler.cycles"
+const MetricJobsSchedulerCyclesDescription untyped string = "Completed scheduler cycles by bounded outcome"
+const MetricJobsSchedulerCyclesUnit untyped string = "{cycle}"
+const MetricJobsSchedulerDuration untyped string = "vv.jobs.scheduler.duration"
+func MetricJobsSchedulerDurationBoundaries() []float64
+const MetricJobsSchedulerDurationDescription untyped string = "Duration of one RunDue cycle, with no schedule identity"
+const MetricJobsSchedulerDurationUnit untyped string = "s"
+const MetricJobsSchedulerResults untyped string = "vv.jobs.scheduler.results"
+func MetricJobsSchedulerResultsBoundaries() []float64
+const MetricJobsSchedulerResultsDescription untyped string = "Due, placed, existing and conflict counts from one scheduler cycle"
+const MetricJobsSchedulerResultsUnit untyped string = "{placement}"
+const MetricJobsWorkerAdmission untyped string = "vv.jobs.worker.admission"
+const MetricJobsWorkerAdmissionDescription untyped string = "Admission observations by closed outcome and signal"
+const MetricJobsWorkerAdmissionUnit untyped string = "{observation}"
+const MetricJobsWorkerBytes untyped string = "vv.jobs.worker.bytes"
+func MetricJobsWorkerBytesBoundaries() []float64
+const MetricJobsWorkerBytesDescription untyped string = "Record bytes reported by claim and recovery operations"
+const MetricJobsWorkerBytesUnit untyped string = "By"
+const MetricJobsWorkerDeliveryResults untyped string = "vv.jobs.worker.delivery_results"
+const MetricJobsWorkerDeliveryResultsDescription untyped string = "Delivery result item counts for successful renew and apply calls"
+const MetricJobsWorkerDeliveryResultsUnit untyped string = "{delivery}"
+const MetricJobsWorkerDispositions untyped string = "vv.jobs.worker.dispositions"
+const MetricJobsWorkerDispositionsDescription untyped string = "Delivery apply calls with validated command/disposition/reason; not a claim that mutation applied"
+const MetricJobsWorkerDispositionsUnit untyped string = "{delivery}"
+const MetricJobsWorkerDuration untyped string = "vv.jobs.worker.operation.duration"
+func MetricJobsWorkerDurationBoundaries() []float64
+const MetricJobsWorkerDurationDescription untyped string = "Elapsed worker control-plane operations; no polling spans"
+const MetricJobsWorkerDurationUnit untyped string = "s"
+const MetricJobsWorkerItems untyped string = "vv.jobs.worker.items"
+func MetricJobsWorkerItemsBoundaries() []float64
+const MetricJobsWorkerItemsDescription untyped string = "Items reported by one worker operation"
+const MetricJobsWorkerItemsUnit untyped string = "{item}"
+const MetricJobsWorkerOperations untyped string = "vv.jobs.worker.operations"
+const MetricJobsWorkerOperationsDescription untyped string = "Worker control-plane events with closed operation and outcome"
+const MetricJobsWorkerOperationsUnit untyped string = "{operation}"
+const MetricJobsWorkerReleased untyped string = "vv.jobs.worker.recovery.released"
+func MetricJobsWorkerReleasedBoundaries() []float64
+const MetricJobsWorkerReleasedDescription untyped string = "Delivery leases released by one successful recovery result, not current queue depth"
+const MetricJobsWorkerReleasedUnit untyped string = "{item}"
+type MetricMetadata struct {
+	Name string
+	Type string
+	Unit string
+	Description string
+	Source string
+	PrivacyClass string
+	CardinalityBound int
+	Semconv string
+	Maturity string
+}
+var MetricMetadataByKey map[string]MetricMetadata
+const MetricRemoteDuration untyped string = "vv.remote.duration"
+func MetricRemoteDurationBoundaries() []float64
+const MetricRemoteDurationDescription untyped string = "Duration of a logical remote call, excluding rows or wire transport lifetime"
+const MetricRemoteDurationUnit untyped string = "s"
+const MetricRuntimeDuration untyped string = "vv.runtime.operation.duration"
+func MetricRuntimeDurationBoundaries() []float64
+const MetricRuntimeDurationDescription untyped string = "Duration of completed run and drain operations"
+const MetricRuntimeDurationUnit untyped string = "s"
+const MetricRuntimeOperations untyped string = "vv.runtime.operations"
+const MetricRuntimeOperationsDescription untyped string = "Completed run and drain operations"
+const MetricRuntimeOperationsUnit untyped string = "{operation}"
+const MetricRuntimePeriodicDuration untyped string = "vv.runtime.periodic.duration"
+func MetricRuntimePeriodicDurationBoundaries() []float64
+const MetricRuntimePeriodicDurationDescription untyped string = "Duration of one periodic pass"
+const MetricRuntimePeriodicDurationUnit untyped string = "s"
+const MetricRuntimeTransitions untyped string = "vv.runtime.transitions"
+const MetricRuntimeTransitionsDescription untyped string = "Actual runner phase transitions; constructor-only idle is omitted"
+const MetricRuntimeTransitionsUnit untyped string = "{transition}"
+const MetricStorageCleanupRemoved untyped string = "vv.storage.cleanup.removed"
+func MetricStorageCleanupRemovedBoundaries() []float64
+const MetricStorageCleanupRemovedDescription untyped string = "Expired staged objects removed by one successful cleanup result"
+const MetricStorageCleanupRemovedUnit untyped string = "{item}"
+const MetricStorageDuration untyped string = "vv.storage.operation.duration"
+func MetricStorageDurationBoundaries() []float64
+const MetricStorageDurationDescription untyped string = "Time until a storage method returns, excluding returned stream lifetime"
+const MetricStorageDurationUnit untyped string = "s"
+const MetricStorageOperationBytes untyped string = "vv.storage.operation.bytes"
+func MetricStorageOperationBytesBoundaries() []float64
+const MetricStorageOperationBytesDescription untyped string = "Successfully persisted bytes returned by Put Info.Size or Stage Staged.Info.Size"
+const MetricStorageOperationBytesUnit untyped string = "By"
+const MetricStorageStreamBytes untyped string = "vv.storage.stream.bytes"
+func MetricStorageStreamBytesBoundaries() []float64
+const MetricStorageStreamBytesDescription untyped string = "Valid bytes returned before stream termination; omitted after an invalid Reader count or cumulative overflow"
+const MetricStorageStreamBytesUnit untyped string = "By"
+const MetricStorageStreamDuration untyped string = "vv.storage.stream.duration"
+func MetricStorageStreamDurationBoundaries() []float64
+const MetricStorageStreamDurationDescription untyped string = "Stream lifetime from first Read or Close until termination"
+const MetricStorageStreamDurationUnit untyped string = "s"
+const MigrationFrom untyped string = "vv-otel/v1"
+const MigrationNote untyped string = "docs/release-notes/2026-09-09-otel-v1-v2.md"
+const MigrationPolicy untyped string = "Preserve stable wire names; append-only integer signal IDs with independent history and explicit retirement. Signal uint16 and Signals []Signal have no 64-signal mask limit."
+const MigrationSince untyped string = "v0.1.0"
+const MigrationStatus untyped string = "development"
+const MigrationTo untyped string = "vv-otel/v2"
+func MigrationWireChanges() []string
+func Must(Config) *Telemetry
+func MustApproveName(string) ApprovedName
+func MustCacheMemoryStats(*Telemetry, ...*github.com/frostgrove/vv/cache/cachememory.Backend) Registration
+func New(Config) (*Telemetry, error)
+const OpAuthRefusalRefuse untyped string = "refuse"
+const OpAuthenticationAuthenticate untyped string = "authenticate"
+const OpCacheBackendClose untyped string = "close"
+const OpCacheBackendDelete untyped string = "delete"
+const OpCacheBackendEvict untyped string = "evict"
+const OpCacheBackendGet untyped string = "get"
+const OpCacheBackendGetMany untyped string = "get_many"
+const OpCacheBackendPut untyped string = "put"
+const OpCacheBackendReset untyped string = "reset"
+const OpCacheForget untyped string = "forget"
+const OpCacheLoad untyped string = "load"
+const OpCacheLoadMany untyped string = "load_many"
+const OpCacheLookup untyped string = "lookup"
+const OpCacheLookupMany untyped string = "lookup_many"
+const OpCachePut untyped string = "put"
+const OpCommandCount untyped string = "count"
+const OpCommandCreate untyped string = "create"
+const OpCommandDelete untyped string = "delete"
+const OpCommandDeleteMany untyped string = "delete_many"
+const OpCommandGet untyped string = "get"
+const OpCommandList untyped string = "list"
+const OpCommandReplace untyped string = "replace"
+const OpCommandRestore untyped string = "restore"
+const OpCommandRestoreMany untyped string = "restore_many"
+const OpCommandUpdate untyped string = "update"
+const OpCrudSourceBegin untyped string = "begin"
+const OpCrudSourceCommit untyped string = "commit"
+const OpCrudSourceExec untyped string = "exec"
+const OpCrudSourceQuery untyped string = "query"
+const OpCrudSourceRollback untyped string = "rollback"
+const OpCrudSourceUnsafeBulkInsert untyped string = "unsafe_bulk_insert"
+const OpHealthCheck untyped string = "check"
+const OpJobsEnqueueEnqueue untyped string = "enqueue"
+const OpJobsEnqueueEnqueueIn untyped string = "enqueue_in"
+const OpJobsEnqueueEnqueueOnce untyped string = "enqueue_once"
+const OpJobsEnqueueEnqueueOnceIn untyped string = "enqueue_once_in"
+const OpJobsHandlerHandle untyped string = "handle"
+const OpJobsPropagationExtract untyped string = "extract"
+const OpJobsPropagationInject untyped string = "inject"
+const OpJobsSchedulerRunDue untyped string = "run_due"
+const OpJobsWorkerAdmission untyped string = "admission"
+const OpJobsWorkerApply untyped string = "apply"
+const OpJobsWorkerClaim untyped string = "claim"
+const OpJobsWorkerDrain untyped string = "drain"
+const OpJobsWorkerRecover untyped string = "recover"
+const OpJobsWorkerRenew untyped string = "renew"
+const OpJobsWorkerRun untyped string = "run"
+const OpRemoteCount untyped string = "count"
+const OpRemoteCreate untyped string = "create"
+const OpRemoteDelete untyped string = "delete"
+const OpRemoteDeleteMany untyped string = "delete_many"
+const OpRemoteGet untyped string = "get"
+const OpRemoteList untyped string = "list"
+const OpRemoteReplace untyped string = "replace"
+const OpRemoteUpdate untyped string = "update"
+const OpRuntimeLifecycleDrain untyped string = "drain"
+const OpRuntimeLifecycleRun untyped string = "run"
+const OpRuntimePeriodicPass untyped string = "pass"
+const OpStorageAbort untyped string = "abort"
+const OpStorageCleanupExpired untyped string = "cleanup_expired"
+const OpStorageDelete untyped string = "delete"
+const OpStorageHead untyped string = "head"
+const OpStorageOpen untyped string = "open"
+const OpStoragePromote untyped string = "promote"
+const OpStoragePut untyped string = "put"
+const OpStorageStage untyped string = "stage"
+const OpStorageStreamConsume untyped string = "consume"
+const OpStorageTemporaryUrl untyped string = "temporary_url"
+const OutcomeCanceled untyped string = "canceled"
+const OutcomeError untyped string = "error"
+const OutcomeGoroutineExit untyped string = "goroutine_exit"
+const OutcomeOk untyped string = "ok"
+const OutcomeTimeout untyped string = "timeout"
+func ParentChild() JobAdapterOption
+func Periodic(*Telemetry, func(context.Context) error, ...PeriodicOption) func(context.Context) error
 type PeriodicOption func(*periodicSettings)
-    func WithPeriodicResource(name ApprovedName) PeriodicOption
-type Registration interface{ ... }
-    func CacheMemoryStats(tel *Telemetry, backends ...*cachememory.Backend) (Registration, error)
-    func MustCacheMemoryStats(tel *Telemetry, backends ...*cachememory.Backend) Registration
+type Registration interface {
+	Unregister() error
+}
+func Remote(*Telemetry, github.com/frostgrove/vv/remote.Transport) github.com/frostgrove/vv/remote.Transport
+func RemoteOperationName(string) (string, bool)
+func Runtime(*Telemetry) github.com/frostgrove/vv/runtime.Observer
+func RuntimeDurabilityName(string) (string, bool)
+func RuntimeLifecycleOperationName(string) (string, bool)
+func RuntimePhaseName(string) (string, bool)
+func RuntimePlacementName(string) (string, bool)
+func Scheduler(*Telemetry) github.com/frostgrove/vv/jobs.ScheduleObserver
+const ScopeName untyped string = "github.com/frostgrove/vv/otel"
+const ScopeVersion untyped string = "v0.1.0"
+func Service[M any, ID comparable, U any](*Telemetry, ...ServiceOption) github.com/frostgrove/vv/port.ServiceMiddleware[M, ID, U]
 type ServiceOption func(*serviceSettings)
-    func WithServiceResource(name ApprovedName) ServiceOption
 type Signal uint16
-    const SignalAuthRefusalEvent Signal = 27 ...
-type SignalAttributeDescriptor struct{ ... }
-type SignalDescriptor struct{ ... }
-    func SignalDescriptors() []SignalDescriptor
+func (Signal) Valid() bool
+type SignalAttributeDescriptor struct {
+	Key go.opentelemetry.io/otel/attribute.Key
+	Type string
+	Values []string
+	Optional bool
+	Declared bool
+	MaxValues int
+	MaxBytes int
+	Charset string
+}
+const SignalAuthRefusalEvent Signal = 27
+const SignalAuthRefusals Signal = 26
+const SignalAuthenticationDuration Signal = 25
+const SignalAuthenticationSpan Signal = 24
+const SignalCacheBackendEvent Signal = 11
+const SignalCacheChargedBytes Signal = 17
+const SignalCacheEncodedBytes Signal = 14
+const SignalCacheEvent Signal = 10
+const SignalCacheEvents Signal = 12
+const SignalCacheItems Signal = 13
+const SignalCacheMemoryActive Signal = 22
+const SignalCacheMemoryByteLimit Signal = 21
+const SignalCacheMemoryBytes Signal = 19
+const SignalCacheMemoryClosed Signal = 23
+const SignalCacheMemoryEntries Signal = 18
+const SignalCacheMemoryEntryLimit Signal = 20
+const SignalCacheOperations Signal = 9
+const SignalCachePayloadBytes Signal = 15
+const SignalCacheValueBytes Signal = 16
+const SignalCommandDuration Signal = 1
+const SignalCommandSpan Signal = 2
+const SignalCrudSourceDuration Signal = 37
+const SignalCrudSourceSpan Signal = 36
+type SignalDescriptor struct {
+	Key string
+	Name string
+	Names []string
+	Description string
+	Boundaries []float64
+	Minimum float64
+	Maximum float64
+	MinimumInt64 int64
+	MaximumInt64 int64
+	HasMinimum bool
+	HasMaximum bool
+	Variants []SignalVariantDescriptor
+	Kind string
+	Instrument string
+	NumberType string
+	Unit string
+	Component string
+	Availability string
+	CardinalityBound int
+	SeriesBudget int
+	SignalID Signal
+	Provider string
+	APIKind string
+	RecordWhen string
+	SpanKind string
+	Source string
+	PrivacyClass string
+	Maturity string
+	Semconv string
+	NameDomain string
+	Inputs []string
+	DeclaredSources map[string][]string
+	ValueSource string
+	ComputedSource string
+}
+func (SignalDescriptor) Accepts(string, []go.opentelemetry.io/otel/attribute.KeyValue, ...SignalSourceValue) bool
+func (SignalDescriptor) AcceptsFloat64(float64) bool
+func (SignalDescriptor) AcceptsInt64(int64) bool
+func (SignalDescriptor) AcceptsValue(float64) bool
+func SignalDescriptors() []SignalDescriptor
+const SignalHealthChecks Signal = 28
+const SignalHealthDuration Signal = 29
+const SignalHealthSpan Signal = 30
+const SignalJobsEnqueueDuration Signal = 41
+const SignalJobsEnqueueSpan Signal = 42
+const SignalJobsEnqueueStagedSpan Signal = 43
+const SignalJobsHandlerAttempt Signal = 47
+const SignalJobsHandlerDuration Signal = 45
+const SignalJobsHandlerSpan Signal = 44
+const SignalJobsPropagation Signal = 40
+const SignalJobsQueueDelay Signal = 46
+const SignalJobsSchedulerCycles Signal = 56
+const SignalJobsSchedulerDuration Signal = 55
+const SignalJobsSchedulerResults Signal = 57
+const SignalJobsWorkerAdmission Signal = 52
+const SignalJobsWorkerBytes Signal = 51
+const SignalJobsWorkerDeliveryResults Signal = 53
+const SignalJobsWorkerDispositions Signal = 54
+const SignalJobsWorkerDuration Signal = 49
+const SignalJobsWorkerItems Signal = 50
+const SignalJobsWorkerOperations Signal = 48
+const SignalJobsWorkerReleased Signal = 59
+const SignalRemoteDuration Signal = 39
+const SignalRemoteSpan Signal = 38
+const SignalRuntimeDuration Signal = 32
+const SignalRuntimeOperations Signal = 31
+const SignalRuntimePeriodicDuration Signal = 35
+const SignalRuntimePeriodicSpan Signal = 34
+const SignalRuntimeTransitions Signal = 33
 type SignalSourceFact uint16
-    const SourceFactCacheEncodedBytes SignalSourceFact = 1 ...
+func (SignalSourceFact) Valid() bool
 type SignalSourceFacts []SignalSourceValue
-type SignalSourcePredicate struct{ ... }
-type SignalSourceValue struct{ ... }
-type SignalVariantDescriptor struct{ ... }
+type SignalSourcePredicate struct {
+	Fact SignalSourceFact
+	Operator string
+	Value int64
+}
+type SignalSourceValue struct {
+	Fact SignalSourceFact
+	Value int64
+}
+const SignalStorageCleanupRemoved Signal = 58
+const SignalStorageDuration Signal = 3
+const SignalStorageOperationBytes Signal = 5
+const SignalStorageSpan Signal = 4
+const SignalStorageStreamBytes Signal = 7
+const SignalStorageStreamDuration Signal = 6
+const SignalStorageStreamSpan Signal = 8
+type SignalVariantDescriptor struct {
+	Attributes []SignalAttributeDescriptor
+	Absent []go.opentelemetry.io/otel/attribute.Key
+	Status string
+	When []SignalSourcePredicate
+}
 type Signals []Signal
-    func AllSignals() Signals
+func (Signals) Has(Signal) bool
+func Source(*Telemetry, github.com/frostgrove/vv/crud.Source) github.com/frostgrove/vv/crud.Source
+const SourceFactCacheEncodedBytes SignalSourceFact = 1
+const SourceFactJobsWorkerElapsed SignalSourceFact = 2
+const SpanAuthentication untyped string = "vv.auth authenticate"
+const SpanCommand untyped string = "vv.command"
+func SpanCommandName(string) (string, bool)
+const SpanCrudSource untyped string = "vv.crud_source"
+func SpanCrudSourceName(string) (string, bool)
+const SpanHealth untyped string = "vv.health check"
+const SpanJobsEnqueue untyped string = "vv.jobs"
+func SpanJobsEnqueueName(string) (string, bool)
+const SpanJobsEnqueueStaged untyped string = "vv.jobs"
+func SpanJobsEnqueueStagedName(string) (string, bool)
+const SpanJobsHandler untyped string = "vv.jobs handle"
+const SpanRemote untyped string = "vv.remote"
+func SpanRemoteName(string) (string, bool)
+const SpanRuntimePeriodic untyped string = "vv.runtime pass"
+const SpanStorage untyped string = "vv.storage"
+func SpanStorageName(string) (string, bool)
+const SpanStorageStream untyped string = "vv.storage stream"
+func StorageFailureName(string) (string, bool)
+func StorageOperationsName(string) (string, bool)
 type StorageOption func(*storageSettings)
-    func WithStorageResource(name ApprovedName) StorageOption
-    func WithStorageStreams() StorageOption
-type StorageStream interface{ ... }
-type Telemetry struct{ ... }
-    func Must(config Config) *Telemetry
-    func New(config Config) (*Telemetry, error)
+func StorageSpanName(string) string
+type StorageStream interface {
+	Close() error
+	Read([]byte) (int, error)
+	Unwrap() io.ReadCloser
+}
+func StorageStreamOutcomeName(string) (string, bool)
+func Store(*Telemetry, ...StorageOption) github.com/frostgrove/vv/storage.Middleware
+type Telemetry struct {
+	<unexported fields>
+}
+func TraceHandler(log/slog.Handler) log/slog.Handler
+func ValidResourceName(string) bool
+func WithCacheMemorySpanEvents(bool) CacheMemoryOption
+func WithCacheSpanEvents(bool) CacheOption
+func WithHealthResource(ApprovedName) HealthOption
+func WithPeriodicResource(ApprovedName) PeriodicOption
+func WithServiceResource(ApprovedName) ServiceOption
+func WithStorageResource(ApprovedName) StorageOption
+func WithStorageStreams() StorageOption
+func Workers(*Telemetry) github.com/frostgrove/vv/jobs.WorkerObserver
+func WrapService[M any, ID comparable, U any](*Telemetry, github.com/frostgrove/vv/port.Service[M, ID, U], ...ServiceOption) github.com/frostgrove/vv/port.Service[M, ID, U]
 ```
 
 ## github.com/frostgrove/vv/runtime/runtimefx
 ```go
-func AsRunner(constructor any) any
-func Auto() fx.Option
-func ShuttingDownOnFailure(shutdowner fx.Shutdowner, log *slog.Logger) runtime.Observer
-func Supervising(spec Spec) fx.Option
+func AsRunner(any) any
+func Auto() go.uber.org/fx.Option
 type FailurePolicy string
-    const ShutDownOnFailure FailurePolicy = "shut-down" ...
-type Registered struct{ ... }
-type Spec struct{ ... }
+const KeepRunningOnFailure FailurePolicy = "keep-running"
+type Registered struct {
+	go.uber.org/fx.In
+	All []github.com/frostgrove/vv/runtime.Runner "group:\"vv.runtime.runners\""
+	Logger *log/slog.Logger "optional:\"true\""
+	Observer github.com/frostgrove/vv/runtime.Observer "optional:\"true\""
+}
+const ShutDownOnFailure FailurePolicy = "shut-down"
+func ShuttingDownOnFailure(go.uber.org/fx.Shutdowner, *log/slog.Logger) github.com/frostgrove/vv/runtime.Observer
+type Spec struct {
+	DrainGrace time.Duration
+	OnFailure FailurePolicy
+}
+func Supervising(Spec) go.uber.org/fx.Option
 ```
 
 ## github.com/frostgrove/vv/storage/storageminio
 ```go
-const MaxCreateOnlySize int64 = 5 * 1024 * 1024 * 1024 ...
-type Backend struct{ ... }
-    func New(config *Config) (*Backend, error)
+type Backend struct {
+	<unexported fields>
+}
+func (*Backend) Abort(context.Context, github.com/frostgrove/vv/storage.Namespace, github.com/frostgrove/vv/storage.StageID) error
+func (*Backend) Capabilities() github.com/frostgrove/vv/storage.Capabilities
+func (*Backend) CleanupExpired(context.Context, github.com/frostgrove/vv/storage.Namespace, github.com/frostgrove/vv/storage.CleanupOptions) (github.com/frostgrove/vv/storage.CleanupResult, error)
+func (*Backend) Delete(context.Context, github.com/frostgrove/vv/storage.Namespace, github.com/frostgrove/vv/storage.Key, github.com/frostgrove/vv/storage.DeleteOptions) error
+func (*Backend) EnsureBucket(context.Context) error
+func (*Backend) Head(context.Context, github.com/frostgrove/vv/storage.Namespace, github.com/frostgrove/vv/storage.Key) (github.com/frostgrove/vv/storage.Info, error)
+func (*Backend) Open(context.Context, github.com/frostgrove/vv/storage.Namespace, github.com/frostgrove/vv/storage.Key, github.com/frostgrove/vv/storage.ReadOptions) (io.ReadCloser, github.com/frostgrove/vv/storage.Info, error)
+func (*Backend) Promote(context.Context, github.com/frostgrove/vv/storage.Namespace, github.com/frostgrove/vv/storage.StageID, github.com/frostgrove/vv/storage.Key, github.com/frostgrove/vv/storage.PromoteOptions) (github.com/frostgrove/vv/storage.Info, error)
+func (*Backend) Put(context.Context, github.com/frostgrove/vv/storage.Namespace, github.com/frostgrove/vv/storage.Key, io.Reader, github.com/frostgrove/vv/storage.PutOptions) (github.com/frostgrove/vv/storage.Info, error)
+func (*Backend) Stage(context.Context, github.com/frostgrove/vv/storage.Namespace, io.Reader, github.com/frostgrove/vv/storage.StageOptions) (github.com/frostgrove/vv/storage.Staged, error)
+func (*Backend) TemporaryURL(context.Context, github.com/frostgrove/vv/storage.Namespace, github.com/frostgrove/vv/storage.Key, github.com/frostgrove/vv/storage.TemporaryURLOptions) (github.com/frostgrove/vv/storage.Link, error)
 type Clock func() time.Time
-type Config struct{ ... }
+type Config struct {
+	Client *github.com/minio/minio-go/v7.Client
+	Bucket string
+	Prefix string
+	MaxLinkTTL time.Duration
+	StageClaimTTL time.Duration
+	Clock Clock
+}
+const MaxCreateOnlySize int64 = 5368709120
+func New(*Config) (*Backend, error)
 ```
 
 ## github.com/frostgrove/vv/storage/storageminio/storageminiofx
 ```go
-func Module(settings Settings) fx.Option
-func NewBackend(settings Settings, client *minio.Client) (*storageminio.Backend, error)
-func NewClient(settings Settings) (*minio.Client, error)
+const BucketMustExist BucketPolicy = ""
+const BucketOnDemand BucketPolicy = "create"
 type BucketPolicy string
-    const BucketMustExist BucketPolicy = "" ...
-type Settings struct{ ... }
+func Module(Settings) go.uber.org/fx.Option
+func NewBackend(Settings, *github.com/minio/minio-go/v7.Client) (*github.com/frostgrove/vv/storage/storageminio.Backend, error)
+func NewClient(Settings) (*github.com/minio/minio-go/v7.Client, error)
+type Settings struct {
+	Endpoint string
+	AccessKey string
+	SecretKey string
+	Region string
+	Transport Transport
+	Bucket string
+	Prefix string
+	LinkTTL time.Duration
+	Bucketing BucketPolicy
+}
 type Transport string
-    const TransportTLS Transport = "" ...
+const TransportPlaintext Transport = "plaintext"
+const TransportTLS Transport = ""
 ```
 
 ## github.com/frostgrove/vv/utils/vvcfg
 ```go
-const DefaultPath = "./config/app.yml"
-var ErrNoPath = errors.New("vvcfg: no configuration path: pass --config-path or set CONFIG_PATH")
-var ErrNotASize = errors.New("vvcfg: not a size: write one like 25MiB")
-var ErrUndeclaredPath = errors.New("vvcfg: no field declares this path")
-var ErrUnreadableFormat = errors.New(...)
-func Load[T any](path string) (*T, error)
-func MustLoad[T any](paths ...string) *T
-func ValidateTree(root any) error
 type Bytes int64
-    func ParseBytes(written string) (Bytes, error)
-type CrossValidator interface{ ... }
-type Deprecation struct{ ... }
-type EnvironmentApplier interface{ ... }
-type EnvironmentSourceError struct{ ... }
-type Field struct{ ... }
+func (*Bytes) UnmarshalText([]byte) error
+func (Bytes) String() string
+type CrossValidator interface {
+	ValidateCross() error
+}
+const DefaultPath untyped string = "./config/app.yml"
+func DefaultSource() Source
+type Deprecation struct {
+	Path string
+	Advice string
+}
+type EnvironmentApplier interface {
+	ApplyEnvironment() error
+}
+type EnvironmentSourceError struct {
+	Path string
+	Variables []string
+}
+func (*EnvironmentSourceError) Error() string
+var ErrNoPath error
+var ErrNotASize error
+var ErrUndeclaredPath error
+var ErrUnreadableFormat error
+type Field struct {
+	Path string
+	Origin Origin
+	Environment string
+}
+func Load[T any](string) (*T, error)
+func LoadFrom[T any](Source) (*T, *Report, error)
+func LoadStrict[T any](string) (*T, *Report, error)
+func MustLoad[T any](...string) *T
 type Origin int
-    const OriginUnknown Origin = iota ...
+func (Origin) String() string
+const OriginDefault Origin = 1
+const OriginEnvironment Origin = 3
+const OriginFile Origin = 2
+const OriginUnknown Origin = 0
+func ParseBytes(string) (Bytes, error)
+const PathFromCaller PathOrigin = 1
+const PathFromDefault PathOrigin = 4
+const PathFromEnvironment PathOrigin = 3
+const PathFromFlag PathOrigin = 2
+const PathFromNothing PathOrigin = 0
 type PathOrigin int
-    const PathFromNothing PathOrigin = iota ...
-type PrefixedEnvironmentApplier interface{ ... }
-type Report struct{ ... }
-    func LoadFrom[T any](source Source) (*T, *Report, error)
-    func LoadStrict[T any](path string) (*T, *Report, error)
-type SelfValidator interface{ ... }
-type Source struct{ ... }
-    func DefaultSource() Source
-type UnknownKeysError struct{ ... }
-type UnusedEnvironmentError struct{ ... }
-type ValidationError struct{ ... }
-type Validator interface{ ... }
-```
-
-## github.com/frostgrove/vv/vvdb/dbpgx
-```go
-func Apply(pc *pgxpool.Config, p *vvdb.Pool) error
-func Connect(ctx context.Context, c *vvdb.Config, options ...Option) (*pgxpool.Pool, error)
-func ConnectReadWrite(ctx context.Context, c *vvdb.Config, options ...ReadWriteOption) (primary, replica *pgxpool.Pool, err error)
-func MustConnect(ctx context.Context, c *vvdb.Config, options ...Option) *pgxpool.Pool
-func MustConnectReadWrite(ctx context.Context, c *vvdb.Config, options ...ReadWriteOption) (primary, replica *pgxpool.Pool)
-type Option func(*pgxpool.Config)
-type ReadWriteOption func(*readWriteOptions)
-    func Common(options ...Option) ReadWriteOption
-    func Primary(options ...Option) ReadWriteOption
-    func Replica(options ...Option) ReadWriteOption
+func (PathOrigin) String() string
+type PrefixedEnvironmentApplier interface {
+	ApplyEnvironmentPrefix(string) error
+}
+type Report struct {
+	Path string
+	PathOrigin PathOrigin
+	NotInspected error
+	Fields []Field
+	UnknownKeys []string
+	Deprecated []Deprecation
+	UnusedEnvironment []string
+}
+func (*Report) OriginOf(string) (Origin, bool)
+func (*Report) String() string
+type SelfValidator interface {
+	ValidateSelf() error
+}
+type Source struct {
+	Path string
+	Arguments []string
+	DefaultPath string
+	AllowNoFile bool
+	Strict bool
+	RequireEnvironment []string
+}
+func (Source) Resolve() (string, PathOrigin, error)
+type UnknownKeysError struct {
+	Path string
+	Keys []string
+}
+func (*UnknownKeysError) Error() string
+type UnusedEnvironmentError struct {
+	Variables []string
+}
+func (*UnusedEnvironmentError) Error() string
+func ValidateTree(any) error
+type ValidationError struct {
+	Path string
+	Cause error
+}
+func (*ValidationError) Error() string
+func (*ValidationError) Unwrap() error
+type Validator interface {
+	Validate() error
+}
 ```
 
 ## github.com/frostgrove/vv/utils/vvgoose
 ```go
-func Execute(config *vvdb.Config)
+func Execute(*github.com/frostgrove/vv/vvdb.Config)
+```
+
+## github.com/frostgrove/vv/vvdb/dbpgx
+```go
+func Apply(*github.com/jackc/pgx/v5/pgxpool.Config, *github.com/frostgrove/vv/vvdb.Pool) error
+func Common(...Option) ReadWriteOption
+func Connect(context.Context, *github.com/frostgrove/vv/vvdb.Config, ...Option) (*github.com/jackc/pgx/v5/pgxpool.Pool, error)
+func ConnectReadWrite(context.Context, *github.com/frostgrove/vv/vvdb.Config, ...ReadWriteOption) (*github.com/jackc/pgx/v5/pgxpool.Pool, *github.com/jackc/pgx/v5/pgxpool.Pool, error)
+func MustConnect(context.Context, *github.com/frostgrove/vv/vvdb.Config, ...Option) *github.com/jackc/pgx/v5/pgxpool.Pool
+func MustConnectReadWrite(context.Context, *github.com/frostgrove/vv/vvdb.Config, ...ReadWriteOption) (*github.com/jackc/pgx/v5/pgxpool.Pool, *github.com/jackc/pgx/v5/pgxpool.Pool)
+type Option func(*github.com/jackc/pgx/v5/pgxpool.Config)
+func Primary(...Option) ReadWriteOption
+type ReadWriteOption func(*readWriteOptions)
+func Replica(...Option) ReadWriteOption
 ```

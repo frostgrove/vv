@@ -127,6 +127,10 @@ func TestNewRefusesEverySpecItCannotAssemble(t *testing.T) {
 			spec.Tolerate = -time.Second
 			return spec
 		}},
+		{"a negative read throttle", "Pace", func(spec projection.Spec) projection.Spec {
+			spec.Pace = -time.Second
+			return spec
+		}},
 		{"a negative attempt budget", "Attempts", func(spec projection.Spec) projection.Spec {
 			spec.Attempts = -1
 			return spec
@@ -151,6 +155,24 @@ func TestNewRefusesEverySpecItCannotAssemble(t *testing.T) {
 		}},
 		{"a SequenceBy over a nil function", "Sequence", func(spec projection.Spec) projection.Spec {
 			spec.Sequence = projection.SequenceBy("by-order", nil)
+			return spec
+		}},
+		{"Effects beside AfterApply", "AfterApply", func(spec projection.Spec) projection.Spec {
+			spec.Effects = &sink{}
+			return spec
+		}},
+		{"a barrier with nothing to gate", "EffectsAfter", func(spec projection.Spec) projection.Spec {
+			spec.EffectsAfter = 7
+			return spec
+		}},
+		{"a barrier beside a queue", "EffectsAfter", func(spec projection.Spec) projection.Spec {
+			spec = stand.parking(spec, newPark())
+			spec.Effects, spec.EffectsAfter = &sink{}, 7
+			return spec
+		}},
+		{"Effects at a generation with no ownership row", "Generations", func(spec projection.Spec) projection.Spec {
+			spec = stand.staging(spec, &sink{})
+			spec.Generation = 2
 			return spec
 		}},
 	} {
@@ -188,6 +210,24 @@ func TestNewRefusesEverySpecItCannotAssemble(t *testing.T) {
 		for _, names := range []string{"Name", "Log", "Sequence"} {
 			if !strings.Contains(err.Error(), names) {
 				t.Fatalf("the three problems read %q and do not name %s", err, names)
+			}
+		}
+	})
+
+	t.Run("a spec wrong in three of the capability's places reports three problems", func(t *testing.T) {
+		wrong := stand.staging(legal, &sink{})
+		wrong.Advance, wrong.Unit = projection.AfterApply, nil
+		wrong.Generation = 2
+		wrong.EffectsAfter, wrong.OnPermanentFailure, wrong.Park = 7, projection.ParkSequence, newPark()
+
+		_, err := projection.New(wrong)
+		joined, collected := err.(interface{ Unwrap() []error })
+		if !collected {
+			t.Fatalf("a spec wrong in several of the capability's places was refused with %v, which is one problem rather than the collection a caller fixes in one pass", err)
+		}
+		for _, names := range []string{"AfterApply", "EffectsAfter", "Generations", "ParkSequence"} {
+			if !strings.Contains(err.Error(), names) {
+				t.Fatalf("the %d problems read %q and do not name %s", len(joined.Unwrap()), err, names)
 			}
 		}
 	})

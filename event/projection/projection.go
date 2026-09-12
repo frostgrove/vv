@@ -40,6 +40,7 @@ type Projection struct {
 	quarantined uint64
 	parked      uint64
 	resumed     bool
+	pacing      bool
 	streak      int
 	contested   bool
 
@@ -145,6 +146,10 @@ func (this *Projection) Run(ctx context.Context) error {
 			if err := this.follow(ctx, idle); err != nil {
 				return err
 			}
+		case taken == waitPace:
+			if err := this.pace(ctx); err != nil {
+				return err
+			}
 		case taken == waitBackoff:
 			if err := this.backoff(ctx); err != nil {
 				return err
@@ -223,22 +228,42 @@ func (this *Projection) follow(ctx context.Context, idle runtime.Ticker) error {
 	}
 }
 
-// The wait is measured through the same injectable ticker the poll uses, so a
-// test drives the schedule rather than sleeping through it, and what Ready reads
-// is the backoff that was actually waited rather than a clock nobody injected.
+// What Ready reads is the backoff that was actually waited rather than a clock
+// nobody injected, so a wait a drain cut short is not counted: the streak is
+// what makes a projection unready, and a shutdown is not a failure.
 func (this *Projection) backoff(ctx context.Context) error {
 	delay := this.delay()
-	waiting := this.spec.Ticks(delay)
-	defer waiting.Stop()
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-this.drain:
-		return nil
-	case <-waiting.Ticks():
+	elapsed, err := this.resting(ctx, delay)
+	if err != nil || !elapsed {
+		return err
 	}
 	this.waited.Add(int64(delay))
 	return nil
+}
+
+// The read throttle, and what it is not is backoff: a rebuild that is
+// deliberately slowed has failed at nothing, so nothing accumulates here and
+// Ready reports a paced projection healthy however long its drain takes.
+func (this *Projection) pace(ctx context.Context) error {
+	_, err := this.resting(ctx, this.spec.Pace)
+	return err
+}
+
+// Every wait this loop makes is measured through the same injectable ticker the
+// poll uses, so a test drives the schedule rather than sleeping through it. It
+// answers whether the interval elapsed, because its two callers differ on what
+// a drain cutting one short means.
+func (this *Projection) resting(ctx context.Context, interval time.Duration) (bool, error) {
+	waiting := this.spec.Ticks(interval)
+	defer waiting.Stop()
+	select {
+	case <-ctx.Done():
+		return false, ctx.Err()
+	case <-this.drain:
+		return false, nil
+	case <-waiting.Ticks():
+	}
+	return true, nil
 }
 
 func (this *Projection) delay() time.Duration {

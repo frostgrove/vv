@@ -61,6 +61,7 @@ through it.
 | an i18n declaration, locale resolver, MF2 template, typed message, usage extraction, catalogue artifact, overlay, render, error source or publication controller | [[FL-039]] |
 | the audit trace registry, semantic or completeness authority, tagged design import, or section checkpoint | [[FL-040]] |
 | an advisory lock, a guard, a lock key, a retry on a deadlock, or a schema-migration lock | [[FL-041]] |
+| a side effect a projection owes, the barrier that suppresses a warm-up, the ownership row two generations are told apart by, or why a rebuild sends nothing | [[FL-042]] |
 
 **A code change that alters a path must update its flow document in the same
 change.** Not afterwards, not in a follow-up. A flow that describes a path the
@@ -118,6 +119,7 @@ phase 3 landed FL-014 and before phase 5 landed FL-015.
 | [FL-039](FL-039-a-message-declaration-becomes-rendered-presentation.md) | A message declaration becomes rendered presentation | `i18n.New` / `vv-i18n extract|merge` / `Snapshot.Resolve` / `Snapshot.Bind` / `DefineStruct` / `View.Render` / `NewFormatter` / `Controller.Activate` | [[UC-033]] |
 | [FL-040](FL-040-an-audit-contract-becomes-an-executable-checkpoint.md) | An audit contract becomes an executable checkpoint | `scripts/audit-trace.sh` / `scripts/audit_trace_test.go:TestAuditTraceRegistry` / `scripts/audit_trace_import_test.go:TestAuditTraceDesignImport` | [[UC-034]] |
 | [FL-041](FL-041-a-key-becomes-a-held-critical-section.md) | A key becomes a held critical section | `vvdb/lock/lock.go:For` / `vvdb/lock/lock.go:Take` / `vvdb/lock/lock.go:Guarded` / `vvdb/lock/locksql/locksql.go:Hold` | [[UC-035]] |
+| [FL-042](FL-042-an-applied-envelope-becomes-a-staged-effect.md) | An applied envelope becomes a staged effect | `projection.Spec.Effects` / `projection.Effects.Stage` / `projection.Generations.Active` / `projection.Redrive.Sequence` | [[UC-032]] |
 
 ## By file — which flows touch this file
 
@@ -602,20 +604,22 @@ phase 3 landed FL-014 and before phase 5 landed FL-015.
 | `event/eventpg/checkpoints.go` | FL-037, FL-038 |
 | `event/projection/doc.go` | FL-038 |
 | `event/projection/errors.go` | FL-038 |
-| `event/projection/spec.go` | FL-038 |
-| `event/projection/page.go` | FL-038 |
+| `event/projection/spec.go` | FL-038, FL-042 |
+| `event/projection/page.go` | FL-038, FL-042 |
 | `event/projection/classify.go` | FL-038 |
 | `event/projection/park.go` | FL-038 |
-| `event/projection/redrive.go` | FL-038 |
+| `event/projection/redrive.go` | FL-038, FL-042 |
 | `event/projection/state.go` | FL-038 |
 | `event/projection/router.go` | FL-038 |
 | `event/projection/projection.go` | FL-038 |
-| `event/projection/pass.go` | FL-038 |
+| `event/projection/pass.go` | FL-038, FL-042 |
 | `event/projection/identity.go` | FL-038 |
 | `event/projection/partition.go` | FL-038 |
 | `event/projection/cover.go` | FL-038 |
 | `event/projection/sequence.go` | FL-038 |
 | `event/projection/topology.go` | FL-038 |
+| `event/projection/generation.go` | FL-038, FL-042 |
+| `event/projection/effect.go` | FL-042 |
 | `i18n/go.mod` | FL-039 |
 | `i18n/catalog.go` | FL-039 |
 | `i18n/source.go` | FL-039 |

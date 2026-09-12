@@ -303,6 +303,22 @@ Refusal 11 moves with it: a `Generations` supplied beside `Effects` at
 `Ungenerated` is no longer "supplied where nothing uses it" — it is the
 migration, and it is used.
 
+**And the gate is a mechanism, not a guarantee this framework can make on its
+own** *(round 2, GAP-1, driven against PostgreSQL 17.9 and at the Go level).*
+What the suppressor gives is a read of the row through the ambient transaction.
+What makes that read a **boundary** is the implementation's: `Active` must take a
+row lock the cutover's `UPDATE` waits behind — `FOR SHARE` / `FOR KEY SHARE` — or
+run in a `SERIALIZABLE` unit. [[D-126]] forbids this framework choosing the
+level, and at `READ COMMITTED` a plain read and a concurrent `Activate` of one
+row do not conflict: both commit, and the pass that read `1` commits its staged
+effect under a row that already names `2`. So the obligation goes on the
+`Generations` doc comment where `Park`'s ordering obligations live, [SPEC] §1.6
+says which read closes the window, and §UC-202 measures the two recipes against
+each other rather than leaving the difference in prose. It is also stated what
+the lock does **not** buy: the retiring generation goes on advancing past the
+barrier the cutover was observed at, and that overlap is §1.5's window, closed by
+draining rather than by locking.
+
 ### P-8 — a claim is an ownership token, because an expired one otherwise reproduces the disorder the queue exists to prevent
 
 [SPEC] §1.4 and §5.2 spell the claim protocol as
@@ -683,6 +699,8 @@ it is the only thing that holds this rule.
 | UC-158 a generation is built beside the running one | S4 | S6 | `TestAGenerationDrainsBesideTheLiveOneAndTheRowsAgree` (S6 live item 9, UC-120's assertion re-run under the naming) with the stopped-mid-drain control |
 | UC-159 a barrier is observed and reached | S4 | S4 + S6 | `TestABarrierIsObservedAndReached` with the all-fresh control (S4); `TestTheBarrierTheCutoverAndTheRollback` (S6) |
 | UC-180 a barrier from a set with an unreported member | S4 | S4 | `TestObserveRefusesACoverWhoseMemberHasNoRow` with the three-arm control (S4) |
+| UC-200 a retiring cover no member of which holds a row | S4 | S4 | `TestACutoverRefusesARetiringCoverNoMemberOfWhichHoldsARow`, both arms with their three controls (S4) |
+| UC-201 the retiring generation advances between the barrier and the switch | S4 | S4 | `TestTheCutoverWindowIsWhatTheRetiringGenerationAdvancedUnderIt` with the at-rest control (S4) |
 | UC-160 the retiring generation cannot write into the arriving one | S4 | S6 | `TestARetiringGenerationCannotBeToldToWriteIntoTheArrivingOne` with the ignores-its-batch control (S6) |
 | UC-161 the cutover switches the read target atomically | S4 | S6 | `TestTheCutoverSwitchesEveryTableAtOnceForAReaderInOneSnapshot` with the stale-reader negative arm (S6) |
 | UC-162 two operators cut over at once | S4 | S4 + S6 | `TestTwoCutoversLeaveOneWinnerAndOneConflict` (S4); `TestTwoOperatorsCuttingOverAtOnce` (S6, gated) |
@@ -703,8 +721,10 @@ it is the only thing that holds this rule.
 | UC-172 a page straddles the barrier | S5 | S5 + S6 | `TestAStraddlingPageStagesExactlyTheEnvelopesPastTheBarrier` (S5); the live arm (S6) |
 | UC-181 a page in which one envelope is parked and one is applied | S5 | S5 | `TestAParkedEnvelopeIsNotStagedAndIsNotLost` with the nothing-parked control (S5) |
 | UC-182 a redrive stages the effect of the letter it applies | S5 | S5 + S6 | `TestARedriveStagesWhatItAppliesAndAnEvictionStagesNothing` (S5); the crash arm (S6) |
-| UC-173 a retired generation stops staging at the cutover | S5 | S6 | `TestARetiredGenerationStopsStagingAtTheCutover` with the no-row fixture control (S6) |
-| UC-192 the ownership row is reached over a second pool | S5 | S6 | `TestAnOwnershipRowOverASecondPoolLeavesTwoSenders` (S6, the measured boundary) |
+| UC-173 a retired generation stops staging at the cutover | S5 | S6 | `TestARetiredGenerationStopsStagingAtTheCutover` with the no-row fixture control (S6), driving the interleaving rather than taking the cutover between passes |
+| UC-192 the ownership row is reached over a second pool | S5 | S6 | `TestAnOwnershipRowOverASecondPoolLeavesTwoSenders` (S6, one measured boundary of three) |
+| UC-202 the cutover commits between two passes' ownership reads | S5 | S5 + S6 | `TestTheOwnershipReadIsABoundaryOnlyWhenACutoverWaitsForIt`, two recipes each the other's control (S5); the live pair (S6) — round 2, GAP-1 |
+| UC-203 the same generation restarted with `EffectsAfter` dropped | S5 | S5 + S6 | `TestABarrierDroppedFromTheSpecRestagesTheWarmUpBelowIt` with the field-still-set control (S5); beside §6.12's interrupted warm-up (S6) — round 2, GAP-4 |
 | UC-193 a generation-zero projection is retired by the first cutover | S5 | S5 | `TestAnUngeneratedProjectionWithGenerationsStopsStagingAtTheCutover` with the no-`Generations` control (S5) — **P-7** |
 | UC-174 the ownership read costs nothing when nothing is staged | S5 | S5 | `TestTheOwnershipRowIsNotReadWhenThereIsNothingToStage` with the one-envelope control (S5) |
 | UC-175 `EffectsAfter` beside `Park` | S5 | S5 | `TestABarrierBesideAParkIsRefused` with two controls (S5) |
@@ -738,8 +758,8 @@ it is the only thing that holds this rule.
 | INV-098 a cutover derives its own evidence, is one fenced write, refused without it | S4 | S4 + S6 | UC-161 counting one write and measuring atomicity from a reader; UC-162's race; UC-163's three arms; UC-164's `ErrRetired`; UC-180's "no field to hand a barrier through" |
 | INV-099 a barrier is a `Position`, never a resume point | S4 | S4 + S6 | UC-159 with its all-fresh control; the position→cursor surface walk extended over the new packages |
 | INV-100 an effect capability is a value, a rebuild has none, `Stage` is a write | S5 | S5 + S6 | UC-169 with its ownership control; UC-170's refusal; UC-183's lost fence (S6); UC-184's measured edge; and a surface check that `Batch` carries no `Effects`, no dispatcher and no context key |
-| INV-101 the effect gate is durable at every end it has | S5 | S5 + S6 | UC-171, UC-172, UC-181, UC-182, UC-173 with its no-row fixture, UC-192's second-pool boundary, UC-174's call count |
-| INV-106 an effect belongs to an applied envelope, not to a page | S5 | S5 | UC-181 with its nothing-parked control; UC-182's eviction arm; UC-172's straddling page |
+| INV-101 the effect gate rests on three things, and what each rests on is stated | S5 | S5 + S6 | UC-171 and UC-203's dropped constant, UC-172, UC-181 on both appliers (UC-147), UC-182 with its refused barrier, UC-173 with its no-row fixture, UC-202's two recipes, UC-192's second-pool boundary, UC-174's call count |
+| INV-106 an effect belongs to an applied envelope, not to a page | S5 | S5 | UC-181 with its nothing-parked control **on both appliers** — the isolation pass and the blocking one (UC-147), which hold the owed envelopes in two variables; UC-182's eviction arm and its refused barrier; UC-172's straddling page |
 | INV-102 the framework contracts against dispatch and does not sandbox it | S6 | S6 | UC-177's walk with its fixture control, and a doc check that the honest sentence is present |
 | INV-103 nothing starts, opens a transaction, or writes a line | S1…S5 | S1 + S6 | `startsNothing` extended over every new file; `TestNothingInTheProjectionPackageOpensATransaction` — **written in S1, because no such check exists today** — with its reported fixture control; the dependency budget row (`./runtime`) unchanged; and a construction test asserting `Split`, `NewRedrive`, `Observe` and `Cutover` issue nothing until called with a context |
 | INV-104 every refusal names its field and wraps a published sentinel | S1…S5 | S5 | `TestNewRefusesEverySpecItCannotAssemble` extended with this phase's combinations, asserting a spec wrong in three places reports three problems — inside S5's counted `EFF` pattern, not in an arm of its own |
@@ -1140,8 +1160,18 @@ an error wrapping the sentinel. A host that wrapped `Redrive.Any` in a
 permanent failure.
 
 `NewRedrive` refuses: a nil `Handler`, `Park` or `Unit`; a `Destination` of
-`Unchecked` or nil; an `Identity` carrying a partition (`ErrTopology`); and this
-phase's `Effects` combinations, exactly as `New` does.
+`Unchecked` or nil; an `Identity` carrying a partition (`ErrTopology`); `Effects`
+at a generation with no `Generations`, exactly as `New` does; **and a non-zero
+`EffectsAfter`, which `New` accepts.** That asymmetry is the one place the two
+doors part and it is the queue that parts them: a letter is in the park because a
+loop parked it, a loop parks only under `ParkSequence`, and `New` refuses that
+beside a barrier — so every letter a redrive can drain was parked by a generation
+that had none and is owed its effect, and a barrier here can only suppress it for
+ever. The field is present **to be refused** rather than absent, because the spec
+builder that serves a loop and a redrive is exactly the shape that copies it
+across, and a refusal at that call site names the rule where a missing field
+would name nothing. [SPEC] §1.6's "the same three" is corrected to say so
+(round 2, GAP-3).
 
 **There is no `Classifier` on a `RedriveSpec`, and the omission is the answer to
 the mechanism's `EnqueuePolicy`** rather than an oversight — an earlier draft of
@@ -1225,12 +1255,61 @@ func Cutover(ctx context.Context, spec CutoverSpec) error
   fresh → the origin, and that is the true answer. Some fresh and some not →
   `ErrTopology` naming the member with no row (§UC-180). `of` carrying a
   partition → `ErrTopology` (**P-4**).
+- **Amended by the S4 review (GAP-1):** an absent member is asked one further
+  question — `retired(...)`, the row `Split` writes — and a member with no row of
+  its own **beside a retirement row** is `ErrTopology` naming both. It is §UC-180
+  one level down: the rows tell a share that never ran apart from one that ran and
+  handed its cursor to two children, so folding the second in as position zero is
+  the same lie with a second spelling. The origin answer survives untouched for a
+  cover with no rows *and* no retirements (§UC-159's control), which is the
+  discriminating pair the two controls assert.
 - `Reached` asks `Holes` **once** of the arriving generation's park, because a
   park is keyed by a whole identity. A nil park answers zero by construction.
+- **Added in S4:** `Reached` refuses a `Barrier` whose `Projection` is not the
+  arriving generation's — which is how the zero `Barrier` is refused, since it
+  names none — and one whose `Generation` **is** the arriving generation's, which
+  would be a set measured against its own rows. **P-11**'s door rule, at the one
+  value it could not reach.
+- **Added in S4:** `Cutover` asks `Split`'s question of the caller's unit —
+  `Tracker.Transaction(ctx)` must answer a valid authority — inside the unit and
+  before anything is read, `ErrSpec` naming `Unit`. What that buys is the
+  *arriving* generation's rows and the ownership row moving together; what it does
+  not buy is a retiring generation that stands still, and the two are now stated
+  apart (see the overlap window below).
 - **`Cutover` takes no barrier.** Inside the caller's unit it `Observe`s one from
   the retiring generation's own rows, `Reached`es the arriving one against it,
   refuses, and then issues exactly one fenced `Activate`. There is no field
   through which a zero can be handed in (GAP-2's closure).
+- **Amended by the S4 review (GAP-1):** and no field through which a zero can be
+  *derived* either. A retiring cover no member of which holds a row is
+  `ErrRetired`, with the same force as the arriving arm and for a different
+  reason: there the generation has nothing behind it, here it has nothing to say,
+  and the barrier folded from that silence is the origin, which every arriving
+  generation clears by `x >= 0`. The refusal names both readings the rows cannot
+  tell apart — a cover that is not the one this generation records at (a live
+  four-partition generation declared as `Whole()`), and a generation nothing ever
+  recorded for. Standing a read target up where nothing preceded it is a row the
+  application's own `Generations` writes; it is not a switch this call derives.
+- **Amended by the S4 review (GAP-2) — the overlap window is named and not
+  closed.** The barrier is the retiring generation's watermark *as this call read
+  it*. That generation is a separate runner committing in its own transaction;
+  nothing here claims, locks or fences its rows, and [[D-126]] forbids reaching
+  for an isolation level (which would not help — `REPEATABLE READ` makes the
+  barrier the snapshot value, also stale-low). So if it is still advancing, reads
+  move **backwards** at the switch by its advance over the life of the caller's
+  transaction, and stay there until the arriving generation catches up. Written
+  down where an operator reads it, in Marten's own shape: drain or stop the
+  retiring generation before, or as, the switch commits; `Observe` it twice and
+  see whether the barrier moved; `Spec.Pace` on the arriving generation lengthens
+  the recovery, so drop it first — and `Spec.Pace`'s own field comment says so.
+  **The alternative is adjudicated rather than left unmentioned:** Axon's
+  `resetTokens` requires the processor shut down and then claims every token in
+  one transaction. Neither half is taken. This call cannot stop a runner in
+  another process, and claiming a live generation's checkpoint rows means writing
+  them — which takes that runner's fence away, to buy a window an operator closes
+  by draining. Driven: the mutation that adds that claim answers *"a checkpoint row
+  moved between the save this transaction staged and its commit"*, which is the
+  fence fight the refusal is about.
 - It refuses on `Readiness.Holes` and **never** on `Progress.Quarantined`, which
   is cumulative and would refuse a fully recovered generation for ever
   (GAP-18's closure). `AcceptQuarantined` therefore means what its name says.
@@ -2542,6 +2621,48 @@ table, and the live `queue.Sequences` reading through `into.on(ctx)`, which fall
 back to the pool when nothing is bound and therefore conforms to the corrected
 `Park` contract.
 
+**Re-run 2026-09-12, after the audit/otel/i18n line was merged in, and the two
+reds it brought are named rather than absorbed.** The section's own gates are
+unchanged:
+
+```
+gofmt -l .                                                         0
+go build ./... ; go vet ./event/...                                clean
+go test -list "$PARK" ./event/projection/ | grep -c '^Test'        20
+ok  	github.com/frostgrove/vv/event/projection	1.028s   (the twenty, -race)
+ok  	github.com/frostgrove/vv/event	6.868s
+ok  	github.com/frostgrove/vv/event/eventmemory	1.508s
+ok  	github.com/frostgrove/vv/event/eventtest	4.346s
+ok  	github.com/frostgrove/vv/event/projection	1.561s
+ok  	github.com/frostgrove/vv/scripts	6.255s   (the two counted structural names)
+event-kernel-baseline: 148 files recorded in scripts/event_kernel.sha256
+check-event-kernel: ok
+event-kernel-moved: ok            (the same fifteen files, all event/projection/)
+ok  	github.com/frostgrove/vv/event/eventpg	111.037s   (-tags=integration, PostgreSQL 17.9)
+```
+
+The whole `./scripts/` package and `make check` are **red at HEAD, and neither
+red is this section's**. `go test ./scripts/` fails on exactly one arm,
+`TestNoI18nPackageCostsMoreThanItsErrorSeam` (*"the i18n extension reaches
+github.com/go-json-experiment/json/jsontext outside its error seam"*), whose
+subject is `i18n/cmd/vv-i18n` importing `jsonv2` directly; `make check` fails at
+`check-tidy` over **29 satellites** — `app/appfx`, `crud/http/crudgin`,
+`auth/rpc/authgrpc`, `audit/auditpg` (which carries no `go.sum` at all), `test`,
+and among them `event/eventpg`, whose own `go.mod` this phase never touched. Both
+were driven to their origin rather than assumed: at `ce36e2d`, the tree this
+section shipped on, `make check-tidy` answers `check-tidy: ok` and the i18n arm
+does not yet exist; both appear at `fefa3e9`/`939bcd9`, the merge that brought the
+audit, otel and i18n line in. `make unit` fails on that one i18n arm and on
+nothing else; `make vet` and `make examples` are green. `make api` is likewise
+not idempotent at HEAD for a reason outside this phase — `scripts/api-surface`
+was rewritten in `c5e7b62` and the baseline in `docs/api/surface.md` was last
+written in the old format, so a regeneration reformats all 13 860 lines of every
+package's surface; the file was left as committed, because the repository's own
+rule is that a diff there is a question for a person. The regeneration was read
+before being discarded, which is where §GAP-3's close criterion is met:
+`RedriveSpec` renders with six fields — `Identity`, `Handler`, `Sequencer`,
+`Park`, `Unit`, `Destination` — and no `Classifier`.
+
 **Falsified rather than asserted.** Fourteen mutations were driven, each restored,
 and each named the test that caught it: the isolation pass continuing to the next
 envelope of a parked sequence (§UC-146, the count arm); `delivering()` never
@@ -2560,8 +2681,9 @@ survived this mutation**); the sequencer never compared (§UC-155); `Holes`
 counting only what is queued (§UC-157); and the blocking test made outside the
 unit (§UC-147's `outside` count).
 
-**Four more were driven after S3's review**, three of them closing findings the
-first fourteen could not have caught:
+**Six more were driven after S3's review**, one per blocking finding, so that no
+finding is recorded closed on a green suite alone. Each was applied to the
+shipped tree, run, and restored:
 
 | Mutation | Test | Result |
 |---|---|---|
@@ -2569,6 +2691,14 @@ first fourteen could not have caught:
 | `unblockedPage` asks `Holds` on a context of its own rather than the unit's | `TestEachParkMethodIsCalledWhereItsContractSaysItIs` | **FAIL** — *"Holds ran inside the caller's unit 0 times where the contract says 1"* |
 | `Redrive.claimed` releases on a lost claim (`_ = lost` for `if lost { return }`) — **the arm the old test survived** | `TestAnExpiredClaimAppliesEvictsAndReleasesNothing` | **FAIL** — *"Release was called 1 times over a grant this caller had already lost"* |
 | `RedriveSpec` grows back an inert `Classifier` | `TestEveryFieldOfAPublishedSpecIsRead` (`scripts/`) | **FAIL** — *"RedriveSpec.Classifier is published and no line of the package reads it"* |
+| `permanent()` no longer promotes a retryable failure once the budget is spent (`return false` for `this.attempt >= this.spec.Attempts`) | `TestASpentAttemptBudgetParksATransientFailureAndARedriveClearsIt` | **FAIL** — *"the projection never published a state where the budget was spent and the page was parked: it published [draining retrying retrying]"* |
+| `parking()` counts an `ErrParkFull` letter as written instead of ending the pass | `TestTheParksBoundIsPerSequenceAndNotPerQueue` | **FAIL** — *"the projection never published a state where the queue refused the letter and the partition stopped: it published [draining draining degraded]"* |
+
+The last row is what answers the vacuity finding rather than the prose around it:
+the two arms that assert the reference queue's own `room` still cannot fail on
+framework code, but the third and fourth arms now do — a mutation in `pass.go`
+reddens them, so §UC-151's row counts an arm with a framework subject beside the
+two with a fixture one.
 
 The old fourteenth arm — *"the release not deferred, so a panic keeps it"* — is a
 different mutation and still reddens `TestTwoGatedRedrivesNeverProcessOneSequence`;
@@ -2577,7 +2707,7 @@ produced the outcome either way. The fake now counts the call.
 
 ---
 
-### S4 — generations, the barrier and the cutover  `[ ]`   *(no database · moves the manifest)*
+### S4 — generations, the barrier and the cutover  `[x]`   *(no database · moves the manifest)*
 
 **Delivers ES-04.** A generation is a number in the recorded name; the barrier is
 a `Position` and that is legal; `Cutover` derives its own evidence and issues one
@@ -2587,7 +2717,81 @@ fenced write; a rollback is the same call exchanged.
 
 **Files** `event/projection/generation.go` (new), `generation_test.go` (new);
 `errors.go` (modified, for `ErrRetired`), `spec.go`, `projection.go`, `pass.go`
-(modified, for `Pace`); `generation_test.go` carries the `Ignore` case.
+(modified, for `Pace`); `spec_test.go` (modified, for the `Pace` refusal arm);
+`generation_test.go` carries the `Ignore` case. And **`docs/ai/flows/Index.md`**,
+which is outside the kernel manifest and is not optional:
+`scripts/docs_test.go`'s `TestEveryProjectionSourceFileIsNamedByTheFlowReverseIndex`
+goes red the moment a new file of `event/projection` is not named by the reverse
+index, so `generation.go` joins FL-038's row list in this section rather than in
+S6.
+
+**Amended during S4** (four lines, each a fact the section met rather than a
+scope change):
+
+1. **`Cutover` asks `Split`'s question about the caller's unit**, inside it and
+   before anything is read: `Tracker.Transaction(ctx)` must answer a valid
+   authority, or the call is `ErrSpec` naming `Unit`. The contract block says the
+   evidence and the switch are one snapshot; a unit that opened nothing makes
+   them two, and a generation that was at the barrier when it was measured is not
+   one when the row moves. It is a second spelling of `inACallersTransaction`
+   rather than a call to it, because that helper lives in `topology.go`, whose
+   message is about a handoff and which this section's manifest fence does not
+   admit.
+2. **`Reached` refuses a barrier of another projection and one observed from the
+   generation it is being asked about.** The first is also how the zero `Barrier`
+   is refused — it names no projection — which closes the same door **P-11**
+   closes for `Cover{}` and `Identity{}` at a value the plan's own contract block
+   left open. The second is the `min` over its own rows answering true by
+   arithmetic.
+3. **No refusal of this section renders a `Position`**, and that is the kernel's
+   rule rather than a preference: `event/refusalmessages_test.go` reports a
+   message built over one, so `behindTheBarrier` names the rule and the two
+   generations, and the numbers are `Readiness.Behind` and `Barrier.At`, which
+   `Reached` answers as values. The first draft named them in the text and the
+   whole `./event/...` run went red on it.
+4. **`Cutover`'s spec door has a test of its own** —
+   `TestACutoverTakesNoBarrierAndDerivesItsOwn`'s first subtest, eight refusals
+   with a legal control — because `cutting` and the unit check were otherwise
+   code no test could falsify, which is the shape this phase's mutation pass
+   exists to find.
+5. **"A compile-time assertion over the struct's fields" is spelled
+   `reflect.TypeFor[projection.CutoverSpec]()`**, walked for a field named
+   `Barrier` and for a field of type `Barrier`, with an arm that fails if the
+   struct has no fields at all. Go cannot assert the *absence* of a field at
+   compile time — the nearest is an unkeyed composite literal, which breaks on
+   every field added for any reason and would therefore be a test about field
+   order. The walk fails on the one change it is about.
+
+**Amended again by the S4 implementation review, 2026-09-12** — two blocking
+findings closed, both in the same seam and both reproduced before they were
+fixed:
+
+6. **GAP-1 [critical] — silence on the retiring side is refused, and a retired
+   member is told apart from one that never ran.** `Observe`'s all-members-fresh
+   arm answered the origin and `Cutover` guarded `held.recorded == 0` on the
+   *arriving* census only, so a wrong `Retiring` cover yielded `Barrier.At = 0`
+   and every arriving generation cleared it by `x >= 0`. Two fixes, at two
+   levels. `surveyed` now asks `retired(...)` of each absent member, so a cover
+   whose members a `Split` retired is `ErrTopology` naming the retirement row —
+   §UC-180 one level down, and `Observe` answers it too. `switching` now folds the
+   retiring census out of one walk (`observed`, of which `Observe` is the public
+   half) and refuses `recorded == 0` with `ErrRetired`. The contract block above
+   carries both. `TestACutoverTakesNoBarrierAndDerivesItsOwn`'s `legal` fixture
+   gained the retiring row it never had: a legal cutover has a retiring generation
+   that ran, and the spec-door subtest was asserting eight refusals over a spec
+   that was itself unobservable.
+7. **GAP-2 [high] — the read-target overlap window is named, bounded and
+   adjudicated, and the comments no longer over-promise.** `inTheCallersUnit`,
+   `Cutover` and `Generations` claimed the caller's unit made the evidence and the
+   switch one snapshot; against a *running* retiring generation it cannot, and no
+   isolation level closes it ([[D-126]] forbids choosing one). The three comments
+   now state what the unit buys — the arriving generation's rows and the ownership
+   row move together — beside what it does not, `Cutover` carries the window in
+   Marten's own shape with the way to avoid it, `Spec.Pace` says to drop it before
+   cutting over, and the Axon `resetTokens` alternative is refused in writing with
+   its reason. It is the one finding whose answer is a contract statement rather
+   than a refusal, so it is pinned by a measurement instead: see the two tests
+   below.
 
 **Realises** `Generations`, `Barrier`, `Observe`, `Readiness`, `Reached`,
 `CutoverSpec`, `Cutover`, `ErrRetired`, `Spec.Pace`, and **P-4**, **P-5**.
@@ -2646,15 +2850,39 @@ INV-089, INV-096 (the split-arithmetic half), INV-098, INV-099.
 - `TestSplitPreservesTheSumAcrossThePartitionSet` — §INV-096's split arithmetic,
   asserted as a sum over the cover before and after.
 
+**Added by the S4 implementation review** — two names, §UC-200 and §UC-201:
+
+- `TestACutoverRefusesARetiringCoverNoMemberOfWhichHoldsARow` — §UC-200, GAP-1.
+  Two arms. **(a)** a drained `orders` is `Split`, and a cutover declaring the
+  pre-split cover is `ErrTopology` naming `orders#split`, with the ownership row
+  unmoved; `Observe` over that cover is refused too. **Control:** the same cutover
+  over the children's cover proceeds, so the refusal is the retirement and not the
+  cover's size. **(b)** a four-partition live generation declared as `Whole()` is
+  `ErrRetired` naming the identity, with nothing written. **Two controls:** a
+  generation that genuinely never ran — no rows and no retirement — still answers
+  the origin from `Observe` with a nil error, which is §UC-159's documented answer
+  unmoved; and the same cutover over the cover that generation *does* record at
+  proceeds.
+- `TestTheCutoverWindowIsWhatTheRetiringGenerationAdvancedUnderIt` — §UC-201,
+  GAP-2. The retiring generation commits an advance from 1000 to 1050 inside the
+  `Activate` and outside the cutover's unit. The cutover is admitted — that is the
+  contract — and what is asserted is the **bound**: the read target lands exactly
+  50 positions behind, the retiring row stands at advance 2 (its own runner's two
+  writes and no third), and the cutover issued **zero** checkpoint saves, which is
+  the Axon-claim refusal made falsifiable. **Control:** the same cutover with the
+  retiring generation at rest leaves the two generations at the same watermark,
+  so draining first is what closes the window and the measurement is of the
+  advance rather than of the switch.
+
 **Checkpoint** (no database):
 
 ```sh
 ./scripts/checks.sh event-kernel-baseline && cp scripts/event_kernel.sha256 .git/event_kernel_before_s4
 # … write the section …
-GEN='^(TestObserveAnswersTheMinimumAcrossTheCover|TestObserveRefusesACoverWhoseMemberHasNoRow|TestABarrierIsObservedAndReached|TestACutoverRefusesOnHolesAndNotOnQuarantined|TestACutoverTakesNoBarrierAndDerivesItsOwn|TestTwoCutoversLeaveOneWinnerAndOneConflict|TestARollbackIsTheSameCallExchangedAndErrRetiredWhenTheRowsAreGone|TestAnIgnoredTypeLetsTheOldGenerationKeepServing|TestPaceThrottlesTheReadWhileDrainingAndNotWhileFollowing|TestSplitPreservesTheSumAcrossThePartitionSet)$'
+GEN='^(TestObserveAnswersTheMinimumAcrossTheCover|TestObserveRefusesACoverWhoseMemberHasNoRow|TestABarrierIsObservedAndReached|TestACutoverRefusesOnHolesAndNotOnQuarantined|TestACutoverTakesNoBarrierAndDerivesItsOwn|TestACutoverRefusesARetiringCoverNoMemberOfWhichHoldsARow|TestTheCutoverWindowIsWhatTheRetiringGenerationAdvancedUnderIt|TestTwoCutoversLeaveOneWinnerAndOneConflict|TestARollbackIsTheSameCallExchangedAndErrRetiredWhenTheRowsAreGone|TestAnIgnoredTypeLetsTheOldGenerationKeepServing|TestPaceThrottlesTheReadWhileDrainingAndNotWhileFollowing|TestSplitPreservesTheSumAcrossThePartitionSet)$'
 gofmt -l . | tee /dev/stderr | wc -l | grep -qx 0 \
 && go build ./... && go vet ./event/... \
-&& test "$(go test -list "$GEN" ./event/projection/ | grep -c '^Test')" = 10 \
+&& test "$(go test -list "$GEN" ./event/projection/ | grep -c '^Test')" = 12 \
 && go test -race -count=1 -run "$GEN" ./event/projection/ \
 && test "$(go test -list '^TestEveryTrackerInTheProjectionPackageIsKeyedByAnIdentity$' ./scripts/ | grep -c '^Test')" = 1 \
 && go test -race -count=1 ./event/... ./scripts/ \
@@ -2669,25 +2897,141 @@ gofmt -l . | tee /dev/stderr | wc -l | grep -qx 0 \
 in S1's: `ErrRetired` is what `Cutover`'s rollback arm wraps, it has one home, and
 a section that did not declare it did not deliver.
 
+**One line of the chain is run out of order and the reason is mechanical.**
+`go test ./scripts/` carries `TestTheEventKernelOfThisRepositoryIsWhereThisPhaseLeftIt`,
+which runs `check-event-kernel` over the *current* manifest — so the suite is red
+until the baseline is re-recorded, and the chain above re-records it one line
+later. The baseline was therefore taken first and the suite run after it. Nothing
+is weakened by that: `event-kernel-moved` compares the **new** manifest against
+`.git/event_kernel_before_s4`, which was recorded before the first file of this
+section was written, so the fence still reads the whole section's diff.
+
+**Ran green, 2026-09-12 — re-run line for line after the review's two blocking
+findings were closed.** `gofmt` silent, `go build ./...` and `go vet ./event/...`
+clean, the **twelve** names counted and run under `-race`, the `scripts/` arm
+counted:
+
+```
+gofmt -l .                                                          0
+go build ./... ; go vet ./event/...                                clean
+go test -list "$GEN" ./event/projection/ | grep -c '^Test'         12
+ok  	github.com/frostgrove/vv/event/projection	1.321s   (the twelve, -race)
+go test -list '^TestEveryTrackerInTheProjectionPackageIsKeyedByAnIdentity$' ./scripts/ | grep -c '^Test'   1
+event-kernel-baseline: 150 files recorded in scripts/event_kernel.sha256
+ok  	github.com/frostgrove/vv/event	7.017s
+ok  	github.com/frostgrove/vv/event/eventmemory	1.506s
+ok  	github.com/frostgrove/vv/event/eventtest	4.344s
+ok  	github.com/frostgrove/vv/event/projection	1.887s
+check-event-kernel: ok
+the files under event/ this section moved:
+  event/projection/errors.go
+  event/projection/generation.go
+  event/projection/generation_test.go
+  event/projection/pass.go
+  event/projection/projection.go
+  event/projection/spec.go
+  event/projection/spec_test.go
+event-kernel-moved: ok
+```
+
+Beside it: `make vet` clean, `make examples` green (exit 0), the structural checks
+run individually — `check-deps`, `check-tiers`, `check-utils`, `check-triplets`,
+`check-todo`, `check-replaces`, `check-otel-schema`, `check-workspace`,
+`check-event-kernel` — all `ok`. The satellite was not merely compiled: the whole
+tagged suite ran live against PostgreSQL 17.9 —
+`ok github.com/frostgrove/vv/event/eventpg 107.661s`
+(`-race -count=1 -tags=integration`), the first run's 104.893s within run noise.
+The exported surface is byte-identical to the one the review walked: `observed`,
+`neverHandedDown` and `unobservable` are unexported, so `go doc -all
+./event/projection`'s `func`/`type` lines diff empty against HEAD.
+
+**One red the fix caused, and the gate caught it rather than a reviewer.**
+Folding `Observe`'s body into a shared `observed` moved its three door checks out
+of the exported function, and `scripts/projection_test.go`'s
+`TestEveryDoorTakingACoverOrAnIdentityRefusesItsZeroValue` — **P-11**'s rule,
+held structurally — reported *"Observe takes the Identity of and never asks
+whether it was built"* and the same for its `Cover`. The doors were put back in
+`Observe`'s own body and `observed` left as the walk, with a comment saying where
+a cutover's doors are instead: `cutting`'s, asked of the spec before the unit
+opens. That is the better placement anyway — the refusal reaches the caller
+without a transaction being opened for it.
+
+**The two reds at HEAD are the two S3 named, and neither is this section's.**
+`go test ./scripts/` and `make unit` fail on exactly one arm,
+`TestNoI18nPackageCostsMoreThanItsErrorSeam` (*"the i18n extension reaches
+github.com/go-json-experiment/json/jsontext outside its error seam"*), whose
+subject is `i18n/cmd/vv-i18n`; `make check` stops at `check-tidy` over the same
+29 satellites, `event/eventpg` among them, whose `go.mod` this phase has never
+touched. Both arrived with the audit/otel/i18n merge (`fefa3e9`/`939bcd9`) and
+this section touches no file of either subject — `git status` lists
+`event/projection/{errors,pass,projection,spec,spec_test}.go`,
+`event/projection/generation{,_test}.go`, `docs/ai/flows/Index.md` and
+`scripts/event_kernel.sha256` and nothing else. Unchanged after the review's
+closure: no `go.mod` or `go.sum` was touched and no file of `i18n/` was, so the
+`check-tidy` stop is still `./vvdb/dbpgx`'s `go.sum` and the one `./scripts/` red
+is still the i18n arm.
+
+**Falsified rather than asserted.** Eleven mutations were driven, each applied to
+the shipped tree, run, and restored; every one of them was caught, and the first
+message each test printed is quoted:
+
+| Mutation | Test | Result |
+|---|---|---|
+| `surveyed` no longer refuses a cover whose member holds no row | `TestObserveRefusesACoverWhoseMemberHasNoRow` | **FAIL** — *"a cover with a member that has not reported answered `<nil>`"* |
+| `Observe` folds the maximum instead of the minimum | `TestObserveAnswersTheMinimumAcrossTheCover` | **FAIL** — *"answered a barrier of 1300, where the max is 1300 … and the one position the projection as a whole delivered past is 900"* |
+| `Cutover` refuses on the cumulative `Quarantined` instead of on `Holes` | `TestACutoverRefusesOnHolesAndNotOnQuarantined` | **FAIL** — *"a generation that recovered completely was refused the cutover"*, the arm GAP-18 is about |
+| `Cutover` reads the ownership row and then writes it | `TestTwoCutoversLeaveOneWinnerAndOneConflict` | **FAIL** — *"the ownership row was read 2 times by a cutover, and a read followed by a write is what admits two winners"* |
+| the `held.recorded == 0` arm dropped, so a generation with no rows is merely behind | `TestARollbackIsTheSameCallExchangedAndErrRetiredWhenTheRowsAreGone` | **FAIL** — the control reads the refusal as `ErrTopology` where a dropped generation is `ErrRetired` |
+| `Split` hands its children the parent's cursor **without** its watermark | `TestACutoverTakesNoBarrierAndDerivesItsOwn` | **FAIL** — *"the split children answer a barrier of 0 where their parent stood at 36, and a barrier at the origin is reached by anything"* |
+| `throttled` never answers `waitPace` | `TestPaceThrottlesTheReadWhileDrainingAndNotWhileFollowing` | **FAIL** — *"the projection never asked for an interval to wait"* |
+| `Pace` throttles every read, including the first and the one after the poll | `TestPaceThrottlesTheReadWhileDrainingAndNotWhileFollowing` | **FAIL** — the drain never finishes inside the three intervals the case grants it |
+| `Reached` admits a barrier of another projection, and the zero `Barrier` with it | `TestABarrierIsObservedAndReached` | **FAIL** — *"the zero Barrier was admitted as evidence and answered `<nil>`"* |
+| a router never claims a type its own build ignores | `TestAnIgnoredTypeLetsTheOldGenerationKeepServing` | **FAIL** — *"it published [draining halted]"*, which is [[D-131]] without the escape |
+| `Split` gives **both** children the parent's counts | `TestSplitPreservesTheSumAcrossThePartitionSet` | **FAIL** — *"the two children account for 24 applied and 48 quarantined where their parent accounted for 12 and 24"* |
+
+The sixth and the eleventh are mutations of `topology.go`, which this section does
+not own and does not change: they are what makes the split a *fixture* rather than
+decoration, which is the sentence the plan's own test list argues for.
+
+**Five more, driven when the review's findings were closed**, each applied to the
+fixed tree, run, and restored:
+
+| Mutation | Test | Result |
+|---|---|---|
+| the retiring `stood.recorded == 0` refusal dropped | `TestACutoverRefusesARetiringCoverNoMemberOfWhichHoldsARow` | **FAIL** — *"a four-partition generation declared as Whole() answered `<nil>`, and a read target moved on the origin lands on a generation that applied three events"* |
+| the `neverHandedDown` call dropped from `surveyed` | the same test, split arm | **FAIL** — *"observing the pre-split cover of a generation standing at 36 answered `<nil>`"* |
+| `neverHandedDown` refuses **every** absent row, not a retired one | `TestObserveRefusesACoverWhoseMemberHasNoRow` | **FAIL** at §UC-159's control, *"a cover all of whose rows are absent"* — which is what keeps `Observe`'s documented answer where it was |
+| the retiring refusal made unconditional | the new test's **two** controls | **FAIL** — *"the cover the retiring generation actually records at was refused too, so the arm above is about the cover's size and not about the retirement"* |
+| `switching` claims the retiring rows the way Axon's `resetTokens` does | `TestTheCutoverWindowIsWhatTheRetiringGenerationAdvancedUnderIt` | **FAIL** — *"a checkpoint row moved between the save this transaction staged and its commit"*, which is the fence fight the refusal in `Cutover`'s contract is about |
+
+The third and fourth are the ones that matter: they are mutations that make the
+new refusals *wider*, and both controls catch them. A refusal nothing can
+over-fire is one nobody has measured.
+
 ---
 
-### S5 — the effect capability and its gate  `[ ]`   *(no database · moves the manifest)*
+### S5 — the effect capability and its gate  `[x]`   *(no database · moves the manifest)*
 
 **Delivers ES-06.** The capability is a value, not a mode; three suppressors,
-cheapest first; the barrier is per envelope and both sides of the comparison are
-stored; an effect belongs to an applied envelope and follows it into the park.
+cheapest first; the barrier is per envelope, one side of its comparison is a
+checkpoint column and the other is a deployment-held constant that says so; an
+effect belongs to an applied envelope and follows it into the park.
 
 **Appendices** ES-06.
 
 **Files** `event/projection/effect.go` (new), `effect_test.go` (new);
-`spec.go`, `pass.go`, `redrive.go`, `doc.go` (modified).
+`spec.go`, `pass.go`, `redrive.go`, `doc.go` (modified); `generation.go`
+(modified in round 2, for the obligation `Active` carries — GAP-1).
 
 **Realises** `Effect`, `Effects`, `EffectsFunc`, `Spec.Effects`,
-`Spec.EffectsAfter`, `Spec.Generations`, `RedriveSpec`'s three, the suppressor
-order, and **P-3**'s `Stage` arms.
+`Spec.EffectsAfter`, `Spec.Generations`, `RedriveSpec.Effects` and
+`RedriveSpec.Generations` with `RedriveSpec.EffectsAfter` **refused**, the
+suppressor order, the `Generations.Active` locking obligation, and **P-3**'s
+`Stage` arms.
 
 **Covers** UC-169, UC-170, UC-172, UC-174, UC-175, UC-176, UC-181, UC-182,
-UC-184, UC-193; INV-100, INV-101 (the untagged half), INV-104, INV-106.
+UC-184, UC-193, UC-202, UC-203, and UC-147's effect clause; INV-100, INV-101
+(the untagged half), INV-104, INV-106.
 
 **Tests** — untagged, in `event/projection`:
 
@@ -2705,15 +3049,27 @@ UC-184, UC-193; INV-100, INV-101 (the untagged half), INV-104, INV-106.
   `N+2`; the handler is called with all five. **Control:** a page entirely at or
   below `N` does not call `Stage` at all, **not even with an empty slice**, and a
   page entirely above it stages all of it.
-- `TestAParkedEnvelopeIsNotStagedAndIsNotLost` — §UC-181, §INV-106. A page
-  `A2 B1` with `A` failing permanently under `ParkSequence`: `Stage` is called
-  once with exactly `B1`; `A2` is parked with its effect. **Control:** the same
-  page with `A2` succeeding stages both.
+- `TestAParkedEnvelopeIsNotStagedAndIsNotLost` — §UC-181, §UC-147, §INV-106. A
+  page `A2 B1` with `A` failing permanently under `ParkSequence`: `Stage` is
+  called once with exactly `B1`; `A2` is parked with its effect. **A second arm
+  for the other applier** (round 2, GAP-2): a later page `A3 C1` delivered while
+  the queue already holds `a` runs `unblockedPage`, which parks `A3` *without
+  calling the handler*; `Stage` takes `C1` alone and the letter carries `A3`'s
+  effect. The two appliers hold the owed envelopes in two different variables
+  three lines apart, so one arm falsifies one of them and the mutation
+  `held.owed = this.matched` survived the whole package until this arm existed.
+  **Control:** the same two pages with nothing parked stage both, and both times,
+  so each exclusion is attributable to the queue.
 - `TestARedriveStagesWhatItAppliesAndAnEvictionStagesNothing` — §UC-182. Applying
   `A2` stages `A2`'s effect in the same transaction as the apply and the `Evict`.
   **Control:** the same redrive with `Effects` nil applies both letters and stages
   nothing, and a redrive whose identity's generation does not own the row stages
-  nothing either.
+  nothing either. **A refusal arm** (round 2, GAP-3): a `RedriveSpec` carrying a
+  non-zero `EffectsAfter` is refused with `ErrSpec` naming the field, because the
+  only thing a barrier can do on this side is suppress an effect that is owed and
+  nothing will offer it again. **Two controls:** the identical spec at zero
+  constructs, and `New` accepts the very barrier this door refuses — so the
+  refusal is the queue's and not the field's.
 - `TestTheOwnershipRowIsNotReadWhenThereIsNothingToStage` — §UC-174.
   `Generations.Active` is not called at all, counted on a recording
   implementation. **Control:** a page with one applied envelope past the barrier
@@ -2739,6 +3095,26 @@ UC-184, UC-193; INV-100, INV-101 (the untagged half), INV-104, INV-106.
   same cutover, asserted, which is the stated limit of the boundary measured
   rather than written down — and, gated on `spec.Generation != Ungenerated`, the
   first arm behaves like the control and the test is red.
+- `TestTheOwnershipReadIsABoundaryOnlyWhenACutoverWaitsForIt` — §UC-202,
+  **added in round 2 (GAP-1)**. The one interleaving that decides the boundary,
+  driven rather than reasoned about: two generations draining one log, the
+  retiring pass held between its ownership read and its commit, the arriving pass
+  reading the same row, and the cutover's write issued across both. Under the
+  documented **locking** read the `UPDATE` waits behind every open unit — both
+  passes read 1, the envelope is staged once, and the cutover returns only after
+  the unit that staged it committed. Under a **plain** read the cutover commits
+  between the two reads and the same envelope is staged by both. **Each arm is
+  the other's control:** the same interleaving, the same specs, one clause of SQL
+  apart. Driven in `psql` on PostgreSQL 17.9 first, both ways, and the fixture is
+  the two recipes rather than a sleep.
+- `TestABarrierDroppedFromTheSpecRestagesTheWarmUpBelowIt` — §UC-203,
+  **added in round 2 (GAP-4)**. A generation warmed up under `EffectsAfter: 4`,
+  interrupted at position 2, restarted from its own rows by a release that no
+  longer names the barrier: it stages `A3 A4 A5`, the first two of which are
+  below the barrier it was warmed up under. **Control:** the same restart with
+  the field still set stages `A5` alone (§UC-171). That pair is what makes "one
+  side of the comparison is a checkpoint column and the other is a constant the
+  deployment holds" a measured sentence rather than a caveat.
 - `TestABatchCarriesNoRouteToAnEffect` — §INV-100. A compile-time assertion that
   `Batch` has no `Effects` field, no dispatcher and no context key, plus a
   reflection walk over `Batch`'s fields.
@@ -2747,29 +3123,240 @@ UC-184, UC-193; INV-100, INV-101 (the untagged half), INV-104, INV-106.
   reports three problems. It is **inside `EFF`** rather than in an arm of its
   own, because the matrix names S5 as its checkpoint and a name no arm counts is
   a name nothing pins.
+- `TestAStageThatFailsIsRedeliveredOrHaltsAndIsNeverParked` — **added while
+  writing S5**, because **P-3**'s three `Stage`/`Generations.Active` arms are in
+  this section's *Realises* and none of the twelve above reaches them, so the
+  whole failure table would have shipped with no falsifier. Three arms, told
+  apart by `State.Attempt`: a transient refusal redelivers and consumes one; a
+  permanent one **halts, parks nothing, and does not re-enter the isolation
+  pass** — asserted as one handler delivery, which is what a missing arm costs;
+  an ownership row that cannot be read postpones and consumes none. `EFF` gains
+  the name and its count moves from twelve to **thirteen**.
 
 **Checkpoint** (no database):
 
 ```sh
 ./scripts/checks.sh event-kernel-baseline && cp scripts/event_kernel.sha256 .git/event_kernel_before_s5
 # … write the section …
-EFF='^(TestTheLiveGenerationStagesAndTheRebuildDoesNot|TestEffectsAreRefusedBesideAfterApply|TestAStraddlingPageStagesExactlyTheEnvelopesPastTheBarrier|TestAParkedEnvelopeIsNotStagedAndIsNotLost|TestARedriveStagesWhatItAppliesAndAnEvictionStagesNothing|TestTheOwnershipRowIsNotReadWhenThereIsNothingToStage|TestABarrierBesideAParkIsRefused|TestABarrierWithNothingToGateIsRefused|TestASecondProjectionNameWithEffectsStagesEveryHistoricalEvent|TestAnUngeneratedProjectionWithGenerationsStopsStagingAtTheCutover|TestABatchCarriesNoRouteToAnEffect|TestNewRefusesEverySpecItCannotAssemble)$'
+EFF='^(TestTheLiveGenerationStagesAndTheRebuildDoesNot|TestEffectsAreRefusedBesideAfterApply|TestAStraddlingPageStagesExactlyTheEnvelopesPastTheBarrier|TestAParkedEnvelopeIsNotStagedAndIsNotLost|TestARedriveStagesWhatItAppliesAndAnEvictionStagesNothing|TestTheOwnershipRowIsNotReadWhenThereIsNothingToStage|TestABarrierBesideAParkIsRefused|TestABarrierWithNothingToGateIsRefused|TestABarrierDroppedFromTheSpecRestagesTheWarmUpBelowIt|TestASecondProjectionNameWithEffectsStagesEveryHistoricalEvent|TestAnUngeneratedProjectionWithGenerationsStopsStagingAtTheCutover|TestTheOwnershipReadIsABoundaryOnlyWhenACutoverWaitsForIt|TestABatchCarriesNoRouteToAnEffect|TestAStageThatFailsIsRedeliveredOrHaltsAndIsNeverParked|TestNewRefusesEverySpecItCannotAssemble)$'
 gofmt -l . | tee /dev/stderr | wc -l | grep -qx 0 \
 && go build ./... && go vet ./event/... \
-&& test "$(go test -list "$EFF" ./event/projection/ | grep -c '^Test')" = 12 \
+&& test "$(go test -list "$EFF" ./event/projection/ | grep -c '^Test')" = 15 \
 && go test -race -count=1 -run "$EFF" ./event/projection/ \
 && test "$(go test -list '^TestEveryTrackerInTheProjectionPackageIsKeyedByAnIdentity$' ./scripts/ | grep -c '^Test')" = 1 \
 && go test -race -count=1 ./event/... ./scripts/ \
 && ./scripts/checks.sh event-kernel-baseline \
 && ./scripts/checks.sh event-kernel \
 && ./scripts/checks.sh event-kernel-moved .git/event_kernel_before_s5 \
-     '^event/projection/(effect|effect_test|spec|pass|redrive|doc|spec_test|harness_test)\.go$' \
+     '^event/projection/(effect|effect_test|spec|pass|redrive|doc|spec_test|harness_test|generation)\.go$' \
      event/projection/effect.go
 ```
 
+`redrive_test.go` is deliberately **not** in the allowed set, so this section's
+redrive arms live in `effect_test.go` beside the loop's — which is the right home
+anyway: what they pin is the gate, and the gate is one value both callers reach
+for.
+
+**`generation.go` joined the allowed set in round 2, and nothing else did.**
+GAP-1's close criterion is a sentence on the `Generations` contract, and that
+contract is S4's file: the obligation `Active` carries belongs on the interface
+that declares it, beside `Park`'s ordering obligations, and not restated in a
+file the implementor never opens. `generation_test.go` stayed out — the two
+recipes are fixtures of this section's subject, so `ownedRow` lives in
+`effect_test.go` and S4's `ownership` fake is untouched.
+
+**One line of the chain is run out of order, for S4's mechanical reason.**
+`go test ./scripts/` carries
+`TestTheEventKernelOfThisRepositoryIsWhereThisPhaseLeftIt`, which runs
+`check-event-kernel` over the *current* manifest, so the suite is red until the
+baseline is re-recorded and the chain re-records it one line later. The baseline
+was taken first and the suite run after it; `event-kernel-moved` compares the
+**new** manifest against `.git/event_kernel_before_s5`, recorded before the first
+file of this section was written, so the fence still reads the whole diff.
+
+**Ran green, 2026-09-12 — re-run line for line after round 2's four closures.**
+`gofmt` silent, `go build ./...` and `go vet ./event/...` clean, the **fifteen**
+names counted and run under `-race`, the `scripts/` arm counted. The `scripts`
+failure is printed rather than filtered: it is the baseline red this section
+names below, it belongs to the very command this block quotes, and the `&&` chain
+as written stops there — so the two `event-kernel` lines after it were run
+separately and are shown as such:
+
+```
+gofmt -l .                                                          0
+go build ./... ; go vet ./event/...                                clean
+go test -list "$EFF" ./event/projection/ | grep -c '^Test'         15
+ok  	github.com/frostgrove/vv/event/projection	1.049s   (the fifteen, -race)
+go test -list '^TestEveryTrackerInTheProjectionPackageIsKeyedByAnIdentity$' ./scripts/ | grep -c '^Test'   1
+ok  	github.com/frostgrove/vv/event	7.096s
+ok  	github.com/frostgrove/vv/event/eventmemory	1.511s
+ok  	github.com/frostgrove/vv/event/eventtest	4.360s
+ok  	github.com/frostgrove/vv/event/projection	1.920s
+--- FAIL: TestNoI18nPackageCostsMoreThanItsErrorSeam (0.08s)
+    i18n_test.go:31: the i18n extension reaches github.com/go-json-experiment/json/jsontext outside its error seam and declared MessageFormat/CLDR ecosystem
+FAIL	github.com/frostgrove/vv/scripts	125.488s
+
+# run separately, because the chain above stops at the red it discloses
+event-kernel-baseline: 152 files recorded in scripts/event_kernel.sha256
+check-event-kernel: ok
+the files under event/ this section moved:
+  event/projection/doc.go
+  event/projection/effect.go
+  event/projection/effect_test.go
+  event/projection/generation.go
+  event/projection/pass.go
+  event/projection/redrive.go
+  event/projection/spec.go
+  event/projection/spec_test.go
+event-kernel-moved: ok
+```
+
+Beside it: `make vet` clean, `make examples` green (exit 0), the structural checks
+run individually — `check-deps`, `check-tiers`, `check-utils`, `check-triplets`,
+`check-todo`, `check-replaces`, `check-otel-schema`, `check-workspace`,
+`check-event-kernel` — all `ok`. The satellite was not merely compiled: the whole
+tagged suite ran live against PostgreSQL 17.9 —
+`ok github.com/frostgrove/vv/event/eventpg 106.280s`
+(`-race -count=1 -tags=integration`), within run noise of S4's 107.661s. This
+section is a no-database one and that run is a regression check rather than its
+evidence; ES-06's live arms are S6's §6.11–§6.13.
+
+**Re-run after round 2**, because `event/eventpg`'s tagged tests import
+`event/projection` and a refusal added at a door is exactly the kind of change
+that only a live wiring meets: `make vet` clean, `make examples` green (exit 0),
+`check-deps`/`check-tiers`/`check-utils`/`check-triplets`/`check-todo`/`check-replaces`
+all `ok`, and
+`ok github.com/frostgrove/vv/event/eventpg 106.716s`
+(`-race -count=1 -tags=integration`), within run noise of the 106.280s above.
+GAP-1's interleaving arm was additionally run `-count=25` under `-race`, green,
+because a case that passes once and fails on rerun is a real defect and this one
+drives contention.
+
+**The two reds at HEAD are the two S3 and S4 named, and neither is this
+section's.** `go test ./scripts/` fails on exactly one arm,
+`TestNoI18nPackageCostsMoreThanItsErrorSeam`, whose subject is `i18n/cmd/vv-i18n`;
+`make check` stops at `check-tidy` over `./vvdb/dbpgx`'s `go.sum`. Both arrived
+with the audit/otel/i18n merge (`fefa3e9`/`939bcd9`) — `git log -1 --
+vvdb/dbpgx/go.sum` answers `87ae803` — and this section touches no file of either
+subject: `git diff --stat -- '*/go.mod' '*/go.sum'` is empty and no file of
+`i18n/` is in the diff.
+
+**One red this section caused, and a shipped structural rule caught it rather
+than a reviewer.** `event/refusalmessages_test.go`'s
+`TestNoRefusalRendersAnIdentityAPayloadAKeyOrACursor` reported *"a Position is
+rendered into a refusal"* against both new `EffectsAfter` messages, which printed
+the barrier's value. A refusal names the rule that was broken and never the data
+that broke it, so both now say "EffectsAfter names a barrier". The rule is
+phase 1's and it reached across a file phase 1 never saw.
+
+**One addition to this section's test list, made while writing it.**
+`TestAStageThatFailsIsRedeliveredOrHaltsAndIsNeverParked` — **P-3**'s three
+`Stage`/`Generations.Active` arms are in this section's *Realises* and none of the
+twelve planned names reaches them, so the whole failure table would have shipped
+with no falsifier. Four mutations of those arms (15–18 below) are caught by it and
+by nothing else. `EFF` gained the name and its count moved to thirteen; the plan
+was changed before the code.
+
+**Falsified rather than asserted.** Seventeen mutations were driven, each applied
+to the shipped tree, run, and restored; every one was caught, and the first
+message each test printed is quoted:
+
+| Mutation | Test | Result |
+|---|---|---|
+| suppressor 3 gated on `spec.Generation != Ungenerated`, which is what [SPEC] §1.6 implied | `TestAnUngeneratedProjectionWithGenerationsStopsStagingAtTheCutover` | **FAIL** — *"the retiring projection staged [A1 A2 A3] after the row moved"* — **P-7**, measured |
+| the barrier applied per page rather than per envelope | `TestAStraddlingPageStagesExactlyTheEnvelopesPastTheBarrier` | **FAIL** — *"the sink took [[P1 P2 P3 P4 P5]] … owes an effect for exactly the envelopes past it"* |
+| `Stage` called with an empty slice rather than not at all | the straddling page's below-the-barrier control | **FAIL** — *"the sink was called 1 times for a page with nothing past the barrier … not even with an empty slice"* |
+| a parked envelope's effect is staged with the applied ones, **on the isolation pass** | `TestAParkedEnvelopeIsNotStagedAndIsNotLost` | **FAIL** — *"the sink took [[A1] [A2 B1]] … telling the world about it is the inversion the capability exists to prevent"* |
+| the redrive applies a letter and stages nothing | `TestARedriveStagesWhatItAppliesAndAnEvictionStagesNothing` | **FAIL** — *"the sink took [], where one unit per letter is one effect per letter"* |
+| the ownership row is never consulted | `TestTheLiveGenerationStagesAndTheRebuildDoesNot` | **FAIL** — *"the retiring generation staged [A1 A2 B1 A4], and it holds a sink"* |
+| `Effects` beside `AfterApply` accepted | `TestEffectsAreRefusedBesideAfterApply` | **FAIL** — *"a spec staging effects outside a unit of work was accepted"* |
+| a barrier with nothing to gate accepted | `TestABarrierWithNothingToGateIsRefused` | **FAIL** — *"a caller who set it got a suppression of nothing"* |
+| a barrier beside a queue accepted | `TestABarrierBesideAParkIsRefused` | **FAIL** — *"what it leaves is a generation whose rows a cutover cannot compare"* |
+| `Effects` at a generation with no ownership row accepted | `TestNewRefusesEverySpecItCannotAssemble` | **FAIL** — *"a spec carrying Effects at a generation with no ownership row was accepted"* |
+| the ownership row read **before** the barrier is applied | `TestTheOwnershipRowIsNotReadWhenThereIsNothingToStage`, both the no-sink arm and the nothing-past-the-barrier arm | **FAIL** — *"the ownership row was read 1 times for a page with nothing past the barrier"* |
+| the stage runs **before** the handler, over the matched page | `TestAParkedEnvelopeIsNotStagedAndIsNotLost` | **FAIL** — the parked envelope is staged |
+| the redrive stages **outside** the letter's unit | `TestARedriveStagesWhatItAppliesAndAnEvictionStagesNothing` | **FAIL** — *"2 stages were made outside the letter's unit"* |
+| **P-3**'s three arms dropped from the failure table | `TestAStageThatFailsIsRedeliveredOrHaltsAndIsNeverParked` | **FAIL** — *"the projection retried at attempt 2, where a read of the application's own table costs no attempt"* |
+| a permanent stage failure falls through to the isolation pass | the same | **FAIL** — *"the page was delivered 2 times … rather than sent back through the isolation pass one envelope at a time"* |
+| an unreadable ownership row halts instead of postponing | the same | **FAIL** — *"it published [draining halted]"* |
+| a transient stage failure halts instead of being redelivered | the same | **FAIL** — *"it published [draining halted]"* |
+
+The eleventh is the one worth naming: it is the *order* of the suppressors rather
+than any one of them, and it is caught twice — by a projection with no sink and by
+a page with nothing past the barrier — which is what makes "cheapest first" a
+measured property rather than a comment. The fifteenth is caught only by the test
+this section added, which is the argument for adding it.
+
+**Four more, driven in round 2**, each applied to the shipped tree, run, restored,
+and the tree verified unchanged afterwards. The first of them is the finding: it
+**survived** the whole package before the arm below existed, which is what
+"falsified rather than asserted" costs when only one of two appliers has an arm.
+
+| Mutation | Test | Result |
+|---|---|---|
+| `unblockedPage` sets `held.owed = this.matched`, staging an effect for every envelope it **parked without calling the handler** | `TestAParkedEnvelopeIsNotStagedAndIsNotLost`, the §UC-147 arm | **SURVIVED** before round 2 (GAP-2) · **FAIL** now — *"the sink took [[A1] [B1] [A3 C1]], where the page A3 C1 owes an effect for C1 alone — A3 never reached the handler at all"* |
+| the third suppressor dropped, so the ownership row is read and ignored | `TestTheOwnershipReadIsABoundaryOnlyWhenACutoverWaitsForIt`, both arms | **FAIL** — *"the arriving generation staged [A1 A2 A3] beside the retiring one, and no envelope is staged by both"* |
+| `refusedBarrier` dropped from `NewRedrive` | `TestARedriveStagesWhatItAppliesAndAnEvictionStagesNothing`, the refusal arm | **FAIL** — *"a redrive carrying a barrier was accepted, and what it then does is apply a letter and stage nothing — the one outcome [SPEC] §1.6 calls the effect lost for ever"* |
+| the barrier compared against the origin rather than against `EffectsAfter` | `TestABarrierDroppedFromTheSpecRestagesTheWarmUpBelowIt`, both arms | **FAIL** — *"the warm-up staged 1 times below its own barrier, so this arm starts from a generation that was never warming up"* |
+
+**Three `[low]` findings recorded and left alone**, under `## P4` items 60, 61 and
+62: the second payload clone a sink costs per page, `Effect.Attempt` being the
+delivery's attempt rather than the envelope's, and `Spec.Effects` being inert
+beside `AfterApply` by refusal where `Spec.Park` is inert beside `Halt` by a line
+of code.
+
+**Round 2 — four `[high]` findings, all four closed, 2026-09-12.** Two of them
+were this section's own headline claims measured and found not to hold, and both
+are corrections to [SPEC] rather than to the code:
+
+- **GAP-1 — the two-sender boundary is the application's to close, and the code
+  said it was closed.** Driven in `psql` on PostgreSQL 17.9 first: `T1 BEGIN;
+  select active → 1` · `T2 update active=2` (committed, no wait) · `T1 insert
+  staged_effect; COMMIT` → both commit, one staged effect, the row at 2, nothing
+  rolled back. Then the same read `for share`: the cutover was issued at
+  `:23.810` and returned at `:25.815`, **after** the staging unit committed at
+  `:25.814`. So the mechanism is right and the boundary needs a sentence the
+  contract did not have: the obligation is on `Generations.Active` and it is
+  now stated there, `effect.go`'s *"the loser's whole unit rolls back"* is gone,
+  [SPEC] §1.6 says which read closes the window and what it does **not** close
+  (§1.5's overlap, which draining closes), §UC-173 and §UC-192 are restated, and
+  §UC-202 measures the two recipes against each other under `-race`, twenty-five
+  runs.
+- **GAP-2 — the blocking applier's staging arm had no falsifier**, and it is the
+  arm a degraded projection runs on every page. The mutation is in the table
+  above; the arm is in the test list.
+- **GAP-3 — `RedriveSpec.EffectsAfter` accepted a wiring whose only outcome is
+  the permanent loss of an owed effect.** Reproduced first: a redrive carrying a
+  barrier answered `{Applied: 2, Left: 0}` with `rows=[A2 A3] staged=[] calls=0`
+  and a nil error on every path. `NewRedrive` now refuses it, `unstageable` keeps
+  the one refusal both doors share, and the barrier-with-nothing-to-gate refusal
+  moves to `refusedEffects` where it is the loop's alone.
+- **GAP-4 — the barrier is a deployment-held constant and [SPEC] called both
+  sides checkpoint columns.** Reproduced: a generation warmed up under
+  `EffectsAfter: 4` staged nothing over positions 1–2; the same generation
+  restarted with the field dropped staged `[A3 A4 A5]`, two of which are below the
+  barrier it was warmed up under. Recording the barrier is refused here and the
+  refusal is on the record: it is a checkpoint-row question, and §5.1 freezes the
+  `event` surface for this whole phase. So the constant is **named** as one — in
+  `Spec.EffectsAfter`, in `gate.past`, in [SPEC] §1.6 — `Barrier.At`'s "and with
+  nothing else" is reconciled with the one operator use that is the only shipped
+  source of `N`, and §UC-203 measures the failure with the field-still-set
+  control beside it.
+
+Nothing was added to the backlog by round 2: the four were all `[high]`, and the
+six `[medium]`/`[low]` items it recorded (63–68) are the reviewer's, left alone.
+
 ---
 
-### S6 — the live proof, the examples, the decisions and the gate  `[ ]`   ***(LIVE DATABASE · moves the manifest)***
+### S6 — the live proof, the examples, the decisions and the gate  `[x]`   ***(LIVE DATABASE · moves the manifest)***
+
+**Amended during S6 (one line, a fact the section met rather than a scope
+change): this plan's `D-134`, `D-135` and `FL-039` were free when it was written
+and are not now** — `D-134` is the OpenTelemetry module, `D-135` the i18n module
+and `FL-039` the message-rendering flow, all landed since. The two decisions are
+therefore written as **D-140** and **D-141** and the new flow as **FL-042**;
+every "D-134"/"D-135"/"FL-039" below means those. The [[D-131]] amendment and
+[[FL-038]] are unmoved.
 
 **Delivers §6's nineteen items, twice in a row**, plus the two examples, the two
 decisions, the pages, the flows, the source walks and the regenerated surface.
@@ -2784,7 +3371,8 @@ with `psql` rather than in Go.
 `cost_integration_test.go` (new, all `//go:build integration`);
 `event/eventpg/projection_integration_test.go`, `rebuild_integration_test.go`
 (extended); `scripts/projection_test.go` (the dispatch walk and the guard
-counts); `_examples/event-partitions/main.go`,
+counts); `scripts/docs_test.go` and `docs/ai/decisions/D-020-*.md` (the rename
+walk, added when round 1 was closed); `_examples/event-partitions/main.go`,
 `_examples/event-generations/main.go`, `_examples/README.md` (new/extended);
 `docs/ai/decisions/D-134-*.md`, `D-135-*.md`, `Index.md`;
 `docs/ai/decisions/D-131-*.md` (the blue/green amendment recorded **beside** it);
@@ -2819,8 +3407,18 @@ counts); `_examples/event-partitions/main.go`,
    restart.
 8. `TestARedriveStopsAtTheRepeatFailureAndSavesNothing` — §6.8, §UC-153,
    §INV-094, with a recording `Checkpoints` asserting **zero** saves.
-9. `TestTheBarrierTheCutoverAndTheRollback` — §6.9, §UC-159, §UC-161, §UC-164,
-   and `TestTheCutoverSwitchesEveryTableAtOnceForAReaderInOneSnapshot`
+9. `TestTheBarrierTheCutoverAndTheRollback` — §6.9, §UC-159, §UC-161, §UC-164.
+   **The arm in the middle is §UC-159's `Then` and was added when S6's round-1
+   review was closed** (GAP-1): the arriving generation is held inside its second
+   page — the page size is eight over a log of twenty-four so that there is a
+   committed row under the barrier to hold it at — and while it stands there
+   `Reached` answers `Reached: false` with `Behind` equal to the distance the rows
+   record, and a `Cutover` onto it answers `ErrTopology` and leaves the ownership
+   row unmoved. Without it the whole tagged suite is green with
+   `Readiness{Reached: true, …}` hardwired in `event/projection/generation.go`,
+   because every other live arm *waits* for `Reached` and a constant true only
+   shortens the wait. Beside it,
+   `TestTheCutoverSwitchesEveryTableAtOnceForAReaderInOneSnapshot`
    with a reader held open across the commit, plus **the negative arm**: a reader
    that resolved the row *before* the commit keeps reading generation 1, and that
    is **correct** until it is retired. Beside them,
@@ -2835,13 +3433,24 @@ counts); `_examples/event-partitions/main.go`,
     the shape `TestTwoLiveInstancesOfOneNameOverOneSchema` already uses.
 11. `TestARetiredGenerationStopsStagingAtTheCutover` — §6.11, §UC-173, with the
     **no-ownership-row fixture** asserting both *would* stage. This is the window
-    Marten calls "a separate concern", and the pair is the evidence it is closed.
-    Beside it, `TestAnOwnershipRowOverASecondPoolLeavesTwoSenders` — §UC-192, the
-    measured boundary, asserted rather than claimed.
+    Marten calls "a separate concern". **The cutover is committed while a
+    retiring pass is open between its ownership read and its commit, and not
+    between two passes** (round 2, GAP-1): the between-passes version passes by
+    scheduling luck and would be read afterwards as evidence the window is
+    closed. So the live case runs **both recipes** — §UC-202 — a `Generations`
+    whose `Active` is `SELECT active … FOR SHARE`, asserting one staged row per
+    envelope across both generations and that the cutover's `UPDATE` waited; and
+    the same fixture without the clause, asserting two. Rows counted in `psql`.
+    Beside it, `TestAnOwnershipRowOverASecondPoolLeavesTwoSenders` — §UC-192, a
+    third way to lose the same boundary, asserted rather than claimed.
 12. `TestAnInterruptedWarmUpResumesSuppressed` — §6.12, §UC-171. Killed at `K`
     between `M` and `N`, restarted, and the effect sink holds nothing from
     `(K, N]`. **Control:** the same generation started fresh agrees on the
-    boundary.
+    boundary. **And the arm that says what this proves and what it does not**
+    (round 2, GAP-4, §UC-203): the same restart with `EffectsAfter` dropped
+    stages all of `(K, N]`, because the barrier's side of the comparison is a
+    constant the deployment holds. Without it §6.12 is read as proof of a
+    durability the barrier does not have.
 13. `TestAStraddlingPageStagesExactlyThePastBarrierEnvelopesLive` — §6.13.
 14. `TestEightWalksCostEightTimesOneProjectionsReads` — §6.14, §UC-168. Eight
     walks measured against a one-projection baseline, **recorded as a number**
@@ -2923,11 +3532,21 @@ for `eventpg` through the existing `TestTheCheckpointStoreSatisfiesTheContract`.
   the per-envelope barrier and why per-page is wrong; an effect following its
   envelope into the park; the ownership read inside the committing transaction as
   the two-sender boundary **neither source has**, carrying its precondition in
-  the same breath; and — as one section, not a footnote — **what the boundary
-  does not cover**, which is three things and not one: a rebuild spelled as a
-  second `Spec.Name` (§UC-184), a `Generations` reached over a second pool
-  (§UC-192), and **a live projection carrying `Effects` with no `Generations` at
-  all**. The third is **P-7**'s: the suppressor is gated on the capability being
+  the same breath — **and that precondition is two sentences, not one**: the row
+  is read through the ambient transaction, *and* the implementation's `Active`
+  takes a lock the cutover waits on, because [[D-126]] leaves the isolation level
+  to the caller and a plain read at `READ COMMITTED` closes nothing (§UC-202).
+  The barrier's paragraph says in the same breath that one side of its comparison
+  is a checkpoint column and the other a deployment-held constant, and where an
+  operator gets the number (§UC-203). And — as one section, not a footnote —
+  **what the boundary does not cover**, which is four things and not one: a
+  rebuild spelled as a second `Spec.Name` (§UC-184), a `Generations` reached over
+  a second pool (§UC-192), a `Generations` whose `Active` does not lock
+  (§UC-202), and **a live projection carrying `Effects` with no `Generations` at
+  all**. Plus the overlap the ownership row never addressed: a retiring
+  generation still advancing past the observed barrier stages envelopes the
+  arriving one has not reached, which is §1.5's window and is closed by draining
+  (§UC-201). The third is **P-7**'s: the suppressor is gated on the capability being
   supplied, so a projection that never supplied one has nothing to gate, and its
   first `Cutover(From: Ungenerated, …)` runs two senders until the retiring
   projection is stopped. The remedy is a deployment ordering — add `Generations`
@@ -2941,7 +3560,11 @@ for `eventpg` through the existing `TestTheCheckpointStoreSatisfiesTheContract`.
   `Ignore` in the *previous* release — which is a use of the rule and not a
   change to it.
 - `docs/modules/{en,ru}/projection.md` — six contract rows become nine; the three
-  renames written as renames with their reasons; the rebuild recipe changed to
+  renames written as renames with their reasons — a `Was | Is | Why` table on
+  both guides, four rows because `Spec.Quarantine → Spec.Park` is one of them,
+  each carrying §5.2's reason, and the sentence that `Progress.Quarantined` keeps
+  its name and its meaning (delivered when round 1's GAP-2 was closed; until then
+  the pages carried only the new names); the rebuild recipe changed to
   `Spec.Generation` with what the second-`Spec.Name` spelling does **not** get;
   the `Cover` sentence beside `Split`; the `Unchecked` section gaining "a foreign
   destination gets `Halt`"; the `AfterApply` outbox asymmetry Reject 2 owes; "an
@@ -2955,7 +3578,30 @@ for `eventpg` through the existing `TestTheCheckpointStoreSatisfiesTheContract`.
   measured by §UC-193's control) — and **the claim duration**, which must exceed
   the longest unit a redrive may take, because a shorter one turns every redrive
   into a run of lost claims that drains nothing, and `ErrClaimLost` is what an
-  operator sees when it is (**P-8**).
+  operator sees when it is (**P-8**). **Added by the S4 implementation review —
+  two more, both operators' and both already in `Cutover`'s own contract:** (1)
+  **the covers a cutover declares must be the ones those generations record at**,
+  because a cover no member of which holds a row is `ErrRetired` and one whose
+  members a `Split` retired is `ErrTopology` — the four-partition generation
+  declared as `Whole()` is the case to print (§UC-200); and (2) **the read-target
+  overlap window**, in Marten's own shape — drain or stop the retiring generation
+  before, or as, the switch commits, `Observe` it twice to see whether the barrier
+  moved, drop `Spec.Pace` on the arriving generation first, and what it costs when
+  it is not met is reads moving backwards by the retiring generation's advance
+  over the life of the cutover's transaction (§UC-201). The blue/green section is
+  where the second belongs, beside the effect half it already carries.
+  **Added by the S5 implementation review — a third, and it is the one the
+  two-sender paragraph cannot be written without** (round 2, GAP-1): the
+  application's `Generations.Active` must be a **locking** read — `SELECT active
+  … FOR SHARE` — or run in a `SERIALIZABLE` unit. What goes wrong when it is not
+  met is a retiring pass committing a staged effect under a row that already
+  names the arriving generation, at every isolation level this repository names,
+  with both units committing and neither rolling back (§UC-202). The page states
+  it in the same breath as the boundary, or it states a guarantee the recipe
+  beside it does not deliver. **And a fourth, about the barrier** (round 2,
+  GAP-4): `Spec.EffectsAfter` is a deployment-held constant, the operator gets
+  the number from `Observe`'s `Barrier.At`, and a release that lowers or drops it
+  re-stages the warm-up below it with nothing refusing it (§UC-203).
 - `docs/modules/{en,ru}/eventtest.md` — the two topology sections' three store
   obligations, and that a phase-3-certified store may go red on the third.
 - `docs/modules/{en,ru}/eventpg.md` — the N× walk cost and the multiplied
@@ -2966,6 +3612,12 @@ for `eventpg` through the existing `TestTheCheckpointStoreSatisfiesTheContract`.
 - `docs/ai/usecases/` — [[UC-032]] is **not** widened. [APX] says so explicitly.
 - `docs/roadmaps/Roadmap.md` — ES-01, ES-02, ES-03, ES-04 and ES-06 **removed**
   from the open list rather than annotated done; ES-05, ES-07, ES-08, ES-09 stay.
+  **Amended in S6 (one line, a fact the section met):** the open list those five
+  are *on* is not `Roadmap.md` — it is the "Дополнительные приложения — 2026-09-08"
+  section of `docs/roadmaps/2026-09-01-postgres-event-sourcing-roadmap.md`, whose
+  `**Статус: не выполнено.**` markers are what makes them open. The five
+  appendices are removed there and `Roadmap.md`'s projector paragraph, which
+  describes what the projector delivers, is updated to name what now ships.
 - `_examples/README.md` — two rows; both examples use the
   `for _, part := range cover.Partitions()` spelling and nothing else (§8.7).
 
@@ -3035,40 +3687,230 @@ kernel's exported surface does not move. The rest of `docs/api/surface.md` moves
 by everything in §5.2, and *that* diff is the question for a person it always
 is.
 
+**Run, 2026-09-12, and re-run in full after round 1's two `[high]`s were closed.**
+Everything below is what the commands printed on the re-run, reds included. The
+two reds are the two the first run had, and both are the pristine tree's.
+
+```
+$ ./scripts/checks.sh event-kernel-baseline && cp scripts/event_kernel.sha256 .git/event_kernel_before_s6
+event-kernel-baseline: 152 files recorded in scripts/event_kernel.sha256
+
+$ export FROSTGROVE_EVENTPG_TEST_DSN='postgres://vv:vv@localhost:55432/vv?sslmode=disable'
+$ export FROSTGROVE_EVENTPG_TEST_PSQL='docker compose exec -T postgres psql -U vv -d vv'
+$ gofmt -l . | wc -l
+0
+$ go build ./... && go vet ./...          # both silent
+
+$ go test -tags=integration -list '.' ./event/eventpg/ | grep -c '^Test'
+(lists; not empty)
+$ go test -tags=integration -list '^(TestTierAIsProvedAndTierBIsRefusedLive|…|TestACancelledRebuildResumesFromItsRowAndNeverFromTheOrigin)$' ./event/eventpg/ | grep -c '^Test'
+26
+
+$ go test -race -count=1 -tags=integration ./event/eventpg/...   # RUN 1
+ok  	github.com/frostgrove/vv/event/eventpg	115.700s
+$ go test -race -count=1 -tags=integration ./event/eventpg/...   # RUN 2
+ok  	github.com/frostgrove/vv/event/eventpg	118.140s
+
+$ go test -list '^(TestNoPackageOnTheProjectionPathCanDispatch|TestNoModulusIsAppliedToASequenceHash|TestNoExportedFunctionOrdersOrTakesTwoCursors|TestCursorIsNeverCompared|TestNothingInTheProjectionPackageOpensATransaction)$' ./scripts/ | grep -c '^Test'
+5
+$ go test -race -count=1 -run '^(…the same five…)$' ./scripts/
+ok  	github.com/frostgrove/vv/scripts	10.153s
+
+$ go test -race -count=1 -run '^(TestEveryNameTheProjectionPackageRenamedIsOnBothGuidesAsARename|TestAPageThatDocumentsOnlyTheNewNamesIsReported)$' ./scripts/
+ok  	github.com/frostgrove/vv/scripts	1.057s
+
+$ go vet ./event/...                      # silent
+$ go test -race -count=1 ./event/...
+ok  	github.com/frostgrove/vv/event	6.684s
+ok  	github.com/frostgrove/vv/event/eventmemory	1.501s
+ok  	github.com/frostgrove/vv/event/eventtest	4.328s
+ok  	github.com/frostgrove/vv/event/projection	1.920s
+
+$ go test -race -count=1 ./...
+--- FAIL: TestNoI18nPackageCostsMoreThanItsErrorSeam (0.09s)
+    i18n_test.go:31: the i18n extension reaches github.com/go-json-experiment/json/jsontext outside its error seam and declared MessageFormat/CLDR ecosystem
+FAIL
+FAIL	github.com/frostgrove/vv/scripts	147.046s
+(every other package ok)
+
+$ make examples
+… ?   	github.com/frostgrove/vv/_examples/event-generations	[no test files]
+… ?   	github.com/frostgrove/vv/_examples/event-partitions	[no test files]
+(and every other example builds)
+
+$ make api && git diff --stat -- docs/api/surface.md
+api: docs/api/surface.md regenerated — read the diff
+ docs/api/surface.md | 17146 ++++++++++++++++++++++++++++++++++++++++----------
+ 1 file changed, 13908 insertions(+), 3238 deletions(-)
+
+$ ./scripts/checks.sh event-kernel-baseline
+event-kernel-baseline: 152 files recorded in scripts/event_kernel.sha256
+$ ./scripts/checks.sh event-kernel
+check-event-kernel: ok
+$ diff -u .git/event_kernel_before_s6 scripts/event_kernel.sha256
+(empty)
+
+$ make vet
+(every module, silent)
+$ git diff --check
+(empty)
+
+$ make check
+check-deps: ok
+check-tiers: ok
+check-utils: ok
+check-triplets: ok
+check-todo: ok
+check-replaces: ok
+./app/appfx is not tidy — run make tidy
+… 29 modules, ending ./vvdb/dbpgx …
+make: *** [Makefile:18: check] Error 1
+```
+
+**`make check` is red on `check-tidy`, for 29 modules, and it is not this
+section's.** `git stash push --include-untracked && ./scripts/vv check-tidy`
+prints the **identical 29-line set** on the pristine tree, and
+`diff -u` of the two lists is empty. Every other arm of `make check` is green,
+including `check-event-kernel`. The condition is a `go.sum` shape — the missing
+`/go.mod` hash lines — across every satellite module, and the repair is a
+repo-wide `make tidy` that would put 29 unrelated `go.sum` files into this
+section's diff. It is reported rather than swept in, and rather than reported as
+green.
+
+**The `event` surface arm needs its own paragraph, and it is the honest statement
+rather than the fence relaxed.** The literal command
+
+```sh
+diff -u .git/event_surface_before_p4 /tmp/event_surface_after_p4
+```
+
+is **not** empty — it is 232 lines against 59. The reason is not the surface: it
+is `scripts/api-surface`, which was rewritten on **2026-09-10**, after the
+predecessor was recorded on 2026-09-09 and before this section ran. The old
+generator rendered `type Aggregate[S any, ID any] struct{ ... }` and the new one
+expands every field and method, so the predecessor and the current file are two
+renderings of one surface and the diff measures the renderer.
+
+So the claim is settled two ways that the renderer cannot reach, and **both are
+empty**:
+
+```sh
+# 1. the same section, regenerated from the pristine tree by the SAME generator
+$ git stash push --include-untracked && make api && awk '…' docs/api/surface.md > /tmp/event_surface_pristine
+$ git stash pop && diff -u /tmp/event_surface_pristine /tmp/event_surface_after_p4
+(empty — 232 lines against 232)
+
+# 2. the manifest, which is renderer-independent: every event/ file outside
+#    event/projection and event/eventtest, by sha256, before S1 and now
+$ grep -v "event/projection/\|event/eventtest/" .git/event_kernel_before_s1 | sort > /tmp/a
+$ grep -v "event/projection/\|event/eventtest/" scripts/event_kernel.sha256 | sort > /tmp/b
+$ diff -u /tmp/a /tmp/b
+(empty — 82 files each)
+```
+
+A surface cannot move while every file that declares it is byte-identical, so
+§5.1 holds. **The predecessor file is left as it was recorded rather than
+re-minted under the new generator**, because re-recording it would destroy the
+one thing it is for.
+
+**Mutation evidence.** Seven, each restored, each caught by a named arm. The
+seventh is the review's own survivor, and it is in this table because it is now
+caught rather than because it always was:
+
+| Broken | Caught by |
+|---|---|
+| `Partition.Matches` made to match everything | `TestFourPartitionsOverOneLogAndTheModulusControl` — *"the four partitions between them applied the whole log did not happen"* |
+| the ownership suppressor removed from `gate.stage` | `TestARetiredGenerationStopsStagingAtTheCutover/the locking read` — *"`locking-live` was staged 2 times where the locking read leaves it staged exactly once"* |
+| `gate.past` made per page rather than per envelope | `TestAStraddlingPageStagesExactlyThePastBarrierEnvelopesLive` (*"staged [straddle-0 … straddle-4] where exactly the envelopes past the barrier are [straddle-3 straddle-4]"*) **and** `TestAnInterruptedWarmUpResumesSuppressed` |
+| the blocking `Park.Holds` call replaced by `false` | `TestTheBlockingTestAndTheAdvanceAreOneCommit` **and** `TestASplitLeavesTheParkedLettersReachable` — *"no child asked the queue whether a sequence was parked"* |
+| `import "net/http"` planted in `event/projection/doc.go` | `TestNoPackageOnTheProjectionPathCanDispatch` — both `net/http` and the `net` it reaches, with the path it was reached through |
+| `Matches` rewritten as `hash(sequence)%(this.mask+1)` | `TestNoModulusIsAppliedToASequenceHash` — *"partition.go:90:27 takes a modulus of hash"* |
+| `generation.go:273` hardwired to `Readiness{Reached: true, Quarantined: held.quarantined}` | `TestTheBarrierTheCutoverAndTheRollback` — *"generation 2 stands at 8 under the barrier at 24 and its readiness answers {Reached:true Behind:0 Quarantined:0 Holes:0}"*, and the cutover arm alone with the readiness one disarmed — *"the cutover from generation 1 to generation 2, which stands at 8 under the barrier at 24, answered &lt;nil&gt;"*. The whole tagged suite is **red** under it (`FAIL … 114.098s`); before the arm was written it was `ok … 56.008s` |
+
+After the last restore, `./scripts/checks.sh event-kernel-baseline` still diffs
+empty against `.git/event_kernel_before_s6`, which is what says the tree came
+back.
+
 ---
 
 ## The deliverable checklist
 
-- [ ] `event/` outside `event/projection` and `event/eventtest` is byte-identical,
+- [x] `event/` outside `event/projection` and `event/eventtest` is byte-identical,
       proved by S1–S5's `event-kernel-moved` allowed sets and by S6's `diff`
       against its own predecessor, which is the same claim for a section that
-      moves nothing under `event/`.
-- [ ] `docs/api/surface.md`'s `event` section is byte-identical, proved by the
-      diff above.
-- [ ] The checkpoint suite runs **fourteen** sections. `eventpg.Checkpoints`
+      moves nothing under `event/`. **And by the 82-file sha256 comparison
+      against `.git/event_kernel_before_s1`, which is empty.**
+- [x] `docs/api/surface.md`'s `event` section is byte-identical — proved by
+      regenerating it from the pristine tree with the SAME generator, because
+      `scripts/api-surface` was rewritten on 2026-09-10 and the recorded
+      predecessor is in the old rendering. Both settlements are in the transcript
+      above and both are empty.
+- [x] The checkpoint suite runs **fourteen** sections. `eventpg.Checkpoints`
       certifies fourteen; `eventmemory.Checkpoints` certifies **thirteen** and
       declines `durability`, because it does not claim persistence and this phase
       does not make it claim any. `checkpointDefects` is 8 and every checkpoint
       section is named by one, held by
       `TestEveryCheckpointSectionIsNamedByADefectThatBreaksIt`; `inventoried` is
       still 29.
-- [ ] `event/eventpg/census_integration_test.go`'s `checkpointCensus()` names all
+- [x] `event/eventpg/census_integration_test.go`'s `checkpointCensus()` names all
       fourteen sections, and the live run certifies against it.
-- [ ] `make unit` green throughout; `make vet` clean; `gofmt -l` silent;
-      `make check` green (`check-deps`, `check-tiers`, `check-utils`,
-      `check-triplets`, `check-todo`, `check-replaces`, `check-tidy`,
-      `check-event-kernel`).
-- [ ] The live suite ran twice in a row with the DSN set, and did not skip.
-- [ ] `make examples` builds both new examples.
-- [ ] Every test name cited in `docs/` exists (`scripts/docs_test.go`), and every
+- [~] `make unit` green throughout; `make vet` clean; `gofmt -l` silent;
+      `make check` green on `check-deps`, `check-tiers`, `check-utils`,
+      `check-triplets`, `check-todo`, `check-replaces` and
+      `check-event-kernel` — and **red on `check-tidy`, for 29 modules, with the
+      identical set red on the pristine tree**. `go test -race ./...` is green
+      everywhere but `scripts/TestNoI18nPackageCostsMoreThanItsErrorSeam`, which
+      is also red on the pristine tree. Both are reported rather than repaired
+      here: one is a repo-wide `go.sum` shape and the other is the i18n
+      extension's dependency seam, and neither is `event/`'s.
+- [x] The live suite ran twice in a row with the DSN set, and did not skip — 115.951s and 116.064s, both `ok`.
+- [x] `make examples` builds both new examples, and both run: `event-partitions` prints the four rows, the split and the refusal of a second one; `event-generations` prints the barrier, the switch, the refusal on the fence, the retired generation staging nothing and the rollback.
+- [x] Every test name cited in `docs/` exists (`scripts/docs_test.go`), and every
       symbol a doc names is declared where the doc says it is — the renames are
       what makes this a real risk.
-- [ ] D-134, D-135 and the [[D-131]] amendment are written, indexed in
+- [x] The four names this phase removed are on **both** projection guides as
+      renames, beside the one that did not change, and a walk holds it:
+      `TestEveryNameTheProjectionPackageRenamedIsOnBothGuidesAsARename` with
+      `TestAPageThatDocumentsOnlyTheNewNamesIsReported` as its control. That
+      check reads the old names out of the package to confirm they are gone, so
+      it cannot pass on a table documenting a rename nobody made.
+- [x] D-140, D-141 (the numbers D-134/D-135 became — see the S6 amendment) and the [[D-131]] amendment are written, indexed in
       `docs/ai/decisions/Index.md`, and linked from the pages that cite them.
-- [ ] `docs/roadmaps/Roadmap.md` no longer lists ES-01…ES-04 and ES-06 as open.
-- [ ] Every `[critical]`/`[high]` raised by a section's review is closed and
+- [x] The open list no longer carries ES-01…ES-04 and ES-06: the five appendices are removed from `docs/roadmaps/2026-09-01-postgres-event-sourcing-roadmap.md` and `Roadmap.md` names what now ships. ES-05, ES-07, ES-08 and ES-09 stay.
+- [x] Every `[critical]`/`[high]` raised by a section's review is closed and
       re-audited **before** the next section starts; every `[medium]`/`[low]` is
       appended to `EVENTSOURCE_BACKLOG.md` under `## P4` and left alone.
+
+**Round 1 of S6's review raised two `[high]`s and both are closed.**
+
+- **GAP-1 — the whole tagged suite was green with ES-04's barrier gate hardwired
+  open.** Reproduced first: with `Readiness{Reached: true, …}` in
+  `event/projection/generation.go:273`,
+  `go test -race -count=1 -tags=integration -run '^TestTheBarrierTheCutoverAndTheRollback$'`
+  printed `ok … 1.138s`. The shape was the cause — every live arm *waits* for
+  `Reached`, so a constant true only shortens the wait, and nothing anywhere
+  asserted `Reached == false`, `Behind`, or a cutover onto a behind-but-recorded
+  generation. Closed by holding the arriving generation inside its second page
+  (`heldPage`, and a page size of eight over a log of twenty-four so that a
+  committed row stands under the barrier) and asserting both halves of §UC-159's
+  `Then` off the rows: `Reached: false` with `Behind` equal to
+  `barrier.At - row.highest`, and `ErrTopology` from the `Cutover`, with the
+  ownership row unmoved. Both halves catch the mutation independently — the
+  second was checked with the first disarmed — and the whole tagged suite is now
+  red under it.
+- **GAP-2 — [SPEC] §7.3's renames were on neither `projection.md`.** Reproduced:
+  with the new section stripped, `grep -c` for the old vocabulary over both pages
+  answers `0` and `0`, while `Progress.Quarantined` — the one name that did not
+  change — appeared four times. Closed with a `Was | Is | Why` table on both
+  guides covering `Quarantines → Park`, `Quarantined → Letter`, `Failure`'s
+  `Quarantine → ParkSequence` and `Spec.Quarantine → Spec.Park`, each carrying
+  §5.2's reason, plus the sentence that `Progress.Quarantined` keeps its name and
+  its meaning and that finding it there is not evidence the other four are still
+  present. Held by `TestEveryNameTheProjectionPackageRenamedIsOnBothGuidesAsARename`
+  in `scripts/docs_test.go`, which reads the four old names out of
+  `event/projection` to confirm they are gone and the four new ones to confirm it
+  walked the right package — with `TestAPageThatDocumentsOnlyTheNewNamesIsReported`
+  as its control — and is red on all eight rows against the pre-fix pages.
 
 ---
 
@@ -3099,11 +3941,12 @@ touches the edge of, and does not close:
 | 15. `Redriver.Sequence` returns an unbounded `[]Letter` `[medium]` | the bound is the `Park` implementer's | `MaxSequenceLetters` bounds it in practice and nothing in the contract says so |
 | 16. `Sequencer.Name()` has no validity or uniqueness rule `[low]` | it stays free text | §8.1's decision: it is a contract, checked at the park |
 
-**New to the backlog in this phase**, appended by S6:
+**New to the backlog in this phase**, appended by S6 as entries 69, 70 and 71:
 
 - **The N×M walk measurement** from §UC-168, as a number, under `## P4`, so
   Reject 3's shared-reader decision has evidence rather than an intuition
-  ([SPEC] §8.5).
+  ([SPEC] §8.5). Written: **8.0x**, eight runners reading 320 envelopes in 65
+  walks against a one-projection baseline of 40 in 12.
 - **A `parktest`-style conformance harness** for a `Park`/`Redriver`. The two
   count bounds are exercised by §UC-151 and the byte bound only by the example
   ([SPEC] §8.3); the shape that would close it is a published suite, and it is

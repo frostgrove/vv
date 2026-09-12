@@ -102,6 +102,26 @@ type RedriveSpec struct {
 	// its unit cannot order its own eviction against the loop's blocking test,
 	// which is the same reason ParkSequence does not construct there.
 	Destination any
+
+	// Two of the loop's three, checked the same way and for the same reason: an
+	// effect belongs to an applied envelope rather than to a page, so a letter
+	// carries its effect into the park and the redrive that applies it is what
+	// stages it. The stage rides the same unit as the apply and the eviction, so
+	// a crash anywhere between them leaves the letter parked, nothing applied and
+	// nothing staged.
+	//
+	// An eviction stages nothing, ever. A skip is an operator saying the event
+	// will never be applied, and an effect for an event nothing applied is the
+	// thing the capability exists to prevent.
+	//
+	// The third is here to be REFUSED rather than absent, because the field a
+	// composition root copies from a Spec into a RedriveSpec is a field it can
+	// only get wrong: a barrier over a queue suppresses an effect that is owed
+	// and nothing will ever offer it again. NewRedrive says so at the call site;
+	// a missing field would say nothing at all.
+	Effects      Effects
+	EffectsAfter event.Position
+	Generations  Generations
 }
 
 type Redrive struct{ spec RedriveSpec }
@@ -127,6 +147,8 @@ func NewRedrive(spec RedriveSpec) (*Redrive, error) {
 		problems = append(problems, fmt.Errorf("%w: Unit names no unit of work, and a letter's apply and its eviction issued outside one are two commits", ErrSpec))
 	}
 	problems = append(problems, refusedDestination(spec)...)
+	problems = append(problems, refusedBarrier(spec)...)
+	problems = append(problems, unstageable(spec.Effects, spec.Generations, spec.Identity.Generation())...)
 	if spec.Sequencer != nil {
 		if broken := unusable(spec.Sequencer); broken != "" {
 			problems = append(problems, fmt.Errorf("%w: %s", ErrSpec, broken))
@@ -139,6 +161,21 @@ func NewRedrive(spec RedriveSpec) (*Redrive, error) {
 		spec.Sequencer = ByStream()
 	}
 	return &Redrive{spec: spec}, nil
+}
+
+// The refusal that is true of EVERY redrive rather than of a wiring an operator
+// might avoid, which is why it is unconditional. A letter is in the queue
+// because a loop parked it; a loop parks only under OnPermanentFailure:
+// ParkSequence; and New refuses that beside EffectsAfter. So a generation that
+// has letters is a generation that had no barrier, every letter it left is owed
+// its effect, and the one thing a barrier can do on this side is suppress that
+// effect for ever — the loop advanced over the position and will never read it
+// again. The loop's symmetric wiring is refused; this one has to be.
+func refusedBarrier(spec RedriveSpec) []error {
+	if spec.EffectsAfter == 0 {
+		return nil
+	}
+	return []error{fmt.Errorf("%w: EffectsAfter names a barrier on a redrive, and a redrive drains letters a generation with no barrier parked — every one of them is owed its effect, and suppressing it here loses it for ever because the loop advanced over that position and will never read it again. A spec builder that serves a loop and a redrive leaves this field at zero on the redrive", ErrSpec)}
 }
 
 func refusedDestination(spec RedriveSpec) []error {
@@ -254,7 +291,7 @@ func (this *Redrive) sequenced(letters []Letter) error {
 // half a redrive can make, and the other half is falsified by consequence — a
 // redrive over a second pool leaves the letter parked and nothing applied.
 func (this *Redrive) letter(ctx context.Context, claim Claim, held Letter) (failed, refused error) {
-	var refusal, applied, evicted error
+	var refusal, applied, staged, evicted error
 	var ran bool
 	answered := this.spec.Unit(ctx, func(inner context.Context) error {
 		if ran {
@@ -267,12 +304,17 @@ func (this *Redrive) letter(ctx context.Context, claim Claim, held Letter) (fail
 		if applied = this.apply(inner, held); applied != nil {
 			return applied
 		}
+		if staged = this.staging(inner, held); staged != nil {
+			return staged
+		}
 		evicted = this.spec.Park.Evict(inner, claim, held)
 		return evicted
 	})
 	switch {
 	case refusal != nil:
 		return nil, refusal
+	case staged != nil:
+		return nil, fmt.Errorf("the letter %q of %q was applied and its effect could not be staged, so its unit rolled back and nothing was applied: %w", held.Sequence, held.Identity, staged)
 	case evicted != nil:
 		return nil, fmt.Errorf("the letter %q of %q was applied and could not be evicted, so its unit rolled back and nothing was applied: %w", held.Sequence, held.Identity, evicted)
 	case applied != nil:
@@ -283,6 +325,20 @@ func (this *Redrive) letter(ctx context.Context, claim Claim, held Letter) (fail
 		return nil, fmt.Errorf("%w: the letter %q of %q was not redriven: %w", ErrSpec, held.Sequence, held.Identity, errUnitRanNothing)
 	}
 	return nil, nil
+}
+
+// The same gate the loop has, over the one envelope this letter carries: a
+// redrive is where the effect of a parked envelope is staged, and the identity
+// it is staged under is the redrive's own whole one — a park is keyed by the
+// projection and its generation, so which partition the key once hashed into is
+// not a thing a drain knows or needs.
+func (this *Redrive) staging(ctx context.Context, held Letter) error {
+	return gate{
+		effects:     this.spec.Effects,
+		after:       this.spec.EffectsAfter,
+		generations: this.spec.Generations,
+		of:          this.spec.Identity,
+	}.stage(ctx, []event.Envelope{held.Envelope}, held.Attempt+1)
 }
 
 func (this *Redrive) apply(ctx context.Context, held Letter) error {

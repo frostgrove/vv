@@ -137,6 +137,18 @@ This decision is about the tests, so its evidence is the tests themselves:
   a guide legitimately names the reader's own file, and
   `TestASymbolThatMovedOutOfTheFileTheDocNamesIsReported` is the control that the
   skip is not swallowing everything.
+- `TestEveryNameTheProjectionPackageRenamedIsOnBothGuidesAsARename` in
+  `scripts/docs_test.go` — the fourth form, and the one a compile error sends the
+  reader looking for. A doc updated to the new names alone is complete and
+  useless to the only reader who needs it: the consumer holding
+  `projection.Quarantines` has one string, and it is the removed one. The walk
+  reads the four old names out of the package to confirm they are gone and the
+  four new ones to confirm this is the right package, requires both guides to
+  carry each pair on one line of code spans — `Quarantine` is a substring of the
+  other two, so the names are read out of the spans rather than out of the text —
+  and requires the one name that deliberately did **not** change,
+  `Progress.Quarantined`, to be declared and said so on both pages.
+  `TestAPageThatDocumentsOnlyTheNewNamesIsReported` is the control.
 - `TestTheStatusADocPromisesIsTheOneTheFunctionItNamesReturns` in
   `scripts/docs_test.go` — the same idea for behaviour rather than location. A
   line naming one function and one status code is claiming what that function

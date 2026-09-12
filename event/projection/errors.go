@@ -2,10 +2,10 @@ package projection
 
 import "errors"
 
-// Seven, and none of them crosses a store seam: construction, lifecycle,
-// contention, routing, topology, the park's room and a redrive's grant. What a
-// store refused travels as the sentinel event already publishes, so a consumer
-// reads one vocabulary rather than two.
+// Eight, and none of them crosses a store seam: construction, lifecycle,
+// contention, routing, topology, the park's room, a redrive's grant and a
+// generation's rows. What a store refused travels as the sentinel event already
+// publishes, so a consumer reads one vocabulary rather than two.
 //
 // ErrHalted is never what Run returns — Run returns ctx.Err() — it is what Ready
 // reports and what State.Err carries.
@@ -30,6 +30,10 @@ import "errors"
 // ErrClaimLost is a Park implementation's, answered to a redrive whose claim no
 // longer owns the sequence it was granted. It is the operation failing rather
 // than the letter failing, so it never reaches Retried.Cause.
+//
+// ErrRetired is a cutover to a generation whose checkpoint rows are gone. A
+// generation that was dropped and one that never ran read alike from the rows,
+// and the read target is pointed at neither: what stands behind both is nothing.
 var (
 	ErrSpec      = errors.New("projection: this projection cannot be assembled from this spec")
 	ErrHalted    = errors.New("projection: this projection stopped advancing and is not applying events")
@@ -38,4 +42,5 @@ var (
 	ErrTopology  = errors.New("projection: this topology change is not one this projection can make")
 	ErrParkFull  = errors.New("projection: this park has no room for the letter this pass has to write")
 	ErrClaimLost = errors.New("projection: this claim no longer owns the sequence it was granted")
+	ErrRetired   = errors.New("projection: this generation's checkpoints are gone, so nothing may be pointed back at it")
 )

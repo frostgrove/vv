@@ -738,6 +738,177 @@ func declaredNamesByFile(t *testing.T, root string) map[string]map[string]bool {
 	return declared
 }
 
+// The four names `event/projection` removed under a rename, each paired with
+// what replaced it. A consumer meets every one of them as a compile error, and
+// the only string they hold at that moment is the old one — so the page that is
+// their reference has to carry it, beside the new name, on one line. A page
+// documenting only the new names is a page the search that sent them there does
+// not match.
+var renamesTheProjectionPagesMustCarry = [][2]string{
+	{"Quarantines", "Park"},
+	{"Quarantined", "Letter"},
+	{"Quarantine", "ParkSequence"},
+	{"Spec.Quarantine", "Spec.Park"},
+}
+
+var projectionPages = []string{"../docs/modules/en/projection.md", "../docs/modules/ru/projection.md"}
+
+// Both guides, because they are parallel by design, and both halves, because
+// either alone is green on a lie: a page may name a rename the package never
+// made, and a package may make one no page mentions. The old names must be gone
+// from `event/projection`, the new ones must be there, and the one name that
+// deliberately did NOT change — `Progress.Quarantined`, the kernel's field —
+// must still be declared and must be said so on both pages. Without that last
+// row a reader grepping the old vocabulary finds the only member of it that is
+// still correct and concludes the rest are too.
+func TestEveryNameTheProjectionPackageRenamedIsOnBothGuidesAsARename(t *testing.T) {
+	held := packageDeclarations(t, "../event/projection")
+	for _, gone := range []struct{ kind, name string }{
+		{"a type", "Quarantines"},
+		{"a type", "Quarantined"},
+		{"a constant", "Quarantine"},
+		{"a field of Spec", "Spec.Quarantine"},
+	} {
+		if held.holds(gone.kind, gone.name) {
+			t.Errorf("event/projection still declares %s named %s, so the migration table on both projection pages documents a rename that did not happen", gone.kind, gone.name)
+		}
+	}
+	for _, arrived := range []struct{ kind, name string }{
+		{"a type", "Park"},
+		{"a type", "Letter"},
+		{"a constant", "ParkSequence"},
+		{"a field of Spec", "Spec.Park"},
+	} {
+		if !held.holds(arrived.kind, arrived.name) {
+			t.Errorf("event/projection declares no %s named %s, so this walk read the wrong package and the four rows below prove nothing", arrived.kind, arrived.name)
+		}
+	}
+	if kernel := packageDeclarations(t, "../event"); !kernel.holds("a field of Progress", "Progress.Quarantined") {
+		t.Error("event declares no Progress.Quarantined, and the sentence both projection pages carry — that it keeps its name and its meaning — has stopped being true")
+	}
+	for _, page := range projectionPages {
+		for _, complaint := range renamesNotWrittenAsRenames(t, page, renamesTheProjectionPagesMustCarry) {
+			t.Error(complaint)
+		}
+		if !namesBoth(t, page, "Progress.Quarantined", "Progress.Quarantined") {
+			t.Errorf("%s never names Progress.Quarantined, which is the one name of this vocabulary that did not change", page)
+		}
+	}
+}
+
+func TestAPageThatDocumentsOnlyTheNewNamesIsReported(t *testing.T) {
+	page := filepath.Join(t.TempDir(), "projection.md")
+	written := "`Park` is the queue, `Letter` is one entry, `ParkSequence` is the verdict, `Spec.Park` is the field.\n"
+	if err := os.WriteFile(page, []byte(written), 0o600); err != nil {
+		t.Fatalf("the fixture page could not be written: %v", err)
+	}
+	reported := renamesNotWrittenAsRenames(t, page, renamesTheProjectionPagesMustCarry)
+	if len(reported) != len(renamesTheProjectionPagesMustCarry) {
+		t.Fatalf("a page carrying only the new names was reported for %d of the %d renames, so a page that documents none of them reads as documenting some",
+			len(reported), len(renamesTheProjectionPagesMustCarry))
+	}
+}
+
+func renamesNotWrittenAsRenames(t *testing.T, path string, pairs [][2]string) []string {
+	t.Helper()
+	var missing []string
+	for _, pair := range pairs {
+		if namesBoth(t, path, pair[0], pair[1]) {
+			continue
+		}
+		missing = append(missing, fmt.Sprintf("%s carries no line naming `%s` beside `%s`, so a consumer holding the removed name finds nothing on the page they were sent to", path, pair[0], pair[1]))
+	}
+	return missing
+}
+
+// One line, and the names read out of its code spans rather than off the raw
+// text: `Quarantine` is a substring of `Quarantines` and of `Quarantined`, so a
+// plain search answers yes for a row that is about another symbol.
+func namesBoth(t *testing.T, path, was, is string) bool {
+	t.Helper()
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("cannot read %s: %v", path, err)
+	}
+	for _, line := range strings.Split(string(content), "\n") {
+		spans := map[string]bool{}
+		for _, span := range inlineCode.FindAllStringSubmatch(line, -1) {
+			spans[span[1]] = true
+		}
+		if spans[was] && spans[is] {
+			return true
+		}
+	}
+	return false
+}
+
+// Package-level declarations of one directory, by kind, because the kinds are
+// what tells a rename from a name that merely still exists: `Readiness` carries
+// a field `Quarantined` on purpose, and a walk that collected every identifier
+// would read it as the removed struct.
+type declarations struct {
+	types  map[string]bool
+	values map[string]bool
+	fields map[string]bool
+}
+
+func (this declarations) holds(kind, name string) bool {
+	switch {
+	case strings.Contains(kind, "field"):
+		return this.fields[name]
+	case strings.Contains(kind, "constant"):
+		return this.values[name]
+	default:
+		return this.types[name]
+	}
+}
+
+func packageDeclarations(t *testing.T, dir string) declarations {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("cannot read %s: %v", dir, err)
+	}
+	held := declarations{types: map[string]bool{}, values: map[string]bool{}, fields: map[string]bool{}}
+	fileSet := token.NewFileSet()
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".go") || strings.HasSuffix(entry.Name(), "_test.go") {
+			continue
+		}
+		path := filepath.Join(dir, entry.Name())
+		parsed, err := parser.ParseFile(fileSet, path, nil, parser.SkipObjectResolution)
+		if err != nil {
+			t.Fatalf("cannot parse %s: %v", path, err)
+		}
+		for _, declared := range parsed.Decls {
+			general, is := declared.(*ast.GenDecl)
+			if !is {
+				continue
+			}
+			for _, spec := range general.Specs {
+				switch typed := spec.(type) {
+				case *ast.TypeSpec:
+					held.types[typed.Name.Name] = true
+					structure, shaped := typed.Type.(*ast.StructType)
+					if !shaped {
+						continue
+					}
+					for _, field := range structure.Fields.List {
+						for _, name := range field.Names {
+							held.fields[typed.Name.Name+"."+name.Name] = true
+						}
+					}
+				case *ast.ValueSpec:
+					for _, name := range typed.Names {
+						held.values[name.Name] = true
+					}
+				}
+			}
+		}
+	}
+	return held
+}
+
 // "Exactly once" is a claim no queue and no event log in this repository can
 // make, and a reader who takes one stops writing the idempotency their consumer
 // needs. The phrase itself is not the defect — a preload resolved exactly once

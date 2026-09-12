@@ -10,13 +10,15 @@ import (
 	"github.com/frostgrove/vv/event"
 )
 
-// What the loop does next, and the four are exhaustive: read again at once,
-// wait out the poll, wait out a backoff, or stop advancing for good.
+// What the loop does next, and the five are exhaustive: read again at once,
+// wait out the poll, wait out the read throttle, wait out a backoff, or stop
+// advancing for good.
 type step uint8
 
 const (
 	readAgain step = iota
 	waitIdle
+	waitPace
 	waitBackoff
 	stopNow
 )
@@ -48,6 +50,9 @@ func (this *Projection) once(ctx context.Context) (step, error) {
 		return taken, err
 	}
 	if this.page == nil {
+		if taken := this.throttled(); taken != readAgain {
+			return taken, nil
+		}
 		if taken, err := this.read(ctx); err != nil || taken != readAgain {
 			return taken, err
 		}
@@ -164,6 +169,23 @@ func (this *Projection) unretired(ctx context.Context) (step, error) {
 		ErrTopology, this.identity, tracker.Projection())))
 }
 
+// Pace gates the read and nothing else, and only while the previous read
+// answered that there is more: a rebuild draining beside a live projection is
+// what it is for, and a projection that has caught up waits out Idle instead. It
+// is consumed once per read, so a retry — which re-applies the page it holds and
+// issues no read — waits for nothing here, and a Pace of zero consumes it and
+// reads at once.
+func (this *Projection) throttled() step {
+	if !this.pacing {
+		return readAgain
+	}
+	this.pacing = false
+	if this.spec.Pace == 0 {
+		return readAgain
+	}
+	return waitPace
+}
+
 // A read that answered ends whatever streak the loop was in, for the reason a
 // save that landed does: what Ready measures is a run of consecutive failures,
 // and a store that answered is not failing.
@@ -182,6 +204,7 @@ func (this *Projection) read(ctx context.Context) (step, error) {
 	if err != nil {
 		return this.stop(this.haltedBy(err))
 	}
+	this.pacing = true
 	this.page, this.matched, this.keys, this.cursor, this.attempt = page, matched, keys, this.reader.Cursor(), 1
 	this.transition(PhaseDraining, this.attempt, nil)
 	return readAgain, nil
@@ -248,6 +271,12 @@ type tally struct {
 
 	envelopes   uint64
 	quarantined uint64
+
+	// What the handler APPLIED in this delivery, which is what an effect is owed
+	// for. It is not the page and it is not the matched subset: a parked envelope
+	// never reached the handler and is not in here, and its effect is not lost
+	// either — the letter carries it.
+	owed []event.Envelope
 }
 
 // What delivers a page, and whether what it will have applied is known before it
@@ -347,9 +376,19 @@ func (this *Projection) insideAUnit(ctx context.Context, apply applier) (step, e
 // The isolation pass is the one applier whose tally only its own run knows —
 // what the sink took is what it discovered — so it saves afterwards, and pays
 // the double-apply this order exists to close.
+//
+// The stage runs directly after the handler in both orders, which is where an
+// effect belongs: it is owed for what the handler applied, and nothing between
+// the two may decide otherwise. Where it sits relative to the save is invisible
+// to everything but the lock manager, because all three commit together — and
+// running before the save in the order that has one left costs the pass no
+// settlement round trip when the sink refuses.
 func (this *Projection) claimed(ctx context.Context, apply applier, held *tally) error {
 	if apply.foreseen == nil {
 		if held.applied = apply.run(ctx, held); held.applied != nil {
+			return held.applied
+		}
+		if held.applied = this.staging(ctx, held); held.applied != nil {
 			return held.applied
 		}
 		if held.save = this.presentSave(ctx, held); held.save != nil {
@@ -366,7 +405,24 @@ func (this *Projection) claimed(ctx context.Context, apply applier, held *tally)
 	if held.applied = apply.run(ctx, held); held.applied != nil {
 		return held.applied
 	}
-	return nil
+	held.applied = this.staging(ctx, held)
+	return held.applied
+}
+
+// The whole of the effect gate the loop has, and it is the gate's: this pass
+// supplies the four values and the order lives in one place, beside the redrive
+// that stages through the same one.
+//
+// It is reached from inside the unit and from nowhere else. Under AfterApply
+// there is no call at all, because Effects constructs at no other tier than the
+// one whose transaction it rides in.
+func (this *Projection) staging(ctx context.Context, held *tally) error {
+	return gate{
+		effects:     this.spec.Effects,
+		after:       this.spec.EffectsAfter,
+		generations: this.spec.Generations,
+		of:          this.identity,
+	}.stage(ctx, held.owed, this.attempt)
 }
 
 // Which of the two whole-page appliers this pass uses, and the question is the
@@ -390,11 +446,15 @@ func (this *Projection) delivering() applier {
 // what lets the advance be claimed before the handler is called.
 func (this *Projection) matchedPage() applier {
 	return applier{
-		run: func(ctx context.Context, _ *tally) error {
+		run: func(ctx context.Context, held *tally) error {
 			if len(this.matched) == 0 {
 				return nil
 			}
-			return this.applyPage(ctx, this.matched, this.attempt)
+			if err := this.applyPage(ctx, this.matched, this.attempt); err != nil {
+				return err
+			}
+			held.owed = this.matched
+			return nil
 		},
 		foreseen: func(held *tally) { held.envelopes = uint64(len(this.matched)) },
 	}
@@ -436,6 +496,7 @@ func (this *Projection) unblockedPage() applier {
 			return err
 		}
 		held.envelopes += uint64(len(free))
+		held.owed = free
 		return nil
 	}}
 }
@@ -483,6 +544,7 @@ func (this *Projection) sequenceBySequence() applier {
 			switch {
 			case err == nil:
 				held.envelopes++
+				held.owed = append(held.owed, envelope)
 				continue
 			case stopping(err):
 				return err
@@ -566,6 +628,12 @@ func (this *Projection) presentSave(ctx context.Context, held *tally) error {
 	return err
 }
 
+// Total by construction, and the two effect arms sit ABOVE the park's for a
+// reason the order alone does not show: a delivery whose STAGING failed applied
+// its page perfectly well, so routing it to the isolation pass would park an
+// envelope over a read-model hole that does not exist. They are told by the
+// error's type rather than by the tally, because a stage that failed after the
+// advance was claimed is answered through a settlement that carries none.
 func (this *Projection) applyFailed(ctx context.Context, held tally, err error) (step, error) {
 	switch {
 	case stopping(err):
@@ -575,6 +643,12 @@ func (this *Projection) applyFailed(ctx context.Context, held tally, err error) 
 	case held.read != nil:
 		return this.postpone(held.read)
 	case held.park != nil:
+		return this.stop(this.haltedBy(err))
+	case asUnowned(err):
+		return this.postpone(err)
+	case asUnstaged(err) && !this.permanent(err):
+		return this.redeliver(err)
+	case asUnstaged(err):
 		return this.stop(this.haltedBy(err))
 	case held.retryable:
 		return this.redeliver(err)

@@ -36,6 +36,24 @@
 // nothing per pass. A redrive is the operator's, on the operator's goroutine,
 // and it touches no checkpoint.
 //
+// The live effects are not the projection. A Handler is handed a Batch and holds
+// no route to an Effects; a rebuild is a spec with that field nil, so there is
+// nothing to withhold from it because there is nothing to hold. Stage is called
+// inside the transaction that commits the advance and is contracted to make a
+// durable write and nothing a rollback cannot take back — the dial-out belongs
+// to whatever drains the stage. Three things suppress it, checked cheapest
+// first: a nil Effects, which costs nothing; EffectsAfter, per envelope, the
+// envelope's side of it durable and the barrier's side a constant the
+// deployment holds, so an interrupted warm-up resumes suppressed and a restart
+// under a lower barrier does not; and the ownership row, read through the
+// ambient transaction and — this half is the implementation's, because no
+// isolation level is chosen here — under a lock the cutover waits on, so a
+// retiring generation stops staging in the same breath as it commits its own
+// advance. An effect
+// follows its envelope rather than its page: a parked envelope is not staged and
+// is not lost, because its letter carries it and the redrive that applies it is
+// what stages it, while an eviction stages nothing at all.
+//
 // There is no head. A store that will not promise monotone visibility has no
 // number that is the end of the log, so being caught up is a statement about the
 // last read and never about the log: PhaseFollowing means the last read

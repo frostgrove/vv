@@ -256,6 +256,18 @@ mitigations, none of which is this library's to apply:
   projection at a glance, which is why the alert is on the pair rather than on
   either.
 
+**N partitions x M generations multiply both the read traffic and this
+exposure.** Each runner is a separate walk of the whole log with a settlement
+bound of its own, so two generations at four partitions each is eight walks and
+eight times a single projection's reads — measured, at exactly 8.0x
+(`TestEightWalksCostEightTimesOneProjectionsReads`). The multiplication that
+matters more is this section's: every one of those walks waits on the **same**
+cluster-wide floor, so one session idle in transaction anywhere stalls all eight
+at once, and a rebuild is precisely when a deployment has the most of them
+running. Size the pool for the runners you start, and set
+`idle_in_transaction_session_timeout` before you start a rebuild rather than
+after.
+
 The reference implementation this store was adjudicated against names the same
 drawback and offers no mitigation for it. There is one documented alternative —
 reading up to `pg_sequence_last_value` behind

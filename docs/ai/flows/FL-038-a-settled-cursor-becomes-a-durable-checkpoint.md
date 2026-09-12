@@ -5,7 +5,7 @@
 `eventmemory.NewCheckpoints` / `eventpg.NewCheckpoints` (the two shipped stores),
 `eventtest.RunCheckpoints` (a third implementation's proof)
 **Governed by:** [[D-092]] [[D-118]] [[D-126]] [[D-128]] [[D-129]] [[D-130]]
-[[D-131]] [[D-132]] [[D-133]]
+[[D-131]] [[D-132]] [[D-133]] [[D-140]]
 
 What happens between a page the log answered and a row in a checkpoint table that
 says a consumer finished with it — the fence that admits one save at a time, the
@@ -251,6 +251,59 @@ why the operator's order is drain, split, start the children. There is no
 `Merge`: it would have to order two cursors, and a cursor answers equality and
 emptiness only ([[D-129]]).
 
+## The cutover
+
+`event/projection/generation.go`, and it is the other half of what a generation
+is for: [[FL-042]] is where the effect gate reads the same row, and this section
+is where the read target moves.
+
+1. `Observe(ctx, checkpoints, of, over)` answers the **lowest `Highest`** across a
+   cover, which is the only aggregate a set of checkpoint rows has: `Highest` is a
+   completeness watermark for its own row and says nothing across rows, so a max,
+   a sum or an average over a partition set is a number no partition ever reached.
+   All members fresh and none retired answers the origin with a nil error — the
+   generation delivered nothing, so nothing is owed. **Some** fresh and some not
+   is `ErrTopology` naming one that holds no row, and so is a member with no row
+   beside a row recording that a split retired it: read as position zero, an
+   absent row answers a barrier at the origin for a generation that is live on
+   three partitions out of four, and every arriving generation clears it.
+2. `Reached(ctx, checkpoints, park, barrier, arriving, over)` compares `>=`
+   against the lowest `Highest` of the arriving generation's own cover and does
+   nothing else with the number. `Holes` is asked **once**, of the whole
+   generation, because a park is keyed by an identity with the partition dropped;
+   a nil park answers zero. `Quarantined` is summed and is not what a cutover
+   refuses on: it is cumulative and never falls, so a generation that parked a
+   sequence and redrove it completely would be refused by it for ever.
+3. `Cutover(ctx, spec)` is six steps inside one transaction of the caller's, and
+   the order is the argument. `inACallersTransaction`'s question first, because a
+   unit that opened nothing makes the evidence and the switch two snapshots. Then
+   the barrier is observed from the **retiring** generation's own rows —
+   `CutoverSpec` has no barrier field, because a barrier a caller can invent is
+   not evidence and the zero value of one admits a generation that has delivered
+   nothing. A retiring generation with no rows at all is `ErrRetired`; so is an
+   arriving one. Holes are refused unless `AcceptQuarantined` says otherwise, which
+   is an operator's deliberate act reachable by no default. And then `Activate`
+   moves the row, once, fenced: it answers an error wrapping `event.ErrConflict`
+   when the row does not hold `from`, so two operators cutting over at once leave
+   one winner and one refusal.
+4. **A rollback is the same call with `From` and `To` exchanged**, and the two
+   covers with them. That is not elegance: it is what makes the rollback path
+   exercised by the tests the forward one is.
+
+Two windows are named here and neither is closed by the transaction. **The covers
+a cutover declares must be the ones those generations record at**, and this call
+cannot check that — it reads the rows the cover names and no others, so a live
+four-partition generation declared as `Whole()` answers silence and silence is
+refused rather than folded into a barrier at the origin. And **the retiring
+generation is a separate runner**: if it is still advancing it goes past the
+barrier while this unit is open, and reads then move backwards by exactly that
+much until the arriving generation catches up. What closes it is an operator
+draining or stopping the retiring generation before, or as, the switch commits —
+`Observe` it twice and see whether the barrier moved. Axon's `resetTokens` is the
+one mechanism either reference has, and neither half of it is taken: this call
+cannot stop a runner in another process, and claiming a live generation's rows
+means writing them, which takes that runner's fence away.
+
 ## The two shipped checkpoint stores
 
 `event/eventmemory/checkpoints.go` keeps its rows **on the `*Log`**, so two
@@ -342,7 +395,7 @@ save ever created.
 | `event/projection/page.go` | `Batch` and its `Identity`, `Handler`, `HandlerFunc`, `copyOf` — the page per attempt, which is §INV-021's eighth hand-off |
 | `event/projection/classify.go` | `Verdict`, `Retryable`, `Permanent`, `Classifier`, `Classify`, `Failure`, `Halt`, `ParkSequence` — the history class and `ErrUnrouted` are permanent and everything else is retryable, and the second verdict parks the sequence rather than the envelope. A `RedriveSpec` carries no `Classifier`: a letter that fails again is requeued with its new cause whichever class it is in, because giving up on one removes it without applying it and that is an operator's act through `Evict` |
 | `event/projection/park.go` | `Letter`, `Park` — the queue a permanent failure parks a whole sequence in, keyed by `Identity.Whole()` so a split moves nothing, bounded per sequence rather than per queue, and counted once per resume so a healthy projection pays nothing |
-| `event/projection/redrive.go` | `Claim`, `Redriver`, `Retried`, `RedriveSpec`, `Redrive`, `NewRedrive`, `errLetterRanTwice`, `refusedDestination`, `Redrive.Sequence`, `Redrive.Any`, `Redrive.claimed`, `Redrive.drain`, `Redrive.sequenced`, `Redrive.letter`, `Redrive.apply`, `Redrive.requeued`, `Redrive.checkUnit` — the operator's half: one unit per letter, in insert order, stopping at the first that fails again, claimed rather than read, and touching no checkpoint |
+| `event/projection/redrive.go` | `Claim`, `Redriver`, `Retried`, `RedriveSpec`, `Redrive`, `NewRedrive`, `errLetterRanTwice`, `refusedBarrier`, `refusedDestination`, `Redrive.Sequence`, `Redrive.Any`, `Redrive.claimed`, `Redrive.drain`, `Redrive.sequenced`, `Redrive.letter`, `Redrive.apply`, `Redrive.requeued`, `Redrive.checkUnit` — the operator's half: one unit per letter, in insert order, stopping at the first that fails again, claimed rather than read, and touching no checkpoint |
 | `event/projection/state.go` | `Phase` and its seven values, `PhaseDegraded` and `PhaseBlocked` among them, `State` and its `Parked`, `State.Identity`, `Observer`, `ObserverFunc`, `observing`, `Projection.State`, `Projection.transition`, `Projection.progressed`, `Projection.counting`, `Projection.seed`, `Projection.publish` — published on a change and never on every pass, and a panicking observer does not take the loop down |
 | `event/projection/router.go` | `Foreign`, `SkipForeign`, `RefuseForeign`, `routeKey`, `Router`, `NewRouter`, `On`, `TryOn`, `Ignore`, `TryIgnore`, `Router.declare`, `Router.ignore`, `Router.unclaimed`, `Router.Apply`, `Router.claims`, `Router.foreignTo`, `Router.unrouted`, `Router.seal`, `Router.Skipped`, `refusedName` |
 | `event/projection/projection.go` | `Projection`, `newProjection`, `Projection.Name`, `Projection.Declaration`, `Projection.Run`, `Projection.Drain`, `Projection.Ready`, `Projection.until`, `Projection.follow`, `Projection.backoff`, `Projection.delay`, `Projection.acknowledge`, `Projection.stop` — the loop, and the six properties of it that are load-bearing and invisible from its shape |
@@ -352,6 +405,7 @@ save ever created.
 | `event/projection/cover.go` | `Cover`, `NewCover`, `Cover.Partitions`, `Cover.Count`, `gapIn` — the set is the thing that has to be right, checked by two exact arithmetic facts |
 | `event/projection/sequence.go` | `Sequencer`, `ByStream`, `Unordered`, `OneSequence`, `SequenceBy`, `sequencer`, `sequencer.Name`, `sequencer.SequenceOf`, `unusable` — who names a sequence, and the three obligations the type cannot carry |
 | `event/projection/topology.go` | `SplitSpec`, `Split`, `children`, `handOver`, `recordingFiner`, `tracking`, `retired`, `loaded`, `inACallersTransaction`, `noParent`, `besideAnAbsentParent`, `alreadySplit`, `unrecordable`, `alreadyFiner` — the one topology change there is, six steps in the caller's own transaction, the record that makes it one way, and nothing carried between two runs of it |
+| `event/projection/generation.go` | `Generation`, `Ungenerated`, `Generations`, `Barrier`, `Observe`, `Readiness`, `Reached`, `Cutover`, `CutoverSpec` and their refusals — the barrier is the lowest `Highest` across a checked set, the evidence is derived inside the unit rather than supplied by the caller, and the switch is one fenced write |
 | `scripts/projection_test.go` | the surface, AST and comment walks the invariants name: no exported function from a position or a progress to a cursor, no ordering of a cursor, no comment promising exactly-once delivery, no snapshot declared or published, no transaction opened, no published topology predicate left without a caller, and no door taking a `Cover` or an `Identity` without asking whether it was built |
 | `scripts/event_test.go` | the `projection` row of `charged`: this package costs the vocabulary plus `runtime` and nothing else |
 | `_examples/event-checkpoints-elsewhere/main.go` | a complete `event.Checkpoints` over a database this framework ships no store for, and the `InUnit` wiring that is accepted and cannot be checked |
@@ -375,8 +429,13 @@ Behind `//go:build integration`, against a live PostgreSQL:
 `event/eventpg/projection_integration_test.go`,
 `event/eventpg/projectioncase_integration_test.go`,
 `event/eventpg/router_integration_test.go`,
-`event/eventpg/rebuild_integration_test.go` and
-`event/eventpg/replay_integration_test.go`. The gate names its own command:
+`event/eventpg/rebuild_integration_test.go`,
+`event/eventpg/replay_integration_test.go`,
+`event/eventpg/partition_integration_test.go`,
+`event/eventpg/topology_integration_test.go`,
+`event/eventpg/park_integration_test.go`,
+`event/eventpg/generation_integration_test.go` and
+`event/eventpg/cost_integration_test.go`. The gate names its own command:
 
 ```sh
 FROSTGROVE_EVENTPG_TEST_DSN='postgres://vv:vv@localhost:55432/vv?sslmode=disable' \
@@ -428,9 +487,21 @@ FROSTGROVE_EVENTPG_TEST_DSN='postgres://vv:vv@localhost:55432/vv?sslmode=disable
 | two live instances of one name over one schema behave as the two modes promise | `TestTwoLiveInstancesOfOneNameOverOneSchema`, `TestASettlementTakesTheRowsCursorWhenAShorterWinnerLeftIt` |
 | the two modes leave measurably different state at one kill point | `TestTheTwoModesLeaveDifferentStateAtOneKillPoint` |
 | three wirings to a second database are told apart | `TestThreeWiringsToASecondDatabaseAreToldApart` |
-| a rebuild drains beside the live projection and the rows agree | `TestARebuiltProjectionDrainsBesideTheLiveOneAndTheRowsAgree` |
+| a rebuild drains beside the live projection and the rows agree | `TestARebuiltProjectionDrainsBesideTheLiveOneAndTheRowsAgree`, `TestAGenerationDrainsBesideTheLiveOneAndTheRowsAgree` |
+| the barrier is observed from the retiring generation's own rows, a generation that holds rows and still stands below it answers `Reached: false` with the distance and a cutover onto it is refused, the switch is one fenced write, and the rollback is the same call exchanged | `TestABarrierIsObservedAndReached`, `TestACutoverTakesNoBarrierAndDerivesItsOwn`, `TestTwoCutoversLeaveOneWinnerAndOneConflict`, `TestARollbackIsTheSameCallExchangedAndErrRetiredWhenTheRowsAreGone`, `TestTheBarrierTheCutoverAndTheRollback`, `TestTwoOperatorsCuttingOverAtOnce` |
+| a cutover refuses on holes and never on the cumulative count, and a cover no member of which holds a row is refused | `TestACutoverRefusesOnHolesAndNotOnQuarantined`, `TestACutoverRefusesARetiringCoverNoMemberOfWhichHoldsARow`, `TestACutoverCannotBeHandedABarrier` |
+| the switch is atomic for every table at once for a reader in one snapshot, and a reader that resolved the row first keeps reading the retiring generation | `TestTheCutoverSwitchesEveryTableAtOnceForAReaderInOneSnapshot` |
+| the overlap window is what the retiring generation advanced under the switch | `TestTheCutoverWindowIsWhatTheRetiringGenerationAdvancedUnderIt`, `TestACancelledRebuildResumesFromItsRowAndNeverFromTheOrigin` |
+| a generation is a name, and the retiring one cannot be told to write into the arriving one | `TestARetiringGenerationCannotBeToldToWriteIntoTheArrivingOne` |
+| four partitions over one live log keep every key in order, and the modulus that replaced them reorders and skips | `TestFourPartitionsOverOneLogAndTheModulusControl` |
+| a split's writes are one transaction live, a running parent halts, and an absent parent writes nothing | `TestASplitsThreeStatementsAreOneTransaction`, `TestARunningParentHaltsWhenItsRowIsSplitAway`, `TestASplitWithNoParentRowWritesNothing` |
+| the park write and the advance are one commit live, the fast path costs nothing, a full park blocks and one DELETE clears it, and a redrive saves nothing | `TestTheBlockingTestAndTheAdvanceAreOneCommit`, `TestTheFastPathCostsNothingLive`, `TestAFullParkBlocksAndOneDeleteClearsIt`, `TestARedriveStopsAtTheRepeatFailureAndSavesNothing`, `TestTwoOperatorsRedrivingAtOnce` |
+| a split leaves the parked letters reachable, and an empty park costs the children nothing | `TestASplitLeavesTheParkedLettersReachable`, `TestASplitOverAnEmptyParkLeavesBothChildrenPayingNothing` |
+| tier A is proved and tier B is refused live, and a foreign destination gets four promises and not the fifth | `TestTierAIsProvedAndTierBIsRefusedLive`, `TestAForeignDestinationGetsFourPromisesAndNotTheFifth` |
+| N partitions x M generations cost N x M walks, recorded as a number | `TestEightWalksCostEightTimesOneProjectionsReads` |
 | a projection resumes through a second value over one backing | `TestAProjectionResumesThroughASecondValueOverOneBacking` |
 | the replay benchmark measures what the snapshot deferral rests on | `TestTheReplayBenchmarkMeasuresTwoOrdersApart` |
 | no exported function turns a position or a progress into a cursor, no cursor is ordered, no comment promises exactly-once delivery, and no snapshot is declared or published | `TestNoExportedFunctionTakesAPositionAndAnswersACursor`, `TestNoConstructorTakesAProgressAndAnswersACursor`, `TestCursorIsNeverCompared`, `TestNoCommentInTheProjectionPackagePromisesExactlyOnce`, `TestNoSnapshotAuthorityIsDeclaredOrPromised` |
+| no exported function takes two cursors, and no modulus is applied to a sequence hash | `TestNoExportedFunctionOrdersOrTakesTwoCursors`, `TestNoModulusIsAppliedToASequenceHash` |
 | this package opens no transaction, no published topology predicate is inert, no door takes an unchecked `Cover` or `Identity`, and every file of it is named by the reverse index | `TestNothingInTheProjectionPackageOpensATransaction`, `TestEveryPublishedTopologyPredicateHasACaller`, `TestEveryDoorTakingACoverOrAnIdentityRefusesItsZeroValue`, `TestEveryProjectionSourceFileIsNamedByTheFlowReverseIndex` |
 | this package costs the vocabulary plus `runtime` and nothing else | `TestNoEventPackageCostsMoreThanTheSeamItNames` |

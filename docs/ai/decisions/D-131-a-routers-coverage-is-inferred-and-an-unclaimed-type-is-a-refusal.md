@@ -112,6 +112,39 @@ there must not start.
 - `TestAHistoryClassFailureHaltsAndNamesNoData` — an unreadable payload and an
   unrouted type reach the same permanent verdict and name no data.
 
+## Amendment — the blue/green deployment ordering
+
+*Recorded beside the rule above and not inside it: this is a **use** of the rule
+and not a change to it. Nothing in the decision moves, and the invariant at the
+top of this file is unamended.*
+
+Two generations of one projection running side by side is what a rebuild is
+([[D-141]]), and the second one's build usually introduces an event type the
+first one's does not route. Without preparation the live generation halts on the
+first such event — which is this decision working exactly as written, and is
+still the right behaviour: a read model silently missing an event type for ever
+is the cost of the alternative.
+
+**The preparation is a release ordering, and the order is the whole of it.**
+`Ignore(router, "orders", "orders.RefundIssued")` ships in the **live**
+generation's own build, one release *before* anything introduces the type. That
+release changes nothing observable: the type does not exist in the log yet, so
+the declaration is inert. The release after it introduces the type and builds the
+arriving generation, and the live one skips what it was told to skip and keeps
+serving.
+
+Doing it the other way round — introducing the type first and adding the `Ignore`
+when the halt is seen — works, and it works *after* an outage rather than instead
+of one.
+
+The same shape, one decision along: [[D-141]]'s effect gate needs
+`Spec.Generations` added to the live `Ungenerated` projection one release
+**before** its first `Cutover`, for the same reason — the release that prepares
+comes first and the release that switches comes second. What it costs when it is
+not met is measured rather than asserted
+(`TestAnUngeneratedProjectionWithGenerationsStopsStagingAtTheCutover` and its
+control): the cutover runs two senders until the retiring projection is stopped.
+
 ## See also
 
-[[D-121]] [[D-123]] [[D-130]] [[FL-038]] [[UC-032]]
+[[D-121]] [[D-123]] [[D-130]] [[D-141]] [[FL-038]] [[UC-032]]

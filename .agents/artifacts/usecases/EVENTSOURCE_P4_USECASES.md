@@ -1061,7 +1061,9 @@ type Generations interface {
   winner and one `ErrConflict`.
 - **The table is the application's**, behind the interface, for the same reason
   `Park` and `Quarantines` are. It must live in the checkpoint store's database,
-  because §1.6 reads it inside the transaction that commits the advance.
+  because §1.6 reads it inside the transaction that commits the advance — and
+  that read must be a **locking** one, which is §1.6's second obligation and is
+  stated on the interface beside this one.
 
 **And the promise carries its precondition, in the same breath, wherever it
 appears** — [[D-130]] makes that a house rule for exactly this shape:
@@ -1219,10 +1221,43 @@ From Marten's own `rebuilding.md`, and it is the honest half of blue/green:
 > old version before (or as) the new one starts to avoid the window; fully
 > coordinated drain-and-handoff is a separate concern.
 
-vv closes it, and this is the strongest single thing phase 4 contributes over
-both sources: the effect gate reads the ownership row **inside the transaction
-that commits the advance**, so the retired generation's next page finds itself
-inactive and stages nothing. §1.6.
+That passage has two halves, and they get two different answers.
+
+**The side-effect half vv closes**, and this is the strongest single thing phase 4
+contributes over both sources: the effect gate reads the ownership row **inside
+the transaction that commits the advance**, so the retired generation's next page
+finds itself inactive and stages nothing. §1.6.
+
+**The read-target half vv does not close, and names.** *(Written when the S4
+implementation review was closed; it was answered nowhere before.)* `Cutover`
+derives its barrier from the retiring generation's rows as they stand when it
+reads them. That generation is a separate runner committing in its own
+transaction: nothing claims, locks or fences its rows, and no isolation level
+helps — [[D-126]] forbids the store choosing one, and `REPEATABLE READ` would make
+the barrier the snapshot value, which is stale-low in the same direction. So if
+the retiring generation is still advancing, the read target lands on a generation
+standing where it stood a moment ago and **reads move backwards** by that
+advance, until the arriving generation catches up.
+
+The bound is Marten's own sentence with vv's terms in it: the regression is the
+retiring generation's advance rate times the life of the caller's transaction,
+and **stopping or draining the retiring generation before — or as — the switch
+commits avoids it**. `Observe` it twice and see whether the barrier moved; that is
+the whole of the check, and it needs no surface that does not already ship.
+`Spec.Pace`, this phase's answer to ES-04's resource budget, slows the arriving
+generation and therefore lengthens the recovery, so it is dropped before cutting
+over — `Cutover`'s contract says so and `Spec.Pace`'s field comment says so.
+
+**The alternative is refused in writing rather than left unmentioned.** Axon's
+`resetTokens` is the one mechanism either source has for this: one transaction,
+every segment, **processor stopped**, every token claimed. Neither half is
+available here. `Cutover` cannot stop a runner in another process, and claiming a
+live generation's checkpoint rows means *writing* them, which takes that runner's
+fence away — an operator's write in the advance path of a runner nobody at this
+call site supervises, bought to close a window an operator closes by draining.
+Driven rather than argued: the mutation that adds the claim answers *"a checkpoint
+row moved between the save this transaction staged and its commit"*. §UC-201 is
+the case, and its control is the drained one.
 
 ### The resource budget
 
@@ -1353,10 +1388,36 @@ staged and the pass is otherwise unchanged.
 
 This is the durable ownership boundary the appendix asks for and **neither source
 provides**. Marten names the two-sender window and calls closing it "a separate
-concern". vv closes it because the mechanism was already shipped: one row, one
-writer, and a read of the ownership row in the same transaction that commits the
-advance means two generations cannot both believe they own the effects — the
-loser's whole unit rolls back, its staged row with it.
+concern". vv gives it a mechanism: one row, one writer, and the read of that row
+made inside the transaction that commits the advance.
+
+**Which read closes the window, stated exactly, because the mechanism alone does
+not.** [[D-126]] forbids this framework choosing an isolation level, and at
+`READ COMMITTED` — PostgreSQL's default and what every shipped example runs at —
+a plain `SELECT active …` and a concurrent `Activate` of the same row do not
+conflict: **both commit**, and a pass that read `1`, staged, and committed after
+the row moved to `2` has staged beside the generation the row now names.
+`REPEATABLE READ` does not close it either; a snapshot read of a row another
+transaction updated raises nothing, and only `SERIALIZABLE` would.
+
+So the boundary is an **obligation on the `Generations` implementation**, stated
+in the interface's own doc comment the way `Park`'s ordering obligations are:
+`Active` must be a **locking** read — `SELECT active … FOR SHARE` / `FOR KEY
+SHARE` — or run in a `SERIALIZABLE` unit. Under a locking read the cutover's
+`UPDATE` waits behind every unit that has read the row and not yet committed, so
+the generation that staged is the generation that owned the row for the whole of
+its unit. Driven against PostgreSQL 17.9, both ways, and §UC-202 is the pair of
+recipes measured against each other.
+
+**And what the boundary is not, under either read.** It does not promise that an
+envelope the retiring generation staged is one the arriving generation will not
+stage when it reaches it. The retiring generation goes on advancing past the
+barrier the cutover was observed at, and every envelope in that overlap is one
+the arriving generation has not applied yet and will stage when it does. That is
+Marten's accepted overlap window in §1.5's terms, and the remedy is §1.5's:
+**drain or stop the retiring generation before — or as — the switch commits.**
+The ownership row closes the window between a read and a commit; the drain closes
+the window between two generations' positions, and neither closes the other.
 
 Consequences that must be stated:
 
@@ -1407,14 +1468,33 @@ of the remaining history the first time the process restarts, and that failure
 only shows up in production. Axon puts it in the token; Marten puts it in the
 comparison `own progress < N` against a persisted mark.
 
-vv has both numbers durably already:
+vv has **one** of the two numbers durably, and says which:
 
 ```go
-// Suppressed for every envelope at or below it. Both sides of the comparison
-// are checkpoint columns, so an interrupted warm-up resumes suppressed rather
-// than re-firing from the beginning.
+// Suppressed for every envelope at or below it. The ENVELOPE'S side of the
+// comparison is a checkpoint column — it is where the resumed cursor left this
+// generation — so an interrupted warm-up resumes suppressed rather than
+// re-firing from the beginning. THIS side is a constant the deployment holds.
 Spec.EffectsAfter event.Position
 ```
+
+**The half that is not durable, named rather than implied.** Nothing records the
+barrier a generation was warmed up under, nothing derives it from the prior
+generation's mark the way Marten's `GateSideEffectsBehindPriorVersion` snapshots
+`N`, and nothing refuses a restart that names a lower one. vv's shape therefore
+moves the source's failure from a **process restart** to a **configuration
+change** — a real improvement, and not the same as closing it. A release that is
+rolled back, a config map that lost a key, or a second generation built by a spec
+builder whose default is zero re-stages an effect for every envelope of the
+warm-up still below the barrier, on the first pass, with no error and no record.
+§UC-203 is that input, measured, with the field-still-set control beside it.
+
+**Where an operator gets `N`:** it is the prior generation's mark, which
+`Observe` answers as `Barrier.At`. Reading it there and writing it into the next
+generation's `Spec.EffectsAfter` is a deployment-time act — a human reading a
+barrier and writing a constant — and it is the only shipped source of the number.
+That is the one use of `Barrier.At` beside the `>=` comparison, and its doc
+comment says so rather than forbidding it.
 
 Four behaviours, all four from the source and all four load-bearing:
 
@@ -1517,11 +1597,26 @@ without reaching the handler still *contains* `A2` and `A3`. Both readings of
 envelope, and it goes wherever the envelope goes.**
 
 - `Effect.Envelopes` is the envelopes of this page the handler **applied**, past
-  the barrier. A parked envelope is not among them.
+  the barrier. A parked envelope is not among them — on **either** applier: the
+  isolation pass that parks the envelope whose handler failed, and the blocking
+  pass a degraded projection runs on every later page, which parks an envelope
+  of a held sequence *without calling the handler at all* (§UC-147).
 - A letter carries its effect into the park with it. `RedriveSpec` therefore
-  carries `Effects`, `EffectsAfter` and `Generations` — the same three the loop
-  has, checked the same way — and a redrive that applies a letter stages that
-  letter's effect in the same transaction as the apply and the `Evict`.
+  carries `Effects` and `Generations` — checked the same way the loop checks
+  them — and a redrive that applies a letter stages that letter's effect in the
+  same transaction as the apply and the `Evict`.
+- **A `RedriveSpec` carries `EffectsAfter` to refuse it, and that is the one
+  place the two doors differ.** A letter is in the queue because a loop parked
+  it; a loop parks only under `OnPermanentFailure: ParkSequence`; and `New`
+  refuses that beside a barrier. So every letter a redrive can ever drain was
+  parked by a generation that had **no** barrier and is owed its effect, and the
+  only thing a barrier can do on this side is suppress that effect **for ever** —
+  the loop advanced over the position and will never read it again, which is the
+  second of the two failures this section enumerates. `NewRedrive` refuses a
+  non-zero value naming that rule; the field exists rather than being absent
+  because the spec builder that serves a loop and a redrive is exactly the shape
+  that copies it across, and a refusal at that call site says why while a missing
+  field says nothing.
 - **An eviction stages nothing, ever.** A skip is the operator saying "this will
   never be applied", and an effect for an event that will never be applied is the
   first reading above. The eviction record and `Progress.Quarantined` are its
@@ -1592,7 +1687,9 @@ sink in tests, which is what tells the three apart in §UC-169.
 
 **ES-06.**
 - `Effect`, `Effects` (`Stage`), `EffectsFunc`, `Spec.Effects`,
-  `Spec.EffectsAfter`, and the same three on `RedriveSpec`.
+  `Spec.EffectsAfter`, `Spec.Generations`; `RedriveSpec.Effects` and
+  `RedriveSpec.Generations` checked the same way, and `RedriveSpec.EffectsAfter`
+  **refused** (§1.6).
 - The ownership read inside the committing transaction.
 - The staging-only contract, and the import walk with its control.
 
@@ -1958,9 +2055,14 @@ the end, so a number is out of order where a subject would otherwise be split.
 #### UC-147 A later page meets a sequence that is already parked  [happy]
 - **Given** The park holding sequence `A`, and a later page holding `A4 C1`.
 - **Then** `A4` is parked without reaching the handler; `C1` is applied. One
-  `Holds` call per envelope, made inside the unit.
+  `Holds` call per envelope, made inside the unit. With `Effects` set, `Stage`
+  takes `C1` and not `A4` — an effect is owed for what the handler applied, and
+  the handler was never called with `A4` (§UC-181, §INV-106).
 - **Must not** The blocking test must not be made outside the unit under
-  `InUnit`, where the park write and the advance are one commit.
+  `InUnit`, where the park write and the advance are one commit. And the effect
+  rule must not be pinned on the isolation pass alone: this is the applier a
+  degraded projection runs on **every** page until the queue is drained, and the
+  two appliers hold the owed envelopes in two different variables.
 - **Control** With the park empty, `Holds` is not called at all for that page
   (§UC-148).
 
@@ -2250,6 +2352,71 @@ the end, so a number is out of order where a subject would otherwise be split.
   a cover all of whose rows are absent answers the origin (§UC-159's control) —
   the three arms are told apart by the rows rather than by the caller.
 
+#### UC-200 A cutover declares a retiring cover no member of which holds a row  [edge]
+*Added when the S4 implementation review was closed. §UC-180 is the same rule on
+one member; this is the rule on all of them, and it is the half `Cutover` was
+missing.*
+- **Given** Two arms. **(a)** A live generation drained to a non-zero watermark
+  and then `Split`, so the parent's row is gone and its retirement row stands,
+  and a cutover declaring the cover the operator had **before** the split.
+  **(b)** A live generation running at four partitions, and a cutover declaring
+  its retiring cover as `Whole()` — the natural mistake when the two generations
+  have different topologies, which is much of the reason a rebuild exists.
+- **Then** Both are refused and nothing is written. **(a)** is `ErrTopology`
+  naming the member and the row that records its retirement, from `Observe` as
+  well as from `Cutover`: the rows say that share ran and handed its cursor to two
+  children, so it is not a member at position zero. **(b)** is `ErrRetired` naming
+  the generation, from `Cutover`: the barrier folded from silence is the origin,
+  every arriving generation clears it by `x >= 0`, and a read target is not moved
+  on no evidence. The refusal names both readings the rows cannot tell apart — a
+  cover that is not the one this generation records at, and a generation nothing
+  ever recorded for.
+- **Must not** The barrier of zero must not be reachable as *evidence* through any
+  path. The refusal must not be reachable by an override — the arriving arm has
+  none and this is the same absence. And standing a read target up where nothing
+  preceded it must not be smuggled in through this door: that is a row the
+  application's own `Generations` writes.
+- **Control** Three, and they are what keep the refusal from being about the
+  cover's shape. The same cutover over the cover the retiring generation actually
+  records at proceeds, in **both** arms — the children's cover in (a), the four
+  partitions in (b). And a generation that genuinely never ran, with no rows and
+  no retirement row, **still answers the origin from `Observe` with a nil error**
+  (§UC-159's control, unmoved): the door that closed is `Cutover`'s, and
+  `Observe`'s documented answer did not change.
+
+#### UC-201 The retiring generation advances between the barrier and the switch  [edge]
+*Added when the S4 implementation review was closed. The read-target half of
+Marten's accepted overlap window, which §1.6 answered only for side effects.*
+- **Given** A retiring generation and an arriving one at the same watermark, a
+  cutover in the caller's unit, and the retiring generation — a separate runner,
+  committing in its own transaction — advancing past the barrier after it was
+  read and before the ownership row commits.
+- **Then** The cutover is **admitted**, and that is the contract rather than a
+  defect: nothing here claims, locks or fences the retiring generation's rows, and
+  no isolation level closes the window ([[D-126]] forbids choosing one, and
+  `REPEATABLE READ` would make the barrier the snapshot value, which is also
+  stale-low). Reads move backwards at the switch by exactly what that generation
+  advanced over the life of the transaction, and recover when the arriving
+  generation catches up. The window is **named where an operator reads it** —
+  `Cutover`'s own contract — with what closes it: drain or stop the retiring
+  generation before, or as, the switch commits, and `Observe` it twice to see
+  whether the barrier moved. `Spec.Pace` on the arriving generation lengthens the
+  recovery and its own field comment says to drop it first.
+- **Must not** No comment may claim the caller's unit makes the evidence and the
+  switch one snapshot with respect to a *running* retiring generation; what the
+  unit buys is the arriving generation's rows and the ownership row moving
+  together, and the two are stated apart. The cutover must not write, claim or
+  fence any checkpoint row — Axon's `resetTokens` claims every token with the
+  processor shut down, and neither half is available to a call that cannot stop a
+  runner in another process. Taking a live runner's fence away to buy a window an
+  operator closes by draining is refused, in writing.
+- **Control** The same cutover with the retiring generation at rest leaves the
+  two generations at the same watermark and the regression at zero, so what the
+  positive arm measures is the advance and not the switch. And the retiring row's
+  advance is asserted to have moved only by its own runner's writes, so a cutover
+  that started claiming rows fails this case and the decision above is revisited
+  rather than eroded.
+
 #### UC-160 The retiring generation cannot write into the arriving one  [edge]
 - **Given** Both generations running, and a deliberate attempt to make the old
   one write into the new one's tables.
@@ -2427,7 +2594,7 @@ the end, so a number is out of order where a subject would otherwise be split.
   attributable to the park rather than to the barrier.
 
 #### UC-182 A redrive stages the effect of the letter it applies  [happy]
-- **Given** `A2 A3` parked with `Effects`, `EffectsAfter` and `Generations` on the
+- **Given** `A2 A3` parked, with `Effects` and `Generations` on the
   `RedriveSpec`, and the cause fixed.
 - **Then** Applying `A2` stages `A2`'s effect in the **same transaction** as the
   apply and the `Evict`; the same for `A3`; a crash between them leaves the letter
@@ -2436,18 +2603,26 @@ the end, so a number is out of order where a subject would otherwise be split.
   is where the effect would be lost for ever, since the loop advanced over those
   positions and will never see them again), and an **eviction** must not stage
   anything at all, ever — a skip is the operator saying the event will never be
-  applied.
+  applied. And `NewRedrive` must not **accept** an `EffectsAfter`: it is the one
+  wiring whose only outcome is that loss, and it is refused at the door (§1.6).
 - **Control** The same redrive with `Effects` nil applies both letters and stages
   nothing, and a redrive whose identity's generation does not own the row stages
   nothing either — the same two suppressors the loop has, checked the same way.
+  The refusal has two of its own: the identical spec with the field at zero
+  constructs, and the loop's door accepts the very barrier this one refuses, so
+  the refusal is the queue's and not the field's.
 
 #### UC-173 A retired generation stops dispatching at the cutover  [happy]
 - **Given** Generations 1 and 2 both running with `Effects` set, a `Generations`
-  row, and a cutover from 1 to 2 committed mid-drain.
+  whose `Active` is the documented **locking** read, and a cutover from 1 to 2
+  committed mid-drain.
 - **Then** Generation 1's next pass reads the ownership row inside the
   transaction that commits its advance, finds 2, and stages nothing. Its handler
   keeps running and its checkpoint keeps advancing. Generation 2 begins staging.
-  **No envelope is staged by both.**
+  **No envelope is staged by both — and the read that makes that true is the
+  locking one** (§1.6, §UC-202): a pass that read the row before the cutover and
+  commits after it stages beside the arriving generation, and nothing in this
+  framework can order the two for the implementation.
 - **Must not** The ownership read must not be outside the committing transaction,
   and it must not be cached across passes.
 - **Control** Without the ownership row (a spec at `Ungenerated`), both would
@@ -2459,18 +2634,64 @@ the end, so a number is out of order where a subject would otherwise be split.
   of resolving through the context's ambient transaction, and a cutover from 1 to
   2 committed mid-drain.
 - **Then** Generation 1 keeps staging past the cutover, and both generations stage
-  the same envelopes for as long as the retired one runs. This is asserted, as the
+  the same envelopes for as long as the retired one runs. This is asserted, as one
   measured boundary of the guarantee: the framework holds a method set and no
   resource, so it cannot compare that implementation's transaction to its own, and
   a self-reported "am I in your transaction?" would be answered by the same code
   that is wrong.
-- **Must not** The spec must not claim the alignment is measured (§1.6 says which
-  three alignments are asserted and why the `Destination` argument does not reach
-  them), and the module page must not state the two-sender boundary without the
-  obligation that carries it.
-- **Control** The documented implementation — resolving through the context —
-  stops staging at the same cutover (§UC-173), so the two are told apart by a
-  rollback rather than by prose.
+- **Must not** A second pool must not be presented as the **only** way to lose
+  the boundary. A `Generations` in the caller's own transaction whose `Active` is
+  a plain unlocked read loses it too, at every isolation level this repository
+  names — §UC-202 measures that one, and a live case that cuts over between two
+  passes passes by scheduling luck rather than by the boundary holding. The spec
+  must not claim the alignment is measured (§1.6 says which three alignments are
+  asserted and why the `Destination` argument does not reach them), and the
+  module page must not state the two-sender boundary without the obligation that
+  carries it.
+- **Control** The documented implementation — resolving through the context, with
+  a locking read — stops staging at the same cutover (§UC-173), so the two are
+  told apart by a rollback rather than by prose.
+
+#### UC-202 The cutover commits between two passes' ownership reads  [edge]
+- **Given** Generations 1 and 2 draining one log with `Effects` set, and the one
+  interleaving that decides the boundary: the retiring pass sits between its
+  ownership read and its commit, the arriving pass reads the same row, and the
+  cutover's write is issued across both. Run twice — once with a `Generations`
+  whose `Active` is the documented locking read, once with a plain one.
+- **Then** Under the **locking** read the cutover's `UPDATE` waits behind every
+  unit that read the row: both passes read `1`, generation 1 stages the envelope,
+  generation 2 stages nothing, and the cutover returns only after the unit that
+  staged has committed. **The envelope is staged exactly once.** Under the
+  **plain** read the cutover commits between the two reads: generation 1 commits
+  a staged effect under a row that already names 2, generation 2 reads 2 and
+  stages the same envelope, and **one envelope is staged by both**.
+- **Must not** The locking arm must not be read as a framework guarantee — the
+  obligation is the implementation's ([[D-126]]), and what the pair measures is
+  which recipe carries it. It must also not be read as closing the overlap of two
+  generations at different positions: that is §1.5's window and §UC-201's, and it
+  is closed by draining the retiring generation.
+- **Control** Each arm is the other's: the same interleaving, the same specs, one
+  clause of SQL apart, and opposite outcomes.
+
+#### UC-203 The same generation is restarted with `EffectsAfter` dropped  [edge]
+- **Given** A generation warmed up under `EffectsAfter: N` and interrupted at
+  `M < N`, restarted from its own rows by a release that no longer names the
+  barrier — a rollback of the release that added it, a config map that lost a
+  key, a spec builder whose default is zero.
+- **Then** It resumes at `M` and **stages** an effect for every envelope over
+  `(M, N]` as well as for everything past `N`, on the first pass, with no error,
+  no refusal and no record. This is asserted, as the measured half of the barrier
+  that is **not** durable: one side of the comparison is a checkpoint column and
+  the other is a constant the deployment holds (§1.6).
+- **Must not** The document must not claim both sides are durable, and a comment
+  on `Spec.EffectsAfter` or on the gate must not say the interrupted-warm-up
+  property holds for a restart under a lower barrier. Nor may it be answered by
+  `Barrier.At` being read at run time: a position is not a resume point
+  ([[D-129]]) and `Observe` answers the **prior** generation's mark, which is
+  what an operator writes into the constant.
+- **Control** The same restart with the barrier still named resumes suppressed
+  over `(M, N]` and stages only what is past `N` (§UC-171), so what the arm
+  measures is attributable to the dropped constant.
 
 #### UC-193 A generation-zero projection is retired by the first cutover  [edge]
 - **Given** The projection every deployment actually has: `orders` at
@@ -2814,20 +3035,31 @@ Each states the property and **how it is falsified**.
   set, and a target whose rows were retired. It never refuses on
   `Progress.Quarantined`, which never falls and would refuse a fully recovered
   generation for ever. Its atomicity is stated only with its precondition: the
-  reader resolves the row in the same snapshot as the tables.
+  reader resolves the row in the same snapshot as the tables. **Amended when the
+  S4 implementation review was closed:** it also refuses a *retiring* cover no
+  member of which holds a row, because a barrier folded from silence is the origin
+  and every arriving generation clears it — evidence is derived or the call does
+  not happen. And the guarantee is bounded on the side it cannot hold: the
+  caller's unit makes the *arriving* generation's rows and the ownership row one
+  snapshot, and does nothing about a retiring generation still advancing, which is
+  a named window rather than a silent one.
 - **Falsified by** §UC-161 counting one write, measuring atomicity from a reader
   and asserting the stale-reader arm; §UC-162's race; §UC-163's three arms
   including the recovered one that proceeds without the override; §UC-164's
-  `ErrRetired`; and §UC-180, which asserts there is no field through which a
-  barrier of zero can be handed in.
+  `ErrRetired`; §UC-180, which asserts there is no field through which a
+  barrier of zero can be handed **in**; §UC-200, which asserts there is no cover
+  through which one can be **derived**, with three controls that keep the refusal
+  from being about a cover's shape; and §UC-201, which measures the window and
+  asserts the cutover writes no checkpoint row of the generation it retires.
 
 #### INV-099 A barrier is a `Position`, and never a resume point
 - **Statement** `Barrier.At` is an `event.Position`. Nothing turns it into a
   `Cursor`, resumes from it, or stores it as a checkpoint. It is compared with
   `>=` against `Progress.Highest` and with nothing else.
-- **Falsified by** §UC-159 and its fresh-generation control; and the
-  position→cursor surface walk [[D-129]] already runs, extended to this phase's
-  packages.
+- **Falsified by** §UC-159 and its fresh-generation control; §UC-200's split arm,
+  where a share that ran and handed its cursor down is refused rather than folded
+  in at the origin; and the position→cursor surface walk [[D-129]] already runs,
+  extended to this phase's packages.
 
 #### INV-100 An effect capability is a value, a rebuild does not have one, and `Stage` is a write
 - **Statement** A `Handler` is handed a `Batch` and has no route to an effect. An
@@ -2844,19 +3076,24 @@ Each states the property and **how it is falsified**.
   §UC-183's lost fence; §UC-184's measured edge; and a surface check that `Batch`
   carries no `Effects`, no dispatcher and no context key.
 
-#### INV-101 The effect gate is durable at every end it has
-- **Statement** The gate is decided under three conditions and all three are
-  durable: suppression below the barrier compares a stored position against a
-  stored position, per envelope; ownership reads the generations row inside the
-  transaction that commits the advance; and **the park** decides whether there is
-  an applied envelope to stage at all — a parked envelope's effect is not staged
-  now and is not lost, because the letter carries it and a redrive stages it in
-  the transaction that applies it. An evicted letter's effect is never staged, and
-  that is stated on the module page rather than left to be discovered.
-- **Falsified by** §UC-171's interrupted warm-up; §UC-172's straddling page;
-  §UC-181's parked-and-applied page; §UC-182's redrive; §UC-173's mid-drain
-  cutover with its no-row fixture control and §UC-192's second-pool boundary; and
-  §UC-174's call count.
+#### INV-101 The effect gate rests on three things, and what each of them rests on is stated
+- **Statement** The gate is decided under three conditions, and what each of them
+  rests on is stated rather than averaged into "durable": suppression below the
+  barrier compares a stored position against **the spec's own constant**, per
+  envelope, so an interrupted warm-up resumes suppressed and a restart under a
+  lower constant does not (§UC-203); ownership reads the generations row inside
+  the transaction that commits the advance, and is a boundary exactly when that
+  read is the locking one the `Generations` contract asks for (§UC-202); and
+  **the park** decides whether there is an applied envelope to stage at all — a
+  parked envelope's effect is not staged now and is not lost, because the letter
+  carries it and a redrive stages it in the transaction that applies it. An
+  evicted letter's effect is never staged, and that is stated on the module page
+  rather than left to be discovered.
+- **Falsified by** §UC-171's interrupted warm-up and §UC-203's dropped constant;
+  §UC-172's straddling page; §UC-181's parked-and-applied page on **both**
+  appliers (§UC-147); §UC-182's redrive and its refused barrier; §UC-173's
+  mid-drain cutover with its no-row fixture control, §UC-202's two recipes and
+  §UC-192's second-pool boundary; and §UC-174's call count.
 
 #### INV-106 An effect belongs to an applied envelope, not to a page
 - **Statement** `Effect.Envelopes` is exactly the envelopes of the page that the
@@ -2865,9 +3102,11 @@ Each states the property and **how it is falsified**.
   over the life of the log: by the loop if the loop applied it, by a redrive if a
   redrive did, and by nothing at all if it was evicted unapplied.
 - **Falsified by** §UC-181 asserting exactly which of a mixed page reaches
-  `Stage`, with the nothing-parked control; §UC-182 asserting the redrive stages
-  what it applies and stages nothing for an eviction; and §UC-172's straddling
-  page for the barrier half.
+  `Stage` — on the isolation pass and on the blocking one (§UC-147), which are
+  two code paths holding the owed envelopes in two variables — each with its
+  nothing-parked control; §UC-182 asserting the redrive stages what it applies,
+  stages nothing for an eviction and refuses the barrier that would drop one; and
+  §UC-172's straddling page for the barrier half.
 
 #### INV-102 The framework contracts against dispatch and does not sandbox it
 - **Statement** No package on the projection path reaches anything that can
@@ -3151,9 +3390,15 @@ type Redriver interface {
 // Identity is whole: a redrive drains a generation, not a partition, and one
 // carrying a partition is refused with ErrTopology.
 //
-// Effects, EffectsAfter and Generations are the loop's three, checked the same
-// way and for the same reason: a letter carries its effect into the park, so
-// the redrive that applies it is what stages it. An eviction stages nothing.
+// Effects and Generations are two of the loop's three, checked the same way and
+// for the same reason: a letter carries its effect into the park, so the redrive
+// that applies it is what stages it. An eviction stages nothing.
+//
+// EffectsAfter is the third, and NewRedrive REFUSES a non-zero one: every letter
+// a redrive can drain was parked by a generation that had no barrier — New
+// refuses one beside ParkSequence — so a barrier here can only suppress an
+// effect that is owed, for ever. The field is present to be refused because a
+// spec builder serving both doors is what copies it across.
 //
 // Unit and Destination carry the same tier obligation as a pass (§1.1): the
 // apply, the Evict, the Touch and the staged effect are one transaction, and
@@ -3229,6 +3474,13 @@ const Ungenerated Generation = 0
 // generations staging one envelope. That alignment is asserted rather than
 // measured — the framework holds a method set and no resource — and it is
 // falsified by a rollback rather than by a comparison.
+//
+// AND ACTIVE MUST BE A LOCKING READ — SELECT active … FOR SHARE — or run in a
+// SERIALIZABLE unit. [[D-126]] leaves the isolation level to the caller, and at
+// READ COMMITTED a plain read of this row and a concurrent Activate of it do not
+// conflict: both commit, and a pass that read the old generation stages under a
+// row that already names the new one. The obligation is the implementation's,
+// the way Park's ordering obligations are.
 //
 // Activate is fenced on from, so two operators cutting over at once produce one
 // winner and one Conflict.
@@ -3380,9 +3632,12 @@ type Spec struct {
 	Effects Effects
 
 	// Suppressed for every envelope at or below it, per envelope and not per
-	// page. Both sides of the comparison are stored, so an interrupted warm-up
-	// resumes suppressed rather than re-firing from the beginning. Refused with
-	// a nil Effects, and refused beside OnPermanentFailure: ParkSequence.
+	// page. The envelope's side of the comparison is a checkpoint column, so an
+	// interrupted warm-up resumes suppressed rather than re-firing from the
+	// beginning; THIS side is a constant the deployment holds, so a restart that
+	// drops it stages the rest of the warm-up and nothing refuses that. Observe
+	// answers the number as Barrier.At. Refused with a nil Effects, and refused
+	// beside OnPermanentFailure: ParkSequence.
 	EffectsAfter event.Position
 
 	// A minimum interval between reads while draining. Zero is no pacing. It is
@@ -3489,11 +3744,19 @@ in Go.
     contention is caused rather than hoped for — the shape
     `TestTwoLiveInstancesOfOneNameOverOneSchema` already uses.
 11. **The retired generation stops dispatching at the cutover** (§UC-173), with
-    the no-ownership-row fixture asserting both *would* dispatch — this is the
-    window Marten calls a separate concern, and the pair is the evidence it is
-    closed.
+    the no-ownership-row fixture asserting both *would* dispatch. **Driven, not
+    awaited:** the cutover commits while a retiring pass sits between its
+    ownership read and its commit, because a cutover taken between two passes
+    passes by scheduling luck and would be read afterwards as evidence the window
+    is closed. Both recipes run (§UC-202) — the locking read, asserting the
+    envelope is staged once and that the `UPDATE` waited; and the plain one as
+    the control, asserting two senders. That pair is the evidence, and §UC-192's
+    second pool is a third way to lose the same boundary rather than the only one.
 12. **The interrupted warm-up** (§UC-171): killed at `K` between `M` and `N`,
-    restarted, and the effect sink holds nothing from `(K, N]`.
+    restarted, and the effect sink holds nothing from `(K, N]` — and the same
+    restart with `EffectsAfter` dropped (§UC-203) asserting it stages all of
+    `(K, N]`, so what item 12 proves is the checkpoint half and not a durability
+    the barrier does not have.
 13. **The straddling page** (§UC-172): `Stage` called once with exactly the
     envelopes past `N`.
 14. **The N× read cost** (§UC-168): eight walks measured against a

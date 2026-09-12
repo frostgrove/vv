@@ -47,7 +47,7 @@ func TestNoExportedFunctionTakesAPositionAndAnswersACursor(t *testing.T) {
 			t.Error(complaint + ", and a cursor is a store's own bytes rather than a number a consumer can compute")
 		}
 	}
-	if walked < 100 {
+	if walked < 200 {
 		t.Fatalf("%d exported signatures were read across the extension, so this walked the wrong packages", walked)
 	}
 	assertTheWalkFindsAKnownSignature(t)
@@ -65,7 +65,7 @@ func TestNoConstructorTakesAProgressAndAnswersACursor(t *testing.T) {
 			t.Error(complaint + ", and Progress is an observation nobody resumes from")
 		}
 	}
-	if walked < 100 {
+	if walked < 200 {
 		t.Fatalf("%d exported signatures were read across the extension, so this walked the wrong packages", walked)
 	}
 	assertTheWalkFindsAKnownSignature(t)
@@ -104,7 +104,7 @@ func TestCursorIsNeverCompared(t *testing.T) {
 			t.Error(complaint)
 		}
 	}
-	if read < 40 {
+	if read < 80 {
 		t.Fatalf("%d source files were read across the extension, so this walked the wrong tree", read)
 	}
 
@@ -138,8 +138,8 @@ func Resumed(held, taken event.Cursor) event.Cursor {
 func TestNoCommentInTheProjectionPackagePromisesExactlyOnce(t *testing.T) {
 	claims, read, files := commentClaims(t, "../event/projection")
 
-	if files < 16 {
-		t.Fatalf("%d source files of event/projection were read, and the package has sixteen outside its tests", files)
+	if files < 18 {
+		t.Fatalf("%d source files of event/projection were read, and the package has eighteen outside its tests", files)
 	}
 	if read.counted["English"] == 0 {
 		t.Fatal("not one comment of event/projection used either wording for how often a thing is delivered, and the package doc states the weaker one — so this read the wrong files")
@@ -175,8 +175,8 @@ func TestNothingInTheProjectionPackageOpensATransaction(t *testing.T) {
 			t.Error(complaint)
 		}
 	}
-	if walked < 16 {
-		t.Fatalf("%d files of event/projection were read, and the package holds sixteen outside its tests — so this walked the wrong directory", walked)
+	if walked < 18 {
+		t.Fatalf("%d files of event/projection were read, and the package holds eighteen outside its tests — so this walked the wrong directory", walked)
 	}
 
 	t.Run("the control: every shape is reported when it is there", func(t *testing.T) {
@@ -266,7 +266,7 @@ func TestNoSnapshotAuthorityIsDeclaredOrPromised(t *testing.T) {
 			t.Error(complaint)
 		}
 	}
-	if defined < 1000 {
+	if defined < 5000 {
 		t.Fatalf("%d identifiers were read across the extension, so this walked the wrong packages", defined)
 	}
 
@@ -981,5 +981,222 @@ func fieldsNothingReads(t *testing.T, checked checkedPackage, named string) []st
 		}
 		complaints = append(complaints, fmt.Sprintf("%s.%s.%s is published and no line of the package reads it, so a caller who fills it in gets nothing", checked.path, named, field.Name()))
 	}
+	return complaints
+}
+
+// The four packages of the standard library through which a process reaches the
+// outside world. `net` is the transport under `net/http` and every client built
+// on it; `net/smtp` is the mail the effect capability exists to keep out of a
+// unit of work; `os/exec` is the shell that reaches anything at all.
+var dispatchingPackages = map[string]string{
+	"net":      "a socket, and everything an HTTP client is built on",
+	"net/http": "an HTTP call, which is the irreversible action a rollback cannot take back",
+	"net/smtp": "a mail, which is the effect ES-06 exists to keep out of a unit of work",
+	"os/exec":  "a process, which reaches anything at all",
+}
+
+// §UC-177, §INV-102. The framework CONTRACTS against dispatch, and this is the
+// half of that contract a walk can hold: no package on the projection path — the
+// package itself and everything it reaches, transitively — imports anything that
+// can dial out. It is not a sandbox and the module page says so in the same
+// paragraph: a handler may still dial out, and what the shape does is make the
+// honest thing the easy thing.
+func TestNoPackageOnTheProjectionPathCanDispatch(t *testing.T) {
+	reached := reachableFrom(t, typeChecked(t, eventExtension+"/projection").pkg)
+	if len(reached) < 10 {
+		t.Fatalf("%d packages were reached from event/projection, and the vocabulary, the runtime and the standard library it rests on are more than that — so this walked nothing", len(reached))
+	}
+	for _, complaint := range dispatchers(reached) {
+		t.Error(complaint)
+	}
+
+	t.Run("the control: a package that imports net/http is reported by the same walk", func(t *testing.T) {
+		fixture := checkedFixture(t, "dialling", `package dialling
+
+import "net/http"
+
+func Dials() *http.Client { return http.DefaultClient }
+`)
+		reported := dispatchers(reachableFrom(t, fixture.pkg))
+		if len(reported) == 0 {
+			t.Fatal("the fixture imports net/http and nothing came back, so a walk that resolved no import would be read as a clean tree")
+		}
+	})
+}
+
+// Every package the given one reaches, including itself, by name. The transitive
+// half is the whole point: a package that imports a package that imports net/http
+// is one hop from a dial-out and nothing about the first package's own import
+// list would say so.
+func reachableFrom(t *testing.T, pkg *types.Package) map[string][]string {
+	t.Helper()
+	found := map[string][]string{pkg.Path(): nil}
+	var walk func(held *types.Package, through []string)
+	walk = func(held *types.Package, through []string) {
+		for _, imported := range held.Imports() {
+			path := imported.Path()
+			if _, seen := found[path]; seen {
+				continue
+			}
+			found[path] = append(append([]string{}, through...), held.Path())
+			walk(imported, found[path])
+		}
+	}
+	walk(pkg, nil)
+	return found
+}
+
+func dispatchers(reached map[string][]string) []string {
+	var complaints []string
+	for path, through := range reached {
+		what, dials := dispatchingPackages[path]
+		if !dials {
+			continue
+		}
+		complaints = append(complaints, fmt.Sprintf("%s is on the projection path, reached through %v, and it opens %s",
+			path, through, what))
+	}
+	slices.Sort(complaints)
+	return complaints
+}
+
+// §INV-086. A partition is a mask and a key never moves except by a split, so
+// the one arithmetic that must not appear is a modulus over the hash of a
+// sequence key: under `hash % N -> hash % (N+1)` roughly N/(N+1) of all keys
+// change partition and each lands in one whose checkpoint is at an unrelated
+// position. The walk is over the operator applied to a CALL of the package's own
+// hash rather than over the word, so a rename is invisible to it and a comment
+// naming it is too.
+func TestNoModulusIsAppliedToASequenceHash(t *testing.T) {
+	checked := typeChecked(t, eventExtension+"/projection")
+	if len(checked.files) < 18 {
+		t.Fatalf("%d files of event/projection were read, and the package holds eighteen outside its tests", len(checked.files))
+	}
+	hashes := hashingFunctions(checked)
+	if len(hashes) == 0 {
+		t.Fatal("event/projection declares no function whose name says it hashes a key, so this walk has nothing to watch and a modulus over one would be invisible to it")
+	}
+	for _, complaint := range modulusOverAHash(checked, hashes) {
+		t.Error(complaint)
+	}
+
+	t.Run("the control: the same walk over a package that does apply one", func(t *testing.T) {
+		fixture := checkedFixture(t, "modulus", `package modulus
+
+import "hash/fnv"
+
+func hashOf(key string) uint32 {
+	held := fnv.New32a()
+	_, _ = held.Write([]byte(key))
+	return held.Sum32()
+}
+
+func PartitionOf(key string, count uint32) uint32 { return hashOf(key) % count }
+`)
+		reported := modulusOverAHash(fixture, hashingFunctions(fixture))
+		if len(reported) != 1 {
+			t.Fatalf("the fixture takes a modulus of a hash and %v came back, so the arm that would have found one in the tree proves nothing", reported)
+		}
+	})
+}
+
+var hashingName = regexp.MustCompile(`(?i)hash`)
+
+func hashingFunctions(checked checkedPackage) map[types.Object]bool {
+	found := map[types.Object]bool{}
+	for identifier, object := range checked.info.Defs {
+		if object == nil || !hashingName.MatchString(identifier.Name) {
+			continue
+		}
+		if _, is := object.Type().(*types.Signature); is {
+			found[object] = true
+		}
+	}
+	return found
+}
+
+func modulusOverAHash(checked checkedPackage, hashes map[types.Object]bool) []string {
+	var complaints []string
+	for _, file := range checked.files {
+		ast.Inspect(file, func(node ast.Node) bool {
+			binary, is := node.(*ast.BinaryExpr)
+			if !is || binary.Op != token.REM {
+				return true
+			}
+			for _, side := range []ast.Expr{binary.X, binary.Y} {
+				call, isCall := side.(*ast.CallExpr)
+				if !isCall {
+					continue
+				}
+				named, isName := call.Fun.(*ast.Ident)
+				if !isName || !hashes[checked.info.Uses[named]] {
+					continue
+				}
+				complaints = append(complaints, checked.fset.Position(binary.Pos()).String()+
+					" takes a modulus of "+named.Name+
+					", and a partition is a mask: under a modulus a key moves the moment the count changes, into a partition whose checkpoint is at an unrelated position")
+			}
+			return true
+		})
+	}
+	slices.Sort(complaints)
+	return complaints
+}
+
+// §UC-142, §INV-088. A merge is the one topology change [[D-128]] and [[D-129]]
+// jointly forbid, and its SIGNATURE is what it cannot hide: two partitions
+// become one, so the function that performs it takes both children's cursors and
+// has to decide which the survivor resumes from. There is no such decision — a
+// cursor is a store's own bytes and ordering two of them is arithmetic on an
+// encoding — so no exported signature of this extension mentions event.Cursor
+// twice in its parameters.
+//
+// TestNoExportedFunctionTakesAPositionAndAnswersACursor asks a different
+// question and would not see one: a merge takes no position and answers a cursor
+// it was handed. TestCursorIsNeverCompared holds the ordering half.
+func TestNoExportedFunctionOrdersOrTakesTwoCursors(t *testing.T) {
+	walked := 0
+	for _, checked := range checkedEventPackages(t) {
+		walked += checked.signatures
+		for _, complaint := range takesTwoCursors(checked.pkg) {
+			t.Error(complaint)
+		}
+	}
+	if walked < 200 {
+		t.Fatalf("%d exported signatures were read across the extension, so this walked the wrong packages", walked)
+	}
+
+	t.Run("the control: a package declaring a merge is reported by the same walk", func(t *testing.T) {
+		fixture := checkedFixture(t, "merging", `package merging
+
+import "github.com/frostgrove/vv/event"
+
+func Merge(held, taken event.Cursor) event.Cursor { return held }
+`)
+		reported := takesTwoCursors(fixture.pkg)
+		if len(reported) != 1 {
+			t.Fatalf("the fixture takes two cursors and %v came back, so the arm that would have found one in the tree proves nothing", reported)
+		}
+	})
+}
+
+func takesTwoCursors(pkg *types.Package) []string {
+	cursor := eventTypeName("Cursor")
+	var complaints []string
+	for _, signature := range exportedSignatures(pkg) {
+		params := signature.signature.Params()
+		held := 0
+		for index := range params.Len() {
+			if types.TypeString(params.At(index).Type(), nil) == cursor {
+				held++
+			}
+		}
+		if held < 2 {
+			continue
+		}
+		complaints = append(complaints, fmt.Sprintf("%s.%s takes %d cursors, and a call that holds two has to decide which one the survivor resumes from — which is the ordering a cursor does not answer",
+			pkg.Path(), signature.name, held))
+	}
+	slices.Sort(complaints)
 	return complaints
 }

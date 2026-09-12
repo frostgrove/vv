@@ -89,6 +89,21 @@ type Spec struct {
 
 	Idle time.Duration
 
+	// The read throttle a rebuild is given so that it does not starve the live
+	// projection beside it: at most one read of the log per interval while the
+	// previous read answered that there is more, and nothing at all once the
+	// whole log has been read, where Idle governs and Backoff governs a retry.
+	//
+	// It is not a concurrency cap and must not be presented as one: it bounds the
+	// reads of this loop and of nothing else. Zero reads as fast as the store
+	// answers, which is every projection that exists today.
+	//
+	// Drop it before cutting over to this generation. Cutover names a window in
+	// which reads move backwards by whatever the retiring generation advanced
+	// while the switch committed, and what closes that window is this generation
+	// catching up — which is the one thing Pace slows down.
+	Pace time.Duration
+
 	// A hint that the log has grown, and never the delivery mechanism: Idle polls
 	// whether or not anything sends here, so a producer that stops sending costs
 	// latency and nothing else. Closing it says there will be no more hints — the
@@ -108,6 +123,42 @@ type Spec struct {
 	// the shipped matrix.
 	OnPermanentFailure Failure
 	Park               Park
+
+	// The ownership row, and the durable two-sender boundary neither reference
+	// has. Required beside Effects at a generation other than Ungenerated,
+	// because that is the pair that admits two senders; optional otherwise, and
+	// supplying it there is the migration rather than a field nothing uses. The
+	// suppressor is gated on this being supplied and never on Generation: before
+	// a cutover the row answers this projection's own generation and it stages
+	// exactly as it did without the field, and after one it answers another and
+	// it stops — one code path for both cases, and the only one that closes the
+	// first cutover of a deployment that exists today.
+	Generations Generations
+
+	// The live effects, and they are not the projection: a Handler is handed a
+	// Batch and holds no route to one of these. Refused beside AfterApply, where
+	// an effect staged outside a unit has the window a broker outage turns into a
+	// permanently lost event. A rebuild is a spec with this nil, which is the
+	// whole of "a rebuild does not get the effect-dispatch capability".
+	Effects Effects
+
+	// Suppressed for every envelope at or below it, per envelope and not per
+	// page. The envelope's side of the comparison is durable — it is where the
+	// resumed checkpoint left this generation — so a warm-up interrupted below
+	// the barrier resumes suppressed rather than firing from the beginning.
+	//
+	// THIS SIDE IS A DEPLOYMENT-HELD CONSTANT AND NOT A RECORDED POSITION.
+	// Nothing stores the barrier a generation was warmed up under and nothing
+	// compares a restart's value against it, so a release that lowers or drops
+	// this field stages an effect for every envelope of the warm-up still below
+	// it, on the first pass, with no error and no refusal. The number is the
+	// prior generation's mark: Observe answers it as Barrier.At, and a rollback
+	// of the release that set it is a rollback of the barrier too.
+	//
+	// Refused with a nil Effects, and refused beside ParkSequence: a warm-up that
+	// parked an event produces a generation whose rows are not comparable to the
+	// live one, and the comparison is a cutover's only evidence.
+	EffectsAfter event.Position
 
 	Classifier Classifier
 	Observer   Observer
@@ -168,6 +219,7 @@ func New(spec Spec) (*Projection, error) {
 		problems = append(problems, fmt.Errorf("%w: OnPermanentFailure is neither Halt nor ParkSequence, and an unknown policy is not Halt", ErrSpec))
 	}
 	problems = append(problems, refusedPark(spec)...)
+	problems = append(problems, refusedEffects(spec)...)
 	problems = append(problems, refusedNumbers(spec)...)
 	if len(problems) > 0 {
 		return nil, errors.Join(problems...)
@@ -233,6 +285,30 @@ func refusedPark(spec Spec) []error {
 	return problems
 }
 
+// The three the capability costs beyond the one both doors share, and none of
+// them is about the sink. An effect staged outside a unit is the reference's own
+// dual-write window — the broker outage that advances the checkpoint and loses
+// the event permanently — so the capability constructs at one tier and the
+// refusal is a contract rather than a caveat. A barrier with no sink is a field
+// whose only effect is a suppression of nothing. And a barrier beside a queue is
+// a warm-up that can pass its own barrier by PARKING an event: the generation it
+// leaves has rows that are not comparable to the live one, and that comparison
+// is the only evidence a cutover has. That last one is why the redrive's door
+// refuses a barrier outright — see NewRedrive.
+func refusedEffects(spec Spec) []error {
+	var problems []error
+	if !absent(spec.Effects) && spec.Advance != InUnit {
+		problems = append(problems, fmt.Errorf("%w: Effects is supplied beside Advance: AfterApply, and an effect staged outside the unit that commits the advance is a second write — the outage that takes the sink away advances the checkpoint over an event nothing will ever send, which is the window the capability exists to close", ErrSpec))
+	}
+	if spec.EffectsAfter > 0 && absent(spec.Effects) {
+		problems = append(problems, fmt.Errorf("%w: EffectsAfter names a barrier and Effects names no sink, and a barrier with nothing to gate is a spec assembled wrong rather than a field that is merely unused", ErrSpec))
+	}
+	if spec.EffectsAfter > 0 && spec.OnPermanentFailure == ParkSequence {
+		problems = append(problems, fmt.Errorf("%w: EffectsAfter names a barrier beside OnPermanentFailure: ParkSequence, and a warm-up that parks an event passes its own barrier over a read model that never received it — the rows the generation then holds are not comparable to the live one's, and that comparison is the only evidence a cutover has. What a barrier is warmed up under is Halt", ErrSpec))
+	}
+	return append(problems, unstageable(spec.Effects, spec.Generations, spec.Generation)...)
+}
+
 func refusedNumbers(spec Spec) []error {
 	var problems []error
 	for _, bound := range []struct {
@@ -240,6 +316,7 @@ func refusedNumbers(spec Spec) []error {
 		chosen time.Duration
 	}{
 		{"Idle", spec.Idle},
+		{"Pace", spec.Pace},
 		{"Tolerate", spec.Tolerate},
 		{"Backoff.First", spec.Backoff.First},
 		{"Backoff.Max", spec.Backoff.Max},

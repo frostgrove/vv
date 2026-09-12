@@ -1369,3 +1369,84 @@ func TestThreeWiringsToASecondDatabaseAreToldApart(t *testing.T) {
 		}
 	})
 }
+
+// §6.1, §UC-131, §UC-132. Tier A is what InUnit promises and tier B is the one
+// that passes every other check in this package: two transactions, one per
+// resource, both resolvable, both transactions — and the handler's writes and
+// the advance are two commits with a crash between them. The comparison is made
+// inside the unit and BEFORE the handler runs, which is what an empty
+// destination table and an absent checkpoint row are the evidence for.
+func TestTierAIsProvedAndTierBIsRefusedLive(t *testing.T) {
+	held := newProjectionCase(t, 12, 0)
+	into := held.destination(t, "tier_read_model")
+
+	const keys = 6
+	writePartitioned(t, held, "tier", keys)
+
+	// The second pool over the same database and the same schema: the table is
+	// the one table, so what differs between the two arms is the transaction the
+	// handler writes through and nothing else.
+	second := checkpointPool(t, 6)
+	beside := crudsql.Postgres(second)
+	reached := &atomic.Int64{}
+	counted := projection.HandlerFunc(func(ctx context.Context, batch projection.Batch) error {
+		reached.Add(int64(len(batch.Envelopes)))
+		return into.attributing().Apply(ctx, batch)
+	})
+
+	spec := held.spec(t, "tier-b", counted)
+	spec.Advance = projection.InUnit
+	spec.Destination = beside
+	spec.Unit = func(ctx context.Context, work func(context.Context) error) error {
+		return crud.InNewTx(ctx, held.source, func(inner context.Context) error {
+			return crud.InNewTx(inner, beside, work)
+		})
+	}
+	running := held.run(t, spec)
+	failure := running.halted(t, "the projection whose unit opened one transaction per resource halted")
+
+	if !errors.Is(failure, projection.ErrSpec) {
+		t.Fatalf("the tier B wiring halted with %v, where a unit that bound two transactions is a wiring refusal and not a handler failure", failure)
+	}
+	if errors.Is(failure, projection.ErrHalted) && !errors.Is(failure, projection.ErrSpec) {
+		t.Fatalf("the tier B wiring reports %v, which says it stopped and not why", failure)
+	}
+	for _, named := range []string{"Destination", "advance"} {
+		if !strings.Contains(failure.Error(), named) {
+			t.Fatalf("the refusal does not name %q, so a composition root is told which of the two resources to move: %v", named, failure)
+		}
+	}
+	if got := reached.Load(); got != 0 {
+		t.Fatalf("the handler was called for %d envelopes under a wiring that was refused, and the comparison is made before the handler runs", got)
+	}
+	if got := into.rows(t); len(got) != 0 {
+		t.Fatalf("the refused wiring left %v in the destination", got)
+	}
+	if row, found := held.row(t, "tier-b"); found {
+		t.Fatalf("the refused wiring left a checkpoint row at advance %d, and an advance over a page nobody applied is a lost event", row.advance)
+	}
+	if printed, asked := psqlAnswers(t, "SELECT projection FROM "+quoteIdentifier(held.schema.Name)+".checkpoints WHERE projection = 'tier-b'"); asked && len(printed) != 0 {
+		t.Fatalf("psql prints %v for the refused wiring's checkpoint row, so one of the two is not reading the database", printed)
+	}
+
+	// The control: the identical composition with ONE transaction bound for both
+	// is accepted and drains the log, so the refusal is discriminating rather
+	// than universal.
+	t.Run("the control: one transaction for both drains the same log", func(t *testing.T) {
+		held := newProjectionCase(t, 12, 0)
+		into := held.destination(t, "tier_a_read_model")
+		writePartitioned(t, held, "tier", keys)
+		running := held.run(t, inUnit(held.spec(t, "tier-a", into.attributing()), held.source, into.source))
+		running.following(t, "the tier A wiring drained the log")
+		if got := into.count(t); got != 2*keys {
+			t.Fatalf("the tier A wiring left %d rows over a log of %d", got, 2*keys)
+		}
+		row, found := held.row(t, "tier-a")
+		if !found {
+			t.Fatal("the tier A wiring saved no checkpoint")
+		}
+		if row.applied != int64(2*keys) {
+			t.Fatalf("the tier A checkpoint accounts for %d applied where the read model holds %d rows", row.applied, 2*keys)
+		}
+	})
+}

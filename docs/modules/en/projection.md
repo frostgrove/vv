@@ -36,6 +36,11 @@ writes no log line.
 | `Park` · `Letter` · `ErrParkFull` | the queue a parked sequence goes to, what one entry is, and the third verdict |
 | `Redriver` · `Claim` · `ErrClaimLost` · `NewRedrive` · `Redrive.Sequence` · `Redrive.Any` · `Retried` · `RedriveSpec` | the operator's half: drain one sequence, or the least recently tried one |
 | `State` · `Phase` · `Observer` · `ObserverFunc` | what an operator reads |
+| `Partition` · `NewPartition` · `Whole` · `ParsePartition` · `Cover` · `NewCover` · `MaxPartitions` | a share of the key space, and the set that was checked |
+| `Sequencer` · `ByStream` · `OneSequence` · `Unordered` · `SequenceBy` | who names a sequence |
+| `Identity` · `NewIdentity` · `ParseIdentity` · `Split` · `SplitSpec` · `ErrTopology` | the one recorded name, and the one topology change there is |
+| `Generation` · `Ungenerated` · `Generations` · `Barrier` · `Observe` · `Readiness` · `Reached` · `Cutover` · `CutoverSpec` · `ErrRetired` | a rebuild beside the live one, the evidence it is measured on, and the switch |
+| `Effect` · `Effects` · `EffectsFunc` | the live side effects, which are not the projection |
 | `Unchecked` | the destination this framework cannot resolve, said out loud |
 
 ```go
@@ -61,9 +66,28 @@ supervisor.Add(following)
 **refused**: a projector that can append is how a replay writes. `event.ReadOnly`
 is the wrapper that takes the surface away.
 
-## The seven rows this page is for
+## Four names changed with the park, and you meet each as a compile error
 
-Everything else here is prose. These seven are the contract.
+There is no alias and no deprecation window, so they are written here as renames
+rather than only documented under their new names: a consumer who upgrades reads
+`undefined: projection.Quarantines` and needs this table, not the prose.
+
+| Was | Is | Why |
+|---|---|---|
+| `Quarantines` (interface) | `Park` | it blocks the sequence now; the old name described a sink that did not |
+| `Quarantined` (struct) | `Letter` | it is a queue entry with an order, not a record of a skip |
+| `Failure`'s `Quarantine` (const) | `ParkSequence` | one mechanism, and a name that can coexist with the interface: a package-level `const Quarantine` beside a package-level `type Park` would read as two. It also says the thing that is new — the **sequence** is what is parked |
+| `Spec.Quarantine` (field) | `Spec.Park` | a field rather than a package-level name, so it collides with nothing |
+
+**`Progress.Quarantined` keeps its name and its meaning.** It is the kernel's
+field — the durable cumulative count of what the destination did not take, which
+never falls — and it did not move. It is the one piece of the old vocabulary that
+is still correct, and finding it on this page is not evidence that the four above
+are still there.
+
+## The nine rows this page is for
+
+Everything else here is prose. These nine are the contract.
 
 ### 1. A checkpoint is a cursor
 
@@ -104,6 +128,16 @@ There are exactly two divergences, and only one of them is invisible:
   pool, a document store, a search index — is still outside that transaction and
   no check in this framework can see it. What you have there is `AfterApply`
   semantics under an `InUnit` spec.
+
+A **foreign destination gets four promises and not a fifth.** Every committed
+event reaches your handler at least once; the order within each stream is the
+stream's; the resume point skips nothing; and every delivery carries a
+`(Stream, Version)` that is unique across the whole run. What is *not* promised is
+that the foreign effect happened exactly once — that is what `Unchecked` costs,
+and the upsert on `(Stream, Version)` is the whole of what closes it. A
+`Destination` the unit bound no executor for, or bound a non-transaction for, is
+neither: it is `ErrSpec` and a **halt**, because an alignment that cannot be
+proven is not one this framework asserts.
 
 `Destination: projection.Unchecked` is how a composition says the handle cannot
 be resolved through `crud`'s binding at all; a field left zero is refused rather
@@ -252,6 +286,155 @@ are certified by `eventtest.RunCheckpoints`’ `topology` and `topology handoff`
 sections: a cursor written under one projection name reads back unchanged under
 another, and a save at advance 1 over a live row is refused by the store’s own
 fence.
+
+### 8. A generation is a name, and a cutover is one fenced write
+
+`Spec.Generation` is a number in the recorded name and nothing else: `orders` at
+`Ungenerated` renders `orders`, and `Generation: 2` renders `orders@2`. Two
+generations of one projection are two checkpoint rows, two parks, two
+destinations and two runners over one log, with **nothing between them** — there
+is no API by which the arriving one could read, pause or reset the live one's
+checkpoint.
+
+**This is the rebuild recipe, and it replaced the second-`Spec.Name` one.** A
+rebuild spelled as `Spec.Name: "orders-rebuild"` still works and still replays
+the whole log, and what it does **not** get is the effect gate below: the
+framework cannot distinguish a second projection name from a rebuild of the
+first, so a second name carrying `Effects` stages an effect for every historical
+event. `Spec.Generation` is the spelling the gate covers.
+
+The evidence is derived rather than supplied, and there is **no barrier field on
+`CutoverSpec`**: a barrier a caller can invent is not evidence, and the zero value
+of one admits a generation that has delivered nothing.
+
+- `Observe(ctx, checkpoints, of, over)` answers the **lowest `Highest`** across a
+  cover, which is the only aggregate a set of rows has. All members fresh answers
+  the origin with a nil error; **some** fresh and some not is `ErrTopology`
+  naming one that holds no row, because an absent row read as position zero is a
+  barrier every arriving generation clears.
+- `Reached(...)` answers `Readiness{Reached, Behind, Quarantined, Holes}`.
+  **`Reached` means DELIVERED, not "the rows agree".** It is `>=` against the
+  lowest `Highest` of the arriving generation's own cover, plus `Holes == 0`, and
+  that is the strongest statement available without a barrier token. A consumer
+  who wants "the rows agree" runs the comparison
+  `TestAGenerationDrainsBesideTheLiveOneAndTheRowsAgree` demonstrates.
+  `Behind` is an upper bound and a hint: a log burns a position for a rolled-back
+  append and for an optimistic-concurrency loser, so the distance between two
+  positions is not a count of undelivered events.
+- `Cutover(ctx, spec)` observes its own barrier from the retiring generation's
+  rows, measures the arriving one against it, refuses on `Holes`, and moves the
+  row once, fenced — all inside the unit **you** open. A rollback is the same call
+  with `From` and `To` exchanged.
+
+`Cutover` never refuses on `Progress.Quarantined`. That count is cumulative and
+never falls, so a generation that parked a sequence and redrove it completely
+would be refused by it for ever — the ordinary recovery path closed by the check
+meant to guard it. What it reads is `Park.Holes`, which is what the queue answers
+now.
+
+### 9. The live effects are not the projection
+
+`Spec.Effects` is the capability to cause a side effect, **as a value**. A
+`Handler` is handed a `Batch`, and a `Batch` carries a name, an identity,
+envelopes and an attempt — there is no field on it through which an effect could
+be caused. A rebuild is a spec with `Effects` nil, which is the whole of "a
+rebuild does not get the effect-dispatch capability".
+
+`Stage` is named for where it runs: **inside the transaction that commits the
+advance**. What it does must roll back with it — a staged job ([[D-118]]), a row
+in your own tables. An HTTP call, a payment, a mail or a non-transactional publish
+here is sent again on every rollback the delivery can take, and there are four: a
+lost fence (which is what a rolling deploy does on purpose), a full park, a later
+envelope's permanent failure in the same page, and a serialisation failure your
+own `Unit` answers.
+
+**An HTTP call inside the unit is not protected by the fence.** The fence decides
+which writer's rows land; it decides nothing about a socket that is already open.
+A losing instance that dialled out inside its unit has dialled out, and its rows
+are gone.
+
+**A skipped event's effect is never sent.** An effect follows its envelope: a
+parked envelope is not staged and is not lost, because its letter carries it and
+the redrive that applies it is what stages it. An **eviction** stages nothing, ever
+— a skip is you saying the event will never be applied.
+
+Three things suppress a stage, checked cheapest first: a nil `Effects`, which
+costs nothing; `Spec.EffectsAfter`, per envelope and never per page; and the
+ownership row, read inside the committing transaction. A page entirely at or
+below the barrier does not call `Stage` at all — not even with an empty slice.
+
+`Effects` is refused beside `AfterApply`, and that is the **outbox asymmetry** to
+read twice. Under `InUnit` the stage, the handler's rows and the advance are one
+commit. Under `AfterApply` they would be three, and the window between them is
+the one a broker outage turns into a permanently lost event: the advance moves
+past an envelope whose effect was never staged, and nothing will ever offer that
+envelope again. `AfterApply` remains a legitimate mode for a projection with no
+effects; it is not one for a projection with them.
+
+This is a **contract and not a sandbox**. Nothing here can stop your handler
+dialling out; what the shape does is make the honest thing the easy thing and the
+dishonest thing visible in a review. The half that is enforced is the framework's
+own reach: no package `event/projection` reaches, transitively, imports `net`,
+`net/http`, `net/smtp` or `os/exec`.
+
+## What you own, and what goes wrong when you do not
+
+Six obligations, none of which this package can check, each with the cost of
+missing it.
+
+**1. Add `Spec.Generations` to the live projection one release BEFORE the first
+cutover.** The suppressor is gated on the field being supplied, never on
+`Spec.Generation` — gated there it would never run for a projection at
+`Ungenerated`, which is every projection that exists today. A projection at
+`Ungenerated` whose spec carries a `Generations` reads the row, finds
+`Ungenerated` (a projection with no ownership row answers `Ungenerated` and a
+**nil error**), and stages exactly as it did without the field. Miss the ordering
+and the first `Cutover(From: Ungenerated, To: 2)` runs **two senders** until the
+retiring projection is stopped.
+
+**2. `Generations.Active` must be a LOCKING read** — `SELECT active … FOR SHARE`,
+`FOR KEY SHARE` — or run in a `SERIALIZABLE` unit, and it must resolve the
+**ambient** transaction rather than a pool of its own. [[D-126]] leaves the
+isolation level to you, and at `READ COMMITTED` a plain read of that row and a
+concurrent `Activate` of it do not conflict: both commit, and a generation the row
+no longer names commits the effect it staged anyway. `REPEATABLE READ` does not
+close it either. What goes wrong when it is not met is a retiring pass committing
+a staged effect under a row that already names the arriving generation, with both
+units committing and neither rolling back. The two-sender boundary is stated only
+with this sentence beside it.
+
+**3. `Spec.EffectsAfter` is a deployment-held constant, and only half of the
+barrier is durable.** The envelope's side is where the resumed checkpoint left
+this generation, so an interrupted warm-up resumes suppressed. The barrier's own
+side is the number you wrote in the spec — nothing stores what a generation was
+warmed up under and nothing compares a restart's value against it. A release that
+lowers or drops the field re-stages the whole warm-up below it, on the first
+pass, with no error and no refusal. You get the number from `Observe`'s
+`Barrier.At` on the generation that is live now, and a rollback of the release
+that set it is a rollback of the barrier too.
+
+**4. The covers a cutover declares must be the ones those generations record
+at.** `Cutover` reads the rows the cover names and no others. A live generation
+running at four partitions declared here as `Whole()` answers silence, and silence
+is `ErrRetired` rather than a barrier at the origin; a cover whose members a
+`Split` retired is `ErrTopology`. Print the identities, not the shape you
+remember.
+
+**5. Drain or stop the retiring generation before, or as, the switch commits.**
+The barrier is that generation's watermark as `Cutover` read it, and that
+generation is a separate runner committing in its own transaction. If it is still
+advancing it goes past the barrier while the unit is open, and the read target
+then moves to a generation standing where the retiring one stood a moment ago:
+**reads move backwards**, by that generation's advance over the life of the
+transaction, and stay there until the arriving generation catches up. `Observe` it
+twice and see whether the barrier moved — that is the whole of the check. Drop
+`Spec.Pace` on the arriving generation first, because pacing lengthens exactly
+the recovery this window needs.
+
+**6. The claim duration must exceed the longest unit a redrive may take.** A
+`Claim.Until` shorter than one letter's apply turns every redrive into a run of
+lost claims that drains nothing, and `ErrClaimLost` is what you see when it is.
+The framework reads no clock and enforces no expiry: the duration is your table's.
 
 ## One name is one writer, and the fence is what holds when it is not
 
@@ -588,6 +771,11 @@ below `Tolerate`.
 | `OnPermanentFailure` | `Halt` |
 | `Park` | none. `ParkSequence` without one is refused |
 | `Destination` | none under `InUnit`. "I cannot check this" has to be written |
+| `Sequence` | `ByStream()`, the kernel's own composition of the family and the key |
+| `Partition` | `Whole()`, so a spec that names no partition is one runner over everything |
+| `Generation` | `Ungenerated`, which renders nothing at all, so no existing name or row moves |
+| `Pace` | 0 — as fast as the store answers, which is every projection that exists today |
+| `Effects` · `EffectsAfter` · `Generations` | none. A rebuild is a spec with the first of them nil |
 
 ## What is deliberately absent
 
@@ -601,13 +789,23 @@ below `Tolerate`.
 | a retry, backoff or circuit breaker around your `Unit` | [[D-040]]; the unit is yours, and it runs once |
 | an `event.Store` accepted as `Spec.Log` | a projector that can append is how a replay writes |
 | a per-failure enqueue policy, and a `Classifier` on `RedriveSpec` | the framework's two answers are park and halt; it removes nothing, so a decision that could drop a letter is an operator's |
+| a `Merge` of two partitions | it would have to order two cursors, and a cursor is a store's own bytes rather than a point on a line ([[D-129]], [[D-140]]). The route to a coarser topology is a new generation |
+| a barrier field on `CutoverSpec` | a barrier a caller can invent is not evidence, and the zero value of one admits a generation that has delivered nothing |
+| an `EffectsAfter` on `RedriveSpec` | it is the one wiring whose only outcome is a lost effect: a barrier over a queue suppresses one that is owed and nothing will ever offer it again |
+| a partition count anywhere | there is no count; there is a set of rows and the mask each runner was built with ([[D-140]]) |
+| a `Log.ReadAll` filter, or a reader shared between runners | N partitions x M generations are N x M independent walks, and the cost is paid and recorded rather than traded for a contract the log does not have |
 
 ## See also
 
 - [event](event.md) — the vocabulary, the checkpoint seam and the refusals
 - [eventmemory](eventmemory.md) · [eventpg](eventpg.md) — the two checkpoint
   stores that ship
-- [eventtest](eventtest.md) — `RunCheckpoints`, the twelve sections a third one
-  is proved by
+- [eventtest](eventtest.md) — `RunCheckpoints`, the fourteen sections a third one
+  is proved by, two of which a split rests on
+- [`_examples/event-partitions`](../../../_examples/event-partitions/) — four
+  runners from one `Cover`, and the split that takes one of them to two
+- [`_examples/event-generations`](../../../_examples/event-generations/) — the
+  barrier, the cutover, the rollback and the effect gate
 - [[D-091]] · [[D-092]] · [[D-118]] · [[D-126]] · [[D-128]] · [[D-129]] ·
-  [[D-130]] · [[D-131]] · [[D-132]] · [[D-133]] · [[FL-038]] · [[UC-032]]
+  [[D-130]] · [[D-131]] · [[D-132]] · [[D-133]] · [[D-140]] · [[D-141]] ·
+  [[FL-038]] · [[FL-042]] · [[UC-032]]

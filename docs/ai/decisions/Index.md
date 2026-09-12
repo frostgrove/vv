@@ -194,6 +194,8 @@ phase 3 paid that.
 | [D-137](D-137-a-wired-source-carries-the-layers-the-graph-declared.md) | `crudsqlfx` hands out the composed source: the deployment writes the chain as `Layers`, a `Wrapping` carries a name and a function and no place of its own, the wired source stays addressable as the base so an offline harness keeps the chain, and a declared layer nobody contributed, a contributed layer nobody declared, one name twice or a layer answering with no source fails the graph before anything is wrapped (extends D-111) | accepted | composition, transactions & datasources |
 | [D-138](D-138-a-declared-index-is-created-by-a-version-step.md) | Every declared index is created by a `SchemaVersion` step and by nothing else, and a declaration that changes without one fails the build rather than somebody's start-up; a missing index is created by the upgrade, a wrong-definition operational index is refused where a drifted retention index is rebuilt, and a `VerifySchema` start-up creates nothing; a refused schema is repaired by a migration or a person and never by dropping the schema or the delivery tables, whose rows no rerun reconstructs | accepted | jobs, operations |
 | [D-139](D-139-a-lock-that-owns-its-transaction-may-retry-and-refuses-what-it-cannot-take.md) | `lock` may replay a transaction it opened itself, because nobody else can see it to replay it — `Guarded` and `Retry` retry, `Take` and `TryTake` classify and hand back as before (narrows D-040); an engine that cannot give the semantics asked for is refused at `For` with a typed error rather than answered with a weaker lock or none; guards are taken in one deterministic order; and `KeyOf`'s numbers are frozen, because changing them un-locks a rolling deploy silently | accepted | errors, transactions & datasources, concurrency |
+| [D-140](D-140-a-partition-is-a-mask-and-a-topology-change-is-a-handoff.md) | A partition is `(id, mask)` with `mask = 2^k-1` and a key belongs to the one whose id is the low k bits of FNV-1a/32 over its sequence key; no count is stored and no modulus derives one, because `hash % N -> hash % (N+1)` moves roughly N/(N+1) of all keys into partitions at unrelated positions and skips in one direction while re-delivering out of order in the other. The one topology change is a `Split` — two children at the parent's exact cursor, both read before either is written, the retirement recorded before the row is removed, all in one transaction of the caller's — an absent parent is refused whatever the absence means, and there is no merge, for two independent reasons | accepted | event sourcing, transactions & datasources |
+| [D-141](D-141-an-effect-is-a-separate-capability-gated-on-a-durable-ownership-row.md) | The capability to cause a side effect is a value on the spec and a `Handler` holds no route to one, so a rebuild is a spec with that field nil; `Stage` runs inside the transaction that commits the advance and is contracted to a durable write and nothing a rollback cannot take back, refused beside `AfterApply`; three suppressors are checked cheapest first and the barrier is per envelope, with one side of its comparison durable and the other a deployment-held constant that says so; and the two-sender boundary is a durable ownership row read through the ambient transaction under a locking read, with the four cases it does not cover written down | accepted | event sourcing, transactions & datasources, operations |
 
 ## By area
 
@@ -429,6 +431,14 @@ a supervised runner, why the framework opens no transaction, why the read is
 outside every unit, and what `InUnit`'s precondition is), D-131 (why a forgotten
 route halts where a foreign family is skipped), D-132 (the measured replay, the
 recorded snapshot trigger, and why this package writes no line).
+
+**Event sourcing, phase 4** — D-140 (why a partition is a mask and never a
+modulus, why a split reads both children before writing either, why an absent
+parent is refused whatever the absence means, and why a merge has no spelling),
+D-141 (why an effect is a capability rather than a mode, why `Stage` is a durable
+write inside the advance's own transaction, why the barrier is per envelope and
+only half of it is durable, and what the ownership row does and does not cover).
+[[D-131]] carries the blue/green amendment both of them lean on.
 
 **Philosophy & docs** — D-021 (magic over orthodoxy, and D-050 as its newest
 application), D-023 (guides lead with the result), D-020 (what a test is for).

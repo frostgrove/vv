@@ -754,3 +754,96 @@ reproduction recorded above and each with an arm that reddens when the fix is
 reverted (GAP-5's arm reddens on the fixture's bound rather than on framework
 code, which is the honest limit and is now stated in the matrix). GAP-7 … GAP-11
 remain open in the backlog, untouched.
+
+---
+
+## Round 3 — independent re-verification — 2026-09-12
+
+Round 2 recorded the six blocking findings closed. A closure recorded is not a
+closure verified, and this section's own delivery rule is that a gate never
+proceeds on a green suite: **every one of the six fixes was re-opened by hand on
+the shipped tree, the fix reverted, the pinning test run, and the fix restored.**
+All six went red. Nothing in `event/` was edited in this round; `git status
+--porcelain` was empty before and after each mutation.
+
+| Finding | The fix, reverted | Test | Result |
+|---|---|---|---|
+| GAP-1 | `withDefaults` no longer drops `spec.Park` beside a policy that does not name it | `TestAParkIsInertBesideAPolicyThatDoesNotNameIt` | **FAIL**, both `Halt` arms — *"the projection never published a state where the whole log was read: it published [draining draining degraded]"* and *"…where the projection halted"* |
+| GAP-2 | `unblockedPage` asks `Holds` on `context.Background()` rather than the unit's context | `TestEachParkMethodIsCalledWhereItsContractSaysItIs` | **FAIL** — *"Holds ran inside the caller's unit 0 times where the contract says 1"* |
+| GAP-3 | `RedriveSpec` grows an inert `Classifier Classifier` back | `TestEveryFieldOfAPublishedSpecIsRead` (`scripts/`) | **FAIL** — *"github.com/frostgrove/vv/event/projection.RedriveSpec.Classifier is published and no line of the package reads it"* |
+| GAP-4 | `permanent()` returns `false` instead of `this.attempt >= this.spec.Attempts` | `TestASpentAttemptBudgetParksATransientFailureAndARedriveClearsIt` | **FAIL** — *"the projection never published a state where the budget was spent and the page was parked: it published [draining retrying retrying]"* |
+| GAP-5 | `parking()` counts an `ErrParkFull` letter as written instead of ending the pass | `TestTheParksBoundIsPerSequenceAndNotPerQueue` | **FAIL** on the one-dimensional control — *"the projection never published a state where the queue refused the letter and the partition stopped"* |
+| GAP-6 | `_ = lost` for `if lost { return }` in `Redrive.claimed` | `TestAnExpiredClaimAppliesEvictsAndReleasesNothing` | **FAIL** — *"Release was called 1 times over a grant this caller had already lost"* |
+
+GAP-5's row is the one worth stating precisely, because it is the finding about
+vacuity. The two arms that assert the reference queue's own `room` still cannot
+fail on framework code and that limit stands as Round 2 recorded it. What the
+mutation shows is that the test is **no longer only** those two: a change in
+`pass.go` reddens the third and fourth arms, so the `-list` name the coverage
+matrix counts for §UC-151 now has a framework subject as well as a fixture one.
+
+The documentation half of each close criterion was read rather than assumed:
+`park.go`'s four-method contract; `redrive.go`'s "there is no `Classifier` here"
+and "the suppression is this package's"; `FL-038` lines 146 and 343; the plan's
+refusal item 11, its `EnqueuePolicy`/`EnqueueDecision` adjudication in the
+deliberately-absent list, its §UC-151 and §INV-093 matrix rows; §UC-197 and
+§UC-198; and both module pages — `en` 357, 403–419, 502, 603 with the `ru` twin
+carrying each in parallel.
+
+### Two reds at HEAD, and neither belongs to this section
+
+`make check` and the whole `./scripts/` package fail on the current tree. Both
+were traced to their origin rather than attributed by assertion:
+
+- `TestNoI18nPackageCostsMoreThanItsErrorSeam` — *"the i18n extension reaches
+  github.com/go-json-experiment/json/jsontext outside its error seam and declared
+  MessageFormat/CLDR ecosystem"*. The subject is `i18n/cmd/vv-i18n`, which imports
+  `jsonv2` and `jsontext` directly in four files. It is the **only** failing arm
+  in `./scripts/` and the only failing arm in all of `make unit`.
+- `check-tidy` — **29 satellites** untidy, including `app/appfx`,
+  `crud/http/crudgin`, `auth/rpc/authgrpc`, `test`, `event/eventpg`, and
+  `audit/auditpg`, which carries no `go.sum` at all.
+
+At `ce36e2d`, the tree this section shipped on, `make check-tidy` answers
+`check-tidy: ok` and the i18n arm does not exist (`no tests to run`). Both arrive
+with `939bcd9` / `fefa3e9`, the merge of the audit-otel-i18n line; the
+event-sourcing line touched no satellite `go.mod` or `go.sum`, and
+`event/eventpg`'s appears in the untidy list without this phase ever having
+edited it. They are reported here rather than fixed: widening another subsystem's
+declared dependency budget and rewriting 29 modules' dependency files are that
+line's adjudications, not this section's, and `make tidy` under the local
+toolchain (`go1.27.0-X:nodwarf5`, against a workspace that declares `go 1.26.6`)
+would churn every module in the repository.
+
+`make api` is not idempotent at HEAD for the same kind of reason:
+`scripts/api-surface` was rewritten in `c5e7b62` while `docs/api/surface.md` was
+last written in the old format, so regenerating reformats 13 860 lines across
+every package. The file was regenerated, **read**, and restored — which is where
+GAP-3's third close criterion is actually met: `RedriveSpec` renders with
+`Identity`, `Handler`, `Sequencer`, `Park`, `Unit`, `Destination` and no
+`Classifier`.
+
+### The checkpoint, re-run 2026-09-12
+
+| Check | Result |
+|---|---|
+| `gofmt -l .` | 0 |
+| `go build ./...`, `go vet ./event/...` | clean |
+| `go test -list "$PARK" ./event/projection/ \| grep -c '^Test'` | **20** |
+| `go test -race -count=1 -run "$PARK" ./event/projection/` | `ok … 1.028s` |
+| `go test -list '^(TestEveryTrackerInTheProjectionPackageIsKeyedByAnIdentity\|TestEveryFieldOfAPublishedSpecIsRead)$' ./scripts/` | **2**, and both `ok … 6.255s` |
+| `go test -race -count=1 ./event/...` | `ok` ×4 — `event 6.868s`, `eventmemory 1.508s`, `eventtest 4.346s`, `projection 1.561s` |
+| `./scripts/checks.sh event-kernel` / `event-kernel-baseline` | `ok`, 148 files |
+| `event-kernel-moved .git/event_kernel_before_s3 …` | `ok`, 15 files, all under `event/projection/` |
+| `FROSTGROVE_EVENTPG_TEST_DSN=… go test -race -count=1 -tags=integration ./event/eventpg/...` | `ok … 111.037s` against PostgreSQL 17.9 |
+| `make vet`, `make examples` | green |
+| `make unit` | one failing arm, `TestNoI18nPackageCostsMoreThanItsErrorSeam`, and no other |
+| `make check` | `check-deps`, `check-tiers`, `check-utils`, `check-triplets`, `check-todo`, `check-replaces` `ok`; **`check-tidy` red over 29 foreign satellites** |
+| `make api` | reformats every package; read and restored |
+
+## Verdict — Round 3
+
+**GREEN on GAP-1 … GAP-6, verified by driven mutation rather than by the record.**
+GAP-7 … GAP-11 remain `[medium]`/`[low]` in `EVENTSOURCE_BACKLOG.md` items 45–49,
+untouched. The two red gates at HEAD are foreign to this section, evidenced
+against `ce36e2d`, and are the merged line's to close.

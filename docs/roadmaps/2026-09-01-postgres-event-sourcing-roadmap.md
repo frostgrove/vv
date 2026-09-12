@@ -761,57 +761,24 @@ The first PostgreSQL event-source release is complete only when:
 
 ## Дополнительные приложения — 2026-09-08
 
-**ES-01–ES-09 не выполнены.** Это дополнительные механики и уточнения E1/E2,
-а не отчёт о реализации. База сверена с `dev/ai-improvements` на `c938866`,
-включая реализованный [PostgreSQL store](../../event/eventpg/) из `6e1c846`.
-Существующие E0–E4 и их gates здесь не пересматриваются. Реализация store
-не закрывает ES-01–ES-09.
+**ES-05, ES-07, ES-08 и ES-09 не выполнены.** Это дополнительные механики и
+уточнения E1/E2, а не отчёт о реализации. База сверена с `dev/ai-improvements`
+на `c938866`, включая реализованный [PostgreSQL store](../../event/eventpg/) из
+`6e1c846`. Существующие E0–E4 и их gates здесь не пересматриваются.
+
+**ES-01, ES-02, ES-03, ES-04 и ES-06 выполнены и удалены из этого списка**
+(фаза 4): одна transaction authority, партиции как маска с передачей позиции,
+dead-letter queue, сохраняющая причинный порядок, поколения с барьером и
+переключением, и способность вызывать эффект как значение спецификации. Что из
+этого получилось, живёт в [[D-140]], [[D-141]], [[FL-038]], [[FL-042]] и на
+[странице модуля projection](../modules/ru/projection.md) — здесь их больше нет,
+потому что это список открытого.
 
 Владельцы — опциональная event-подсистема и выбранный store, не framework kernel.
 Приложение передаёт обработчики, SQL transaction authority и read-model repository
 своего ORM; никакого обязательного ORM, DI, broker или межмодульного registry.
 Новые гарантии требуют отдельного контракта и тестов: нынешний [[UC-032]] ими
 не расширяется. DX ниже — эскизы, не существующие API.
-
-### Приложение ES-01 — durable subscriptions и атомарная SQL-проекция
-
-**Статус: не выполнено.** Уточняет E2, не повторная реализация `Reader.Cursor`.
-
-1. Механизм: [Axon tracking tokens](https://docs.axoniq.io/axon-framework-reference/4.12/events/event-processors/streaming/) — постоянная позиция отдельного подписчика, продолжение после рестарта. [Marten daemon](https://martendb.io/events/projections/async-daemon.html) сохраняет изменения проекции и её продвижение одной транзакцией.
-2. Зачем: падение между изменением read model и checkpoint не должно терять событие или повторно применять уже закоммиченный SQL-эффект.
-3. Адаптация: выбранный SQL-профиль фиксирует effect + checkpoint одной transaction authority. У текущего `eventpg` log читается вне write transaction, чтобы не принять собственные staged rows за подтверждённую историю; обработчик пишет effect/checkpoint в предоставленной SQL-транзакции. Курсор не проходит незавершённый append, `MAX(sequence)` не доказательство видимости. Чужая БД/HTTP требуют своей идемпотентности.
-4. Уже есть: [reader и сохраняемый cursor](../../event/reader.go), [PostgreSQL settled watermark](../../event/eventpg/read.go) и [caller-owned SQL transaction binding](../../event/eventpg/executor.go). [Capabilities](../../event/eventpg/config.go): Transactions/Persistence/SharedBacking поддержаны, MonotoneVisibility — нет. Постоянного subscriber state и SQL-projector нет.
-5. DX: имя подписчика + read-only log + обработчик batch в предоставленной SQL-транзакции; после crash запуск продолжает сохранённую позицию.
-
-### Приложение ES-02 — параллельные подписчики с порядком внутри последовательности
-
-**Статус: не выполнено.** Дополняет E2.
-
-1. Механизм: [Axon segments и token claims](https://docs.axoniq.io/axon-framework-reference/4.12/events/event-processors/streaming/) распределяют работу между процессами, сохраняя порядок связанных событий.
-2. Зачем: ускорить проекции несколькими воркерами, не получить `OrderPaid` раньше `OrderCreated` при перераспределении нагрузки.
-3. Адаптация: application задаёт ключ последовательности по конфликтующей read model; aggregate ID подходит не для любой multi-stream проекции. SQL commit проверяет актуальное поколение claim вместе с effect/checkpoint. Изменение числа partitions требует согласованной передачи позиции, не замены `hash % N` на ходу. Внешний HTTP такой fence не защищает.
-4. Уже есть: [упорядоченные stream/log reads](../../event/store.go), [host-owned runner](../../runtime/runner.go). Нет subscriber partitions, их ownership и handoff; порядок событий не равен порядку параллельных handlers.
-5. DX: подписчик + `SequenceBy(key)` + число partitions; запуск нескольких instances не меняет прикладной handler.
-
-### Приложение ES-03 — dead-letter queue сохраняет причинный порядок
-
-**Статус: не выполнено.** Дополняет E2; не общий redrive jobs.
-
-1. Механизм: [Axon sequenced DLQ](https://docs.axoniq.io/dead-letter-queue-guide/4.13/) паркует не только ошибочное событие, но и следующие события той же последовательности; остальные продолжают обрабатываться.
-2. Зачем: один сломанный заказ не останавливает весь projector, но его последующие изменения не применяются к неверному состоянию.
-3. Адаптация: parking и scan checkpoint атомарны; успешная applied-позиция считается отдельно. Очередь ограничена числом sequences/bytes; overflow останавливает затронутую partition, не пропускает событие. Retry обрабатывает sequence по порядку; skip — явная операторская операция с отметкой неполноты проекции.
-4. Уже есть: [классы unreadable history](../../event/errors.go), bounded pages. Нет subscriber DLQ, состояния заблокированной sequence и ordered redrive.
-5. DX: политика subscriber failure + `RetrySequence(reference)`; состояние показывает blocked/degraded, не ложное «догнал историю».
-
-### Приложение ES-04 — перестроение проекции рядом с работающей версией
-
-**Статус: не выполнено.** Конкретизирует rebuild/cutover из E2.
-
-1. Механизм: [Marten/Wolverine versioned projections](https://jeremydmiller.com/2025/03/26/projections-consistency-models-and-zero-downtime-deployments-with-the-critter-stack/) строят новую версию в отдельных таблицах, пока старая продолжает обслуживать запросы.
-2. Зачем: исправить расчёт или изменить read model без очистки работающей таблицы и выдачи полупостроенных данных.
-3. Адаптация: generation имеет отдельные данные, checkpoints и claims; catch-up продолжается до согласованного барьера. Переключение read target атомарно для заявленного набора таблиц. Старый worker не пишет в новое поколение. Rollback допустим, пока старое поколение поддерживается актуальным либо снова догнало историю. Rebuild получает отдельный ресурсный бюджет.
-4. Уже есть: [полный log walk](../../event/reader.go); E2 требует rebuild/cutover rollback. Нет generation storage, переключения read target и проверки готовности.
-5. DX: `Rebuild(projection, newGeneration)` → проверка результата/барьера → `Activate(newGeneration)`; старое поколение удаляется отдельной операцией.
 
 ### Приложение ES-05 — ожидание конкретного изменения в read model
 
@@ -822,16 +789,6 @@ The first PostgreSQL event-source release is complete only when:
 3. Адаптация: ждать подтверждённую stream/version либо store-issued barrier конкретного projection generation, а не «пока lag станет нулём». Scan checkpoint после parking не доказывает применение события. Deadline возвращает timeout/degraded; stale-read разрешается явно. Успех даёт видимость до барьера, не глобальную linearizability и не свежесть чужой read replica.
 4. Уже есть: [Commit.Stream/Last](../../event/token.go), но receipt внутри caller transaction ещё не доказывает её commit. Нет applied progress и ожидания проекции.
 5. DX: после подтверждённого commit — `projection.Wait(ctx, committedVersion)`, затем чтение согласованного read target.
-
-### Приложение ES-06 — replay не повторяет письма и платежи
-
-**Статус: не выполнено.** Дополняет E2/E4.
-
-1. Механизм: [Marten side effects](https://martendb.io/events/projections/side-effects) отделяет обновление проекции от эффектов и подавляет последние при rebuild; [Axon replay policy](https://docs.axoniq.io/axon-framework-reference/4.12/events/event-processors/streaming/#replay-api) исключает выбранные handlers из replay.
-2. Зачем: восстановление read model не должно повторно выставлять счёт, отправлять webhook или создавать новую job за старое событие.
-3. Адаптация: отдельные projection/effect handlers; rebuild не получает effect-dispatch capability. Начальный backfill тоже имеет явную effect policy. При переключении поколения durable граница владения live effects не допускает двух отправителей. Это не sandbox: произвольный HTTP внутри пользовательского projection callback запрещается его контрактом и проверяется тестом, не блокируется магией.
-4. Уже есть: [ReadOnly без append escape](../../event/reader.go), pure rehydration; E4 выбирает staged jobs/outbox. Нет режима доставки и replay-aware effect dispatch.
-5. DX: `Rebuild(projection)` запускает только пересчёт; live effects подключаются отдельным обработчиком с собственной delivery identity.
 
 ### Приложение ES-07 — выяснение результата неопределённого append
 
@@ -868,8 +825,8 @@ The first PostgreSQL event-source release is complete only when:
 **Статус: не выполнено.** Принадлежит event roadmap, а не общей поставке
 [OTel](2026-09-08-opentelemetry-maximal-roadmap.md).
 
-1. Механизм: OTel Store middleware измеряет `ReadStream`/`ReadAll`/`Append` как I/O, typed repository decorator — полный `Load` с decode/upcast/fold, а projection observer — batch/checkpoint/lag после появления ES-01. Разделение следует реальным lifecycle: один store call не равен replay и продвижение scan cursor не равно применённой проекции.
+1. Механизм: OTel Store middleware измеряет `ReadStream`/`ReadAll`/`Append` как I/O, typed repository decorator — полный `Load` с decode/upcast/fold, а projection observer — batch/checkpoint/lag поверх `projection.Observer`, который уже поставлен. Разделение следует реальным lifecycle: один store call не равен replay и продвижение scan cursor не равно применённой проекции.
 2. Зачем: отличать медленную БД от дорогого folding/upcast, store conflict от pre-store refusal и отставание проекции от остановившегося projector.
-3. Адаптация: root `event` остаётся OTel-free и получает только общий `Middleware`/`Chain` и безопасный `OutcomeOf(error)`, если они подтверждены независимым потребителем. Реализация живёт в единственном `vvotel`, без `eventsourceotel`. Span/metric attributes содержат только закрытые operation/outcome/error-type; stream/key/type/payload/version/checkpoint не экспортируются. Append внутри чужой transaction означает accepted/staged, не committed. Store wrapper сохраняет Capabilities/Limits/Backing/Transaction/Close и не пытается выдать page I/O за полный replay. Projection telemetry не реализуется до ES-01.
+3. Адаптация: root `event` остаётся OTel-free и получает только общий `Middleware`/`Chain` и безопасный `OutcomeOf(error)`, если они подтверждены независимым потребителем. Реализация живёт в единственном `vvotel`, без `eventsourceotel`. Span/metric attributes содержат только закрытые operation/outcome/error-type; stream/key/type/payload/version/checkpoint не экспортируются. Append внутри чужой transaction означает accepted/staged, не committed. Store wrapper сохраняет Capabilities/Limits/Backing/Transaction/Close и не пытается выдать page I/O за полный replay. Projection telemetry читает опубликованный `projection.State` и ничего не добавляет в `event/projection`, который не пишет ни одной строки.
 4. Уже есть: [Store](../../event/store.go), полный replay в [Repo.Load](../../event/repo.go), закрытый [Outcome](../../event/outcome.go) и private failure, но нет middleware, публичного classifier, repository decorator или projection observer. Текущий `vvotel.Store` относится только к object storage.
-5. DX: `event.Chain(store, vvotel.EventStore(tel))` для I/O и `vvotel.EventRepo(tel, repo)` для полного load/append; после ES-01 projector получает обычный `vvotel.EventProjection(tel)` observer. Native OTel API остаётся escape hatch.
+5. DX: `event.Chain(store, vvotel.EventStore(tel))` для I/O и `vvotel.EventRepo(tel, repo)` для полного load/append; projector получает обычный `vvotel.EventProjection(tel)` в `Spec.Observer`. Native OTel API остаётся escape hatch.

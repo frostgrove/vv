@@ -128,6 +128,16 @@ written over one that is already recording is a partition silently adopted.
 two `Save`s at advance 1 and a `Forget` inside one caller-opened transaction are
 all or nothing.
 
+That is **three obligations**, and only the first two were reachable before
+partitioned projections existed. **A store certified against the phase-3 suite
+may go red on the third**, and that is the suite widening rather than the store
+regressing: a `Checkpoints` that claims `Transactions` and commits its writes one
+at a time passed everything the earlier suite asked and leaves a split half-made
+— a child row beside a live parent, two writers over one share of the log, each
+with its own fence and its own watermark. The widening is written here and in the
+package doc because the release baseline cannot see it: `docs/api/surface.md`
+records a signature and `RunCheckpoints` did not change one.
+
 ```go
 func TestMyCheckpointsSatisfyTheContract(t *testing.T) {
 	eventtest.RunCheckpoints(t, eventtest.CheckpointFactory{
