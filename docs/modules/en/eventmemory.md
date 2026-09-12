@@ -84,9 +84,9 @@ knowing:
 
   The reclamation is reachability and nothing else, so whatever still names the
   transaction keeps its claims: the `*Tx` itself, and a context carrying it that
-  outlives the request. A **commit receipt is not one of them** — the
+  outlives the request. A **commit token is not one of them** — the
   `event.Authority` in it names this store's own name for the transaction rather
-  than the `*Tx`, because a receipt is a value a caller is meant to keep, in an
+  than the `*Tx`, because a commit token is a value a caller is meant to keep, in an
   audit buffer or an outbox row, and a store whose transaction is a database
   handle loses nothing by keeping it.
 

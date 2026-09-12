@@ -2,7 +2,10 @@ package event
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/binary"
 	"fmt"
+	"hash"
 )
 
 // One store and one declaration, held together. It is a handle: copy the
@@ -35,11 +38,52 @@ func (this *Repo[S, ID]) Load(ctx context.Context, id ID) (S, At[S], error) {
 	if _, err := this.transaction(ctx, backing); err != nil {
 		return none, At[S]{}, err
 	}
-	state, version, err := this.replay(ctx, stream)
+	state, version, err := this.replay(ctx, stream, 0)
 	if err != nil {
 		return none, At[S]{}, err
 	}
 	return state, At[S]{stream: stream, version: version, backing: backing}, nil
+}
+
+// The state this aggregate held at a version, folded from the complete prefix
+// and nothing else. It returns no token, and that is the design rather than an
+// omission: a value that looks like one invites a Load-Decide-Append whose
+// decision was made against the history this call left out.
+//
+// The prefix is dense from version 1 and inclusive of the version asked for. A
+// version of zero, a version past the end of the stream and a stream with no
+// events are all ErrVersion — the three are one answer because an append-only
+// log tells a stream that is empty and a stream that never existed apart nowhere
+// a reader can see. An event the declaration cannot read is its own refusal and
+// the zero state, never the prefix that happened to fold first.
+//
+// It pages through the same ReadStream a load does and truncates the last page
+// in Go: the over-read is at most one page whatever the stream's length, so a
+// ceiling on the store contract would buy one partial page of I/O and cost every
+// store author a signature. The page is checked whole before it is truncated,
+// because a page that arrives out of order folds to a state that is wrong at the
+// right version with the right count and no refusal anywhere.
+func (this *Repo[S, ID]) StateAt(ctx context.Context, id ID, version Version) (S, error) {
+	var none S
+	stream, err := this.streamOf(id)
+	if err != nil {
+		return none, err
+	}
+	if version == 0 {
+		return none, fmt.Errorf("%w: a prefix begins at version 1, and a stream holding nothing is not a state this read may answer", ErrVersion)
+	}
+	backing := this.store.Backing()
+	if _, err := this.transaction(ctx, backing); err != nil {
+		return none, err
+	}
+	state, reached, err := this.replay(ctx, stream, version)
+	if err != nil {
+		return none, err
+	}
+	if reached < version {
+		return none, fmt.Errorf("%w: this stream is shorter than the prefix this read was bounded at", ErrVersion)
+	}
+	return state, nil
 }
 
 // Six steps, and the order is fixed because two of these refusals are in two
@@ -100,6 +144,82 @@ func (this *Repo[S, ID]) Append(ctx context.Context, at At[S], changes ...Change
 	last := at.version + Version(len(changes))
 	return At[S]{stream: at.stream, version: last, backing: backing},
 		Commit{stream: at.stream, first: at.version + 1, last: last, count: len(changes), authority: authority}, nil
+}
+
+// The bytes this append would write, digested: SHA-256 over a length-prefixed
+// encoding of the composed stream and each record's type, revision and payload
+// in order. Length-prefixed because "a"+"bc" and "ab"+"c" are two different
+// batches and one preimage otherwise.
+//
+// It runs the first four of Append's six steps — the token's key, every change's
+// stream and aggregate, each change's own carried refusal, the store's bounds —
+// and answers the same refusals Append would, so a caller that digests first
+// learns a malformed append before it claims anything. It issues no store call
+// and writes nothing.
+//
+// THE VERSION THE TOKEN WAS LOADED AT IS NOT IN IT, and a retry is why. A retry
+// that arrives in a new process holding an operation key loads what the store
+// now holds, which is the version the first attempt moved the stream to, so a
+// digest over the version cannot be reproduced by the one caller the mechanism
+// exists for. Append's own concurrency check is untouched and is where the
+// anchor belongs; what the digest answers is whether two attempts are the same
+// operation, and an operation is its stream and its records.
+//
+// Two attempts are the same only if they encode the same bytes. A codec that
+// records a clock, a fresh id or a map in iteration order encodes differently
+// every time, and under one operation key that is a refusal on every retry
+// rather than a duplicate append — loud, and never wrong. Take such a value from
+// the command, the state or the operation key, the way a Sequencer takes none of
+// them from a clock.
+func (this *Repo[S, ID]) Digest(at At[S], changes ...Change[S]) ([32]byte, error) {
+	var none [32]byte
+	if err := this.checkKey(at.stream.Key); err != nil {
+		return none, err
+	}
+	for _, change := range changes {
+		if err := change.decidedFor(at.stream, this.aggregate); err != nil {
+			return none, err
+		}
+	}
+	for _, change := range changes {
+		if change.err != nil {
+			return none, change.err
+		}
+	}
+	records, err := this.records(changes)
+	if err != nil {
+		return none, err
+	}
+	return digestOf(at.stream, records), nil
+}
+
+// The encoding is frozen, and for the reason Compose's is: a fingerprint
+// outlives the build that computed it. A receipt written by one deployment is
+// compared against a digest recomputed by the next, and inside a retention
+// window a deployment is routine — so reordering these fields, narrowing a
+// length, flipping the byte order or adding a separation tag answers every key
+// still in the window as a collision on an operation nobody performed. The
+// bytes are held as vectors, not described.
+func digestOf(stream Stream, records []Record) [32]byte {
+	sum := sha256.New()
+	prefixed(sum, []byte(Compose(stream.Family, string(stream.Key))))
+	for _, record := range records {
+		prefixed(sum, []byte(record.Type))
+		eightBytes(sum, uint64(record.Revision))
+		prefixed(sum, record.Payload)
+	}
+	return [32]byte(sum.Sum(nil))
+}
+
+func prefixed(into hash.Hash, value []byte) {
+	eightBytes(into, uint64(len(value)))
+	into.Write(value)
+}
+
+func eightBytes(into hash.Hash, value uint64) {
+	var written [8]byte
+	binary.BigEndian.PutUint64(written[:], value)
+	into.Write(written[:])
 }
 
 // A context, never a bound repository and never an inner store: a policing
@@ -195,7 +315,20 @@ func (this *Repo[S, ID]) records(changes []Change[S]) ([]Record, error) {
 // costs an extra round trip on every load, and a store that returns a short page
 // that is not the end of the stream truncates a history silently, which is what
 // the contract makes its own clause and the suite its own defect.
-func (this *Repo[S, ID]) replay(ctx context.Context, stream Stream) (S, Version, error) {
+//
+// upTo is the version the fold stops at, and zero means the end of the stream,
+// which is what a Load asks for. Two orderings inside are load-bearing: the page
+// is checked whole before anything is discarded, because a page returned as
+// [v3, v1, v2] truncated first passes a check that only sees what it was given
+// and folds to a state that is wrong at the right version; and the loop stops
+// reading the moment the accumulated version reaches the bound, folding nothing
+// above it.
+//
+// The over-read is at most one page whatever the stream's length: a bound at
+// version 7 of a 100 000-event stream reads one page and discards the rest of
+// it. A ceiling on the store contract would buy one partial page of I/O and cost
+// every store author a signature, a conformance section and a re-certification.
+func (this *Repo[S, ID]) replay(ctx context.Context, stream Stream, upTo Version) (S, Version, error) {
 	var state S
 	var at Version
 	for {
@@ -206,12 +339,18 @@ func (this *Repo[S, ID]) replay(ctx context.Context, stream Stream) (S, Version,
 		if err := this.checkPage(page, stream, at); err != nil {
 			return this.nothing(err)
 		}
+		if upTo > 0 && at+Version(len(page)) > upTo {
+			page = page[:upTo-at]
+		}
 		for _, envelope := range page {
 			if state, err = this.apply(state, envelope); err != nil {
 				return this.nothing(err)
 			}
 		}
 		at += Version(len(page))
+		if upTo > 0 && at >= upTo {
+			return state, at, nil
+		}
 		if len(page) < this.limits.StreamPage {
 			return state, at, nil
 		}

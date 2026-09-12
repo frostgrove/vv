@@ -100,6 +100,13 @@ func (this *livePark) inUnit(ctx context.Context) (parkExecutor, error) {
 	return tx, nil
 }
 
+func (this *livePark) reading(ctx context.Context) parkExecutor {
+	if on, err := this.inUnit(ctx); err == nil {
+		return on
+	}
+	return this.pool
+}
+
 func (this *livePark) Sequences(ctx context.Context, of projection.Identity) (uint64, error) {
 	this.sequences.Add(1)
 	var held uint64
@@ -110,12 +117,16 @@ func (this *livePark) Sequences(ctx context.Context, of projection.Identity) (ui
 	return held, nil
 }
 
+// The one method both tiers ask, and the clause differs between them: a pass
+// asks it inside the unit it is writing the letter in, where the answer must be
+// ordered against that write; a wait asks it on a request path's own goroutine
+// with no unit at all, where the answer must be the committed state. Both are
+// this one statement, on the unit's transaction where one is bound and on the
+// pool where none is — an implementation that required the transaction here
+// would refuse every wait over a projection that parks.
 func (this *livePark) Holds(ctx context.Context, of projection.Identity, sequence string) (bool, error) {
 	this.holds.Add(1)
-	on, err := this.inUnit(ctx)
-	if err != nil {
-		return false, err
-	}
+	on := this.reading(ctx)
 	var held bool
 	if err := on.QueryRowContext(ctx,
 		"SELECT EXISTS (SELECT 1 FROM "+this.park+" WHERE identity = $1 AND sequence = $2)",

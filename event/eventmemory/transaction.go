@@ -32,8 +32,8 @@ type Tx struct {
 
 // What the authority names, and deliberately not the *Tx: a claim is released
 // when nothing can reach the transaction any more, and the authority travels in
-// every commit receipt, which is a value a caller is meant to keep — an audit
-// buffer, an outbox row, two subsystems comparing receipts later. A store whose
+// every commit token, which is a value a caller is meant to keep — an audit
+// buffer, an outbox row, two subsystems comparing commits later. A store whose
 // transaction is a database handle names the handle, because there the locks go
 // at the commit and not at a collection. Monotone per log, so no two
 // transactions of one log are ever named alike and a name is never reused.

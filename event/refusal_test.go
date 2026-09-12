@@ -36,6 +36,7 @@ func declaredVocabulary() []namedSentinel {
 		{"ErrCursor", "wiring", ErrCursor},
 
 		{"ErrKey", "request", ErrKey},
+		{"ErrVersion", "request", ErrVersion},
 		{"ErrEncode", "request", ErrEncode},
 		{"ErrSample", "request", ErrSample},
 		{"ErrTooLarge", "request", ErrTooLarge},

@@ -400,7 +400,27 @@ generation stops staging in the same breath as it commits its own advance
 partitions x M generations are N x M independent walks of the log, measured at
 8.0x a one-projection baseline, and there is no merge.
 
-**A snapshot is deferred on a measurement rather than omitted.** A full replay is
+**The caller's three guarantees are delivered.** A command can be read back
+without a `sleep`: `projection.WaitOf` derives a wait from the projection's own
+`Spec`, `WaitSpec.Committed` mints a mark from a commit **after** it committed,
+and `Wait` polls on the caller's own goroutine — asking the park **before** the
+census and on **every** poll, so a change a projection parked is named
+(`ErrParked`) rather than waited out, which is the one failure ES-05 exists to
+forbid. An uncertain append is resolvable: `event/receipt` is a durable operation
+receipt written beside the append in the caller's own transaction, behind a
+`Ledger` the application owns — the claim comes before the decision, the
+fingerprint covers the bytes and deliberately not the version, and an absent row
+is `Unresolved` rather than a rollback, because a second connection cannot tell a
+transaction that rolled back from one still open. And `Repo.StateAt` folds the
+complete prefix up to an exact version and returns **no token**, so a historical
+read cannot become the first half of a `Load → Decide → Append`
+([[D-142]], [[D-143]], [[D-144]], [[FL-043]], [[UC-036]], [[UC-037]],
+[[UC-038]]). None of it moved the store contract: `eventtest`'s twenty sections
+and `RunCheckpoints`' fourteen are unchanged, and `eventpg` stays at
+`SchemaVersion = 2` with no fifth table.
+
+**A snapshot is deferred on a measurement rather than omitted, and the deferral
+now has a contract.** A full replay is
 10 – 18 ms at 10 000 events and 104 – 171 ms at 100 000, measured on PostgreSQL
 17.9 at the deployed defaults, and paging is a sixth of it: the 391 pages of a
 100 000-event replay cost about 17.6 ms, roughly 45 µs a page. The gate is a
@@ -408,7 +428,23 @@ measured **need**, not a measured cost — so what ships is the instrument,
 `BenchmarkStreamReplay`, and the re-entry trigger belongs to the deployment: a
 snapshot is built when one measures its own p99 aggregate replay above ~50 ms in
 its own environment, which is somewhere above 30 000 – 50 000 events at these
-rates and an order of magnitude fewer over a 1 ms link ([[D-132]]).
+rates and an order of magnitude fewer over a 1 ms link ([[D-132]]). The gate was
+**asked** rather than assumed: re-measured on 2026-09-12 the crossing is at about
+**45 000 events**, inside that band, so the trigger does not move — and it is a
+measured *cost*, which is the argument [[D-132]] refuses by name. What ships
+instead is **[[D-145]], the contract with no code**: the five bindings compared
+before deserialisation, the two components of a state-computation version, the
+sentence saying nothing detects a forgotten bump, the observable fallback, the
+unreadable event that is never hidden by it, and the two gates neither of which is
+met. It **amends** D-132 and does not supersede it, so the phase that eventually
+writes the code implements a decision instead of re-deriving one.
+
+The consumer's guide is written down rather than left in the reference pages:
+`docs/usage-guides/event-sourcing.md` is the adoption route — declare, bind,
+follow, wait, claim, read history — and `_examples/event-wait` and
+`_examples/event-receipts` are the two runnable programs behind it, the second
+being the **reference `receipt.Ledger`** whose two claim statements a test
+compares with the live suite's byte for byte and in order.
 
 What is left is a retention or archival path for a history that outgrows one
 table — whose interlock is against every projection name's stored cursor and

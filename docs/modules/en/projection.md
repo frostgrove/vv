@@ -59,7 +59,8 @@ following, err := projection.New(projection.Spec{
 	},
 	Destination: source,
 })
-supervisor.Add(following)
+
+supervisor, err := runtime.Auto(following)   // Spec.Runners at the composition root; there is no Add
 ```
 
 `Spec.Log` is an `event.Log` and a value that is also an `event.Store` is
@@ -210,9 +211,11 @@ moves no key out of the parent's own share.
 Declare the set as a `Cover` and build the runners from its members —
 `NewCover` refuses a gap and an overlap by arithmetic, and those are the two
 failures no single runner can see. A page this partition matches nothing in still
-advances its checkpoint and calls no handler, so `Progress.Highest` is the read
-page's last position rather than a claim about what was applied. A panic out of a
-sequencer **halts**: an envelope with no sequence belongs to no partition.
+advances its checkpoint and calls no handler, so a watermark that moved is **not**
+a claim that this runner applied anything — §6 is the promise it does make, and
+the filter is why *delivered* and *applied* come apart here as well as at the
+park. A panic out of a sequencer **halts**: an envelope with no sequence belongs
+to no partition.
 
 **Only the first start chooses the topology.** A partitioned runner started beside
 a live checkpoint row for a coarser share of the same key space — the migration
@@ -376,6 +379,248 @@ dialling out; what the shape does is make the honest thing the easy thing and th
 dishonest thing visible in a review. The half that is enforced is the framework's
 own reach: no package `event/projection` reaches, transitively, imports `net`,
 `net/http`, `net/smtp` or `os/exec`.
+
+## Waiting for a change to be visible
+
+After a confirmed command the next read must not show the old state, and a test
+must not need a `sleep`. A wait polls **one** named generation over **one** cover
+until everything at or below a minted position has been delivered — and, where you
+supply a `Park`, **applied**.
+
+| | |
+|---|---|
+| `WaitOf(spec, over)` | a `WaitSpec` derived from the projection's own `Spec`. No I/O, starts nothing |
+| `WaitSpec` | `Checkpoints` · `Park` · `Sequence` · `Generations` · `Of` · `Over` · `Until` · `Every` · `Ticks` |
+| `WaitSpec.Committed(ctx, store, commit)` | the `Mark` for an append that has committed |
+| `MarkOf(barrier)` | the `Mark` a `Barrier` was observed at |
+| `Mark` | `At()` · `Zero()` · `String()` — `"[mark]"`, and no field a caller can write |
+| `Wait(ctx, spec)` | polls on **your** goroutine until reached, refused, or the context is done |
+| `Visibility` | `Reached` · `At` · `Behind` · `Moved` · `Quarantined` · `Parked` · `Polls` |
+| `ErrNotVisible` · `ErrParked` · `ErrUncommitted` · `ErrGeneration` | the four answers that are not "reached" |
+
+```go
+waiting, err := projection.WaitOf(spec, cover)     // once, at the composition root
+...
+// in the handler, after crud.InNewTx has COMMITTED:
+mark, err := waiting.Committed(ctx, store, commit)
+if err != nil {
+	return err
+}
+waiting.Until = mark
+
+vis, err := projection.Wait(ctx, waiting)
+switch {
+case err == nil:
+	return serveFresh()
+case errors.Is(err, projection.ErrParked):
+	return serveParked()                       // a redrive is the fix; waiting is not
+case errors.Is(err, projection.ErrNotVisible):
+	return serveStale(vis.Behind)              // a branch you wrote, not a flag you passed
+default:
+	return err
+}
+```
+
+**`WaitOf` is the spelling this page gives**, and the struct stays assemblable by
+hand for the host that assembles its runners by hand. It derives the five facts a
+wait needs from the `Spec` the runner was built from, through the same defaults
+`New` applies, and refuses the zero `Cover` and a spec that names no identity.
+`Until`, `Every` and `Ticks` are yours to fill in — and `Until` is the only one a
+request path has any business writing. `Every` and `Ticks` are deliberately **not**
+taken from the `Spec`: a projection's interval is its idle policy and a wait's is a
+request path's latency budget.
+
+### What a mark is, and why you cannot write one
+
+Both doors take a number a store produced. A mark you could build is evidence you
+invented — the same door `Cutover` closes by having no barrier field.
+
+`Committed` reads the commit's **whole range** back from the store, after your
+transaction has committed. `Commit` carries no position by design: inside an
+uncommitted transaction an envelope's position is unspecified, and one store has it
+already while another answers zero. So the map from a version to a position costs
+one `ReadStream` for a commit that fits a page, and this call is where that round
+trip is rather than hidden inside the poll loop. It reads the whole range and not
+only the last event because a `Sequencer` is any function of an envelope: a commit
+of three facts can belong to three sequences, and a mark carrying only the last
+one's key would ask the park about one third of what it is waiting for.
+
+Six refusals, and each is a mark that would have lied: an **empty commit**; a
+**transaction of this store's bound to `ctx`**, because a position read inside the
+transaction that wrote it belongs to an append that can still roll back — and a
+rolled-back append burns its position, which no projection ever delivers, so a
+wait on such a mark never reaches; a store that does **not show `commit.Last()`**
+(`ErrUncommitted`, which tells "not committed yet" from "rolled back" no better
+than a second connection can); a **zero position** (`ErrUncommitted`); a page the
+store's own answer is **not honest about** — longer than its published
+`StreamPage`, or carrying any envelope that is another stream's or is not one
+version above the one before it (`event.ErrBackend`); and a **nil `Sequence`
+beside a non-nil `Park`** (`ErrSpec`).
+
+`MarkOf(barrier)` is the other door — a barrier `Observe` folded from a
+generation's own checkpoint rows. It carries **no sequence key**, because a
+barrier has no envelope to ask a sequencer about, so `Wait` refuses it beside a
+non-nil `Park` rather than quietly answering *delivered* to a caller that asked
+*applied*.
+
+**A mark minted from one projection is refused on another**, at `Wait`'s door and
+before any store call, with `ErrSpec`. Two projections over one log is an ordinary
+deployment, and the values are each individually right:
+
+```go
+mark, err := orders.Committed(ctx, store, commit)   // keys: orders' sequencer's
+invoices.Until = mark                               // compiles, and is a lie
+```
+
+The position is global, so the census would reach; the park would be asked under a
+key no letter of `invoices` was ever written under, `Holds` would answer false, and
+the caller would be told *reached* for an event `invoices` parked. **To wait on a
+second projection, derive that projection's own `WaitSpec` and call its
+`Committed`** — one more `ReadStream`, and the right park asked the right
+question. The comparison is on the **projection name alone** and never the
+generation, because a barrier of another generation of the same projection is the
+cutover case a wait admits.
+
+### What one poll does, in order
+
+1. **The ownership row**, on the first poll, where `Generations` is supplied. A
+   wait scoped to a generation reads do not resolve to is asking about a read
+   model this caller is not reading, and every other answer would be beside the
+   point.
+2. **The park**, before the census and on **every** poll. Your change may live in
+   one partition that parked it while another partition merely lags; a wait that
+   asked only after reaching would burn its deadline on a condition it could have
+   named at once. `Sequences` first, and `Holds` only behind a non-zero count.
+3. **The census** — the lowest `Highest` across the cover's members, which is the
+   only aggregate a set of checkpoint rows has.
+4. **The ownership row again**, on the poll that would otherwise answer reached.
+   That read turns a false success into a refusal when a cutover committed while
+   this wait was running.
+
+**Two ownership reads over the whole wait, and never one per poll.** A per-poll
+read buys a faster refusal for a case the caller cannot act on any sooner, at one
+more `SELECT` per interval per waiter on a row every read path of the deployment
+already contends for. *Over the wait* and not *on two polls*: a caught-up
+deployment reaches on its first poll every time, so both reads land on that one
+poll and the cost is one extra `SELECT`. What may not move is the **last** read.
+
+**A wait scoped to no generation asks nothing.** `Generations` nil says the caller
+knows which generation it is reading, which a deployment tool waiting on an
+*arriving* generation on purpose does.
+
+### The exits, and what each one is not
+
+| Exit | Error | What it means |
+|---|---|---|
+| reached | `nil` | everything at or below the mark was delivered in this generation — and applied, if a `Park` was supplied |
+| parked | `ErrParked` | one of the mark's sequences is held in this generation's queue. **Terminal**: waiting longer cannot help and a redrive can |
+| another generation | `ErrGeneration` | reads of this projection resolve elsewhere. Read `Active` and wait again on the generation it answers |
+| deadline | `ErrNotVisible` wrapping `context.DeadlineExceeded` | not yet, and `Visibility` carries what the last readable poll saw |
+| cancelled | `ctx.Err()` bare, zero `Visibility` | the caller stopped asking |
+| unreadable | `ErrTopology` / `event.ErrBackend` | the poll could not be made at all |
+
+**Five things `Reached` is not**, and they are on this page because each is a
+sentence somebody would otherwise assume:
+
+1. **Not global linearizability.** It is a statement about one named projection
+   generation, over one named cover, resolved against one checkpoint store. A
+   second projection of the same log, a second database, a second generation and
+   anything outside the cover are all unaddressed.
+2. **Not another replica's freshness.** The wait reads through the context it was
+   given; if that reaches a read replica, it reports that replica's view. Visibility
+   up to the mark holds for a reader that resolves the read model on the authority
+   the projection wrote it through, and for no other reader.
+3. **Not "the projection is caught up".** There is no head. `Reached` says the
+   watermark passed the mark and says nothing about anything above it.
+4. **Not "the event was applied", unless the park was asked.** With `Park` nil,
+   `Reached` means *delivered*, and delivered is not applied for a projection that
+   parks. `WaitOf` is what makes supplying it a derivation rather than a thing to
+   remember.
+5. **Not "the generation I am about to read".** With `Generations` nil, `Reached`
+   is about the generation `Of` names, and the gap between the last ownership read
+   and your own read is the cutover's named overlap window seen from the read
+   path's side.
+
+**There is no stale-read field.** No `AllowStale`, no `OnTimeout`, nothing that
+turns a refusal into a success. A wait that did not reach returns a **filled-in**
+`Visibility` beside its refusal, so serving stale data is a branch a reviewer can
+see rather than a flag every caller ends up passing.
+
+**`Moved` is exactly what it says.** It is whether `At` changed across this wait's
+polls, and it is the one field that tells a slow projector from a stopped one. It
+costs nothing — the census read the number anyway. **With `Polls` below two it is
+always false and means nothing**, because one observation cannot show a change;
+and a projector between two slow passes has not moved either.
+
+**`Behind` is an upper bound and a hint**, for the reason `Readiness.Behind`
+already carries: a log burns a position for a rolled-back append and for an
+optimistic-concurrency loser, so the distance between two positions is not a count
+of undelivered events.
+
+**A poll that cannot be made is terminal on the first poll and polled through
+after it**, and the poll number is the whole of that rule: a cover that is not the
+one the rows are recorded at, a `Checkpoints` pointing elsewhere and a `Park` that
+refuses outside a unit are wrong on poll 1 and wrong for ever, so they come back at
+once instead of after a deadline; a refusal that appears later is the deployment
+moving, and the deadline decides with that last refusal wrapped into it. **The
+caller's context outranks the poll number**: a poll whose refusal arrives with the
+caller's own budget already done takes the deadline exit or the cancellation exit
+on poll 1 exactly as on poll 4 — and that refusal is *not* wrapped into the
+deadline, because a store reached with a done context answers a store class and a
+deadline carrying one reads as a cover misconfiguration that does not exist. A
+poll that **answered** still answers: `ErrParked` and `ErrGeneration` are
+conclusions drawn from rows that were read, and a caller can act on a redrive and
+cannot act on a timeout.
+
+**A generation with no checkpoint rows at all is not an error.** The census has a
+third answer beside *a number* and *a partial cover*: no member has a row, so
+`At` is zero, nothing is folded, and the wait simply does not reach — which is
+what a wait on a generation that has never started should do.
+
+### What a wait costs
+
+One `Park.Sequences` count plus one checkpoint `Load` **per cover member, per
+poll, per waiting caller** — and two per member while that member has recorded
+nothing yet, because the census asks an absent row whether a split handed it down.
+`Every` defaults to **50 ms**.
+
+So a four-member cover at the default interval is **80 small indexed `SELECT`s a
+second** per waiting caller, and fifty concurrent waiters on that cover is about a
+**thousand a second**. Cheap until it is not. **The lever is `Every`**: a request
+path that wants 200 ms writes 200 ms, and the default is not raised because a
+default cannot be *invisible* and this arithmetic can be on the page instead. A
+wait during a rebuild is the expensive case — a rebuilding generation's members
+have no rows yet, so each poll pays the doubled census.
+
+A wait **starts nothing and writes nothing**: no goroutine, no `Save`, no
+`Forget`, no transaction, no log line, span or metric. It costs exactly nothing
+when nobody is waiting, which is why there is no shared poller.
+
+### Three obligations a wait cannot check, beside `Sequencer`'s three
+
+A hand-assembled `WaitSpec` carries three obligations nothing at any door can
+see, and each is silent when it is broken. `WaitOf` discharges all three by
+derivation, which is why it is the spelling this page gives.
+
+1. **`Sequence` must be the sequencer the projection runs.** Another one produces
+   keys no letter was parked under, so the park answers false for a change that is
+   held and the wait reports reached.
+2. **`Park` must be the projection's queue, if it has one.** Nil against a
+   projection that parks answers *delivered* where the caller asked *applied*.
+3. **`Over` must be the cover the rows are recorded at.** A minimum folded over
+   the wrong set is a minimum across a hole.
+
+They sit beside the three `Sequencer` already carries, for the same reason —
+**none of the three is checked at run time**, and the supported way to change a
+key is a new generation:
+
+1. **Total.** Every envelope gets a key. An envelope with no sequence has no
+   sequence to be parked in, so a panic out of a sequencer halts the projection
+   rather than failing its page.
+2. **Pure.** It reads the envelope and nothing else: no clock, no map iteration,
+   no process-local state.
+3. **Stable for the life of the log.** The key an envelope produced in one release
+   is the key it must produce in every later one.
 
 ## What you own, and what goes wrong when you do not
 
@@ -553,6 +798,17 @@ would otherwise open a transaction every pass to be told the queue is still empt
 ambient transaction in `Sequences`: a refusal there is read as a postpone, and a
 projection whose count can never be read retries for ever without advancing and
 without halting.
+
+**One sentence of that contract widened when the wait landed, and it is
+`Holds`'s: a wait also asks it OUTSIDE a unit of work, and an implementation must
+answer the committed state there.** `Wait` has no unit — it runs on a request
+path's own goroutine — and `Sequences` and `Holds` are the only two `Park` methods
+it calls. What the inside-a-unit call buys is a pass's property and is unchanged;
+a wait needs no ordering, only a committed answer, and the `Sequences`-first gate
+means a projection that has parked nothing never reaches the widened clause. **One
+sentence, and it is `Holds`'s** — `Sequences`'s outside-a-unit rule is unchanged,
+`Park` is still a pass's write, and `Holes` is asked by no wait at all
+([[D-144]]).
 
 **A healthy projection pays nothing.** `Park.Sequences` is read once per resume —
 a process start, or an overtaken that adopted another instance's row — and again
@@ -794,6 +1050,10 @@ below `Tolerate`.
 | an `EffectsAfter` on `RedriveSpec` | it is the one wiring whose only outcome is a lost effect: a barrier over a queue suppresses one that is owed and nothing will ever offer it again |
 | a partition count anywhere | there is no count; there is a set of rows and the mask each runner was built with ([[D-140]]) |
 | a `Log.ReadAll` filter, or a reader shared between runners | N partitions x M generations are N x M independent walks, and the cost is paid and recorded rather than traded for a contract the log does not have |
+| `AllowStale`, `Stale` or `OnTimeout` on a `WaitSpec` | a wait that did not reach returns a filled-in `Visibility` beside its refusal, so serving stale data is a branch a reviewer can see |
+| a shared poller, a cached progress or any pre-warming behind `Wait` | anything continuous is a `runtime.Runner` the host has to supervise ([[D-092]]), and this costs nothing when nobody is waiting |
+| a settable field on a `Mark` | a target a caller can write is evidence it invented; both doors take a number a store produced |
+| `Park.Holes` asked by a wait | a hole is a cutover's question. A wait asks `Sequences` and `Holds` and nothing else of a `Park` |
 
 ## See also
 
@@ -806,6 +1066,10 @@ below `Tolerate`.
   runners from one `Cover`, and the split that takes one of them to two
 - [`_examples/event-generations`](../../../_examples/event-generations/) — the
   barrier, the cutover, the rollback and the effect gate
+- [`_examples/event-wait`](../../../_examples/event-wait/) — an append, a mark, a
+  wait and the read, with the parked branch written out
+- [receipt](receipt.md) — the other half of the same request path: what happened
+  to the command whose outcome you never heard
 - [[D-091]] · [[D-092]] · [[D-118]] · [[D-126]] · [[D-128]] · [[D-129]] ·
   [[D-130]] · [[D-131]] · [[D-132]] · [[D-133]] · [[D-140]] · [[D-141]] ·
-  [[FL-038]] · [[FL-042]] · [[UC-032]]
+  [[D-144]] · [[FL-038]] · [[FL-042]] · [[FL-043]] · [[UC-032]] · [[UC-036]]

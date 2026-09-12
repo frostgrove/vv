@@ -3,9 +3,11 @@
 **Entry points:** `projection.New` (the composition root), `projection.Projection.Run`
 (the loop), `event.Track` (the door onto a checkpoint store),
 `eventmemory.NewCheckpoints` / `eventpg.NewCheckpoints` (the two shipped stores),
-`eventtest.RunCheckpoints` (a third implementation's proof)
+`eventtest.RunCheckpoints` (a third implementation's proof),
+`projection.WaitOf` / `projection.WaitSpec.Committed` / `projection.Wait` (the
+read of these rows from a request path)
 **Governed by:** [[D-092]] [[D-118]] [[D-126]] [[D-128]] [[D-129]] [[D-130]]
-[[D-131]] [[D-132]] [[D-133]] [[D-140]]
+[[D-131]] [[D-132]] [[D-133]] [[D-140]] [[D-144]]
 
 What happens between a page the log answered and a row in a checkpoint table that
 says a consumer finished with it — the fence that admits one save at a time, the
@@ -304,6 +306,69 @@ one mechanism either reference has, and neither half of it is taken: this call
 cannot stop a runner in another process, and claiming a live generation's rows
 means writing them, which takes that runner's fence away.
 
+## A wait, which is a read of these same rows from a request path
+
+`event/projection/wait.go` and `event/projection/mark.go`. Nothing here writes: a
+wait is the checkpoint rows this flow produces, read on a caller's own goroutine,
+until they say the caller's own change has been delivered.
+
+**The value first.** `Mark` has unexported fields only and two minting doors, both
+of which take a number a store produced. `WaitSpec.Committed` reads the commit's
+**whole range** back with `Store.ReadStream` after the caller's transaction has
+committed — `Commit` carries no position by design — and attaches the distinct
+sequence keys `spec.Sequence` answered, in first-appearance order. `MarkOf` takes
+a `Barrier` that `Observe` folded from a generation's own rows and attaches none.
+Both record `Of.Projection()` / `Barrier.Projection`, and `Wait` refuses a mark
+whose projection is not `spec.Of`'s before any store call: the position is global
+so a census would reach, while the park would be asked under a key no letter of
+this projection was written under ([[D-144]]).
+
+`WaitSpec.resolved` does not trust the page it is handed. `honest` reproduces all
+three arms of `event/repo.go:checkPage` in this package's vocabulary — no more
+envelopes than the published `StreamPage`, every envelope the stream that was
+asked for, every envelope one version above the one before it — because a store
+answering another stream's row mints a mark at a foreign position carrying a
+foreign sequence key, and the park is then asked about somebody else's event and
+answers no.
+
+**`WaitOf(spec, over)` derives the five facts a wait needs from the projection's
+own `Spec`, through the same `withDefaults` `New` applies** rather than through a
+second spelling of two of its clauses. Three of the five are silently wrong-able
+by a request handler, and `WaitOf` is what makes supplying them a derivation.
+
+**One poll, in order**, and the order is the whole of ES-05:
+
+1. `Generations.Active`, on poll 1 where `Generations` is supplied
+   (`waiter.resolves`);
+2. `Park.Sequences`, and `Park.Holds` per mark key only behind a non-zero count
+   (`waiter.parked`) — **before** the census and on **every** poll, because the
+   caller's change can be parked in one partition while another merely lags;
+3. `surveyed` (`event/projection/generation.go`), the lowest `Progress.Highest`
+   across the cover — the same census `Observe` folds a barrier from;
+4. `Generations.Active` again, on the poll that would answer reached.
+
+That second ownership read is unconditional: a caught-up deployment reaches on
+poll 1 every time, so exempting it would leave the protection only for waits that
+were going to be slow anyway. **Two reads over the wait, not two polls.**
+
+`Park.Holds` is asked **outside** a unit of work here, which is the one sentence
+of `Park`'s contract this phase widened; `Park.Holes` is asked by no wait at all.
+
+**Five exits** (`waiting`): reached; `ErrParked` and `ErrGeneration`, both
+terminal because they are conclusions drawn from rows that were read; a refusal
+that could not be made, terminal on poll 1 and polled through after it; and the
+context — `ErrNotVisible` wrapping `context.DeadlineExceeded` with the last
+readable `Visibility`, or `ctx.Err()` bare and the zero `Visibility` on a
+cancellation. **The context outranks the poll number**, and `expired` is what
+keeps a store's own classification of a done context out of the deadline's wrap:
+it asks `errors.Is(refusal, ctx.Err())` **and** `errors.Is(event.CauseOf(refusal),
+ctx.Err())`, because a refusal answers false for `context.DeadlineExceeded` by
+design and the cause is the only door onto it.
+
+A wait starts nothing, saves nothing and forgets nothing. `startsNothing`
+(`scripts/extensions_test.go`) is what holds the first of those over these two
+files.
+
 ## The two shipped checkpoint stores
 
 `event/eventmemory/checkpoints.go` keeps its rows **on the `*Log`**, so two
@@ -390,7 +455,7 @@ save ever created.
 | `event/eventtest/sections_topology.go` | `topologySection`, `topologyHandoffSection`, `checkpoints.handOver`, `checkpoints.absentOutside` — the other two, and the only place the suite asks what a split rests on: one cursor written under two names, a save at advance 1 over a live row, and a read, two saves and a removal that are one transaction or none |
 | `event/eventtest/defects_checkpoints.go` | `checkpointDefect`, `checkpointDefects`, `unfenced`, `ahead`, `ambient`, `pedantic`, `narrow`, `verbose`, `closing`, `stale`, `absent`, `oneName`, `detaching`, `namespaced`, `recomposed`, `adopting`, `retiring`, `beside` — the fourteen broken stores the runner is falsified with, one per section but `durability`, whose defect is a factory rather than a decorator |
 | `event/projection/doc.go` | the package sentence: at least once in both modes, one name is one writer, there is no head, and nothing here writes a line |
-| `event/projection/errors.go` | `ErrSpec`, `ErrHalted`, `ErrOvertaken`, `ErrUnrouted`, `ErrTopology`, `ErrParkFull`, `ErrClaimLost` — seven, none of which crosses a store seam |
+| `event/projection/errors.go` | `ErrSpec`, `ErrHalted`, `ErrOvertaken`, `ErrUnrouted`, `ErrTopology`, `ErrParkFull`, `ErrClaimLost`, `ErrRetired`, `ErrNotVisible`, `ErrParked`, `ErrUncommitted`, `ErrGeneration` — twelve, none of which crosses a store seam; the last four arrived with the wait |
 | `event/projection/spec.go` | `Advance` and its three values, `Advance.Valid`, `Advance.String`, `Backoff`, `Spec` — `Sequence`, `Partition` and `Generation` among its fields — `unchecked`, `Unchecked`, `New`, `namedRefusal`, `refusedAdvance`, `refusedPark`, `refusedNumbers`, `withDefaults`, `appends`, `absent` — the whole refusal set, collected rather than reported one at a time, and the three the park costs are about the tier rather than about the queue |
 | `event/projection/page.go` | `Batch` and its `Identity`, `Handler`, `HandlerFunc`, `copyOf` — the page per attempt, which is §INV-021's eighth hand-off |
 | `event/projection/classify.go` | `Verdict`, `Retryable`, `Permanent`, `Classifier`, `Classify`, `Failure`, `Halt`, `ParkSequence` — the history class and `ErrUnrouted` are permanent and everything else is retryable, and the second verdict parks the sequence rather than the envelope. A `RedriveSpec` carries no `Classifier`: a letter that fails again is requeued with its new cause whichever class it is in, because giving up on one removes it without applying it and that is an operator's act through `Evict` |
@@ -405,6 +470,8 @@ save ever created.
 | `event/projection/cover.go` | `Cover`, `NewCover`, `Cover.Partitions`, `Cover.Count`, `gapIn` — the set is the thing that has to be right, checked by two exact arithmetic facts |
 | `event/projection/sequence.go` | `Sequencer`, `ByStream`, `Unordered`, `OneSequence`, `SequenceBy`, `sequencer`, `sequencer.Name`, `sequencer.SequenceOf`, `unusable` — who names a sequence, and the three obligations the type cannot carry |
 | `event/projection/topology.go` | `SplitSpec`, `Split`, `children`, `handOver`, `recordingFiner`, `tracking`, `retired`, `loaded`, `inACallersTransaction`, `noParent`, `besideAnAbsentParent`, `alreadySplit`, `unrecordable`, `alreadyFiner` — the one topology change there is, six steps in the caller's own transaction, the record that makes it one way, and nothing carried between two runs of it |
+| `event/projection/mark.go` | `Mark`, `Mark.At`, `Mark.Zero`, `Mark.String`, `MarkOf` — the value a wait waits for, with unexported fields only: both minting doors take a number a store produced, and both record the projection they minted from, so a mark of one projection waited on another is refused at `Wait`'s door |
+| `event/projection/wait.go` | `WaitOf`, `WaitSpec`, `WaitSpec.Committed`, `WaitSpec.resolved`, `honest`, `Visibility`, `Wait`, `waitable`, `polled`, `waiter`, `waiting`, `waiter.poll`, `waiter.resolves`, `waiter.parked`, `expired`, `waiter.stopped`, `defaultEvery` — the read of these same rows from a request path: the park before the census on every poll, the census's minimum, the two ownership reads, and the five exits |
 | `event/projection/generation.go` | `Generation`, `Ungenerated`, `Generations`, `Barrier`, `Observe`, `Readiness`, `Reached`, `Cutover`, `CutoverSpec` and their refusals — the barrier is the lowest `Highest` across a checked set, the evidence is derived inside the unit rather than supplied by the caller, and the switch is one fenced write |
 | `scripts/projection_test.go` | the surface, AST and comment walks the invariants name: no exported function from a position or a progress to a cursor, no ordering of a cursor, no comment promising exactly-once delivery, no snapshot declared or published, no transaction opened, no published topology predicate left without a caller, and no door taking a `Cover` or an `Identity` without asking whether it was built |
 | `scripts/event_test.go` | the `projection` row of `charged`: this package costs the vocabulary plus `runtime` and nothing else |
@@ -422,7 +489,9 @@ Untagged, in `make unit`: `event/checkpoint_test.go` and `event/tracker_test.go`
 seam), `event/reader_test.go` (the page and the cursor checked together),
 `event/eventmemory/checkpoints_test.go` and `event/eventmemory/transaction_test.go`
 (the memory store and its staging), `event/eventtest/checkpoints_test.go` (the
-runner's own falsification), and the twelve files of `event/projection`.
+runner's own falsification), and the files of `event/projection` — including
+`event/projection/mark_test.go` and `event/projection/wait_test.go`, which drive
+the wait against a fake clock so no test of it sleeps either.
 
 Behind `//go:build integration`, against a live PostgreSQL:
 `event/eventpg/checkpoints_integration_test.go`,
@@ -434,8 +503,12 @@ Behind `//go:build integration`, against a live PostgreSQL:
 `event/eventpg/partition_integration_test.go`,
 `event/eventpg/topology_integration_test.go`,
 `event/eventpg/park_integration_test.go`,
-`event/eventpg/generation_integration_test.go` and
-`event/eventpg/cost_integration_test.go`. The gate names its own command:
+`event/eventpg/generation_integration_test.go`,
+`event/eventpg/cost_integration_test.go` and
+`event/eventpg/wait_integration_test.go` (the ten cases of ES-05: a confirmed
+command read back without a sleep, the parked pair, a mark minted inside the
+writing transaction, the call-count budget, and a wait polling beside the
+projection's own loop). The gate names its own command:
 
 ```sh
 FROSTGROVE_EVENTPG_TEST_DSN='postgres://vv:vv@localhost:55432/vv?sslmode=disable' \
@@ -504,4 +577,12 @@ FROSTGROVE_EVENTPG_TEST_DSN='postgres://vv:vv@localhost:55432/vv?sslmode=disable
 | no exported function turns a position or a progress into a cursor, no cursor is ordered, no comment promises exactly-once delivery, and no snapshot is declared or published | `TestNoExportedFunctionTakesAPositionAndAnswersACursor`, `TestNoConstructorTakesAProgressAndAnswersACursor`, `TestCursorIsNeverCompared`, `TestNoCommentInTheProjectionPackagePromisesExactlyOnce`, `TestNoSnapshotAuthorityIsDeclaredOrPromised` |
 | no exported function takes two cursors, and no modulus is applied to a sequence hash | `TestNoExportedFunctionOrdersOrTakesTwoCursors`, `TestNoModulusIsAppliedToASequenceHash` |
 | this package opens no transaction, no published topology predicate is inert, no door takes an unchecked `Cover` or `Identity`, and every file of it is named by the reverse index | `TestNothingInTheProjectionPackageOpensATransaction`, `TestEveryPublishedTopologyPredicateHasACaller`, `TestEveryDoorTakingACoverOrAnIdentityRefusesItsZeroValue`, `TestEveryProjectionSourceFileIsNamedByTheFlowReverseIndex` |
+| a mark is minted only from a number a store produced, renders nothing, and is refused on another projection's spec at both doors | `TestAMarkIsMintedOnlyFromANumberAStoreProduced`, `TestCommittedRefusesTheSixItCannotMint`, `TestAMarkMintedInsideTheWritingTransactionIsRefused` |
+| a wait reaches on its first poll and never sleeps, and the derived spec answers what three hand-written ones get wrong | `TestAWaitReachesOnItsFirstPollAndNeverSleeps`, `TestWaitOfDerivesTheSameDefaultsNewApplies`, `TestTheDerivedSpecAnswersWhatThreeHandWrittenOnesGetWrong`, `TestTheDerivedSpecAgainstThreeHandWrittenOnesLive` |
+| the park is asked before the census on every poll, a healthy wait never asks `Holds` or `Holes`, and a parked sequence is named rather than waited out | `TestTheParkIsAskedBeforeTheCensusOnEveryPoll`, `TestAHealthyWaitAsksSequencesAndNeverHoldsOrHoles`, `TestABarrierMintedMarkIsRefusedBesideAPark`, `TestTheParkedPairIsTheWholeOfTheAppendix`, `TestParkedInOnePartitionWhileAnotherLags` |
+| a deadline says which kind of not-yet it was, a poll that cannot be made is terminal first and polled through after, and no field turns a refusal into a success | `TestADeadlineSaysWhichKindOfNotYetItWas`, `TestAPollThatCannotBeMadeIsTerminalFirstAndPolledThroughAfter`, `TestAPollThatFailsFirstAndAPollThatFailsFourth`, `TestSlowVersusStopped`, `TestThereIsNoFieldThatTurnsARefusalIntoASuccess` |
+| a cutover under a wait is refused rather than answered, and the ownership row is read exactly twice | `TestACutoverUnderAWaitIsRefusedRatherThanAnswered`, `TestACutoverThatCommitsWhileAWaitIsRunning` |
+| a wait starts nothing, saves nothing and costs one count per poll, beside the projection's own loop under `-race` | `TestAWaitStartsNothingAndSavesNothing`, `TestTheCallCountBudgetAndItsPlacement`, `TestAWaitBesideTheProjectionsOwnLoop`, `TestAConfirmedCommandIsVisibleWithoutASleep` |
+| no refusal of a wait names a position or a key, and a commit spanning two sequences carries both | `TestNoRefusalOfAWaitNamesAPositionOrAKey`, `TestCommittedReadsTheCommitsOwnRangeAndNothingElse` |
+| the projection pages state the three obligations a wait cannot check and do not restate `Highest` as a page's last position | `TestTheThreeObligationsAWaitCannotCheckAreStatedTogether`, `TestNoProjectionGuideRestatesHighestAsThePagesLastPosition` |
 | this package costs the vocabulary plus `runtime` and nothing else | `TestNoEventPackageCostsMoreThanTheSeamItNames` |

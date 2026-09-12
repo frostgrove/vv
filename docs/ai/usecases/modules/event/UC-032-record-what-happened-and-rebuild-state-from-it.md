@@ -212,3 +212,23 @@ rewriting the domain.
   Crypto-shredding and retention are the application's design.
 - A durable store. The one that ships keeps nothing across a process, and says
   so.
+
+## See also
+
+Three use cases were added beside this one rather than folded into it, because
+each is a new observable behaviour with its own refusals and a settled contract
+that absorbs one stops meaning anything. **No clause of `What must hold` above
+changed and `Out of scope` gained nothing**, because nothing that was out of
+scope came in.
+
+- [[UC-036]] — reading a change back out of a read model without sleeping for it.
+  A new read over the checkpoint rows §21 already describes; delivery is still at
+  least once and there is still no head.
+- [[UC-037]] — finding out what happened to a write nobody confirmed. §8's
+  unconfirmed append is reported exactly as before and is still not retried by
+  anybody; this is the durable, readable answer to the question that report
+  leaves open, in the application's own table.
+- [[UC-038]] — the state this history held at a version. §6 is untouched: a load
+  still rebuilds from the whole history every time, and a bounded read is the
+  first of §10's two reads with a ceiling rather than a third read. A version
+  ceiling is a prefix; the predicate `Out of scope` refuses is still refused.

@@ -108,6 +108,9 @@ For newcomer-oriented navigation, see the [module index](modules/Index.md) and
 | [UC-033](modules/i18n/UC-033-render-one-message-correctly-now-or-later.md) | Render one message correctly now or later | application author presenting a message | `i18n` | errs · port · CRUD HTTP · CRUD gRPC · auth | covered; durable/external lifecycle remains application-owned |
 | [UC-034](modules/audit/UC-034-record-and-investigate-auditable-evidence.md) | Record and investigate auditable evidence | the application author defining accountable operations, the investigator reviewing them, and the operator preserving the ledger | `audit` | crud · security · auth · tenancy · jobs · event · storage · errs · i18n · otel · app | S0 contract covered; runtime implementation owed |
 | [UC-035](modules/lock/UC-035-serialise-work-that-has-no-row-to-lock.md) | Serialise work that has no row to lock | the application author, and the framework's own PostgreSQL drivers | `lock` | crud · errs · jobs · event · audit | covered for PostgreSQL; every other engine refused rather than approximated |
+| [UC-036](modules/event/UC-036-read-back-a-change-without-sleeping-for-it.md) | Read a change back without sleeping for it | the application author whose command writes to a log and whose next read comes from a read model | `event` | projection · eventmemory · eventpg | covered |
+| [UC-037](modules/event/UC-037-find-out-what-happened-to-an-uncertain-write.md) | Find out what happened to a write nobody confirmed | the application author whose command writes history, and whose client retries | `event` | receipt · eventpg | covered; the application's own table, and no published conformance harness for it |
+| [UC-038](modules/event/UC-038-see-the-state-a-history-held-at-a-version.md) | See the state a history held at a version | the application author answering a question about the past | `event` | eventmemory · eventpg | covered |
 
 ## Coverage map
 | Use case | Flows |
@@ -146,6 +149,9 @@ For newcomer-oriented navigation, see the [module index](modules/Index.md) and
 | [UC-033](modules/i18n/UC-033-render-one-message-correctly-now-or-later.md) | `i18n` | errs · port · CRUD HTTP · CRUD gRPC · auth | [[FL-039]] |
 | [UC-034](modules/audit/UC-034-record-and-investigate-auditable-evidence.md) | `audit` | crud · security · auth · tenancy · jobs · event · storage · errs · i18n · otel · app | [[FL-040]] |
 | [UC-035](modules/lock/UC-035-serialise-work-that-has-no-row-to-lock.md) | `lock` | crud · errs · jobs · event · audit | [[FL-041]] |
+| [UC-036](modules/event/UC-036-read-back-a-change-without-sleeping-for-it.md) | `event` | projection · eventmemory · eventpg | [[FL-038]] |
+| [UC-037](modules/event/UC-037-find-out-what-happened-to-an-uncertain-write.md) | `event` | receipt · eventpg | [[FL-043]] |
+| [UC-038](modules/event/UC-038-see-the-state-a-history-held-at-a-version.md) | `event` | eventmemory · eventpg | [[FL-036]] |
 
 ## Gaps
 

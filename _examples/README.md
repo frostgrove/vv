@@ -10,6 +10,13 @@ see what the generator produces, then leave it alone.
 They exist because the two usage guides describe the wiring and these execute
 it. If a guide and an example disagree, the example is the one that was run.
 
+[`event-guide`](event-guide/) is the one directory here that is not a
+program. It is the Go of [the event-sourcing guide](../docs/usage-guides/event-sourcing.md),
+and nothing else: every fenced Go block on that page is a contiguous run of its
+lines, and `TestEveryGoFenceInTheEventSourcingGuideIsCompiled` compares the two.
+The guide's code is therefore compiled by `make examples` rather than read by a
+reviewer, which is how four API errors reached it once.
+
 ## Start the databases, then pick one
 
 ```bash
@@ -33,7 +40,8 @@ All of them need `go get github.com/frostgrove/vv`. Beyond that each
 needs only what its own stack uses: the Fiber ones add `.../crud/http/crudfiber`, the
 Gin ones `.../crud/http/crudgin`, `pgx-grpc` adds `.../crud/rpc/crudgrpc`,
 `auth-jwt-gin` adds `.../auth/http/authgin` and `.../auth/authjwt`, `pgx-fiber`
-adds `.../crud/adapter/crudpgx`, and
+adds `.../crud/adapter/crudpgx`,
+`event-wait`, `event-receipts` and `event-guide` add `.../event/eventpg`, and
 `sql-nethttp` adds nothing at all — `crudnet` and `crudsql` are both stdlib, so
 both live in the library.
 
@@ -54,6 +62,15 @@ both live in the library.
 | [`event-checkpoints-elsewhere`](event-checkpoints-elsewhere/) | none | `crudsql` | PostgreSQL | none | A complete `event.Checkpoints` of your own — the fenced save, the outcome classification and the `Transaction` answer — over a database this framework does not ship a store for, and the one wiring where `projection.InUnit` is accepted and cannot be checked: the advance rides in the checkpoint database's transaction and the handler writes to a second pool, so `Destination` is `projection.Unchecked` and the handler's upsert on `(stream, version)` is what closes the window that opens. See [projection](../docs/modules/en/projection.md). |
 | [`event-partitions`](event-partitions/) | none | none | none | none | Four runners over one log, built from a `Cover` and from nothing else: a `SequenceBy` key the application chose, a mask rather than a modulus, and the `Split` that takes one partition to two at the parent's exact cursor and refuses a second one. The third example that needs no database — the log and the checkpoint rows are `eventmemory`, which supports transactions and declines persistence. |
 | [`event-generations`](event-generations/) | none | none | none | none | A read model rebuilt beside the one that is serving: `orders` and `orders@2` over one log, the barrier observed from the retiring generation's own rows rather than supplied, `Reached`, the fenced `Cutover`, the rollback that is the same call exchanged, and the effect gate — the live generation stages, the rebuild has `Effects` nil, and the retired one stops staging the moment the ownership row names another. The `Generations` implementation says where a SQL one takes its lock. |
+| [`event-wait`](event-wait/) | none | `crudsql` | PostgreSQL | none | Reading your own change back without a `sleep`: `WaitOf` derived from the projection's own `Spec`, a `Mark` minted from a commit **after** it committed — with the refusal for one minted inside the writing transaction driven rather than described — and the parked branch, where the watermark has passed an event the read model never received and the answer is `ErrParked` rather than a false success. It needs a database because `ParkSequence` makes the park write, the read model's writes and the advance one transaction. |
+| [`event-receipts`](event-receipts/) | none | `crudsql` | PostgreSQL | none | **The reference `receipt.Ledger`**, and a test compares its two claim statements with the live suite's byte for byte and in order: `INSERT … ON CONFLICT DO NOTHING` **then** a `SELECT`, `statement_timestamp()` rather than a bound instant, the completing `UPDATE`, a horizon computed in SQL from a configured retention, and a sweep that is a supervised periodic runner because nothing in the framework prunes. Beside it: `Once`, the open-coded form, `ErrCollision`, `ErrIncomplete`, and an operation resolved from another connection while its writing transaction is still open. |
+
+`event-wait` and `event-receipts` are the two event examples that **do** need
+one, and each for a reason worth reading before you copy it: `ParkSequence`
+requires the park write, the read model's writes and the checkpoint advance to be
+one transaction, so the read model cannot be a map behind a mutex; and a receipt
+is only a receipt if it commits with the events, which means one database and one
+transaction and never two handles.
 
 `tenancy-sharedrow`, `event-partitions` and `event-generations` are the three
 examples that need no database, for two different reasons. `tenancy-sharedrow`

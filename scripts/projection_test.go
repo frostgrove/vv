@@ -138,8 +138,8 @@ func Resumed(held, taken event.Cursor) event.Cursor {
 func TestNoCommentInTheProjectionPackagePromisesExactlyOnce(t *testing.T) {
 	claims, read, files := commentClaims(t, "../event/projection")
 
-	if files < 18 {
-		t.Fatalf("%d source files of event/projection were read, and the package has eighteen outside its tests", files)
+	if files < 20 {
+		t.Fatalf("%d source files of event/projection were read, and the package has twenty outside its tests", files)
 	}
 	if read.counted["English"] == 0 {
 		t.Fatal("not one comment of event/projection used either wording for how often a thing is delivered, and the package doc states the weaker one — so this read the wrong files")
@@ -175,8 +175,23 @@ func TestNothingInTheProjectionPackageOpensATransaction(t *testing.T) {
 			t.Error(complaint)
 		}
 	}
-	if walked < 18 {
-		t.Fatalf("%d files of event/projection were read, and the package holds eighteen outside its tests — so this walked the wrong directory", walked)
+	if walked < 20 {
+		t.Fatalf("%d files of event/projection were read, and the package holds twenty outside its tests — so this walked the wrong directory", walked)
+	}
+
+	// `event/receipt` owes the same sentence for the same reason one door over: a
+	// claim, a completion and a resolve all run inside the caller's own unit, and
+	// a package that opened one of its own would write the row beside the append
+	// rather than in it.
+	received := 0
+	for _, source := range goSourcesIn(t, "../event/receipt") {
+		received++
+		for _, complaint := range opensATransaction(t, source) {
+			t.Error(complaint)
+		}
+	}
+	if received < 7 {
+		t.Fatalf("%d files of event/receipt were read, and the package holds seven outside its tests — so this walked the wrong directory", received)
 	}
 
 	t.Run("the control: every shape is reported when it is there", func(t *testing.T) {
@@ -554,8 +569,8 @@ func checkedEventPackages(t *testing.T) []checkedPackage {
 		return checkedEvent
 	}
 	listed := surfacedPackages(t, eventExtension)
-	if len(listed) < 5 || !slices.Contains(listed, eventExtension+"/projection") {
-		t.Fatalf("%v is what %s lists for the extension, and the vocabulary, three stores and the projection package are the least it holds — regenerate it with make api", listed, surfaceBaseline)
+	if len(listed) < 6 || !slices.Contains(listed, eventExtension+"/projection") || !slices.Contains(listed, eventExtension+"/receipt") {
+		t.Fatalf("%v is what %s lists for the extension, and the vocabulary, three stores, the projection package and the receipt package are the least it holds — regenerate it with make api", listed, surfaceBaseline)
 	}
 	for _, path := range listed {
 		checkedEvent = append(checkedEvent, typeChecked(t, path))
@@ -915,10 +930,22 @@ func asksAbout(body *ast.BlockStmt, held, named string) bool {
 //
 // The question is asked of the field object rather than of its name, so a field
 // called Handler is not counted read because some other type's Handler is.
+//
+// `receipt.Receipt` is deliberately not asked, and the reason is on the type: it
+// is a record the LEDGER fills and the framework reads back, and `RecordedAt` is
+// written by `statement_timestamp()` and read by the application and by an
+// operator rather than by that package. A walk that demanded a read would force a
+// use that does not exist, which is a test shaping code rather than measuring it.
 func TestEveryFieldOfAPublishedSpecIsRead(t *testing.T) {
 	checked := checkedProjection(t)
-	for _, named := range []string{"Spec", "RedriveSpec"} {
+	for _, named := range []string{"Spec", "RedriveSpec", "WaitSpec"} {
 		for _, complaint := range fieldsNothingReads(t, checked, named) {
+			t.Error(complaint)
+		}
+	}
+	receipts := checkedEventPackage(t, eventExtension+"/receipt")
+	for _, named := range []string{"ClaimSpec", "ResolveSpec"} {
+		for _, complaint := range fieldsNothingReads(t, receipts, named) {
 			t.Error(complaint)
 		}
 	}
@@ -950,12 +977,17 @@ func New(spec Spec) string {
 
 func checkedProjection(t *testing.T) checkedPackage {
 	t.Helper()
+	return checkedEventPackage(t, eventExtension+"/projection")
+}
+
+func checkedEventPackage(t *testing.T, path string) checkedPackage {
+	t.Helper()
 	for _, checked := range checkedEventPackages(t) {
-		if checked.path == eventExtension+"/projection" {
+		if checked.path == path {
 			return checked
 		}
 	}
-	t.Fatalf("%s lists no projection package, so nothing about its published forms was checked", surfaceBaseline)
+	t.Fatalf("%s lists no %s, so nothing about its published forms was checked", surfaceBaseline, path)
 	return checkedPackage{}
 }
 

@@ -6,7 +6,7 @@
 // repository root; `make examples` builds it.
 module github.com/frostgrove/vv/_examples
 
-go 1.26
+go 1.26.6
 
 replace github.com/frostgrove/vv => ../
 
@@ -17,6 +17,8 @@ replace github.com/frostgrove/vv/crud/http/crudgin => ../crud/http/crudgin
 replace github.com/frostgrove/vv/crud/adapter/crudpgx => ../crud/adapter/crudpgx
 
 replace github.com/frostgrove/vv/otel => ../otel
+
+replace github.com/frostgrove/vv/event/eventpg => ../event/eventpg
 
 require (
 	github.com/frostgrove/vv v0.1.0
@@ -103,6 +105,7 @@ require (
 	github.com/frostgrove/vv/crud/http/crudfiber v0.0.0
 	github.com/frostgrove/vv/crud/http/crudgin v0.0.0
 	github.com/frostgrove/vv/crud/rpc/crudgrpc v0.0.0
+	github.com/frostgrove/vv/event/eventpg v0.0.0
 	github.com/frostgrove/vv/vvdb/dbpgx v0.0.0
 	github.com/gin-gonic/gin v1.12.0
 	github.com/go-openapi/inflect v0.19.0 // indirect

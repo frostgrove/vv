@@ -468,6 +468,23 @@ func TestOneLoadAndOneAppendMakeExactlyTheStoreCallsTheContractNames(t *testing.
 		t.Fatalf("the second control append was refused with %v", err)
 	}
 	store.exactly(t, "two appends and a load", map[string]int{"Backing": 3, "Transaction": 3, "ReadStream": 3, "Append": 2})
+
+	store.forget()
+	if _, err := repo.StateAt(ctx, acme, 2); err != nil {
+		t.Fatalf("a bounded read at version 2 was refused with %v", err)
+	}
+	store.exactly(t, "a bounded read at version 2 of six events at a page of two", map[string]int{"Backing": 1, "Transaction": 1, "ReadStream": 1})
+
+	marked, err := repo.Within(withRecordingTransaction(ctx, &recordingTx{store: store}))
+	if err != nil {
+		t.Fatalf("the transaction the bounded read below is marked for could not be entered: %v", err)
+	}
+	crossed := withRecordingTransaction(marked, &recordingTx{store: store})
+	store.forget()
+	if _, err := repo.StateAt(crossed, acme, 2); !errors.Is(err, ErrTransactionMismatch) {
+		t.Fatalf("a bounded read on a context marked for one transaction and now carrying another answered %v, so a historical read escapes the caller's unit of work without saying so", err)
+	}
+	store.exactly(t, "a bounded read refused before any statement", map[string]int{"Backing": 1, "Transaction": 1})
 }
 
 // Two identical changes are a normal history — two credits of the same amount,

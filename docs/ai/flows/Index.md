@@ -62,6 +62,7 @@ through it.
 | the audit trace registry, semantic or completeness authority, tagged design import, or section checkpoint | [[FL-040]] |
 | an advisory lock, a guard, a lock key, a retry on a deadlock, or a schema-migration lock | [[FL-041]] |
 | a side effect a projection owes, the barrier that suppresses a warm-up, the ownership row two generations are told apart by, or why a rebuild sends nothing | [[FL-042]] |
+| an operation key, a receipt row, a fingerprint of what an append would write, or what happened to a command nobody confirmed | [[FL-043]] |
 
 **A code change that alters a path must update its flow document in the same
 change.** Not afterwards, not in a follow-up. A flow that describes a path the
@@ -120,6 +121,7 @@ phase 3 landed FL-014 and before phase 5 landed FL-015.
 | [FL-040](FL-040-an-audit-contract-becomes-an-executable-checkpoint.md) | An audit contract becomes an executable checkpoint | `scripts/audit-trace.sh` / `scripts/audit_trace_test.go:TestAuditTraceRegistry` / `scripts/audit_trace_import_test.go:TestAuditTraceDesignImport` | [[UC-034]] |
 | [FL-041](FL-041-a-key-becomes-a-held-critical-section.md) | A key becomes a held critical section | `vvdb/lock/lock.go:For` / `vvdb/lock/lock.go:Take` / `vvdb/lock/lock.go:Guarded` / `vvdb/lock/locksql/locksql.go:Hold` | [[UC-035]] |
 | [FL-042](FL-042-an-applied-envelope-becomes-a-staged-effect.md) | An applied envelope becomes a staged effect | `projection.Spec.Effects` / `projection.Effects.Stage` / `projection.Generations.Active` / `projection.Redrive.Sequence` | [[UC-032]] |
+| [FL-043](FL-043-an-uncertain-append-becomes-a-resolvable-operation.md) | An uncertain append becomes a resolvable operation | `event.Repo.Digest` / `receipt.Once` / `receipt.Claim` / `receipt.Held.Complete` / `receipt.Resolve` | [[UC-037]] |
 
 ## By file — which flows touch this file
 
@@ -539,7 +541,7 @@ phase 3 landed FL-014 and before phase 5 landed FL-015.
 | `event/marker.go` | FL-036 |
 | `event/token.go` | FL-036 |
 | `event/outcome.go` | FL-036 |
-| `event/errors.go` | FL-036 |
+| `event/errors.go` | FL-036, FL-043 |
 | `event/store.go` | FL-036 |
 | `event/codec.go` | FL-036 |
 | `event/encodable.go` | FL-036 |
@@ -552,7 +554,7 @@ phase 3 landed FL-014 and before phase 5 landed FL-015.
 | `event/change.go` | FL-036 |
 | `event/checkpoint.go` | FL-038 |
 | `event/binding.go` | FL-036 |
-| `event/repo.go` | FL-036 |
+| `event/repo.go` | FL-036, FL-043 |
 | `event/reader.go` | FL-036, FL-038 |
 | `event/eventmemory/log.go` | FL-036 |
 | `event/eventmemory/store.go` | FL-036 |
@@ -620,6 +622,15 @@ phase 3 landed FL-014 and before phase 5 landed FL-015.
 | `event/projection/topology.go` | FL-038 |
 | `event/projection/generation.go` | FL-038, FL-042 |
 | `event/projection/effect.go` | FL-042 |
+| `event/projection/mark.go` | FL-038 |
+| `event/projection/wait.go` | FL-038 |
+| `event/receipt/doc.go` | FL-043 |
+| `event/receipt/key.go` | FL-043 |
+| `event/receipt/fingerprint.go` | FL-043 |
+| `event/receipt/receipt.go` | FL-043 |
+| `event/receipt/claim.go` | FL-043 |
+| `event/receipt/resolve.go` | FL-043 |
+| `event/receipt/errors.go` | FL-043 |
 | `i18n/go.mod` | FL-039 |
 | `i18n/catalog.go` | FL-039 |
 | `i18n/source.go` | FL-039 |

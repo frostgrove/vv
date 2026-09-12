@@ -119,6 +119,7 @@ to declare a codec of your own.
 | `Repo.Append(ctx, at, changes…)` | admitted only at the token's version; answers the next token and a `Commit` |
 | `Repo.Within(ctx)` | the context marked with the transaction this store finds in it |
 | `Repo.Authority(ctx)` | what this store says is bound, for two subsystems proving they wrote together |
+| `Repo.Digest(at, changes…)` | the bytes this append **would** write, digested — no store call, no write |
 | `At[S]` | `Stream()` · `Version()` — minted by `Load` and by a successful `Append` |
 | `Commit` | `Empty()` · `Stream()` · `First()` · `Last()` · `Count()` · `Authority()` |
 
@@ -130,8 +131,60 @@ if err != nil {
 if state.Balance < amount {
 	return ErrInsufficient
 }
-_, receipt, err := repo.Append(ctx, at, Credit.New(id, Credited{Amount: -amount}))
+_, commit, err := repo.Append(ctx, at, Credit.New(id, Credited{Amount: -amount}))
 ```
+
+### The historical read
+
+| | |
+|---|---|
+| `Repo.StateAt(ctx, id, version)` | the state this aggregate held at a version — folded from the complete prefix, and **no token** |
+
+```go
+before, err := repo.StateAt(ctx, id, disputed-1)
+```
+
+**There is no second return value, and that is the design.** A value that looked
+like a load token would invite a `Load → Decide → Append` whose decision was made
+against the history this call deliberately left out. Correcting the past is a new
+domain command against the present, decided from a `Load` ([[D-144]]).
+
+The prefix is dense from version 1 and **inclusive** of the version asked for.
+Three inputs are one refusal, `ErrVersion`: **version zero**, a version **past the
+end** of the stream, and a **stream with no events at all** — version zero is the
+empty stream, and an empty history and one that never existed are one thing in an
+append-only log. The refusal names neither the bound nor the head, on the same
+rule every other refusal here follows.
+
+An event this build cannot read is its own refusal and the **zero state**, never
+the prefix that happened to fold first: `ErrUnknownType`, `ErrRevision`,
+`ErrUpcast` and `ErrPayload` come back exactly as they do from a `Load`, because
+it is the same loop with a ceiling rather than a second one.
+
+It pages through the same `ReadStream` a load does, so the over-read is at most
+**one page** whatever the stream's length — a bound at version 7 of a
+100 000-event stream reads one page and discards the rest of it. That is why the
+store contract gains no ceiling: a version parameter on `ReadStream` would buy one
+partial page of I/O and cost every store author a signature, a conformance
+section and a re-certification.
+
+### A timestamp is not a boundary, and could only ever be a lookup
+
+`Repo.StateAt` takes a **version**. There is no timestamp parameter, no timestamp
+overload and no timestamp option anywhere on this surface, and no example here
+sorts by an instant.
+
+`Envelope.RecordedAt` is `statement_timestamp()` where `eventpg` writes it — a
+database clock, so it is comparable across writers, which is already more than an
+application clock gives you. It is still **not business time and not commit
+order**: two writers can share an instant, and a commit can land long after the
+statement timestamp it carries ([[D-128]]). An "as of 14:03" read built on it
+would answer a question about statement times and present it as a question about
+history.
+
+If a time-shaped entry point is ever added it can only be a **lookup that
+resolves to a version** — *which version was this stream at* — and then the
+bounded read above. It would need its own contract; it is not this one.
 
 ### The log walk
 
@@ -232,7 +285,7 @@ answered by another.
 |---|---|
 | declaration — you wrote the declaration wrong; panicked, never returned | `ErrDeclaration` · `ErrSealed` · `ErrCodecType` |
 | wiring — this program was assembled from values that do not belong together | `ErrFamily` · `ErrWrongStore` · `ErrWrongStream` · `ErrNoTransaction` · `ErrNoTransactionBinding` · `ErrAmbientNotTransaction` · `ErrTransactionMismatch` · `ErrCursor` |
-| request — the data this operation was given cannot be used | `ErrKey` · `ErrEncode` · `ErrSample` · `ErrTooLarge` |
+| request — the data this operation was given cannot be used | `ErrKey` · `ErrVersion` · `ErrEncode` · `ErrSample` · `ErrTooLarge` |
 | history — a fact's recorded bytes cannot be read by this build | `ErrUnknownType` · `ErrRevision` · `ErrPayload` · `ErrUpcast` |
 | write — the append did not do what you asked | `ErrConflict` · `ErrUncertain` |
 | store — the store itself refused or failed | `ErrBackend` · `ErrClosed` · `ErrRefused` |
@@ -456,5 +509,8 @@ checkpoint seam: what it delivers is at least once, in both of its modes.
 - [projection](projection.md) — the consumer built on the log walk and the
   checkpoint seam
 - [eventtest](eventtest.md) — the conformance suite, and the three proxies
+- [receipt](receipt.md) — what happened to an operation nobody confirmed, built
+  on `Repo.Digest` and the transaction authority
 - [[D-121]] · [[D-122]] · [[D-123]] · [[D-124]] · [[D-125]] · [[D-128]] ·
-  [[D-129]] · [[D-132]] · [[D-133]] · [[FL-036]] · [[FL-038]] · [[UC-032]]
+  [[D-129]] · [[D-132]] · [[D-133]] · [[D-142]] · [[D-144]] · [[D-145]] ·
+  [[FL-036]] · [[FL-038]] · [[FL-043]] · [[UC-032]] · [[UC-037]] · [[UC-038]]

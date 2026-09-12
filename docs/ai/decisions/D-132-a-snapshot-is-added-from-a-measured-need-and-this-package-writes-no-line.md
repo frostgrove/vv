@@ -136,4 +136,15 @@ panicked only from `Ready`, and learns nothing at all of a retry streak below
 
 ## See also
 
-[[D-062]] [[D-091]] [[D-130]] [[FL-038]] [[UC-032]]
+**[[D-145]] is the contract this file's re-entry trigger opens into**, and it
+**amends** this decision rather than superseding it: the invariant above stands
+verbatim, `TestNoSnapshotAuthorityIsDeclaredOrPromised` stays green and
+un-narrowed, and nothing here is loosened. What D-145 adds is the design a later
+phase implements once the trigger is met — the five bindings compared before
+deserialisation, the state-computation version this file already names as the one
+thing this framework structurally cannot detect, the observable fallback, and the
+two gates. It also re-measured the instrument on 2026-09-12 and found the crossing
+at ~45 000 events, inside the 30 000 – 50 000 recorded above, so **the trigger
+does not move**.
+
+[[D-062]] [[D-091]] [[D-130]] [[D-145]] [[FL-038]] [[UC-032]]

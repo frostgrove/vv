@@ -54,6 +54,19 @@
 // is not lost, because its letter carries it and the redrive that applies it is
 // what stages it, while an eviction stages nothing at all.
 //
+// A wait is the caller's question over the rows the loop already writes, and it
+// is not part of the loop: Wait polls on the caller's own goroutine, is bounded
+// by the caller's context and costs nothing when nobody is waiting. What it waits
+// for is a Mark — a position a store produced, minted from the caller's own
+// commit or from a barrier Observe folded — because a target a caller can invent
+// is not evidence. Each poll asks the park before the census and asks it every
+// poll: a parked sequence is the one case where the watermark is past the mark
+// and the read model never received the event, so a wait that compared only the
+// watermark would answer reached for it. Reached means DELIVERED to the
+// generation and the cover the wait was given, and APPLIED only where a Park and
+// a Sequence were supplied; it says nothing about a second projection, a second
+// database, a read replica or anything above the mark.
+//
 // There is no head. A store that will not promise monotone visibility has no
 // number that is the end of the log, so being caught up is a statement about the
 // last read and never about the log: PhaseFollowing means the last read

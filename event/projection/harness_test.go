@@ -2,6 +2,7 @@ package projection_test
 
 import (
 	"context"
+	"encoding/json"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -530,6 +531,162 @@ func returns(t *testing.T, returned <-chan error) error {
 	case <-time.After(settle):
 		t.Fatal("Run did not return")
 		return nil
+	}
+}
+
+// The store as a wait's mint reads through it: every ReadStream counted, and a
+// case may answer in its place. It promotes event.Store, so a repository can be
+// bound to the store underneath while the mint reads through this one and the
+// count is the mint's alone.
+type watchedStore struct {
+	event.Store
+
+	reads  atomic.Int64
+	answer func(page []event.Envelope, reads int64) ([]event.Envelope, error)
+
+	// StreamPage as this store publishes it, so a case can make one commit span
+	// two pages without writing a store of its own.
+	page int
+}
+
+func watchingStore(store event.Store) *watchedStore { return &watchedStore{Store: store} }
+
+func (this *watchedStore) Limits() event.Limits {
+	held := this.Store.Limits()
+	if this.page > 0 {
+		held.StreamPage = this.page
+	}
+	return held
+}
+
+func (this *watchedStore) ReadStream(ctx context.Context, stream event.Stream, after event.Version) ([]event.Envelope, error) {
+	reads := this.reads.Add(1)
+	page, err := this.Store.ReadStream(ctx, stream, after)
+	if err != nil {
+		return page, err
+	}
+	if this.page > 0 && len(page) > this.page {
+		page = page[:this.page]
+	}
+	if this.answer == nil {
+		return page, nil
+	}
+	return this.answer(page, reads)
+}
+
+// The aggregate a wait's own appends are made through: a Commit is a value only
+// Repo.Append mints and the first door of a wait takes one. Its family is its
+// own, so the raw appends the loop cases make through stand.append never share a
+// stream with it.
+type waited struct{ Tags []string }
+
+type waitedID string
+
+type tag struct{ Tag string }
+
+var waitedOrders = event.Define[waited]("waits.order", func(id waitedID) event.Key {
+	return event.Compose(string(id))
+})
+
+var tagged = event.Declare(waitedOrders, "waits.tagged", event.From(event.JSON[tag]()),
+	func(state waited, fact tag) waited {
+		state.Tags = append(state.Tags, fact.Tag)
+		return state
+	})
+
+func waitedRepo(t *testing.T, store event.Store) *event.Repo[waited, waitedID] {
+	t.Helper()
+	repo, err := event.Bind(event.Open(store), waitedOrders)
+	if err != nil {
+		t.Fatalf("binding the aggregate a wait appends through was refused: %v", err)
+	}
+	return repo
+}
+
+// One append of one or more tagged facts and the Commit it answers, which is
+// what a caller holds when it asks for its own change to become visible.
+func committing(t *testing.T, repo *event.Repo[waited, waitedID], id waitedID, tags ...string) event.Commit {
+	t.Helper()
+	ctx := context.Background()
+	_, at, err := repo.Load(ctx, id)
+	if err != nil {
+		t.Fatalf("loading %q was refused: %v", id, err)
+	}
+	changes := make([]event.Change[waited], 0, len(tags))
+	for _, named := range tags {
+		changes = append(changes, tagged.New(id, tag{Tag: named}))
+	}
+	_, commit, err := repo.Append(ctx, at, changes...)
+	if err != nil {
+		t.Fatalf("appending %v to %q was refused: %v", tags, id, err)
+	}
+	return commit
+}
+
+// The spec a case waits with, derived the way a host derives one: from the Spec
+// the runner was built from and the cover it was built out of.
+func waitingOver(t *testing.T, spec projection.Spec, over projection.Cover) projection.WaitSpec {
+	t.Helper()
+	held, err := projection.WaitOf(spec, over)
+	if err != nil {
+		t.Fatalf("a well-formed wait spec was refused: %v", err)
+	}
+	return held
+}
+
+// The sequencer a commit spans two of: a key off a field of the payload rather
+// than off the stream, which is what makes a commit of three facts belong to two
+// sequences and what a mark carrying only the last one's key would ask the wrong
+// question about.
+func byTag() projection.Sequencer {
+	return projection.SequenceBy("by-tag", func(envelope event.Envelope) string {
+		var held tag
+		if err := json.Unmarshal(envelope.Payload, &held); err != nil {
+			return "unreadable"
+		}
+		return held.Tag
+	})
+}
+
+// The interval seam a wait is driven through, in two shapes. Asked records every
+// interval the caller wanted, which is how a case says a wait that reached on its
+// first poll never asked for one at all. Ready decides the rest: an always-ready
+// ticker lets the poll count be decided by what the checkpoint store answers,
+// and one that is never ready leaves the caller's deadline as the only thing that
+// releases the wait.
+type paced struct {
+	mutex sync.Mutex
+	asked []time.Duration
+	beats chan time.Time
+}
+
+func freeRunning() *paced {
+	beats := make(chan time.Time)
+	close(beats)
+	return &paced{beats: beats}
+}
+
+func neverBeating() *paced { return &paced{beats: make(chan time.Time)} }
+
+func (this *paced) Ticks(interval time.Duration) runtime.Ticker {
+	this.mutex.Lock()
+	this.asked = append(this.asked, interval)
+	this.mutex.Unlock()
+	return beating{beat: this.beats}
+}
+
+func (this *paced) intervals() []time.Duration {
+	this.mutex.Lock()
+	defer this.mutex.Unlock()
+	return append([]time.Duration(nil), this.asked...)
+}
+
+func (this *paced) fire(t *testing.T) {
+	t.Helper()
+	select {
+	case this.beats <- time.Now():
+	case <-time.After(settle):
+		t.Fatal("the wait was not blocked on its ticker, so nothing released it into another poll")
 	}
 }
 

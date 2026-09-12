@@ -1,10 +1,15 @@
 package event
 
 import (
+	"context"
+	"errors"
 	"go/ast"
 	"go/types"
+	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/frostgrove/vv/crud"
 )
 
 // A refusal names the rule that was broken and the classification it belongs
@@ -79,6 +84,117 @@ func TestNoRefusalRendersAnIdentityAPayloadAKeyOrACursor(t *testing.T) {
 			}
 		}
 	})
+}
+
+// The sibling above reads what the source asks a message to render; this drives
+// the paths a bounded read and a digest added and reads what came out. Each row
+// names what it handed in, because what a refusal may not carry is the caller's
+// own data and not a digit: a bound that says "a prefix begins at version 1"
+// names the rule, and "96 bytes against a bound of 64" names two published
+// numbers, while a 5, a 9, a key and a payload are the values that would let an
+// operator's log replay a history.
+func TestNoRefusalOfABoundedReadNamesAVersion(t *testing.T) {
+	acme := accountID{tenant: "acme", number: "A-17"}
+	untouched := accountID{tenant: "acme", number: "A-99"}
+	stream := accountsAt("acme", "A-17")
+	ctx := context.Background()
+	secret := "a-payload-fragment-nobody-may-see"
+	identity := []string{"A-17", "acme/A-17", "acme"}
+
+	store := newRecordingStore(t)
+	repo, declared := bindAccounts(t, store)
+	plantCredits(t, repo, declared, acme, 5)
+	_, at, err := repo.Load(ctx, acme)
+	if err != nil {
+		t.Fatalf("the token the digest rows below are taken over was refused with %v", err)
+	}
+	_, elsewhere, err := repo.Load(ctx, untouched)
+	if err != nil {
+		t.Fatalf("the token the crossed-stream row needs was refused with %v", err)
+	}
+
+	narrow := newRecordingStore(t)
+	narrow.limits.MaxKey = 8
+	narrow.limits.MaxPayload = 64
+	cramped, crampedFacts := bindAccounts(t, narrow)
+
+	disordered := newRecordingStore(t)
+	outOfOrder, outOfOrderFacts := bindAccounts(t, disordered)
+	plantCredits(t, outOfOrder, outOfOrderFacts, acme, 2)
+	disordered.page = func(page []Envelope) []Envelope {
+		if len(page) != 2 {
+			return page
+		}
+		return []Envelope{page[1], page[0]}
+	}
+
+	unreadable := newRecordingStore(t)
+	unknown, _ := bindAccounts(t, unreadable)
+	unreadable.history(stream, Record{Type: "accounts.retired", Revision: 1, Payload: []byte(`{"Reason":"` + secret + `"}`)})
+
+	stateAt := func(repo *Repo[account, accountID], id accountID, version Version) error {
+		_, err := repo.StateAt(ctx, id, version)
+		return err
+	}
+	digest := func(at At[account], changes ...Change[account]) error {
+		_, err := repo.Digest(at, changes...)
+		return err
+	}
+
+	for _, one := range []struct {
+		what     string
+		refused  error
+		want     error
+		unspoken []string
+	}{
+		{"a bound of version zero", stateAt(repo, acme, 0), ErrVersion, append([]string{"0"}, identity...)},
+		{"a bound past the end of the stream", stateAt(repo, acme, 9), ErrVersion, append([]string{"9", "5"}, identity...)},
+		{"a bound on a stream nothing was ever appended to", stateAt(repo, untouched, 1), ErrVersion, append([]string{"A-99", "acme/A-99", "acme"}, identity...)},
+		{"a bound on an identity that renders no legal stream key",
+			stateAt(cramped, accountID{tenant: "acme", number: "A-17-and-far-too-long"}, 3), ErrKey,
+			[]string{"A-17-and-far-too-long", "acme", "3"}},
+		{"a bound over a store that answers a page out of order", stateAt(outOfOrder, acme, 2), ErrBackend, append([]string{"2"}, identity...)},
+		{"a bound over a fact this declaration cannot read", stateAt(unknown, acme, 1), ErrUnknownType, append([]string{secret}, identity...)},
+		{"a digest over a token no load minted", (digest(At[account]{}, declared.credited.New(acme, creditedV2{Minor: 5, Reason: "one"}))), ErrKey, identity},
+		{"a digest over a change decided for another stream",
+			(digest(at, declared.credited.New(untouched, creditedV2{Minor: 5, Reason: secret}))), ErrWrongStream,
+			append([]string{secret, "A-99"}, identity...)},
+		{"a digest over a token minted for another stream",
+			(digest(elsewhere, declared.credited.New(acme, creditedV2{Minor: 5, Reason: secret}))), ErrWrongStream,
+			append([]string{secret, "A-99"}, identity...)},
+		{"a digest over an encoded payload past the bound the store published",
+			func() error {
+				_, err := cramped.Digest(At[account]{stream: Stream{Family: "accounts.account", Key: Compose("a", "b")}},
+					crampedFacts.credited.New(accountID{tenant: "a", number: "b"}, creditedV2{Minor: 5, Reason: secret + strings.Repeat("f", 64)}))
+				return err
+			}(), ErrTooLarge, []string{secret}},
+	} {
+		if !errors.Is(one.refused, one.want) {
+			t.Fatalf("%s answered %v where the rule it broke is %v, so the row below reads a message nobody published", one.what, one.refused, one.want)
+		}
+		matched := 0
+		for _, sentinel := range vocabulary() {
+			if errors.Is(one.refused, sentinel) {
+				matched++
+			}
+		}
+		if matched != 1 {
+			t.Fatalf("%s answers %d of the published sentinels, and a refusal belongs to exactly one class", one.what, matched)
+		}
+		for _, named := range one.unspoken {
+			escaped := strconv.Quote(named)
+			if strings.Contains(one.refused.Error(), named) || strings.Contains(one.refused.Error(), escaped[1:len(escaped)-1]) {
+				t.Fatalf("%s rendered %q into %q, and a refusal names the rule that was broken and never the data that broke it", one.what, named, one.refused)
+			}
+		}
+	}
+
+	if !errors.Is(stateAt(repo, acme, 0), crud.ErrBadRequest) || !errors.Is(stateAt(repo, acme, 9), crud.ErrBadRequest) {
+		t.Fatal("a version a caller asked for and the stream does not hold does not carry the request class, so an undeclared wrap renders it as a 500 over data only the caller can correct")
+	}
+	if _, err := repo.StateAt(ctx, acme, 5); err != nil {
+		t.Fatalf("the bound the stream does hold was refused with %v, so every row above passes against a call that refuses everything", err)
+	}
 }
 
 type messages struct{ total, wrapping, bare, delegated int }

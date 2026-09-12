@@ -20,7 +20,7 @@ func (this At[S]) Version() Version { return this.version }
 // the store's Append answers with an error and nothing else, so nothing sealed
 // crosses the store boundary in the store's direction.
 //
-// Every accessor answers on an empty receipt rather than panicking, because a
+// Every accessor answers on an empty commit rather than panicking, because a
 // caller must not have to know its own decision was a no-op before it may ask a
 // question. An empty one reports the token's stream, First 0, Last the version
 // the token went in at, Count 0, and the invalid authority: an append that wrote

@@ -21,7 +21,7 @@
 // next append to one of its streams drops the claim and is admitted. Until then
 // those appends are conflicts. Reachability is the whole of the rule, so what
 // still names the transaction still claims: the *Tx, and a context carrying it
-// that outlives the request. The commit receipt does not — the authority names
+// that outlives the request. The commit token does not — the authority names
 // this store's own name for the transaction rather than the *Tx.
 //
 // A Tx may be used from more than one goroutine, and a context may carry one

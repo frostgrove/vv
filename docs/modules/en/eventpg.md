@@ -256,6 +256,17 @@ mitigations, none of which is this library's to apply:
   projection at a glance, which is why the alert is on the pair rather than on
   either.
 
+**This one stall is two symptoms on the request path, and they are both the same
+number.** A `projection.Wait` over this schema polls a checkpoint row whose
+`Highest` has stopped moving, so it burns its whole deadline and answers
+`ErrNotVisible` — the *slow* answer, not the *stopped* one, with `Moved` false
+across every poll. And a `receipt.Resolve` for an operation whose writing
+transaction is the very session holding the floor down answers `Unresolved`, for
+exactly as long, for exactly the same reason: `idle_in_transaction_session_timeout`
+is the lever under both, and it is the deployment's rather than this library's
+([[D-143]]). An operator seeing waits time out and receipts stay unresolved at the
+same moment is looking at one idle session, not at two subsystems.
+
 **N partitions x M generations multiply both the read traffic and this
 exposure.** Each runner is a separate walk of the whole log with a settlement
 bound of its own, so two generations at four partitions each is eight walks and

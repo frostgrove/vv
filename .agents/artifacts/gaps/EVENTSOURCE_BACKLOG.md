@@ -3773,6 +3773,115 @@ two places: line 573 (*"`checkpointDefects` 5 → 8"*) and line 3851, which is a
 deliverable item reading *"`checkpointDefects` is 8 and every checkpoint section is named by
 one"*. PLAN GAP-3's closure note repeats *"5 → 8"* as well.
 
+---
+
+## P5 — the wait, the receipt, the bounded read and the snapshot contract
+
+Recorded under the 2026-09-08 policy: `[medium]` and `[low]` are scheduled here and left alone.
+Everything below was raised by the phase-5 use-case audit (Round 1,
+[`EVENTSOURCE_P5_USECASES_GAPS.md`](EVENTSOURCE_P5_USECASES_GAPS.md)) against
+[`EVENTSOURCE_P5_USECASES.md`](../usecases/EVENTSOURCE_P5_USECASES.md). The eleven blocking
+findings (one `[critical]`, ten `[high]`) are in that file and are **not** repeated here.
+
+### 1. The appendix's «Deadline возвращает timeout/**degraded**» has no verdict  `[medium]`
+
+ES-05 part 3 names two deadline answers and [SPEC] §1.1 ships one: `ErrNotVisible` wrapping
+`context.DeadlineExceeded`, plus `Visibility.Moved` as the discriminator. §8 tension 2 already
+concedes what `Moved` is — *"a heuristic dressed as a field … a projector between two slow passes
+has not moved either"* — so the degraded half of the appendix's sentence is answered by a field the
+spec itself says is not the thing it is read as. `projection.State`'s `PhaseHalted`/`PhaseDegraded`/
+`PhaseBlocked` are published values (`event/projection/state.go`) and the study names them as *"what
+Marten issue #3912 is asking for"*; they are in-process and a waiter is usually not that process,
+which is the real reason they are unavailable and is nowhere written down. Owed: one paragraph
+saying why a wait cannot report a phase, or a second verdict that does.
+
+### 2. `Repo.Digest`'s result is never tied to what `Repo.Append` writes  `[medium]`
+
+[SPEC] §INV-116 says the digest is *"computed by `Repo.Digest` from the bytes that would be
+written"*, which is true of the call and not of the caller: nothing checks that the `changes`
+handed to `Digest` are the ones handed to `Append`, and the framework structurally cannot. A caller
+that re-runs `decide(state)` between the two — an ordinary refactor — records a fingerprint for a
+batch it did not write, after which its own retries never match. §INV-111 is the document's own
+shape for an obligation the framework cannot verify (the sequencer a wait names); the digest needs
+the same sentence, in the same place, and a use case that drives it wrong.
+
+### 3. `Mark`'s contents and rendering are unspecified  `[medium]`
+
+Beyond the blocking asymmetry (GAP-7), two smaller holes in the same type: nothing says what
+`Mark` renders under `%v` or `String()` — UC-032 §11's no-data rule and §INV-124's
+*"`event.Position` values appear in no message"* both bear on it — and nothing says whether two
+marks are comparable or whether a `Mark` may be held across a process. `Barrier` has the same
+questions answered by being three exported fields; `Mark` is opaque and answers none.
+
+### 4. `ResolveSpec.Store` has no stated purpose  `[medium]`
+
+§5.3's `ResolveSpec{Ledger, Store, Key, Issued}` carries a store that the `Resolve` doc comment
+never mentions and the prose never uses; the only trace of what it is for is §UC-221's control
+(*"zero calls to the event store other than the transaction question"*), which implies a check no
+contract states. Either the field earns a sentence (which is GAP-4's close criterion) or it is not
+in the spec.
+
+### 5. §INV-110 and §INV-112 state call orders rather than falsifiable properties  `[medium]`
+
+*"Each poll asks `Park.Sequences` first and, when that count is non-zero, `Park.Holds` …"* and
+*"Each poll builds a fresh `event.Track` per cover member and calls `Load`; no tracker is retained
+between polls"* are procedures. Both have real properties underneath — a parked sequence is named
+within one poll rather than at the deadline; a wait never moves a fence — and both spell the
+procedure rather than the property, which makes them true of one implementation rather than of any.
+The falsifiers listed are behavioural, so nothing is unproved; what is missing is the statement a
+second implementation could be held to.
+
+### 6. ES-09: the `SnapshotFilter` composition rule has no answer in D-145  `[medium]`
+
+Study nuance ES-09/3: Axon's javadoc rule 3 (*"return `true` if the snapshot data does **not**
+correspond to the desired aggregate"*) exists because `combine` is an AND across every registered
+filter, so a filter that returns `false` for anything it does not recognise *"silently turns off
+snapshotting for the whole application"*. [SPEC] §1.4 specifies five column comparisons and no
+composition, which is probably why the hazard does not apply — but D-145 is the contract a later
+phase implements from, and the moment it grows a per-aggregate policy assembled from parts it
+inherits the hazard. One sentence, recorded with the source, is the cost of not rediscovering it.
+
+### 7. ES-09: «оператор может отбросить snapshot» has no invariant  `[medium]`
+
+ES-09 part 5: *«обычные команды не зависят от наличия snapshot, оператор может его отбросить»*.
+§1.4 gets most of the way there (the fallback, "history is never deleted", a snapshot is
+replaceable) and never states the property in the form a test could take: **deleting every row of
+the snapshot table changes no result anywhere**, and a command path that fails when a snapshot is
+absent is a defect. §INV-121 and §INV-122 cover binding and fallback and not this.
+
+### 8. ES-09: "a snapshot decode that panics falls back" assumes a `recover` nothing authorises  `[medium]`
+
+§1.4, transferring Axon's `catch (Exception | LinkageError e)`: *"A snapshot decode that panics
+falls back; a snapshot decode that returns a plausible zero value does not and cannot."* A recover
+on the kernel's load path is a design decision of its own — `event/projection`'s existing recover
+is scoped to a handler call and was argued — and D-145 asserting one in passing is the kind of
+clause the implementing phase will read as settled. Either it is argued where it is stated, or the
+sentence says that a panicking codec is the caller's defect and is not caught.
+
+### 9. `Visibility.Behind` is an `event.Position` used as a distance, again  `[medium]`
+
+`## P4` item 1 raised exactly this for `Readiness.Behind` and it is still open; §5.2's
+`Visibility{… Behind event.Position …}` adds a second field of the same shape with the same
+doc-comment caveat. Whatever answer item 1 gets — a distinct type, a `uint64` named for what it is,
+or a module-page sentence about burnt positions — now has two fields to apply to, and the phase
+that fixes one should fix both.
+
+### 10. A wait against a generation with no checkpoint rows at all is unstated  `[low]`
+
+The published `Observe` contract answers the origin with a nil error when **all** cover members are
+fresh, and `ErrTopology` when some are and some are not. So a wait against a generation that has
+never saved — a rebuild that has just been declared — polls against position zero and waits, which
+is the right behaviour and is derivable only by reading `Observe`'s contract. §1.1 states the two
+refusals `surveyed` buys and not the third answer it gives.
+
+### 11. §0 says "moves three kernel names" and lists four  `[low]`
+
+*"Phase 5 moves three kernel names and widens one application contract. `event` gains
+`Repo.Digest`, `Repo.StateAt` and `ErrVersion` (§5.1); `event/projection` gains the wait (§5.2);
+`event/receipt` is a new package under `event/` (§5.3). All four …"* — the sentence counts three and
+the list has four, and §7.1's table has five rows. The number is load-bearing nowhere; the paragraph
+is the first thing a reviewer reads about the phase's surface.
+
 The code is right. What is wrong is the record a future reader checks to find out whether the
 deliverable was met, and a ticked box with a wrong number in it is the one place a wrong number
 costs the most. Fix the three statements to 14, or strike the number from the deliverable and
@@ -3793,3 +3902,1070 @@ untagged test is fabricated"* in full at 1901-1909, §INV-091's matrix row names
 the commit-together half, and `TestTheBlockingTestAndTheAdvanceAreOneCommit` exists in
 `event/eventpg/park_integration_test.go`. Only the symbol name in the plan is wrong. Rename the
 plan's prose to the two names that exist.
+
+### 12. A third `< 18` file floor in `scripts/projection_test.go` that P-4 does not name  `[medium]`
+
+*Raised by the phase-5 plan audit (Round 1, [`EVENTSOURCE_P5_PLAN_GAPS.md`](EVENTSOURCE_P5_PLAN_GAPS.md)), 2026-09-12.*
+
+`EVENTSOURCE_P5_PLAN.md` **P-4** says *"the **two** file-count guards in `scripts/projection_test.go`
+move with the package"* and names `TestNoCommentInTheProjectionPackagePromisesExactlyOnce`
+(`:141`, `files < 18`) and `TestNothingInTheProjectionPackageOpensATransaction` (`:178`,
+`walked < 18`). There is a third: `TestNoModulusIsAppliedToASequenceHash` (`:1070-1073`) asserts
+`len(checked.files) < 18` with the same message, *"the package holds eighteen outside its tests"*.
+
+All three are floors, so none of them breaks when the package grows to twenty — which is exactly the
+failure a floor exists to catch. Two of them move and the third silently stops measuring two
+tenths of the package. Move it with the other two, or record why one of three is different.
+
+### 13. The conformance table states `checkpointDefects` at 8 and it is 14  `[medium]`
+
+*Raised by the phase-5 plan audit (Round 1), 2026-09-12.*
+
+`EVENTSOURCE_P5_PLAN.md` § *The conformance extension* holds the claim *"the suite's inventory did
+not move"* in an evidence row reading *"`event/eventtest`'s own counts (`inventoried` at 29,
+`checkpointDefects` at 8, the certified-section assertions)"*. `inventoried` is 29
+(`event/eventtest/defects_test.go:47`). `checkpointDefects` is **14**
+(`event/eventtest/checkpoints_test.go:277`), and fourteen is also the number of checkpoint sections
+the same file asserts (*"certified %d of fourteen"*).
+
+The gate itself is unharmed — `go test ./event/eventtest/` asserts both counts internally, whatever
+the plan's prose says — but the number a section report is written from should be one that exists in
+the tree. Correct it to 14, or drop the numbers and let the suite be the answer.
+
+### 14. `WaitSpec.Committed` takes any `event.Store` and compares no backing  `[medium]`
+
+*Raised by the phase-5 plan audit (Round 1), 2026-09-12.*
+
+`func (this WaitSpec) Committed(ctx context.Context, store event.Store, commit event.Commit) (Mark, error)`
+carries six refusals and none of them is *"this is not the store the commit was written to"*.
+`Repo.Append` treats the same question as load-bearing — step 5 of six, `backing.Equal(at.backing)`
+→ `ErrWrongStore` (`event/repo.go:89-92`) — because a token minted over one backing must not be
+spent on another.
+
+A deployment with two backings that passes the wrong store gets a mark read out of the wrong
+database at the same stream and version, and `Wait` then clears it against the right one's
+checkpoint rows. The value exists to make the check: `Commit.Authority()` (`event/token.go:47`) and
+`Authority.Same` (`event/authority.go:36`) are both exported.
+
+What makes this a scheduling item rather than a quick fix: `Authority.backing` is unexported and has
+no accessor, so `event/projection` cannot ask the question without an addition to `event` — which
+phase 5 permits only in S1, and S1's checkpoint asserts the `event` section of
+`docs/api/surface.md` grew by **exactly three** lines. Closing this after S1 costs a second kernel
+move and a rewritten fence. Whoever opens it should open it at the top of a section list, not in the
+middle of one.
+
+### 15. P-7's rebuild-wait cost omits `surveyed`'s `ErrTopology` window  `[medium]`
+
+*Raised by the phase-5 plan audit (Round 1), 2026-09-12.*
+
+**P-7** states the poll cost for *"a generation that has not saved yet — a rebuild just declared,
+which is the wait a deployment tool makes"* as two reads per member per poll, *"and the cost falls
+to one per member as each member records its first checkpoint"*, and puts
+`1 + (1 or 2) × |cover|` on the module page.
+
+There is a third state between the two, and it is not a cost: `surveyed`
+(`event/projection/generation.go:189-192`) refuses with `ErrTopology` whenever
+`held.recorded > 0 && held.recorded < over.Count()`. A four-partition rebuild whose members record
+their first checkpoints one at a time is in that state for the whole window. A wait that started
+while all four were fresh polls through it (a later refusal is not terminal) and eventually reaches;
+a wait that **starts** inside the window is refused terminally on poll 1.
+
+The behaviour is right and §UC-244 covers its shape — *"a cover that is mid-split — some members
+holding rows and some not"* — but the page as planned describes a steady state that a multi-partition
+rebuild wait does not stay in. Either the page names the window, or it says the arithmetic applies to
+a cover whose members have all recorded or none has.
+
+### 16. S1's and S2's kernel-fence allowed sets exclude the fixtures their tests need  `[medium]`
+
+*Raised by the phase-5 plan audit (Round 1), 2026-09-12.*
+
+`event-kernel-moved` fails a section on **any** path under `event/` outside its anchored allowed
+set, and both no-database sections draw theirs tightly:
+
+- S1 allows `^event/(repo|errors|token|repo_test|replay_test|refusalmessages_test|stateat_test|digest_test)\.go$`
+  and the two `eventmemory` comment files. Its tests call for *"a recording store"* with a
+  `StreamPage` of 4, *"a defect store answering `[v3, v1, v2]`"* and a payload over `MaxPayload` —
+  and `event/recordingstore_test.go` and `event/fixtures_test.go` both exist and are **not** in the
+  set.
+- S2 allows `^event/projection/(mark|wait|errors|park|doc|mark_test|wait_test|harness_test)\.go$`.
+  Its tests call for a recording `Park`, a movable `Generations`, a failable `Checkpoints` and a
+  recording `Ticks`; `event/projection/park_test.go` and `generation_test.go` are not in the set.
+
+The fence is doing its job — it fails loudly rather than absorbing the edit — but a section whose
+first honest test edit turns its own gate red is a section that will be tempted to widen the ERE
+mid-flight, which is the one move the fence exists to make visible. Either the allowed sets name the
+fixture files up front, or the plan states that a fixture edit is a finding and each section reports
+the path it had to add.
+
+### 17. `_examples/event-receipts` has no named store, and `_examples` requires no `event/eventpg`  `[medium]`
+
+*Raised by the phase-5 plan audit (Round 1), 2026-09-12.*
+
+S6 publishes `_examples/event-receipts` as the reference `Ledger` — *"the one-statement claim with
+`statement_timestamp()`, the completing `UPDATE`, a SQL-side `Horizon` from a configured retention,
+a `jobs` periodic that sweeps"* — which is PostgreSQL SQL, and `make examples`
+(`scripts/modules.sh:53-55`) runs `GOWORK=off go build ./... && vet ./... && test ./...` inside
+`_examples` with no database.
+
+`_examples/go.mod` requires no `github.com/frostgrove/vv/event/eventpg`, and the two shipped event
+examples reach only `event`, `event/eventmemory` and `event/projection`. So the example either runs
+its ledger over `eventmemory` with the SQL as a string constant — which is fine, and is what
+`TestTheExampleLedgerIsTheOneTheLiveSuiteProved` compares — or it takes a new require and a matching
+`replace`, which is the satellite trap `CLAUDE.md` names by hand. The plan says which SQL the
+example carries and not which store it runs. Say it, and if a require lands, say the replace lands
+with it.
+
+### 18. `ErrUncommitted` joins a var block whose opening sentence says none of them crosses a store seam  `[medium]`
+
+*Raised by the phase-5 plan audit (Round 1), 2026-09-12.*
+
+`event/projection/errors.go:5-8` opens *"Eight, and none of them crosses a store seam: construction,
+lifecycle, contention, routing, topology, the park's room, a redrive's grant and a generation's
+rows. What a store refused travels as the sentinel `event` already publishes, so a consumer reads
+one vocabulary rather than two."*
+
+Phase 5 moves the count to twelve and adds `ErrUncommitted` — *"this store shows no event at the
+version this commit reports"* — which is a statement about a store's visible state rather than a
+projection's. [SPEC] §5.2's own gloss concedes as much (*"it is `receipt.Unresolved` one level down
+and says so"*) and argues it is about the caller's transaction, not the store. The plan moves the
+number and not the sentence. Decide which reading the file states, and state it.
+
+### 19. P-3 names five walks riding on `checkedEventPackages` and there are seven  `[low]`
+
+*Raised by the phase-5 plan audit (Round 1), 2026-09-12.*
+
+`checkedEventPackages` (`scripts/projection_test.go:549`) is called from seven tests — lines 44, 62,
+81, 101, 263, 710 and 1160 — plus `checkedProjection` (`:951`) on top. **P-3** names five, omitting
+`TestNoConstructorTakesAProgressAndAnswersACursor` (`:60`) and the walk at `:81`. The fix P-3
+prescribes (the floor `listed < 5` → `< 6`, plus the `slices.Contains` assertion) protects all of
+them, so nothing is unprotected; the count is simply wrong in a paragraph whose whole job is to say
+what would silently stop being asked.
+
+### 20. `ByStream()` is `withDefaults`'s ninth clause, not its tenth  `[low]`
+
+*Raised by the phase-5 plan audit (Round 1), 2026-09-12.*
+
+**P-1** calls `if spec.Sequence == nil { spec.Sequence = ByStream() }` *"its **tenth** clause"*. In
+`event/projection/spec.go:349-384` it is the ninth of eleven: Park, Advance, Idle, `Backoff.Max`,
+`Backoff.First`, the `Max < First` correction, Attempts, Tolerate, **Sequence**, Classifier, Ticks.
+P-1's argument does not rest on the ordinal; the number is simply not the one in the file.
+
+### 21. The snapshot gate merges D-132's two codec bands into one range  `[low]`
+
+*Raised by the phase-5 plan audit (Round 1), 2026-09-12.*
+
+`EVENTSOURCE_P5_PLAN.md` § *The snapshot gate* reading 1 says D-132 *"recorded … **104.4–170.6 ms**
+at 100 000"*, then observes *"Today's 100 000-event figure sits inside that band."* D-132's table
+holds two separate rows for that length: **104.4 – 105.7 ms** with a no-op codec and
+**163.4 – 170.6 ms** with `event.JSON`. Today's measurement, 108.4 – 111.3 ms, is on the no-op codec
+and is therefore 3–7 % above the comparable number, not inside a band. The conclusion is unaffected —
+the gate is refused on D-132's *"there is no consumer"*, not on the arithmetic — but a merged band
+is a wider tolerance than the instrument has, and D-145 is planned to carry these numbers forward.
+
+### 22. `replay`'s `upTo == 0` is an in-band sentinel while `StateAt` refuses version zero  `[low]`
+
+*Raised by the phase-5 plan audit (Round 1), 2026-09-12.*
+
+The planned loop is `replay(ctx, stream, upTo Version)` where *"zero means the end of the stream,
+which is what a Load asks for"*, and `Load` calls `replay(ctx, stream, 0)`. Meanwhile `StateAt`
+refuses version zero with `ErrVersion` (§UC-231), so one `Version(0)` means "no bound" one frame
+down and "an impossible bound" one frame up.
+
+`replay` is unexported and the two callers are three lines apart, so nothing is reachable today.
+What it costs is the next reader: **P-13** already records that the phase which adds the snapshot
+base state seeds this same loop, and a seed of zero will mean "from the origin" in a function where
+zero already means "to the end". A named bound (`allVersions`, or a `*Version`) removes the question
+before that phase has to answer it.
+
+### 23. `jobspg`'s ambient placement cannot retry a lost race above READ COMMITTED  `[medium]`
+
+*Raised while closing the phase-5 plan audit's GAP-5, 2026-09-12. A finding about `jobs`, not about
+`event` — recorded here because this is where it was found and because D-142 adjudicates the
+mechanism it belongs to.*
+
+`jobspg.Driver.Place` enlists in the caller's ambient transaction when one is bound
+(`jobs/jobspg/driver.go:22-42`) and routes through `TxStager.Stage`, which retries
+`errIntentConflict` up to three times **on that same transaction** (`jobs/jobspg/stager.go:112-121`).
+The retry is what turns a lost race into `EnqueueExistingSamePayload` rather than
+`jobs.ErrConflict`: attempt one's `insertIntent` (`repo_ops.go:232-250`) finds the winner's row and
+reports zero rows, and attempt two's `findIntent` reads it.
+
+That works at READ COMMITTED, where each statement takes a fresh snapshot. It cannot work above it.
+Measured on PostgreSQL 17.9 (`localhost:55432`, two sessions, the winner holding open 3 s): an
+`INSERT … ON CONFLICT … DO NOTHING` that waits on a concurrently-committing conflicting tuple
+raises **SQLSTATE `40001`** at REPEATABLE READ and SERIALIZABLE, and every statement after it in
+that transaction answers *"current transaction is aborted, commands ignored until end of
+transaction block"*. So on the ambient path at either stricter level, attempt one aborts the
+**caller's** transaction, attempts two and three cannot run, and the caller receives
+`jobs.RejectPlacement(jobs.ErrConflict)` for what is a plain repeat — with its own unit already
+dead. The non-ambient path (`Driver.Place`'s own `BeginTx`, `driver.go:45-54`) is unaffected,
+because each attempt gets a fresh transaction.
+
+Nothing is written twice and nothing is lost; the cost is a misreported verdict and a retry loop
+that is dead code above READ COMMITTED. The honest repair is for `Stage` to stop retrying on a
+transaction it does not own and to surface the serialisation failure as retryable — `40001` is
+already `errs.CodeSerializationFailure` (`errs/sqlerr/postgres.go:15`) — so the caller's own
+`crud.InNewTx` retries the unit. That is a change to `jobs`, with its own tests in all three
+`jobs` drivers, and it is not phase 5's.
+
+### 24. `Digest` and `Append` carry the same four pre-store steps as two copies  `[medium]`
+
+*Raised by the phase-5 S1 code review (Round 1), 2026-09-12
+([`EVENTSOURCE_P5_S1_GAPS.md`](EVENTSOURCE_P5_S1_GAPS.md) GAP-3).*
+
+`event/repo.go:113-132` (`Append`) and `event/repo.go:176-192` (`Digest`) are byte-identical but
+for the return values — `checkKey`, the `decidedFor` loop, the `change.err` loop, `records` — and
+what binds them is a sentence in a comment (`:154-158`, *"answers the same refusals Append would"*).
+A fifth pre-store check added to `Append` leaves `Digest` answering a fingerprint for a batch
+`Append` will refuse. **Still open after GAP-1 was closed:** all four existing steps now have a
+table row and each row cross-checks `Append`'s own sentence, so the correspondence holds for the
+steps that exist today — but it holds by enumeration, and the *fifth* check nobody has written yet
+is what this item is about.
+
+The extraction is available — `checkKey`, then `Append`'s empty-batch short circuit, then one
+helper carrying steps 2–4 that both call. The cheaper half is a test that drives every refusal
+`Append` has before the store and asserts `Digest` answers the same sentence, which is the shape
+**P-16**'s `TestEveryRefusalClaimHasIsReachableThroughOnce` uses one section later for the same
+kind of two-door correspondence.
+
+### 25. `StateAt` reports a store that truncated a history as the caller's bad request  `[low]`
+
+*Raised by the phase-5 S1 code review (Round 1), 2026-09-12
+([`EVENTSOURCE_P5_S1_GAPS.md`](EVENTSOURCE_P5_S1_GAPS.md) GAP-4).*
+
+`replay` documents its own blind spot (`event/repo.go:307-310`) and `event/eventtest` makes it a
+defect. What S1 adds is the rendering. Driven: a store answering a 2-envelope page where it
+publishes a `StreamPage` of 4, read at version 8 over an 11-event stream, answers `ErrVersion` —
+*"this stream is shorter than the prefix this read was bounded at"* — which wraps
+`crud.ErrBadRequest` (`event/errors.go:43`) and renders 400. A store defect therefore reaches the
+caller as their own off-by-one. §INV-118 names three causes for `ErrVersion`; this is a fourth, and
+a fourth indistinguishable cause is the shape the ES-08 study criticises Marten's `null` for.
+
+`[low]` because the framework structurally cannot tell the two apart without the confirming read
+the store contract deliberately refuses, and because `Load`'s answer to the same store is worse — a
+silently truncated state with no refusal at all. Owed: one sentence on both `event.md` pages saying
+`ErrVersion` also covers a store that broke its short-page clause, and that the conformance suite is
+where that is caught.
+
+### 26. `Repo.Digest` does not answer `ErrWrongStore`  `[low]`
+
+*Raised by the phase-5 S1 code review (Round 1), 2026-09-12
+([`EVENTSOURCE_P5_S1_GAPS.md`](EVENTSOURCE_P5_S1_GAPS.md) GAP-5).*
+
+Driven: `Digest` over a token minted against another backing returns a fingerprint and a nil error,
+while `Append` over the same token answers `ErrWrongStore` (`event/repo.go:133-136`, step 5). The
+fingerprint is **identical** to the one taken over this store's own token, which is correct and
+deliberate — §INV-116 excludes the backing from the preimage — so this is about the refusal and not
+about the digest. The comment's *"a caller that digests first learns a malformed append before it
+claims anything"* (`:156-157`) is true of four of `Append`'s six steps and not of the fifth.
+
+Harm is bounded: a claim runs inside the caller's transaction, so the refused append rolls the claim
+back with it. Owed is either the backing comparison inside `Digest` — which costs **P-12**'s
+zero-store-call property one `Store.Backing()` call and therefore needs an argument — or one clause
+narrowing the sentence to the four steps it enumerates.
+
+### 27. The live `eventpg` suite is order-dependently red on the burnt-gap walk  `[low]`
+
+*Observed while closing the phase-5 S1 review's two blocking findings, 2026-09-12. Not caused by
+that work: the only non-test change was a comment, and `event/digest_test.go` is a `_test.go` of
+package `event`, which is not compiled into `eventpg`'s test binary.*
+
+`TestABurntGapIsPassedInsideOneReadAllAndALiveOneIsNot`, first subtest, failed once inside a full
+`go test -race -count=1 -tags=integration ./event/eventpg/...`:
+
+```
+watermark_integration_test.go:310: the walk beyond the gap answered [], and a walk that stops for
+good at a gap that can never be filled never finishes
+```
+
+Run alone it passes (`ok 1.219s`), and the two full runs after it were green
+(`ok 118.035s`, `ok 114.169s`). **This is the already-recorded cluster-wide-`xmin` drawback showing
+up as a test flake, not a second defect**: `event/eventpg/read.go:319` reads
+`pg_snapshot_xmin(pg_current_snapshot())`, which is the oldest running transaction id in the whole
+database, so any other session that has written and not yet ended holds the settlement floor down
+and the walk does not pass the burnt gap. In a full suite run, the other tests are exactly such
+sessions.
+
+Owed: nothing new about the mechanism — that item already carries the mitigation to write down.
+What is owed **here** is that the test has no isolation from the rest of the suite while asserting
+a property that depends on the cluster being quiet, so it can be red for a reason that is not a
+regression. Either it settles its own floor before asserting, or it says in its failure message
+that a concurrent session anywhere in the cluster produces this exact output. `[low]` because the
+behaviour under test is correct and documented; what is wrong is that a green suite is not
+reproducible.
+
+### 28. The flow-index walk's own file floor is two sections behind the package  `[low]`
+
+*Observed while closing phase-5 S2, 2026-09-12, and not caused by it.*
+
+`TestEveryProjectionSourceFileIsNamedByTheFlowReverseIndex` (`scripts/docs_test.go:1398`) guards its
+walk with `walked < 16` and the message *"the package holds sixteen outside its tests"*.
+`event/projection` held **eighteen** before this section and holds **twenty** after it, so the floor
+has been passing over a walk that could have found a quarter of the package missing. P-4 moved the
+two guards in `scripts/projection_test.go` because the plan named them; this third one is in another
+file, was not named, and is left alone under the delivery policy rather than fixed because it is a
+one-line change.
+
+Owed: the floor moves to the package's real count in the same change as the next file that lands
+under `event/projection`, and the sentence stops naming a number a reader has to trust. It is the
+same defect `event/projection/lifecycle_test.go:235`'s `walked < 9` carries (P4 backlog), so the two
+are worth closing together.
+
+### 29. §UC-243's own "Then" has no arm — only its control ships  `[medium]`
+
+*Observed while reviewing phase-5 S2, 2026-09-12.*
+
+§UC-243 requires two things: that `spec.Committed` mints a mark carrying the distinct keys `A` and
+`B` in first-appearance order, **and** that `Wait` then *"answers `ErrParked` from the second
+`Holds` call"*. `TestCommittedReadsTheCommitsOwnRangeAndNothingElse` ships the use case's
+**Control** — a park holding neither key, `Holds` counted twice per poll — and no arm in the
+repository parks the mark's *second* key. The coverage matrix records UC-243 as proved by that
+count, so the claim that a commit spanning three sequences is protected in all of them rests on a
+call count rather than on an answer.
+
+Driven during the review and the behaviour is correct: a commit `A,B,A` with the queue holding `B`
+answers `ErrParked` with `Visibility{Parked:true, Polls:1}` and two `Holds` calls, both outside a
+unit — and the same holds with `StreamPage` forced to 1 so the commit spans three pages. So this is
+a coverage hole, not a defect.
+
+Owed: one subtest beside the existing control, parking the second key and asserting `ErrParked`,
+with the first-key arm kept so the pair shows the loop does not stop at index zero.
+
+### 30. `WaitOf` admits a `Spec` whose `Checkpoints` is nil  `[medium]`
+
+*Observed while reviewing phase-5 S2, 2026-09-12.*
+
+`WaitOf` (`event/projection/wait.go:68`) refuses the zero `Cover` and a `Spec` that names no
+identity, and derives `Checkpoints` from the same `Spec` — but does not refuse a nil one, where
+`New` refuses it at construction. Driven: `WaitOf(Spec{Name:"orders", Generation:2}, cover)`
+answers `err=<nil>`, and the refusal lands on the first poll as
+
+```
+projection: this projection cannot be assembled from this spec: "orders@2" is not a name a
+checkpoint row can be keyed by, or Checkpoints names no store: … this call names none
+```
+
+reported as `Visibility{Polls: 1}` for a poll that issued no store call of any kind. The refusal is
+prompt, typed and names no data, so nothing is wrong with what the caller is told — what is wrong
+is where it is told, and that `Polls` counts a round trip nobody made.
+
+Owed: the same `absent()` door every other field of a `WaitSpec` gets, with a row in
+`TestTheDerivedSpecAnswersWhatThreeHandWrittenOnesGetWrong`'s fourth arm beside the zero-`Cover`
+and no-identity ones.
+
+### 31. INV-124's refusal table reaches 16 of the wait's 20 new error paths  `[medium]`
+
+*Observed while reviewing phase-5 S2, 2026-09-12. Renumbered 2026-09-12 when P-19 added the
+twentieth path and its row landed in the same change, so the four below are the same four.*
+
+`TestNoRefusalOfAWaitNamesAPositionOrAKey` walks sixteen rows. The four new refusal paths it does
+not reach are `WaitOf`'s two (zero `Cover`, no identity), `Committed`'s wrap of a
+`store.Transaction(ctx)` error, and `resolved`'s zero-position `ErrUncommitted`
+(`event/projection/wait.go:180-182`). All four were read by hand during the review and none renders
+a key, a stream, a position, a version or a cursor, so INV-124 holds in fact — `WaitOf`'s
+no-identity row wraps `NewIdentity`'s refusal, which names at most one separator character, and the
+zero-position one names no number at all. What is missing is the arm that keeps it holding when one
+of those messages is next edited.
+
+Owed: four rows in the existing table. The `Transaction`-error row needs a store whose
+`Transaction` refuses, which `watchedStore` can answer with one more field.
+
+### 32. Two published doc sentences of §5.2 did not land  `[low]`
+
+*Observed while reviewing phase-5 S2, 2026-09-12.*
+
+`WaitOf`'s doc comment no longer carries §5.2's *"It applies `ByStream()` where `Spec.Sequence` is
+nil, which is the default `New` applies and the one a hand-written spec forgets."* The shipped
+comment explains the derivation through `withDefaults` and the `Park` clause, which is the more
+interesting half, but a consumer reading GoDoc no longer learns the `Sequence` default at all —
+and that default is one of the three obligations INV-111 says a hand-written spec carries.
+
+`ErrUncommitted`'s doc drops §5.2's closing sentence *"It is `receipt.Unresolved` one level down and
+says so."* That is understandable at S2 — `event/receipt` does not exist yet — and is owed back by
+S3, which is when the forward reference becomes resolvable and when a consumer reading either
+sentinel needs to know the two are the same fact at two levels.
+
+Owed: one clause restored to `WaitOf`'s comment now; the `ErrUncommitted` sentence added in S3's
+own change, beside `receipt.Unresolved`'s own doc.
+
+### 33. A third copy of the nil-interface predicate  `[low]`
+
+*Observed while implementing phase-5 S3, 2026-09-12.*
+
+`event/receipt/claim.go`'s `absent` is a reflection-over-`Kind` nil check, and it is the **third**
+spelling of one idea in this subtree: `event/projection/spec.go:396` has the same function under the
+same name, and `event/nilByAnyRoute` is the kernel's own. The two under `event/` cannot share
+one — `receipt` importing `projection` would make an optional consumer a dependency of a durable
+record, and `event` exporting it would put a Go-language predicate on the vocabulary's published
+surface.
+
+What a third copy costs is what a third copy always costs: a fix to one of them is a fix to one of
+them. The three agree today and that was checked by reading, which is the evidence a duplicate is
+allowed to have exactly once.
+
+Owed: either an `event/internal/...` home the three share — which is the first `internal` package
+this subtree would have and is a decision, not a refactor — or a recorded note on each that the
+other two exist. Not urgent: the predicate is ten lines with no branch a test can reach differently.
+
+### 34. A collided `Claim` hands the caller the other operation's row  `[medium]`
+
+*Raised by the phase-5 S3 code review, Round 1 — [`EVENTSOURCE_P5_S3_GAPS.md`](EVENTSOURCE_P5_S3_GAPS.md) GAP-1.*
+
+`event/receipt/claim.go:115-118` seats the stranger's `Receipt` in the `Held` it returns beside
+`ErrCollision`, and `Held.Receipt()` hands it back unfiltered. [SPEC] §5.3 says the collided
+`Held` carries *"the verdict for a caller that wants to branch"* — the verdict, not the row.
+Driven: a second operation under one key answered `held.Receipt()` carrying the first operation's
+stream `"A-17"`, range `1..1`, fingerprint and `RecordedAt`. The refusal *message* names none of
+it — `TestNoRefusalOfAReceiptNamesAKeyOrAFingerprintsPreimage` proves that — and the value channel
+does, so INV-124's purpose is defeated through the door the error channel keeps shut. The stream
+key is what that test's own comment calls *"a customer's identifier"*.
+
+Not `[high]`: the sentinel and the message are correct and the leak needs a caller that branches
+on the verdict and reads the receipt on `Collided` — which is the sanctioned shape one step wrong,
+and compiles.
+
+Owed: `Held.Receipt()` answers the zero `Receipt` on `Collided`, or §5.3 says in words that it
+answers the stranger's row and why that is safe; either way a test asserts it with a `Repeated`
+control, and the refusal-message test gains an arm that walks the returned `Held` and not only the
+string.
+
+### 35. `Held` is half-synchronised — `Receipt()` races `Complete` under `-race`  `[medium]`
+
+*Raised by the phase-5 S3 code review, Round 1 — GAP-2.*
+
+`claimed.completed` is an `atomic.Bool`; `claimed.receipt` beside it is written unguarded at
+`event/receipt/claim.go:194` and read unguarded at `:76`. Driven: `WARNING: DATA RACE`, write at
+`claim.go:194` against a read at `claim.go:76`.
+
+Not `[high]`: the blast radius is one `Held`, which belongs to one transaction, which
+`database/sql` already forbids sharing between goroutines — so it is not the process-global shape
+`CLAUDE.md`'s `-race` sentence is about. What keeps it above `[low]` is the `atomic.Bool`: a
+reader is entitled to conclude a `Held` is safe for concurrent use, and it is safe for one of its
+three methods.
+
+Owed: one guard covering both, or a `Held` doc sentence saying it is single-goroutine and what the
+atomic is for. Plus a concurrent `Complete`/`Receipt()` test that is green under `-race`.
+
+### 36. `Complete` burns the `Held` before the ledger write succeeds  `[medium]`
+
+*Raised by the phase-5 S3 code review, Round 1 — GAP-3.*
+
+`event/receipt/claim.go:183-195` runs the `CompareAndSwap` before `Ledger.Complete`, and nothing
+resets it on failure. Driven with a ledger whose `Complete` fails once: the first call returns the
+ledger's error, the second returns `ErrSpec` *"this claim has already been completed"* — and the
+row was never written, so the durable state is `Incomplete` while the in-process answer says the
+opposite, under the sentinel that blames the caller for a ledger fault.
+
+Not `[high]`: inside PostgreSQL a failed statement poisons the caller's transaction and the whole
+unit rolls back, which is what §1.2 relies on everywhere else. It matters for a `Ledger` over a
+backend where one statement can fail recoverably.
+
+Owed: move the CAS below the ledger write or reset it on failure, and one §5.3 sentence saying
+which answer a second `Complete` after a failed one gets.
+
+### 37. `Receipt.RecordedAt` is validated at neither door, and its absence disables the horizon check  `[medium]`
+
+*Raised by the phase-5 S3 code review, Round 1 — GAP-4.*
+
+`event/receipt/resolve.go:182` guards the `ErrLedger` horizon comparison with
+`!held.RecordedAt.IsZero()`, and `claimAnswered` (`claim.go:253-269`) never asks about
+`RecordedAt` on the win path either — although `receipt.go:19-22` makes it the one field the
+ledger is contractually required to fill. Driven: a complete row with a zero `RecordedAt` beside a
+`Horizon` of **2099-01-01** resolved to `[standing found]`, `err=<nil>`.
+
+The failure it lets through is P-17's named window: a ledger that omits `recorded_at` from its
+`SELECT` publishes an optimistic horizon unchallenged, and a swept row then reads `Unresolved` for
+ever instead of `Expired` — the monotone-growth failure §"Retention" exists to close. `ErrLedger`'s
+own rule is *"a ledger is trusted exactly as far as its answers are"*, and this is the one answer
+that is never checked.
+
+Owed: `ErrLedger` for a zero `RecordedAt` at both doors (or a contract sentence permitting it), and
+a distinct-sentence arm in `TestALedgerThatAnswersSomethingNoLedgerAnswersIsRefused`.
+
+### 38. The empty-commit exemption admits an empty `Commit` from another unit, and nothing writes it down  `[medium]`
+
+*Raised by the phase-5 S3 code review, Round 1 — GAP-5.*
+
+`event/receipt/claim.go:180-190` skips the authority comparison on an empty `Commit`, by design
+(`event/token.go:23-28`), leaving `Commit.Stream()` as the only discriminator. Driven: an empty
+commit for `A-17` minted in an earlier, already-committed unit, handed to the completion of a claim
+whose own append wrote one event to `A-17`, was **admitted**, and the durable row reads
+`first=0 last=0 complete=true`. Every later retry is answered `Repeated` with an empty range and
+reports *done, nothing changed* — verbatim §UC-222's **Must not**, reached through an admitted
+`Complete` rather than through an unresolved claim.
+
+Not `[high]`: it needs caller malpractice, and it is genuinely undecidable on the current surface —
+an empty commit carries the invalid authority wherever it was minted, and `ClaimSpec` records no
+version to compare `Commit.Last()` against. The finding is the silence, not the hole: §1.2's own
+method for an undecidable hazard is to state it and pin it with an inverted control, applied to
+§UC-250's third way and not here, while `Held.Complete`'s doc claims it *"says which check is
+absent and why rather than leaving the gap to be found"*.
+
+Owed: the sentence in §5.3 and on the module page beside UC-250's, plus a case in the
+`gate_relscope_test.go` inverted shape. Closing it rather than stating it means `ClaimSpec` carries
+the token's version, which is a surface decision.
+
+### 39. The repeat path never compares the row's `Stream` with the claim's  `[low]`
+
+*Raised by the phase-5 S3 code review, Round 1 — GAP-6.*
+
+`claimAnswered` returns `nil` for `!won` after checking the key alone (`claim.go:260-262`), and
+`verdictOf` decides on the fingerprint alone. Driven with a ledger answering a complete row whose
+fingerprint equals the claim's and whose stream is somebody else's: `[verdict repeated]`, no error,
+`held.Receipt().Stream.Key == "SOMEBODY-ELSE"` against a claim for `"A-17"`.
+
+Unreachable with a conformant `Ledger` — `digestOf` opens the preimage with the composed stream, so
+a row for another stream cannot compare equal. It is an asymmetry in the `ErrLedger` door (the win
+path checks the stream, the repeat path does not) and the study's nuance 8 — *the row records which
+aggregate the key was spent on* — reproduced through the fingerprint rather than the column.
+
+Owed: one `if` with its own sentence, or a comment naming `digestOf`'s first field as the reason
+there is none.
+
+### 40. `ErrIncomplete` is what a second `Claim` of one key inside one unit gets, and no page says so  `[low]`
+
+*Raised by the phase-5 S3 code review, Round 1 — GAP-7.*
+
+Driven: two `Claim`s of one key in one transaction answer `[verdict recorded]` then
+`ErrIncomplete`. The answer is correct — at that instant the staged row genuinely is incomplete —
+but `ErrIncomplete`'s own text calls itself *"a defect report rather than an ordinary outcome"* and
+sends the reader to `Resolve` and then to a human, which is the wrong advice for a caller that
+simply wrote two `Once`s under one key.
+
+Owed: a sentence on the module page naming the in-unit re-claim among `ErrIncomplete`'s causes,
+with §INV-126's key-per-append recipe as the fix.
+
+### 41. INV-123's fourth falsifier did not ship  `[low]`
+
+*Raised by the phase-5 S3 code review, Round 1 — GAP-8.*
+
+The coverage matrix routes INV-123's checkpoint to S3 and names four falsifiers, the fourth being
+*"a recording source asserting no `Begin`, `Commit` or `Rollback` on any path"*. No recording
+`crud.Source` exists in `event/receipt`'s fixtures; `countedStore` counts `event.Store` calls and
+`event.Store` has no `Begin`. What shipped is `scripts/projection_test.go:181-194` — a call walk,
+not a spelling walk, over `../event/receipt` with a floor of seven files and a fixture control
+reporting all six shapes — plus `startsNothing` and the dependency charge, all re-run green.
+
+The property is held; the matrix promises a fourth arm that is not there.
+
+Owed: either the recording-source arm, or the matrix row dropping the fourth falsifier and saying
+the AST walk subsumes it.
+
+### 42. The flows reverse index gained S2's two files and not S3's seven  `[low]`
+
+*Raised by the phase-5 S3 code review, Round 1 — GAP-9.*
+
+`docs/ai/flows/Index.md:620-625` adds `event/projection/mark.go` and
+`event/projection/wait.go` and none of `event/receipt`'s seven non-test files. The plan routes
+FL-043 and every doc obligation to S6, which is a defensible reason to wait — but S2 did not wait,
+so the index is half current, and `CLAUDE.md`'s own sentence is *"an index that does not list a
+file is worse than a missing file — an agent trusts the index and stops looking."*
+
+Owed: S6's FL-043, and a row for each of the seven in the reverse index.
+
+### 43. Both module pages still say `Holds` runs inside your unit of work, full stop  `[medium]`
+
+*Raised while implementing phase-5 S4 — the live proof of ES-05.*
+
+`docs/modules/en/projection.md:547-555` and its `ru` sibling carry *"**Where each method runs is
+part of the contract, and the four differ.** `Park.Holds` and `Park.Park` are called **inside** your
+unit of work"*, which is now half the contract: `event/projection/park.go` was widened in S2 with
+*"HOLDS IS ALSO ASKED OUTSIDE A UNIT, BY A WAIT, AND AN IMPLEMENTATION MUST ANSWER THE COMMITTED
+STATE THERE"*. A consumer implementing the page requires the ambient transaction in `Holds`, and
+every `Wait` over a projection that parks then fails its **first** poll — which is terminal — with
+that implementation's own refusal instead of `ErrParked`. S4 hit exactly this: the live suite's own
+queue refused outside a unit and three cases failed for the fixture rather than for the code
+(`event/eventpg/park_integration_test.go`, `livePark.reading`).
+
+S6's module-page row says "the wait section on `projection.md`", which does not name this paragraph,
+and the release-note row records the widening rather than the page. The placement sentence is
+`en:548` / `ru:572`, and the fast-path paragraph beside it (`en:560`, `ru:584`) says `Holds` is
+"never called" while the queue is empty — true of the loop and now also true of a wait, by the
+`Sequences`-first gate, which is worth saying rather than leaving to be read as the loop's.
+
+Owed: the `Where each method runs` paragraph on both pages naming the wait's door, and a doc check
+in the shape of `TestNoProjectionGuideRestatesHighestAsThePagesLastPosition` that fails when a page
+says `Holds` runs inside a unit without the second clause.
+
+### 44. UC-208's bound-transaction assertion never covers `Holds`  `[medium]`
+
+*Source: S4 review round 1 (`EVENTSOURCE_P5_S4_GAPS.md` GAP-3).*
+
+Both standings of `TestTheCallCountBudgetAndItsPlacement`
+(`event/eventpg/wait_integration_test.go:779-892`) run over an **empty** queue — the second drains
+it with `queue.clear` so that only `Quarantined` is non-zero — so `watched.counted(t, "Holds", 0)`
+is asserted and the `if call.bound` loop only ever walks `Sequences` calls. [SPEC] §UC-208 says
+*"Every recorded call carries no bound transaction, which is the placement **the widened `Holds`
+sentence** and the unchanged `Sequences` one both promise"*, and the widened sentence is the half
+with no witness. It is also the half S4's correction 1 had to change a live fixture for
+(`livePark.reading`).
+
+Driven in review and correct: a wait over a queue holding somebody else's sequence answered
+`{Reached:true … Quarantined:1 Parked:false Polls:2}` with calls
+`[Sequences bound:false, Holds bound:false, Sequences bound:false, Holds bound:false]`. So this is a
+missing proof on a path `make api` and `check-event-kernel` both agree they cannot see — which is
+[SPEC]'s own argument for why the recording park exists.
+
+Owed: a standing with a **non-empty** queue holding a sequence that is not the mark's, asserting
+`Holds` once per poll with `bound == false`, and that the wait still reaches. It belongs beside
+item 43's module-page sentence about where each `Park` method runs.
+
+### 45. The cross-spec `Mark` guard compares the projection name alone, and the reason covers only barrier marks  `[medium]`
+
+*Source: S4 review round 1 (`EVENTSOURCE_P5_S4_GAPS.md` GAP-4).*
+
+`event/projection/mark.go:22-24` — *"The comparison is on the projection name alone and never on the
+generation, because a barrier of another generation of the same projection is the cutover case a
+wait admits"* — argues the exemption for `MarkOf`, whose mark carries no sequence key. It does not
+argue it for `WaitSpec.Committed`, whose mark carries *"one projection's sequencer's answers"* (the
+same comment, two sentences earlier). A generation that re-keys its `Sequencer` — a legitimate
+reason to run one — plus a mark minted from the other generation's `WaitSpec` gives
+`Holds(ctx, orders@3, <gen-2 key>)` → false → `Reached: true` for a change generation 3 parked:
+§UC-242's wrong-`Sequence` failure reached through the generation door.
+
+The shape is in the section's own tests: `TestACutoverThatCommitsWhileAWaitIsRunning`'s two controls
+mint under one spec and wait under another (`unscoped.Until = waiting.Until`, `:1355` and `:1406`),
+safe only because both generations there share `ByStream()`.
+
+Owed: `mark.go`'s paragraph distinguishing the two doors, or `Mark` recording what it needs to
+refuse a cross-generation `Committed` mark; plus a test that mints under a differently-keyed
+sequencer at another generation of the same name, with the same-sequencer control beside it.
+
+### 46. The checkpoint rows the census rests on are read through `database/sql`, not through `psql`  `[medium]`
+
+*Source: S4 review round 1 (`EVENTSOURCE_P5_S4_GAPS.md` GAP-5).*
+
+`storedCheckpoint` / `maybeStoredCheckpoint`
+(`event/eventpg/checkpoints_integration_test.go:525-549`) read on a second pool with a hand-written
+`SELECT` and no `psqlAnswers` cross-check, unlike `destination.rows`, `livePark.letters` and
+`liveGenerations.recorded`. [SPEC] §6's preamble is *"Rows are checked with `docker compose exec -T
+postgres psql` … and not by trusting Go"*, and the rows S4 rests on most come from that helper:
+*"the checkpoint row stands at or above the mark"* (`wait_integration_test.go:464`), the lagging
+member (`:570`), `vis.At == row.highest` (`:750`, `:1188`) and `row.advance == saves` (`:962`).
+
+The second-pool read is already independent — its own connection, its own statement, no store code —
+so what `psql` adds is ruling out a driver-level artifact. The helper predates S4; the review's own
+`psql` reconstruction of the parked pair agreed with it exactly
+(`advance=1 highest=1 quarantined=1`, one letter, an empty read model).
+
+Owed: `maybeStoredCheckpoint` cross-checking through `psqlAnswers` in the shape `livePark.letters`
+already has, with the whole tagged suite green twice with it armed — or [SPEC] §6's sentence
+narrowed to the rows it means.
+
+### 47. The S4 record says `make check` is "fourteen checks"; it is eleven  `[low]`
+
+*Source: S4 review round 1 (`EVENTSOURCE_P5_S4_GAPS.md` GAP-6).*
+
+`EVENTSOURCE_P5_PLAN.md:2225-2226` says *"`make check` (fourteen checks, including
+`check-event-kernel`)"*. Measured at HEAD, `make check 2>&1 | grep -cE "^check-[a-z-]+: ok"` answers
+**11**: deps, tiers, utils, triplets, todo, replaces, tidy, otel-schema, otel-module, workspace,
+event-kernel. S3's report counted *"eleven arms"* for the same command on the same tree. The gate is
+green either way; the number in the record is wrong and this project treats a count as evidence.
+
+### 48. `BenchmarkStateAt`, measured — the number ES-09's Gate 1 is compared against  *(a recording, not a finding)*
+
+*Source: S5, per plan **P-14**. [[D-132]] refuses a measured **cost** as a reason to build a
+snapshot, so this lands here and not in D-144 or D-145, where it would slowly become an argument it
+was refused.*
+
+PostgreSQL 17.9 at `localhost:55432`, Intel i9-10900K, a 120-byte payload, a no-op codec and a no-op
+fold, `-benchtime 20x -count 3`, over the **same** 100 000-event stream `BenchmarkStreamReplay`
+uses. Two runs of the checkpoint, an hour apart:
+
+| Bound | events read | ns/op, run by run | ns/event |
+|---|---|---|---|
+| **1 %** | 1 000 | 1 236 968 · 1 194 960 · 1 186 684 — and 1 235 713 · 1 117 943 · 1 070 646 | 1 071 – 1 237 |
+| **50 %** | 50 000 | 57 748 776 · 56 611 208 · 58 043 237 — and 65 425 826 · 68 269 076 · 71 209 222 | 1 132 – 1 424 |
+| **100 %** | 100 000 | 115 303 982 · 113 422 527 · 106 297 019 — and 137 064 539 · 125 590 370 · 120 504 206 | 1 063 – 1 371 |
+
+Three readings, and the third is the one that matters to a later phase.
+
+1. **The bound costs what it reads and nothing else.** 1 % of the stream costs ~1 % of the full
+   replay: the per-event cost is flat at 1.06 – 1.42 µs across a hundredfold range of bounds, which
+   is the same neighbourhood `BenchmarkStreamReplay` reports for a full load at this length
+   (108.4 – 111.3 ms in the plan's own measurement, 106.3 – 137.1 ms here). A bounded read is the
+   same linear walk over a shorter prefix, and the over-read is the one partial page the loop
+   truncates.
+2. **The instrument is the same one and it agrees with itself.** The 100 % arm and
+   `BenchmarkStreamReplay` read the identical stream by two different calls and land within the
+   spread of each other's runs, which is what says `StateAt` is not a second implementation.
+3. **This is not Gate 1 and must not be read as it.** `D-132:49` asks for *a named deployment's own
+   p99, in its own environment, with its own payloads*. This is a loopback socket, a synthetic
+   stream and a no-op fold on one workstation. What it does give the phase that opens the gate is a
+   floor: at ~1.1 µs an event, a bound is worth taking below roughly 45 000 events and the crossing
+   is where D-132 already put it.
+
+**And the full-replay half, beside it, so Gate 1 has both numbers in one place** (added by S6 from
+[PLAN] § *The snapshot gate*; `BenchmarkStreamReplay`, PostgreSQL 17.9, 2026-09-12, a 120-byte
+payload, a no-op codec and a no-op fold, three runs each):
+
+| Stream | `-benchtime` | ns/op, run by run | Full replay | ns/event |
+|---|---|---|---|---|
+| **10 000 events** | `20x`, `-count 3` | 14 881 024 · 13 050 254 · 12 914 297 | **12.91 – 14.88 ms** | 1 291 – 1 488 |
+| **100 000 events** | `10x`, `-count 3` | 110 687 007 · 111 301 799 · 108 429 160 | **108.4 – 111.3 ms** | 1 084 – 1 113 |
+
+The crossing against [[D-132]]'s ~50 ms trigger is **~45 000 events**, inside D-132's recorded
+"somewhere above 30 000 – 50 000", so the trigger does not move. [[D-145]] carries the same table as
+*the measurement that was taken and the reason it is not the one Gate 1 wants*; it is repeated here
+because this file is where the phase that opens the gate looks for numbers, and because a cost is
+not an argument ([[D-132]]:49) — which is the whole reason it is recorded here rather than argued
+there.
+
+### 49. A ledger whose table is empty publishes `now()` as its horizon, and every past `Issued` then reads `Expired`  `[medium]`
+
+*Source: S5, found while writing the live horizon fixture.*
+
+`Horizon` is *"an instant at or before the oldest row this ledger still answers for"* and the two
+spellings the contract names are `MIN(recorded_at)` and `now() - retention`. `MIN` over an **empty**
+table is `NULL`, and the obvious `coalesce(min(recorded_at), now())` then publishes **now** — after
+which `standingOfAnAbsentRow` answers `Expired` for every key a caller minted before this instant,
+including one minted a second ago for an operation that is in flight. It is conformant (the ledger
+really holds nothing older than now) and it is the wrong answer for the first minutes of a
+deployment, for any window in which the sweep emptied the table, and for the whole life of a
+deployment whose first command is a retry.
+
+`now() - retention` does not have it, which is exactly the case the contract's *"for a table that may
+be empty"* clause already names — but the clause reads as a convenience and the failure it prevents
+is nowhere stated. S5's own fixture works around it by writing a row before the horizon matters,
+which is the shape a test may take and a deployment may not.
+
+Owed: one sentence on the module page and in `_examples/event-receipts` saying that a ledger whose
+table can be empty publishes `now() - retention` rather than `coalesce(MIN(...), now())`, with this
+failure named; or a third spelling — `LEAST(min(recorded_at), now() - retention)` — recommended
+outright.
+
+### 50. The store's own concurrency check masks a defective claim, and which line of defence caught what is nowhere written  `[low]`
+
+*Source: S5, found while writing `TestTwoCallersRaceOneKey`.*
+
+A loser wrongly told `Recorded` appends at whatever version its token names. If it decided **before**
+the claim, at the same version the winner decided at, the append is refused by `eventpg`'s own CAS
+(`ErrConflict`) and no second copy lands — so a ledger with the `SELECT` before the `INSERT` looks
+safe in any test whose racers both load first. The duplicate only appears when the loser loads
+**after** its claim returned, which is what `Once` does, and which is why S5's race is written that
+way and says so in a comment.
+
+The consequence is a real one for a deployment: the receipt's value over the store's version check
+is exactly the case of *two retries at different expected versions* ([SPEC] §1.2), and a deployment
+that reads "the claim prevents both appends" without that clause will conclude its own ordering is
+safe because its tests happened to be at one version. §1.2 has the sentence; what nothing has is the
+statement that the two mechanisms are **layered** — the version check catches the same-version race
+and the receipt catches the cross-version one — and that a test which exercises only the first
+proves nothing about the second.
+
+Owed: one paragraph on the module page beside the claim's order, and a sentence in D-142.
+
+### 51. A store's page-level refusal denies a prefix the caller could read, and `StreamPage` decides which  `[medium]`
+
+*Source: the phase-5 S5 code review (Round 1), 2026-09-12
+([`EVENTSOURCE_P5_S5_GAPS.md`](EVENTSOURCE_P5_S5_GAPS.md) GAP-1). Driven live against PostgreSQL
+17.9.*
+
+`StateAt` over-reads at most one page and truncates in Go (`event/repo.go:325-356`), and the page is
+scanned by the **store** before the kernel sees it. A row the store itself refuses —
+`errRowOutsideSchema` → `event.ErrBackend` — therefore refuses every bounded read whose bound falls
+in the same page, even when the requested prefix is entirely readable.
+
+Driven at `StreamPage: 3` with the broken row planted at version **2** and the bound at version
+**1**:
+
+```
+a wire type this declaration does not know   bound 1 → state="v1" err=<nil>
+a recorded payload over the schema's bound   bound 1 → state=""   err=event: the store failed
+```
+
+The kernel's own refusals (`ErrUnknownType`, `ErrRevision`, `ErrUpcast`) refuse the **row** and a
+bound below it reads normally; the store's refuses the **page it scanned**. So which historical reads
+survive a corrupt row is a function of a page size no caller can see, and a corrupt version 2 denies
+the operator the `StateAt(…, 1)` they would use to diagnose it.
+
+`[medium]` because the answer is an honest refusal and never a partial state, so §INV-118 holds. The
+behaviour is written down exactly once, in `event/eventpg/stateat_integration_test.go:296-299` (plan
+correction 3), and nowhere a caller reads. The proper fix is the version ceiling on
+`Store.ReadStream` that [SPEC] §"The store contract is not widened" deliberately refused and §INV-120
+forbids — so what is owed inside this phase is the sentence and the missing term in the argument:
+the over-read does not only buy *"one partial page of I/O"*, it also buys a refusal on a corrupt
+tail.
+
+Owed: one clause in `StateAt`'s doc comment, the same on both `event.md` pages beside `ErrBackend`,
+and the missing term in [SPEC] §"The store contract is not widened, and the arithmetic is the
+argument" or in the decision that records it as accepted.
+
+### 52. `Expired` is reachable for an operation still in flight, with no clock skew at all  `[medium]`
+
+*Source: the phase-5 S5 code review (Round 1), 2026-09-12
+([`EVENTSOURCE_P5_S5_GAPS.md`](EVENTSOURCE_P5_S5_GAPS.md) GAP-2). Driven live against PostgreSQL
+17.9. Neighbour of item 49, and item 49's recommended fix does not close it.*
+
+`standingOfAnAbsentRow` (`event/receipt/resolve.go:120-125`) compares the caller's `Issued` against
+the ledger's horizon and nothing else. A key minted before the retention window opened therefore
+resolves to `Expired` while its writing transaction is still open — and [SPEC] §"Retention" tells the
+caller that the difference between `Unresolved` and `Expired` is *"re-resolve, or **stop**"*.
+
+Driven against a ledger publishing `now() - retention` with a one-minute retention and a
+ten-minute-old `Issued`, with **no** clock skew applied:
+
+```
+PROBE in-flight-under-retention standing=[standing expired] horizon=…16:44:43 issued=…16:34:43
+PROBE after-the-commit          standing=[standing found]
+```
+
+[SPEC] acknowledges the shape only as a skew consequence — *"A clock behind the database's answers
+`Expired` for an operation that is in flight"* — and item 49 attributes it to the empty-table
+`coalesce(min(recorded_at), now())` spelling. But this was driven on `now() - retention`, which is
+item 49's own recommended fix, so the failure is a property of the comparison rather than of either
+spelling.
+
+`[medium]`: `Expired` is still a non-conclusion. It is neither a false `Found` nor a false "it did
+not happen", the caller does not re-issue, and no duplicate append is reachable through it. What is
+wrong is the analysis — the residue is bounded by the deployment's retention, which is minutes, not
+by host-to-database skew, which is milliseconds, so *"why the error term is tolerable"* does not
+cover this case. No behavioural fix is available: there is no row to lock, which is ES-07's hard
+clause.
+
+Owed: one clause on `Standing.Expired`; the retention attribution added to [SPEC] §"Retention"
+beside the skew one, with what a caller holding very old keys does instead; the module page's advice
+for `Expired` not reading as terminal without that caveat; and item 49 amended so its
+`now() - retention` recommendation is not read as closing this.
+
+### 53. Three shipped bookkeeping claims name things that do not exist  `[low]`
+
+*Source: the phase-5 S5 code review (Round 1), 2026-09-12
+([`EVENTSOURCE_P5_S5_GAPS.md`](EVENTSOURCE_P5_S5_GAPS.md) GAP-3).*
+
+1. `event/eventpg/receipt_integration_test.go:32-35` asserts, in the present tense, that
+   *"`_examples/event-receipts` publishes the same two, and
+   `TestTheExampleLedgerIsTheOneTheLiveSuiteProved` compares them byte for byte and in order — so
+   'the reference implementation' is a fact this suite proved rather than a label a page applies."*
+   Neither exists; `grep -rn` finds the test name only inside that comment. S6 owes both, and until
+   it lands the sentence is false about itself — which is the failure this repository's own doc rule
+   prices.
+2. [PLAN] § *The complete set of paths phase 5 may add to the manifest* omits
+   `event/refusal_test.go` and `event/refusalmessages_test.go`, which did move (S1's own
+   `event-kernel-moved` regex correctly includes them), and lists `event/replay_test.go`, which
+   exists and did **not** move. S6 re-checks the phase's whole manifest against that list and trips
+   in both directions.
+3. [PLAN] § *S5 — executed* says the `make api` diff is 117 lines. `git diff --numstat
+   docs/api/surface.md` answers `116 0`; the extra line is the `+++` header. The substantive claim —
+   that nothing of S5's is in it — is true.
+
+Beside these, a **sixth** `Held.Complete` state was driven that §UC-248's five refusals do not name:
+a completion issued after the claim's own transaction has committed answers
+`sql: transaction has already been committed or rolled back` — a bare driver error rather than any
+`receipt` sentinel — and leaves the committed append beside a `0..0` incomplete row. Fail-closed and
+loud, and the residue is §UC-222's documented defect state, but the state itself is unnamed.
+
+Owed: the example and the comparison test, or a narrowed comment; the two corrections to the plan's
+allowed-path set; the 116; and one clause naming the after-the-commit completion, either on
+`Held.Complete` or in [SPEC] §UC-248 as the ledger's error to raise.
+
+**Sub-item 1 is closed by S6**, which was the phase that owed it: `_examples/event-receipts/main.go`
+exists and publishes the same two claim statements, and
+`TestTheExampleLedgerIsTheOneTheLiveSuiteProved` (`scripts/docs_test.go`) compares them with this
+suite's fixture byte for byte and in order, with a swapped-fixture control. The comment at
+`event/eventpg/receipt_integration_test.go:32-35` is now true about itself. Sub-items 2 and 3 and
+the unnamed sixth `Held.Complete` state stay open and are still `[low]`.
+
+### 54. A `receipttest` conformance harness for a `Ledger` is owed and is not in this phase  `[medium]`
+
+*Source: S6, per [PLAN] § *The conformance extension*.*
+
+`receipt.Ledger` is the one genuinely new contract a third party implements, and its four
+obligations are exactly the kind `eventtest` exists for: the claim is an `INSERT … ON CONFLICT
+(key) DO NOTHING` followed by a `SELECT` of the same key **in that order, in one transaction**; the
+horizon is monotone and comes from the database's clock; `Find` sees committed rows only; and
+`Claim` and `Complete` run inside the caller's transaction while `Find` and `Horizon` run outside
+one.
+
+What phase 5 shipped instead is the falsifying half without the package: four decorators over the
+reference implementation, each asserted to break the case that names it
+(`TestFourLedgerDefectsEachBreakTheCaseThatNamesThem`), plus
+`TestTheExampleLedgerIsTheOneTheLiveSuiteProved`, which pins the published example to the statements
+the live suite ran. So a third implementation is now *provable* and no harness exists.
+
+**Why it is not here.** Publishing a conformance module for `Ledger` alone while `Park`,
+`Generations` and `Effects` — three shipped application interfaces of the same shape — have none
+would be a suite chosen by recency rather than by risk, and doing all four is a phase of its own.
+That is the same call, with the same reasoning, that left the park's byte bound uncertified in
+phase 4 (`## P4` item 70).
+
+Owed: `receipttest.Run(t, factory)` with one section per obligation, its own defect inventory, and
+the two anti-vacuity rules `eventtest` already applies — or, if the answer is the wider one, a
+phase that publishes harnesses for all four application interfaces at once.
+
+### 55. A store's first position has no published origin, and the zero-`Mark` discriminator rests on it  `[low]`
+
+*Source: S6, per [PLAN] **P-6**.*
+
+`Wait` refuses the zero `Mark` on the ground that *"a position is drawn from an identity sequence
+starting at one, so zero is never a number a store produced"*. Both shipped stores do start at one.
+**No conformance section asks for it**: `eventtest.inventory()`'s twenty sections check ascent,
+density, conservation and paging, and none of them asserts where a log's first position is.
+
+The failure mode is bounded and that is why this is `[low]` rather than higher: a store that
+assigned position zero would have its first event's mark **refused** at `Wait`'s door with
+`ErrSpec`, which is a loud refusal on a legal store rather than a forged mark on an illegal one. A
+caller would be told to mint again and could not.
+
+Owed: either a `positions begin at one` clause in the `global order` section of `eventtest` — the
+cheap half, since the section already reads the first page — or, if the origin is deliberately a
+store's own choice, a second discriminator on `Mark` that does not rest on it.
+
+### 56. `TestNoDocPromisesExactlyOnceDelivery` is English-only, and this phase added two more Russian pages to its blind spot  `[medium]`
+
+*Source: S6, restating P1 backlog item 8 because the blind spot grew rather than because it is new.*
+
+The walk carries two `wording` rows, English and Russian, and both are exercised — but only against
+what each page happens to be written in, and the Russian row's `about` pattern is narrower than the
+English one's. What this phase added to the tree is `docs/modules/ru/receipt.md` and a Russian wait
+section on `docs/modules/ru/projection.md`: two more pages about **operation idempotency** and
+**delivery**, which is the subject most likely in this repository's history to attract the phrase
+*«ровно один раз»*.
+
+**S6 ran the test itself** as part of the whole-package `./scripts/` arm and it is green, so the
+English half is no longer merely assumed. What stays open is the Russian half's coverage: the row
+matches, it is counted, and nobody has shown it would catch a promise written in the wordings a
+Russian page would actually use for a *receipt* rather than for a projector.
+
+Owed: extend the Russian `about` pattern to the idempotency vocabulary (`идемпотент`, `квитанц`,
+`дедуплик`) and add a Russian fixture arm to
+`TestAPromiseOfExactlyOnceDeliveryIsReportedAndARefusalOfOneIsNot` that uses it.
+
+### 57. The published `jobs` mechanism has no module page, so D-142's reciprocal sentence has nowhere to live  `[low]`
+
+*Source: S6, found while writing `docs/modules/{en,ru}/receipt.md`.*
+
+[PLAN] § *The four decisions* asks for *"one sentence on `docs/modules/{en,ru}/receipt.md` and one
+on `jobs`'s page"* saying which of the two key→verdict mechanisms a consumer reaches for. **There is
+no `jobs` page.** `docs/modules/{en,ru}/` holds fifty-odd pages and none of them is `jobs`, and
+`docs/modules/{en,ru}/Index.md` carries no `jobs` row — the subsystem is documented through
+[[D-118]], [[D-119]] and [[FL-035]] and nowhere else a consumer would land.
+
+S6 put the sentence on both `receipt.md` pages and pointed the reciprocal direction at [[FL-035]],
+which is the document a reader of `jobs` does land on. That is the honest half of the obligation and
+not the whole of it: a consumer who reaches for `jobs.EnqueueOnce` from the module index finds no
+page at all, let alone one naming `receipt`.
+
+Owed: `docs/modules/{en,ru}/jobs.md`, with the reciprocal sentence in it — which is a page about a
+whole subsystem and therefore its own piece of work rather than a line S6 could add.
+
+### 58. The receipts example sweeps with `runtime.Every` where the plan said a `jobs` periodic  `[low]`
+
+*Source: S6, a deliberate deviation recorded rather than absorbed. The plan carries the correction.*
+
+[PLAN] § *The roadmap close-out* specifies `_examples/event-receipts` with *"a `jobs` periodic that
+sweeps"*. A `jobs` schedule needs `jobs.NewScheduler`, a `Queue`, a driver — `jobs/jobspg`, a second
+module — its own schema version and a worker fleet to lease and run the placed invocation, all to
+issue one `DELETE`. The example ships `runtime.Every("receipt-sweep", time.Hour, ledger.sweep)`
+instead: the framework's own periodic `runtime.Runner`, supervised by the host exactly as the
+projection beside it is, with no second schema and no second module in `_examples/go.mod`.
+
+Nothing about retention's contract changes — the horizon is still computed in SQL from the same
+configured retention, and the framework still prunes nothing. What is lost is the demonstration that
+a sweep **can** be a durable scheduled job for a deployment that wants one operator-visible place
+for periodic work.
+
+Owed: one sentence on `docs/modules/{en,ru}/receipt.md` naming `jobs.NewScheduler` as the heavier
+alternative, or a second example if a consumer asks for the scheduled shape.
+
+### 59. Both `receipt.md` pages say the shipped example sweeps with a `jobs` periodic  `[medium]`
+
+*Source: S6 review round 1, GAP-2.*
+
+`docs/modules/en/receipt.md:299` — *"`_examples/event-receipts` runs one as a `jobs` periodic"* —
+and `docs/modules/ru/receipt.md:306`, *"запускает его периодической задачей `jobs`"*. The example
+ships `runtime.Every("receipt-sweep", time.Hour, held.sweep)`
+(`_examples/event-receipts/main.go:361`) and imports no `jobs` package; `_examples/go.mod` requires
+none. S6 recorded the deviation (its own deviation 2, item 58 above) and corrected the plan, the
+close-out table and the `_examples/README.md` row — but not the two pages that describe the example
+to a consumer. Item 58's `Owed` line asks for an added sentence about `jobs.NewScheduler`; it does
+not record that the sentence already there is false.
+
+Nothing misleads a consumer about the framework itself: the sweep is the application's either way
+and the horizon contract is untouched. What it costs is a reader who opens the example expecting a
+scheduled durable job, and a repository whose module page and whose backlog disagree about one file
+in one change.
+
+Owed: both pages naming the shape the example uses, with `jobs.NewScheduler` — if it appears at all
+— named as the heavier alternative.
+
+### 60. D-142 records that its reciprocal sentence lives on a page that does not exist  `[medium]`
+
+*Source: S6 review round 1, GAP-3.*
+
+`docs/ai/decisions/D-142-…:250-252` reads *"That sentence is on `docs/modules/{en,ru}/receipt.md`
+and on the `jobs` page"*. There is no `jobs` page, which is exactly what item 57 above records. The
+plan carries the correction and both `receipt.md` pages implement it by pointing at [[FL-035]]
+(`en:332`, `ru:339`); only the decision was left asserting the page.
+
+The decision's argument is sound and its by-symbol adjudication of `jobs` is accurate — all fifteen
+symbols it names exist, `jobs/placement.go:18`'s `PlacementOnce` included. What is false is one
+claim about where a sentence lives, in the file a later agent reads to learn whether the obligation
+was met, which is the binding layer rather than a description.
+
+Owed: D-142's sentence naming `receipt.md` and [[FL-035]], or saying the `jobs` page is owed and
+linking item 57.
+
+### 61. The new usage guide is in no index a reader reaches it from  `[medium]`
+
+*Source: S6 review round 1, GAP-4.*
+
+`docs/usage-guides/event-sourcing.md` has no row in `docs/Index.md`'s **Usage guides** list (which
+names ent, gorm, migrations, model-generation and tenancy), none in either
+`docs/modules/*/Index.md` guide list, and no link from any module page. The only pointer in the
+tree is `docs/roadmaps/Roadmap.md:443` — the file whose own rule is that it holds only what is not
+built, so the single link is on the page the close-out will eventually delete it from.
+
+`CLAUDE.md` states the rule without qualification: *"when you add a doc, add its row to the
+directory's `Index.md` in the same change. An index that does not list a file is worse than a
+missing file — an agent trusts the index and stops looking."* Mitigating: that list is already
+incomplete at HEAD — `usage-guides/repository.md` is missing from it too — so this is one more
+absence in a list nothing enforces rather than the first one.
+
+Owed: the row in `docs/Index.md`, plus a `See also` link from `event`, `projection` and `receipt`.
+
+### 62. The UC-032 byte-identity check the plan names as the use-case obligation's gate did not ship  `[medium]`
+
+*Source: S6 review round 1, GAP-5.*
+
+[PLAN] § *The roadmap close-out*, the **Use cases** row, names as its `Held by` *"a doc check
+asserting UC-032's two sections are byte-identical to their predecessor"*. No such check exists:
+`grep -rn 'UC-032' scripts/*.go` is empty, S6's four new checks are
+`TestNoProjectionGuideRestatesHighestAsThePagesLastPosition`,
+`TestNoEventGuideOffersATimestampBoundary`,
+`TestTheThreeObligationsAWaitCannotCheckAreStatedTogether` and
+`TestTheExampleLedgerIsTheOneTheLiveSuiteProved`, and the checkpoint's counted `-run` arm lists
+eight names none of which is it. The section records three deviations from its own text and this is
+not among them.
+
+*(Counts as of the finding. Closing GAP-1 added `TestEveryGoFenceInTheEventSourcingGuideIsCompiled`
+and `TestNoDocCallsASupervisorMethodTheTypeDoesNotHave`, so S6's new checks are six and the counted
+arm lists ten. Neither is a UC-032 check and this item is untouched by that.)*
+
+The property holds today and was verified directly: `git diff` on UC-032 is `+20 −0`, all twenty
+lines a `## See also` section appended after `Out of scope`, with no clause of `What must hold`
+changed. What is missing is the falsifier — *"UC-032 is not silently widened"* is the constraint
+this phase's framing states twice and it is now held by nobody, so a future section that adds one
+clause gets no report from any arm of `make unit`.
+
+Owed: a check in `./scripts` comparing UC-032's two sections against a recorded copy, with a
+control fixture that changes one clause and is reported — or the plan's `Held by` cell corrected to
+name what actually holds it.
+
+### 63. Both new examples accumulate state across runs, so their pasted output is not what a second run prints  `[low]`
+
+*Source: S6 review round 1, GAP-6.*
+
+`_examples/event-wait` and `_examples/event-receipts` create their tables `IF NOT EXISTS` and
+delete nothing, so the wait example's parked letters and the receipts example's streams survive the
+process. Re-run at HEAD against the same database, the record's
+*"quarantined=0, 1 letter(s) held"* reads *"quarantined=1, 2 letter(s) held"*, and
+*"range=1..1"* reads *"range=2..2"*. Every line keeps its shape and every assertion inside both
+programs still holds — the numbers are functions of how many times the example has been run.
+
+Nothing is wrong and `_examples/README.md` promises no numbers. What it costs is a reviewer: the
+plan pastes this output as evidence, and a reader re-running it to check that evidence cannot tell
+accumulation from drift without reading the schema.
+
+Owed: a fresh stream id and park identity per run, or one sentence beside the pasted output saying
+the numbers grow with the run count.

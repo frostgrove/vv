@@ -43,7 +43,14 @@ type Letter struct {
 // given, and OnPermanentFailure: ParkSequence constructs at no other tier than
 // the one that opens it. That is what orders a redrive's eviction against the
 // loop's own blocking test: they are rows in one transaction rather than two
-// opinions about what is parked. Sequences runs OUTSIDE it, before the pass
+// opinions about what is parked. HOLDS IS ALSO ASKED OUTSIDE A UNIT, BY A WAIT,
+// AND AN IMPLEMENTATION MUST ANSWER THE COMMITTED STATE THERE — Wait has no unit
+// of work, asks this question on a request path's own goroutine before every
+// census, and Sequences and Holds are the only two methods it calls. What the
+// inside-a-unit call buys is a pass's property and is unchanged; a wait needs no
+// ordering, only a committed answer, and the Sequences-first gate means a
+// projection that has parked nothing never reaches this clause at all.
+// Sequences runs OUTSIDE it, before the pass
 // opens one, because it is asked once per resume and then once per pass while
 // the count is non-zero — a healthy projection would otherwise open a
 // transaction per pass to be told the queue is still empty. Holes is a

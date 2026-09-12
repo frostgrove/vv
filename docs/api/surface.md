@@ -5836,6 +5836,7 @@ var ErrTransactionMismatch error
 var ErrUncertain error
 var ErrUnknownType error
 var ErrUpcast error
+var ErrVersion error
 var ErrWrongStore error
 var ErrWrongStream error
 type Fact[S any, ID any, E any] struct {
@@ -5903,7 +5904,9 @@ type Repo[S any, ID any] struct {
 }
 func (*Repo[S, ID]) Append(context.Context, At[S], ...Change[S]) (At[S], Commit, error)
 func (*Repo[S, ID]) Authority(context.Context) (Authority, error)
+func (*Repo[S, ID]) Digest(At[S], ...Change[S]) ([32]byte, error)
 func (*Repo[S, ID]) Load(context.Context, ID) (S, At[S], error)
+func (*Repo[S, ID]) StateAt(context.Context, ID, Version) (S, error)
 func (*Repo[S, ID]) Within(context.Context) (context.Context, error)
 func ResidentPage(int) int
 type Store interface {
@@ -6085,12 +6088,16 @@ type Effects interface {
 type EffectsFunc func(ctx context.Context, effect Effect) error
 func (EffectsFunc) Stage(context.Context, Effect) error
 var ErrClaimLost error
+var ErrGeneration error
 var ErrHalted error
+var ErrNotVisible error
 var ErrOvertaken error
 var ErrParkFull error
+var ErrParked error
 var ErrRetired error
 var ErrSpec error
 var ErrTopology error
+var ErrUncommitted error
 var ErrUnrouted error
 type Failure uint8
 func (Failure) Valid() bool
@@ -6124,6 +6131,13 @@ type Letter struct {
 	Cause error
 	Attempt int
 }
+type Mark struct {
+	<unexported fields>
+}
+func (Mark) At() github.com/frostgrove/vv/event.Position
+func (Mark) String() string
+func (Mark) Zero() bool
+func MarkOf(Barrier) Mark
 const MaxPartitions untyped int = 1024
 func New(Spec) (*Projection, error)
 func NewCover(...Partition) (Cover, error)
@@ -6274,7 +6288,109 @@ const Ungenerated Generation = 0
 func Unordered() Sequencer
 const UnsetAdvance Advance = 0
 type Verdict uint8
+type Visibility struct {
+	Reached bool
+	At github.com/frostgrove/vv/event.Position
+	Behind github.com/frostgrove/vv/event.Position
+	Moved bool
+	Quarantined uint64
+	Parked bool
+	Polls int
+}
+func Wait(context.Context, WaitSpec) (Visibility, error)
+func WaitOf(Spec, Cover) (WaitSpec, error)
+type WaitSpec struct {
+	Checkpoints github.com/frostgrove/vv/event.Checkpoints
+	Park Park
+	Sequence Sequencer
+	Generations Generations
+	Of Identity
+	Over Cover
+	Until Mark
+	Every time.Duration
+	Ticks github.com/frostgrove/vv/runtime.Ticks
+}
+func (WaitSpec) Committed(context.Context, github.com/frostgrove/vv/event.Store, github.com/frostgrove/vv/event.Commit) (Mark, error)
 func Whole() Partition
+```
+
+## github.com/frostgrove/vv/event/receipt
+```go
+func Claim(context.Context, ClaimSpec) (Held, error)
+type ClaimSpec struct {
+	Ledger Ledger
+	Store github.com/frostgrove/vv/event.Store
+	Key Key
+	Fingerprint Fingerprint
+	Stream github.com/frostgrove/vv/event.Stream
+}
+const Collided Verdict = 3
+var ErrCollision error
+var ErrIncomplete error
+var ErrLedger error
+var ErrSpec error
+const Expired Standing = 4
+type Fingerprint struct {
+	<unexported fields>
+}
+func (Fingerprint) Equal(Fingerprint) bool
+func (Fingerprint) String() string
+func (Fingerprint) Zero() bool
+const Found Standing = 1
+type Held struct {
+	<unexported fields>
+}
+func (Held) Complete(context.Context, github.com/frostgrove/vv/event.Commit) error
+func (Held) Receipt() Receipt
+func (Held) Verdict() Verdict
+const Incomplete Standing = 2
+type Key struct {
+	<unexported fields>
+}
+func (Key) String() string
+func (Key) Value() string
+func (Key) Zero() bool
+type Ledger interface {
+	Claim(context.Context, Receipt) (Receipt, bool, error)
+	Complete(context.Context, Receipt) error
+	Find(context.Context, Key) (Receipt, bool, error)
+	Horizon(context.Context) (time.Time, error)
+	Transaction(context.Context) (github.com/frostgrove/vv/event.Authority, error)
+}
+func NewFingerprint([32]byte) (Fingerprint, error)
+func NewKey(string) (Key, error)
+func Once(context.Context, ClaimSpec, func(context.Context) (github.com/frostgrove/vv/event.Commit, error)) (Held, error)
+func ParseFingerprint(string) (Fingerprint, error)
+type Receipt struct {
+	Key Key
+	Fingerprint Fingerprint
+	Stream github.com/frostgrove/vv/event.Stream
+	First github.com/frostgrove/vv/event.Version
+	Last github.com/frostgrove/vv/event.Version
+	Complete bool
+	RecordedAt time.Time
+}
+const Recorded Verdict = 1
+const Repeated Verdict = 2
+type Resolution struct {
+	Standing Standing
+	Receipt Receipt
+	Horizon time.Time
+}
+func Resolve(context.Context, ResolveSpec) (Resolution, error)
+type ResolveSpec struct {
+	Ledger Ledger
+	Store github.com/frostgrove/vv/event.Store
+	Key Key
+	Issued time.Time
+}
+type Standing uint8
+func (Standing) String() string
+func (Standing) Valid() bool
+const Unresolved Standing = 3
+type Verdict uint8
+func (Verdict) String() string
+func (Verdict) Valid() bool
 ```
 
 ## github.com/frostgrove/vv/health

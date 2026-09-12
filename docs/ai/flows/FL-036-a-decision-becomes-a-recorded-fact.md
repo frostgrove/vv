@@ -2,9 +2,11 @@
 
 **Entry points:** `event.Define` / `event.Declare` (the declaration),
 `event.Open` / `event.Bind` (the composition root), `event.Repo.Load` /
-`event.Repo.Append` (the write path), `event.Read` / `event.Reader.Next` (the
+`event.Repo.Append` (the write path), `event.Repo.StateAt` / `event.Repo.Digest`
+(the bounded read and the fingerprint), `event.Read` / `event.Reader.Next` (the
 log walk)
 **Governed by:** [[D-121]] [[D-122]] [[D-123]] [[D-124]] [[D-125]] [[D-128]]
+[[D-142]] [[D-144]]
 
 What happens between an application declaring that an aggregate has facts and
 those facts being an append-only history a later process folds back into a
@@ -122,6 +124,47 @@ written" is the inference `ErrUncertain` exists to refuse.
 `Commit` is assembled by the kernel from what it already knows — the store's
 `Append` answers with an error and nothing else, so nothing sealed crosses the
 store boundary in the store's direction.
+
+## A bounded read, and a digest of what an append would write
+
+Two calls that reach nothing new: `event/repo.go:StateAt` is `Load`'s own loop
+with a ceiling, and `event/repo.go:Digest` is the first four of `Append`'s six
+steps with the store left out.
+
+`replay` takes the bound as a parameter — `Load` passes zero, which means *to the
+end of the stream* — so there is one loop and not two, and the failure path is
+the one `Load` already had: any non-nil error is the zero state and never the
+accumulator. Two orderings inside it are load-bearing and are named in its
+comment so nobody tidies them away:
+
+- **check, then truncate.** `checkPage` runs on the page the store returned,
+  entire. Truncating first would hide a page answered as `[v3, v1, v2]`, which
+  folds to a state that is wrong at the right version with the right count.
+- **truncate, then fold.** The loop stops reading the moment the accumulated
+  version reaches the bound, and folds nothing above it.
+
+The over-read is at most one page whatever the stream's length, which is the
+whole argument for not putting a ceiling on `Store.ReadStream` ([[D-144]]).
+
+`StateAt` returns **a state and an error and nothing else**. Version zero, a
+version past the end and a stream with no events are one refusal, `ErrVersion`
+(`event/errors.go`), in the request class beside `ErrKey` — an undeclared wrap
+would render a 500 for data only the caller can correct. An event this build
+cannot read is `ErrUnknownType`, `ErrRevision`, `ErrUpcast` or `ErrPayload`,
+inherited from `apply` rather than re-raised.
+
+`Digest` runs the token's key, every change's stream and aggregate, each change's
+own carried refusal and the store's bounds — then `digestOf` over the composed
+stream and each record's type, revision and payload, length-prefixed, every
+length and revision eight big-endian bytes. **It issues no store call**: the
+limits it reads were retained at `Bind`. The version the token was loaded at is
+**not** in the preimage, and [[D-142]] is why. The layout is frozen and held as
+golden vectors, because a fingerprint is read back by a later build than the one
+that wrote it and a reordering answers every key still inside a retention window
+as a collision on an operation nobody performed.
+
+[[FL-043]] is where that digest goes: an operation key, a receipt row and the
+three verdicts a repeat can get.
 
 ## The transaction question
 
@@ -277,7 +320,7 @@ goroutine.
 | `event/marker.go` | `marker`, `withMarker`, `markerFor` — what `Within` leaves and how it is resolved |
 | `event/token.go` | `At`, `Commit` and its six accessors |
 | `event/outcome.go` | `Outcome`, the seven values, `Failure`, `failure` |
-| `event/errors.go` | the twenty-four sentinels, `vocabulary`, `refusal`, `refuse`, `CauseOf`, `walk`, `findAs`, `causeAsWrap` |
+| `event/errors.go` | the twenty-five sentinels — `ErrVersion` joined the request class beside `ErrKey` with the bounded read — `vocabulary`, `refusal`, `refuse`, `CauseOf`, `walk`, `findAs`, `causeAsWrap` |
 | `event/store.go` | `Support`, `Capabilities`, `Limits`, `Record`, `AppendRequest`, `Envelope`, `Log`, `Store` |
 | `event/codec.go` | `Codec`, `JSON`, `encodeWith`, `decodeWith`, `canEncodeWith` |
 | `event/encodable.go` | `chargeJSON`, `jsonWalk`, `members` — the type graph, its three budgets, and the JSON names a struct renders |
@@ -289,7 +332,7 @@ goroutine.
 | `event/comparison.go` | `valueWalk`, `valueWalkNodes`, `shares`, `same`, `sameFields`, `sameOpaque`, `equalByMethod`, `sameNumber`, `asFloat`, `sameElements`, `sameEntries`, `unanswered`, `singleValued`, `reusesItsBuffer`, `readsBackOnTheWire` — the two walks a round trip makes over an application's own values, the budget they run under, the one position a type's own `Equal` is asked at, and the re-encoding that answers behind the walk where nothing in the value can |
 | `event/change.go` | `Change`, `Change.Err`, `decidedFor` |
 | `event/binding.go` | `Binding`, `Open`, `Bind`, `admit`, `admitLimits`, `admitCapabilities` |
-| `event/repo.go` | `Repo`, `Repo.Load`, `Repo.Append`, `Repo.Within`, `Repo.Authority`, `replay`, `checkPage`, `apply`, `records` |
+| `event/repo.go` | `Repo`, `Repo.Load`, `Repo.Append`, `Repo.StateAt`, `Repo.Digest`, `Repo.Within`, `Repo.Authority`, `replay`, `checkPage`, `apply`, `records`, `digestOf` — `replay` takes the bound, so the bounded read is the load's own loop with a ceiling and never a second one |
 | `event/reader.go` | `ReadOnly`, `Read`, `Reader`, `Reader.Next`, `Reader.Events`, `Reader.Cursor`, `Reader.checkPage` — the page and the cursor it was answered with are one answer, so both are checked before the reader's own cursor moves |
 | `event/eventmemory/log.go` | `Log`, `LogSpec`, `NewLog`, `bound`, `publish`, `claim`, `releaseDeadClaim`, `nameTransaction` — the backing, the two numbers the data depends on, the weak claim a stream is held by, and the name a transaction is known to a receipt by |
 | `event/eventmemory/store.go` | `Spec`, `Store`, `New`, `resident`, `Capabilities`, `Limits`, `Backing`, `Close`, `Check` |
@@ -307,6 +350,7 @@ goroutine.
 | `event/eventtest/report.go` | `word`, `verdict`, `certified`, `recording.verdict` — passed, not certified, failed |
 | `event/eventtest/checkpoints.go` | `CheckpointFactory`, `RunCheckpoints`, `tracking`, `checkpoints`, `admitCheckpoints`, `admitInstant`, `missingCheckpointHook`, `checkpointName`, `sameCheckpoint` and the section helpers — the checkpoint store's own runner, under the same three anti-vacuity rules, and `Instant` is where a store declares the grain its own instant column keeps |
 | `event/eventtest/sections_checkpoints.go` | `checkpointInventory`, `needsCheckpointTransactions`, `needsCheckpointPersistence`, `cursorOfWidth`, `firstDifference`, `forgetsInAUnit`, `forgetRacingASave` and the twelve section bodies — `binding`, `absence`, `round trip`, `fence`, `forget`, `names`, `bounds`, `refusal classes`, `lifecycle`, `concurrency`, `transactions`, `durability` |
+| `event/eventtest/sections_topology.go` | `topologySection`, `topologyHandoffSection`, `checkpoints.handOver`, `checkpoints.absentOutside` — the two sections a `Split` rests on: a cursor written under one projection name reading back unchanged under another, and a `Load`, two `Save`s at advance 1 and a `Forget` in one caller-opened transaction being all or nothing ([[FL-038]]) |
 | `event/eventtest/defects_checkpoints.go` | `checkpointDefect`, `checkpointDefects`, `unfenced`, `stale`, `absent`, `oneName`, `detaching` — the five broken checkpoint stores the runner is falsified with |
 | `event/eventtest/proxies.go` | `RoundTrip`, `Keys`, `Families` — the three proxies an application runs over its own declaration |
 | `event/eventtest/sections_write.go` | `bindingSection`, `streamIdentitySection`, `expectedVersionSection`, `denseVersionsSection`, `concurrencySection`, `sharedBackingSection` |
@@ -338,6 +382,7 @@ a file, and a file with no row there reads as a file outside every flow.
 `event/bounds_test.go`, `event/identity_test.go`, `event/concurrency_test.go`,
 `event/crossings_test.go`, `event/fuzz_test.go`,
 `event/mutablestate_test.go`, `event/refusalmessages_test.go`,
+`event/stateat_test.go`, `event/digest_test.go`,
 `event/transactioncontrol_test.go` — the three structural checks, reading
 `event/sources_test.go` for the type-checked package, `event/renderedtypes_test.go`
 for which types render an identity, `event/formatverbs_test.go` for which verb
@@ -375,6 +420,11 @@ inventory.
 | a fold is pure over the state it is given, and a reference kind is not aliased out of a change | `TestAFoldIsPureOverTheStateItIsGiven`, `TestAReferenceKindStateFoldsWithoutAliasing`, `TestAChangeRetainsNoApplicationValue` |
 | an append is refused in its stated order, and a change of another stream or another aggregate of this family never folds | `TestAppendRefusesInItsStatedOrder`, `TestFoldRefusesAnotherInstance`, `TestAnAppendRefusesAChangeDecidedOnAnotherAggregateOfThisFamily`, `TestTheRenderedKeyIsCheckedBeforeTheStoresBound`, `stream identity` |
 | an append is admitted only at the version it was decided at | `TestAnAppendIsAdmittedOnlyAtTheVersionItWasDecidedAt`, `TestTwoTransactionsOnOneStreamLeaveOneWinnerAndAConflictFromAppend`, `expected version` |
+| a bounded read folds the complete prefix and stops at the page it needs | `TestAPrefixFoldsToTheStateItsVersionHolds`, `TestABoundedReadStopsAtThePageItNeeds`, `TestThePrefixAtEveryBoundaryOfARealStream` |
+| version zero, a version past the end and an empty stream are one refusal, and a page out of order is refused before it is truncated | `TestAVersionPastTheEndAndAnEmptyStreamAreOneRefusal`, `TestAPageOutOfOrderIsRefusedBeforeItIsTruncated`, `TestPastTheEndAnEmptyStreamAndVersionZeroLive` |
+| an unreadable event in the prefix is the zero state and `Load`'s own refusal | `TestAnUnreadableEventInThePrefixReturnsTheZeroState`, `TestTheUnreadableEventTableLive` |
+| a bounded read yields nothing that can append, and no refusal of one names a version | `TestABoundedReadYieldsNothingThatCanAppend`, `TestNoRefusalOfABoundedReadNamesAVersion`, `TestNoEventGuideOffersATimestampBoundary` |
+| a digest is the bytes this append would write, reaches no store, and is frozen as a preimage | `TestADigestIsTheBytesThisAppendWouldWrite`, `TestTheDigestPreimageIsFrozen`, `TestADigestCollidesOnAByteAStreamAndAnOrder`, `TestTwoAttemptsAtDifferentVersionsDigestEqual` |
 | an empty append checks the key and touches no store | `TestAnEmptyAppendChecksTheKeyAndNothingElse`, `TestOneAppendCarriesTwoIdenticalChanges` |
 | a forged token buys nothing and does not compile where it would matter | `TestAForgedTokenIsRefusedBeforeAnyStatement`, `TestTheCrossingsThatMustNotCompile` |
 | one load and one append make exactly the store calls the contract names | `TestOneLoadAndOneAppendMakeExactlyTheStoreCallsTheContractNames` |

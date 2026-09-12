@@ -41,6 +41,12 @@ func TestNoBaseSubsystemDependsOnTheEventExtension(t *testing.T) {
 // is the composition root's to name, and `port` stays outside it because this
 // package writes no line at all — a halt reaches an operator through `Ready` and
 // every transition through the `Observer`.
+//
+// `receipt` is a durable record beside an append, so it costs `event` for the
+// `Commit`, the `Authority` and the `Stream` it records, and `crud`/`errs`
+// through the vocabulary's own contracts; it reaches no store, no subsystem and
+// no driver, which is why it is charged at zero and why the `Ledger` is an
+// interface rather than an implementation.
 func TestNoEventPackageCostsMoreThanTheSeamItNames(t *testing.T) {
 	costsNoMoreThanItNames(t, extensionCost{
 		prefix:    eventExtension,
@@ -51,6 +57,7 @@ func TestNoEventPackageCostsMoreThanTheSeamItNames(t *testing.T) {
 			eventExtension + "/eventpg":     "./vvdb/lock/locksql",
 			eventExtension + "/eventtest":   "",
 			eventExtension + "/projection":  "./runtime",
+			eventExtension + "/receipt":     "",
 		},
 		core: func(reached string) string {
 			return "the vocabulary reaches " + reached + " — a deployment that wants a fact history and no subsystem of ours compiles it anyway"

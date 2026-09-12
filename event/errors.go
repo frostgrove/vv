@@ -40,6 +40,7 @@ var (
 	// errs.KindInternal, so a request that omitted an id would render 500 and the
 	// caller would be told the server broke over data only the caller can correct.
 	ErrKey      = fmt.Errorf("event: the identity does not render a legal stream key: %w", crud.ErrBadRequest)
+	ErrVersion  = fmt.Errorf("event: the version this read was bounded at is not one this stream holds: %w", crud.ErrBadRequest)
 	ErrEncode   = fmt.Errorf("event: the payload cannot be encoded by its declared codec: %w", crud.ErrBadRequest)
 	ErrSample   = fmt.Errorf("event: this sample cannot prove what a round trip claims for it: %w", crud.ErrBadRequest)
 	ErrTooLarge = fmt.Errorf("event: the value is over a declared bound: %w", crud.ErrBadRequest)
@@ -65,7 +66,7 @@ func vocabulary() []error {
 		ErrDeclaration, ErrSealed, ErrCodecType,
 		ErrFamily, ErrWrongStore, ErrWrongStream, ErrNoTransaction, ErrNoTransactionBinding,
 		ErrAmbientNotTransaction, ErrTransactionMismatch, ErrCursor,
-		ErrKey, ErrEncode, ErrSample, ErrTooLarge,
+		ErrKey, ErrVersion, ErrEncode, ErrSample, ErrTooLarge,
 		ErrUnknownType, ErrRevision, ErrPayload, ErrUpcast,
 		ErrConflict, ErrUncertain,
 		ErrBackend, ErrClosed, ErrRefused,
