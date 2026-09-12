@@ -252,6 +252,11 @@ triples no walk could have produced.
 | `scripts/checks.sh` | `EVENT_KERNEL_MANIFEST`, `event_kernel_manifest`, `check_event_kernel`, `event_kernel_baseline` and `event_kernel_moved` — the three arms that make the zero-diff obligation executable, and its recorded moves reviewable |
 | `scripts/event_kernel.sha256` | the manifest itself: one sha256 and one path per file under `event/` outside `event/eventpg` |
 | `scripts/event_test.go` | the `eventpg` row of `charged`: this package costs the vocabulary plus `crud/adapter/crudsql` and nothing else |
+| `scripts/event-consumer.sh` | `check-event-consumer`: the three consumer graphs, each resolved with `GOWORK=off GOPROXY=off` and each asserting its module set, a floor on what it linked, and what it may not link |
+| `scripts/event-consumer-fixture/root-only/main.go.txt` | the program a consumer of the root module alone writes: the vocabulary, `eventmemory`, projections and receipts |
+| `scripts/event-consumer-fixture/event-only/main.go.txt` | the same program over `eventpg` |
+| `scripts/event-consumer-fixture/composed/main.go.txt` | the same program beside `tenancy`, `audit`/`auditpg` and `otel` |
+| `test/eventflow/tenancy_composition_test.go` | the tenancy x event application composition: one store per tenant reached through a verified scope, and four refusals that reach no store |
 
 Every non-test `.go` file under `event/eventpg/` has a row above, `doc.go`
 included: the reverse index in `docs/ai/flows/Index.md` is what an agent reads
@@ -333,8 +338,12 @@ it: a skipped run that prints `ok` is what a report calls evidence and is not.
 | the conformance suite catches a defective store, and the gate fails with no DSN | `TestTheConformanceSuiteCatchesADefectiveStore`, `TestTheGateFailsWhenTheDSNIsUnset` |
 | the version advance and the rows are one statement, over the whole schema | `TestTheAuditOverTheWholeSchemaHolds` |
 | stored rows are upcast and never rewritten | `TestStoredRowsAreUpcastAndNeverRewritten` |
+| a rolled-back build meeting the next revision refuses the stream, folds nothing, cannot append over it, and still reads the prefix | `TestARolledBackBuildMeetingRevisionTwoRefusesRatherThanFolding` |
 | `event/` outside `event/eventpg` is where this phase left it | `TestCheckEventKernelReportsADifferenceAndOtherwiseOk`, `TestTheKernelFenceRefusesAMoveItWasNotToldAbout`, `TestTheEventKernelOfThisRepositoryIsWhereThisPhaseLeftIt` |
 | this package costs the vocabulary plus one adapter and nothing else | `TestNoEventPackageCostsMoreThanTheSeamItNames` |
+| no combination package name exists as a directory, a package clause or a module path | `TestACombinationPackageNameIsRefusedWhereverItIsWritten`, `TestThisRepositoryCarriesNoExtensionCombinationPackage` |
+| a root-only, an event-only and a composed consumer each resolve the module graph they are named for, outside `go.work` | `check-event-consumer`, below |
+| tenancy and this extension compose in an application, and a refused scope reaches no store | `TestAVerifiedScopeIsResolvedBeforeAnyEventCallAndARefusedOneReachesNoStore` |
 
 ### What the conformance run is worth, and why the mutation harness exists
 
@@ -368,3 +377,31 @@ that skips a position **still in flight** — the same defect bounded to the pag
 window rather than to the whole log — passes all twenty sections, because no
 section walks the log while a lower position is uncommitted. Recorded as
 `## P2` §59 of `EVENTSOURCE_BACKLOG.md`.
+
+### The three consumer graphs, and why they are a `make check` arm
+
+`check-event-consumer` builds three consumer modules in a temporary directory,
+each with no `go.work` above it and `GOPROXY=off`, each requiring exactly the vv
+modules its name says and replacing them onto this tree. It is in `make check`
+rather than in the release script because there is no tag yet and because the
+question is about *this* working tree, not about what was published.
+
+| Graph | Modules it resolves | What it links |
+|---|---|---|
+| root-only | `github.com/frostgrove/vv` | 8 packages of this library and **no third party at all** |
+| event-only | plus `event/eventpg` | 14 packages and **no third party at all** — pgx is a requirement of `eventpg` for its live fixtures and is imported by no production file, so it is in the module graph and in no binary |
+| composed | plus `audit/auditpg` and `otel` | 29 packages, and the only third party is the OpenTelemetry API the `otel` module declares |
+
+Every step names its own refusal instead of leaning on `set -e`, and each graph
+asserts a floor on what it linked before it asserts anything about what it did
+not. The reason is this repository's own: a `GOWORK=off` scan that could not load
+the module reads exactly like a clean one — that is what happened to `make vuln`
+— and a graph that resolved nothing links nothing, which satisfies every question
+about what it must not link.
+
+Both failures are real and were driven. A blank import of pgx in
+`event/eventpg/catalog.go` — production code, not a fixture — turns the
+event-only arm red with the twenty-five packages that escaped; the same import in
+`event/projection/wait.go` turns the root-only arm red before it measures
+anything, because that graph requires no module providing pgx and the proxy is
+off.

@@ -697,21 +697,21 @@ No step creates a bridge or combination package.
 | One extension | Exactly one eventpg module represents PostgreSQL event sourcing |
 | Root optionality | Root and non-event consumers have no eventpg or PostgreSQL event graph; `make check-deps` stays green with the module in the workspace |
 | Import direction | Eventpg imports root seams and its PostgreSQL choice only; a graph test rejects an optional-extension import in either direction |
-| No combinations | No event × tenancy/audit/OTel/storage/broker package or nested module exists |
+| No combinations | No event × tenancy/audit/OTel/storage/broker package or nested module exists. **Met:** the direction by the graph tests, the names by `check-event-combinations` |
 | Direct seam | First release does not publish a generic root event contract without [[D-048]] evidence |
 | Base composition | Each accepted adapter is an ordinary base middleware and composes with two unrelated layers in declared order |
 | Capabilities | Exact effects never tunnel; method-set capabilities remain honest through opaque neighbours |
 | Append | Expected version, immutable rows and stream order are proven with live concurrent PostgreSQL |
 | Atomicity | Stream/event/local outbox work shares one proven transaction authority, or the configuration refuses the claim |
 | Audit | Application mapping carries a bounded reference only; neither production module imports the other |
-| Tenancy | Verified scope/routing precedes event SQL; missing, wrong or out-of-generation scope fails with zero leakage; no profile claims a topology the tenancy roadmap has not rehearsed |
+| Tenancy | Verified scope/routing precedes event SQL; missing, wrong or out-of-generation scope fails with zero leakage; no profile claims a topology the tenancy roadmap has not rehearsed. **Met:** `test/eventflow/tenancy_composition_test.go`, an unpublished composition fixture with its own control |
 | Broker | Outbox or staged job proves at-least-once crash windows; broker adapter is independent/application-owned |
 | Telemetry | Eventpg has no OTel imports; no-op/exporter failure changes no result; sensitive values remain absent |
-| Evolution | Retained revisions have one reader path; upcasters are deterministic; mixed-release rehearsal passes |
+| Evolution | Retained revisions have one reader path; upcasters are deterministic; mixed-release rehearsal passes. **Met in both directions:** v1-writes/v2-reads and the rollback direction, v2-writes/v1-reads |
 | Lifecycle | Constructors start nothing; every continuous activity is a supervised runner; the host owns cancellation and shutdown |
 | Schema | Start-up verifies by default, migrates only on an explicit profile, and refuses an unknown schema before an append |
 | Health | The store publishes a readiness answer and names no importance of its own |
-| Modules | `GOWORK=off` fixtures cover root-only, eventpg-only and multi-extension application composition, on the `scripts/otel-consumer.sh` model |
+| Modules | `GOWORK=off` fixtures cover root-only, eventpg-only and multi-extension application composition, on the `scripts/otel-consumer.sh` model. **Met:** `scripts/event-consumer.sh`, in `make check` as `check-event-consumer` |
 | Live evidence | The live suite's command is recorded and its absence fails; a skipped run is not evidence |
 | Documentation | Module pages in both languages, index rows, a flow, a use case and a regenerated surface baseline |
 
@@ -756,6 +756,20 @@ The first PostgreSQL event-source release is complete only when:
     module has its pages, index rows, flow and regenerated surface baseline;
 12. `make check`, `make unit`, `make vet` and `git diff --check` pass, and the
     live suite ran rather than skipped.
+
+**Where these stand, 2026-09-12.** A closing audit read all twelve and found
+eight met, two partial and two not met; the four are closed as follows and the
+evidence is named rather than asserted.
+
+| # | Now | What settled it |
+|---|---|---|
+| 1 | met on the forbidden names; **the aggregate is still unnamed by an ADR** | `check-event-combinations` refuses all ten names as a directory, a package clause and a module path, and is in `make check` with five falsification cases in `scripts/checks_test.go`. The aggregate of record remains the conformance suite's own fixture, which is a product decision and not this phase's: no consumer has named one, and inventing one to satisfy the clause would put a fictional domain in an accepted ADR |
+| 6 | met | audit: `test/auditflow/subsystem_composition_test.go`. Tenancy: `test/eventflow/tenancy_composition_test.go` — one store per tenant reached through a verified scope, four refusals that reach no store, and a control that asserts the leak is there without the composition |
+| 8 | met | `scripts/event-consumer.sh` and `check-event-consumer`: root-only, event-only and composed, each resolved with `GOWORK=off GOPROXY=off` outside the workspace. Each asserts its module set exactly, a floor on what it linked, and what it may not link — the floor because a graph that did not resolve links nothing, and that satisfies every prohibition |
+| 10 | met | `docs/usage-guides/event-operations.md` and its Russian counterpart: restore and replay, the rollback, the `xmin` stall, the dead-letter queue, capacity and four incidents. The writer side of the mixed release is `TestARolledBackBuildMeetingRevisionTwoRefusesRatherThanFolding`, live |
+
+Item 12's `make unit` remains red on three arms — `scripts`'s i18n seam test,
+`i18n/cmd/vv-i18n`, and `test/auditflow` — none of which is this subsystem's.
 
 <a id="research-appendices-2026-09-08"></a>
 

@@ -362,6 +362,8 @@ environment variable or writes to a logger ([[D-092]]).
 - [eventtest](eventtest.md) — the suite this store is certified by
 - [`MIGRATIONS.md`](https://github.com/frostgrove/vv/blob/main/event/eventpg/MIGRATIONS.md)
   — the operator's path, the thirteen statements and the v1→v2 row
+- [event-operations.md](../../usage-guides/event-operations.md) — the runbook:
+  what to do about the stall above, and the four incidents it is one of
 - [[D-091]] · [[D-101]] · [[D-118]] · [[D-121]] · [[D-126]] · [[D-127]] ·
   [[D-128]] · [[D-132]] · [[D-133]] · [[FL-036]] · [[FL-037]] · [[FL-038]] ·
   [[UC-032]]

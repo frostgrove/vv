@@ -579,18 +579,27 @@ what a wait on a generation that has never started should do.
 
 ### What a wait costs
 
-One `Park.Sequences` count plus one checkpoint `Load` **per cover member, per
-poll, per waiting caller** — and two per member while that member has recorded
-nothing yet, because the census asks an absent row whether a split handed it down.
-`Every` defaults to **50 ms**.
+Count it per poll, per waiting caller, and `Every` defaults to **50 ms**, so a
+poll is twenty of these a second:
 
-So a four-member cover at the default interval is **80 small indexed `SELECT`s a
-second** per waiting caller, and fifty concurrent waiters on that cover is about a
-**thousand a second**. Cheap until it is not. **The lever is `Every`**: a request
-path that wants 200 ms writes 200 ms, and the default is not raised because a
-default cannot be *invisible* and this arithmetic can be on the page instead. A
-wait during a rebuild is the expensive case — a rebuilding generation's members
-have no rows yet, so each poll pays the doubled census.
+| Read | How many | When |
+|---|---|---|
+| `Park.Sequences` | 1 | every poll, while a `Park` is supplied |
+| `Park.Holds` | 0, or up to one per sequence key the mark carries | only while that count is **not** zero |
+| checkpoint `Load` | 1 per cover member | every poll |
+| checkpoint `Load` again | 1 per cover member **that holds no row yet** | the census asks an absent row whether a split handed it down |
+| `Generations.Active` | 2 over the **whole wait**, not per poll | the first poll, and the poll that would otherwise answer `Reached` |
+
+So `1 + |cover|` while nothing is parked, `1 + 2 x |cover|` while the generation's
+members hold no rows. **A four-member cover at the default interval is 100 small
+indexed `SELECT`s a second per waiting caller**, 120 while that generation's queue
+is not empty, and **180 during a rebuild** — 200 with a non-empty queue. Fifty
+concurrent waiters on a healthy four-member cover is **five thousand a second**.
+Cheap until it is not. **The lever is `Every`**: a request path that wants 200 ms
+writes 200 ms, and the default is not raised because a default cannot be
+*invisible* and this arithmetic can be on the page instead. A wait during a
+rebuild is the expensive case — a rebuilding generation's members have no rows
+yet, so each poll pays the doubled census.
 
 A wait **starts nothing and writes nothing**: no goroutine, no `Save`, no
 `Forget`, no transaction, no log line, span or metric. It costs exactly nothing
@@ -1070,6 +1079,9 @@ below `Tolerate`.
   wait and the read, with the parked branch written out
 - [receipt](receipt.md) — the other half of the same request path: what happened
   to the command whose outcome you never heard
+- [event-operations.md](../../usage-guides/event-operations.md) — the runbook:
+  the rebuild recipe, reading and redriving the queue, and what the numbers above
+  cost in a deployment
 - [[D-091]] · [[D-092]] · [[D-118]] · [[D-126]] · [[D-128]] · [[D-129]] ·
   [[D-130]] · [[D-131]] · [[D-132]] · [[D-133]] · [[D-140]] · [[D-141]] ·
   [[D-144]] · [[FL-038]] · [[FL-042]] · [[FL-043]] · [[UC-032]] · [[UC-036]]

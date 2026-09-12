@@ -1,0 +1,51 @@
+package main
+
+import (
+	"github.com/frostgrove/vv/audit"
+	"github.com/frostgrove/vv/audit/auditpg"
+	"github.com/frostgrove/vv/event"
+	"github.com/frostgrove/vv/event/eventpg"
+	"github.com/frostgrove/vv/event/projection"
+	"github.com/frostgrove/vv/event/receipt"
+	vvotel "github.com/frostgrove/vv/otel"
+	"github.com/frostgrove/vv/storage"
+	"github.com/frostgrove/vv/tenancy"
+)
+
+type balance struct{ Minor int64 }
+
+type credited struct{ Minor int64 }
+
+var (
+	_ = event.Define[balance, string]
+	_ = event.Declare[balance, string, credited]
+	_ = event.Bind[balance, string]
+	_ = event.Open
+	_ = event.JSON[credited]
+	_ = eventpg.New
+	_ = eventpg.NewCheckpoints
+	_ = eventpg.MigrationStatements
+	_ = projection.New
+	_ = projection.WaitOf
+	_ = receipt.Once
+	_ = receipt.Resolve
+
+	_ = tenancy.New
+	_ = tenancy.ParseReference
+	_ = tenancy.Unbound
+	_ = tenancy.ClassWrite
+
+	_ = audit.New
+	_ = auditpg.New
+	_ = auditpg.MigrationStatements
+
+	_ = vvotel.New
+	_ = vvotel.Store
+	_ = vvotel.Service[struct{}, string, struct{}]
+
+	_ event.Store       = (*eventpg.Store)(nil)
+	_ event.Checkpoints = (*eventpg.Checkpoints)(nil)
+	_ storage.Store     = nil
+)
+
+func main() {}

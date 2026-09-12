@@ -2255,3 +2255,97 @@ func TestTheEventKernelOfThisRepositoryIsWhereThisPhaseLeftIt(t *testing.T) {
 		t.Fatalf("check-event-kernel refuses this repository:\n%s", output)
 	}
 }
+
+const combinationLibrary = "package event\n\nfunc Family() string { return \"event\" }\n"
+
+func combinationFixture(t *testing.T) string {
+	t.Helper()
+	return fixture(t, map[string]string{
+		"go.mod":                   libraryGoMod,
+		"event/store.go":           combinationLibrary,
+		"event/eventpg/eventpg.go": "package eventpg\n\nfunc Store() string { return \"eventpg\" }\n",
+		"tenancy/scope.go":         "package tenancy\n\nfunc Scope() string { return \"tenancy\" }\n",
+	})
+}
+
+// A combination package is refused by name because no graph test can see one:
+// TestNoBaseSubsystemDependsOnTheEventExtension reads imports, and a top-level
+// eventotel/ that imported nothing forbidden would pass it while making the
+// combination look sanctioned. Three spellings and three cases, because a name
+// is written in three places and a check that read one of them would be green
+// for the other two.
+func TestACombinationPackageNameIsRefusedWhereverItIsWritten(t *testing.T) {
+	t.Run("a tree with none of the names", func(t *testing.T) {
+		root := combinationFixture(t)
+
+		output, code := runCheck(t, root, "event-combinations")
+		if code != 0 {
+			t.Fatalf("a tree carrying no combination name exited %d:\n%s", code, output)
+		}
+		if !strings.Contains(output, "names refused") {
+			t.Errorf("the arm reported ok without saying how much it read:\n%s", output)
+		}
+	})
+
+	t.Run("a directory named for a combination", func(t *testing.T) {
+		root := combinationFixture(t)
+		writeInto(t, root, "eventotel/doc.go", "package otelbridge\n")
+
+		output, code := runCheck(t, root, "event-combinations")
+		if code != 1 {
+			t.Fatalf("a directory named eventotel was admitted with %d:\n%s", code, output)
+		}
+		if !strings.Contains(output, "eventotel") {
+			t.Errorf("the arm refused without naming the combination it found:\n%s", output)
+		}
+	})
+
+	t.Run("a package clause under a directory named something else", func(t *testing.T) {
+		root := combinationFixture(t)
+		writeInto(t, root, "event/bridge/doc.go", "package eventaudit\n")
+
+		output, code := runCheck(t, root, "event-combinations")
+		if code != 1 {
+			t.Fatalf("a file declaring package eventaudit was admitted with %d:\n%s", code, output)
+		}
+		if !strings.Contains(output, "event/bridge/doc.go") {
+			t.Errorf("the arm refused without naming the file that declares it:\n%s", output)
+		}
+	})
+
+	t.Run("a module path carrying the name", func(t *testing.T) {
+		root := combinationFixture(t)
+		writeInto(t, root, "bridge/go.mod", "module github.com/frostgrove/vv/tenancyevent\n\ngo 1.26\n")
+		writeInto(t, root, "bridge/doc.go", "package bridge\n")
+
+		output, code := runCheck(t, root, "event-combinations")
+		if code != 1 {
+			t.Fatalf("a module named for a combination was admitted with %d:\n%s", code, output)
+		}
+		if !strings.Contains(output, "tenancyevent") {
+			t.Errorf("the arm refused without naming the module it found:\n%s", output)
+		}
+	})
+
+	// The half a name check cannot do for itself: run where there is nothing to
+	// read, every name is absent and the arm is green on an empty answer.
+	t.Run("a tree with no Go file in it at all", func(t *testing.T) {
+		root := fixture(t, map[string]string{"go.mod": libraryGoMod, "README.md": "nothing here\n"})
+
+		output, code := runCheck(t, root, "event-combinations")
+		if code == 0 {
+			t.Fatalf("there was no source to compare the names with and the arm reported ok:\n%s", output)
+		}
+		if !strings.Contains(output, "compared against nothing") {
+			t.Errorf("the arm refused without saying that it read nothing:\n%s", output)
+		}
+	})
+}
+
+func TestThisRepositoryCarriesNoExtensionCombinationPackage(t *testing.T) {
+	command := exec.Command("bash", "checks.sh", "event-combinations")
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("check-event-combinations refuses this repository:\n%s", output)
+	}
+}

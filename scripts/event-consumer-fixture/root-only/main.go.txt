@@ -1,0 +1,44 @@
+package main
+
+import (
+	"github.com/frostgrove/vv/event"
+	"github.com/frostgrove/vv/event/eventmemory"
+	"github.com/frostgrove/vv/event/projection"
+	"github.com/frostgrove/vv/event/receipt"
+)
+
+type balance struct{ Minor int64 }
+
+type credited struct{ Minor int64 }
+
+var (
+	_ = event.Define[balance, string]
+	_ = event.Declare[balance, string, credited]
+	_ = event.Bind[balance, string]
+	_ = event.Open
+	_ = event.Track
+	_ = event.JSON[credited]
+	_ = eventmemory.New
+	_ = eventmemory.NewLog
+	_ = eventmemory.NewCheckpoints
+	_ = eventmemory.WithTransaction
+	_ = projection.New
+	_ = projection.Wait
+	_ = projection.WaitOf
+	_ = projection.ByStream
+	_ = projection.Cutover
+	_ = receipt.Once
+	_ = receipt.Claim
+	_ = receipt.Resolve
+	_ = receipt.NewKey
+
+	_ event.Store        = (*eventmemory.Store)(nil)
+	_ event.Checkpoints  = (*eventmemory.Checkpoints)(nil)
+	_ projection.Handler = projection.HandlerFunc(nil)
+	_ projection.Effects = projection.EffectsFunc(nil)
+	_ event.Outcome      = event.NotWritten
+	_ receipt.Verdict    = receipt.Recorded
+	_ receipt.Standing   = receipt.Unresolved
+)
+
+func main() {}

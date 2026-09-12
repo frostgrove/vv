@@ -1,0 +1,39 @@
+package main
+
+import (
+	"database/sql"
+
+	"github.com/frostgrove/vv/crud"
+	"github.com/frostgrove/vv/event"
+	"github.com/frostgrove/vv/event/eventpg"
+	"github.com/frostgrove/vv/event/projection"
+	"github.com/frostgrove/vv/event/receipt"
+)
+
+type balance struct{ Minor int64 }
+
+type credited struct{ Minor int64 }
+
+var (
+	_ = event.Define[balance, string]
+	_ = event.Declare[balance, string, credited]
+	_ = event.Bind[balance, string]
+	_ = event.Open
+	_ = event.Track
+	_ = event.JSON[credited]
+	_ = eventpg.New
+	_ = eventpg.NewCheckpoints
+	_ = eventpg.MigrationStatements
+	_ = eventpg.SchemaVersion
+	_ = projection.New
+	_ = projection.Wait
+	_ = projection.WaitOf
+	_ = receipt.Once
+	_ = receipt.Resolve
+
+	_ event.Store       = (*eventpg.Store)(nil)
+	_ event.Checkpoints = (*eventpg.Checkpoints)(nil)
+	_ eventpg.Spec      = eventpg.Spec{DB: (*sql.DB)(nil), Source: crud.Source(nil)}
+)
+
+func main() {}

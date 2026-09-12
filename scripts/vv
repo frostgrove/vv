@@ -27,6 +27,8 @@ Usage: make <command>
   check-event-kernel           Compare event/ outside event/eventpg with its manifest
   check-event-kernel-baseline  Record that manifest, in the same change as the code
   check-event-kernel-moved     Read what a re-baseline moved: <predecessor> <allowed> [required...]
+  check-event-consumer         Resolve the root-only, event-only and composed consumer graphs
+  check-event-combinations     Refuse the extension-combination package names by name
   api, vuln                    Regenerate API baseline or scan vulnerabilities
   main-deps, version, release  Maintain module versions and publish a release
   clean                        Stop databases and clear Go's test cache
@@ -71,6 +73,8 @@ case ${1:-help} in
 	check-event-kernel) exec "$SCRIPT_DIR/checks.sh" event-kernel ;;
 	check-event-kernel-baseline) exec "$SCRIPT_DIR/checks.sh" event-kernel-baseline ;;
 	check-event-kernel-moved) shift; exec "$SCRIPT_DIR/checks.sh" event-kernel-moved "$@" ;;
+	check-event-consumer) exec "$SCRIPT_DIR/event-consumer.sh" ;;
+	check-event-combinations) exec "$SCRIPT_DIR/checks.sh" event-combinations ;;
 	check-otel-consumer) exec "$SCRIPT_DIR/otel-consumer.sh" ;;
 	check-i18n-consumer) exec "$SCRIPT_DIR/i18n-consumer.sh" ;;
 	up|down|logs|psql|mysql|mariadb) exec "$SCRIPT_DIR/database.sh" "$1" ;;

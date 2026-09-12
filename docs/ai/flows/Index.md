@@ -604,6 +604,11 @@ phase 3 landed FL-014 and before phase 5 landed FL-015.
 | `event/eventpg/read.go` | FL-037 |
 | `event/eventpg/cursor.go` | FL-037 |
 | `event/eventpg/checkpoints.go` | FL-037, FL-038 |
+| `scripts/event-consumer.sh` | FL-037 |
+| `scripts/event-consumer-fixture/root-only/main.go.txt` | FL-037 |
+| `scripts/event-consumer-fixture/event-only/main.go.txt` | FL-037 |
+| `scripts/event-consumer-fixture/composed/main.go.txt` | FL-037 |
+| `test/eventflow/tenancy_composition_test.go` | FL-037 |
 | `event/projection/doc.go` | FL-038 |
 | `event/projection/errors.go` | FL-038 |
 | `event/projection/spec.go` | FL-038, FL-042 |

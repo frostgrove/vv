@@ -24,7 +24,7 @@ exists.
 | 12 | Jobs/cache conformance and current driver/worker completion | the in-flight implementation and green evidence | no |
 | 13 | Multitenancy: the database-per-tenant profile, RLS, operator rehearsals and the multi-extension fixture | real infrastructure and two extensions that do not exist yet | no |
 | 14 | Optional durable audit extension | a named audited resource and atomicity gate | no |
-| 15 | The PostgreSQL event store | a named aggregate; the vocabulary, the in-memory store and the conformance suite are delivered | no |
+| 15 | The PostgreSQL event store | a retention/archival path and an `eventpgfx`, each blocked on a consumer that needs it; everything else in §15 is delivered | no |
 | 16 | I18n application lifecycle integrations | an application that needs external catalog delivery, durable pins or tenant control-plane policy | no |
 | 17 | The remaining duplicated access declaration | a consumer reaching `RefusingUnchecked` without an excuse | no |
 | 18 | One factory vocabulary, outside `jobs` and `cache` | the remaining consumer-owned names | no |
@@ -444,7 +444,24 @@ The consumer's guide is written down rather than left in the reference pages:
 follow, wait, claim, read history — and `_examples/event-wait` and
 `_examples/event-receipts` are the two runnable programs behind it, the second
 being the **reference `receipt.Ledger`** whose two claim statements a test
-compares with the live suite's byte for byte and in order.
+compares with the live suite's byte for byte and in order. The operator's half is
+`docs/usage-guides/event-operations.md`, in both languages: restore and replay,
+the rollback, the `xmin` stall, the dead-letter queue, capacity and four
+incidents.
+
+**The release gates are arms rather than intentions.** `make check-event-consumer`
+resolves three consumer modules outside `go.work` with the proxy off — root-only,
+event-only and event beside `tenancy`, `audit`/`auditpg` and `otel` — and asserts
+each one's module set, a floor on what it linked, and what it may not link; a
+root-only consumer carries no third-party package at all, and an event-only one
+carries none either, because `eventpg` requires pgx for its live fixtures and
+imports it nowhere. `make check-event-combinations` refuses the ten combination
+package names by name, in the three places a name can be written: a directory, a
+package clause and a module path. Both are in `make check`. And both directions of
+a mixed release are rehearsed live: v1 writes and v2 reads through the upcaster,
+and the rollback direction — a build that retains one revision meets revision 2,
+refuses the whole stream, folds nothing, cannot append over it, and still reads
+the prefix written before the rollback.
 
 What is left is a retention or archival path for a history that outgrows one
 table — whose interlock is against every projection name's stored cursor and
@@ -464,9 +481,15 @@ it to reconcile. The first slice starts with a direct API: an event-specific roo
 chain is added only after a second implementation justifies that base contract.
 
 Tenancy, audit and OTel are application/base-seam composition, not
-`eventtenancy`, `eventaudit` or `eventotel`. A store per tenant schema is
-expressible today, because the backing is the pool and the schema name together;
-no affordance is exported for it. A broker sender is injected through a neutral
+`eventtenancy`, `eventaudit` or `eventotel` — and that is now a check rather than
+a sentence, `make check-event-combinations`. Both compositions are proved in
+unpublished fixtures: `test/auditflow` composes event, audit, jobs and storage and
+asserts an event commit retains its store's transaction authority before an audit
+capture; `test/eventflow` composes event and tenancy and asserts a verified scope
+is resolved before any event call, so an unbound, foreign, out-of-generation or
+suspended scope reaches no store at all. A store per tenant schema is expressible
+today, because the backing is the pool and the schema name together; no affordance
+is exported for it. A broker sender is injected through a neutral
 application-owned contract; a future broker adapter may target an independently
 accepted delivery seam but may not import `eventpg`.
 

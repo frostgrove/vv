@@ -4969,3 +4969,78 @@ accumulation from drift without reading the schema.
 
 Owed: a fresh stream id and park identity per run, or one sentence beside the pasted output saying
 the numbers grow with the run count.
+
+## Closeout
+
+*Source: the closing round of 2026-09-12, answering
+`.agents/artifacts/audit/EVENTSOURCE_CLOSEOUT.md`. It closed Definition-of-done items 8 and 10,
+item 1's forbidden-name half and item 6's tenancy half. Everything recorded here is `[medium]` or
+`[low]` and is left alone by the policy at the top of this file, except where a row says it was
+already closed in passing.*
+
+### 64. GAP-3, the wait's understated cost — **CLOSED in this round**  `[medium]`
+
+`docs/modules/en/projection.md`, `docs/modules/ru/projection.md` and
+`docs/usage-guides/event-sourcing.md` all said **80** `SELECT`s a second for a four-member cover,
+and *"fifty concurrent waiters … about a thousand a second"*. The arithmetic had dropped the
+`Park.Sequences` term and used twenty polls a second against four reads instead of five.
+
+All three now carry the derivation as a table and the corrected numbers: `1 + |cover|` a poll
+healthy and `1 + 2 x |cover|` during a rebuild, so **100** a second at the 50 ms default, **120**
+while that generation's park queue is not empty, **180** rebuilding, **200** rebuilding with a
+non-empty queue, and **five thousand** for fifty concurrent waiters. The numbers are the ones
+`TestAWaitStartsNothingAndSavesNothing` and `TestAHealthyWaitAsksSequencesAndNeverHoldsOrHoles`
+already measure — four loads a poll recorded, eight fresh, one `Sequences`, zero `Holds` while
+healthy — so the pages and the tests now agree. The runbook carries the same table.
+
+### 65. GAP-4, `Roadmap.md`'s summary row for item 15 — **CLOSED in this round**  `[medium]`
+
+The row gave the blocker as *"a named aggregate; the vocabulary, the in-memory store and the
+conformance suite are delivered"*, four phases behind its own §15. It now names what §15 says is
+left: a retention/archival path and an `eventpgfx`, each blocked on a consumer that needs it.
+
+### 66. GAP-5, ES-05's missing *degraded* verdict is argued only here  `[medium]`
+
+Unchanged and deliberately so. ES-05 part 3 asks for *timeout **or** degraded*; only timeout
+shipped, and the reason — a phase is in-process and a waiter usually is not that process — is still
+written only in `## P5` item 1 of this file. The standard ES-06 sets is one layer above: in capitals
+on the module page and in an ADR.
+
+Owed: one paragraph on `projection.md` in both languages saying why a wait cannot report a phase,
+or a second verdict that does.
+
+### 67. The consumer graphs are local-replace only; there is no tag-resolving arm for `event`  `[medium]`
+
+`check-event-consumer` resolves the three graphs through a `replace` onto this tree with
+`GOPROXY=off`, which is what lets it live inside an offline `make check` before the first tag. What
+it therefore does **not** prove is the half `scripts/otel-consumer.sh` proves at release time: that
+`go get github.com/frostgrove/vv/event/eventpg@v0.1.0` resolves from a proxy, with no replace, to a
+directory outside this repository. `scripts/release.sh` runs `otel-consumer.sh` and
+`i18n-consumer.sh` and has no event equivalent.
+
+Owed: an event arm in `release.sh` on the `otel-consumer.sh` model, or on `i18n-consumer.sh`'s
+`git archive` + `file://` proxy model, which needs no published tag.
+
+### 68. `docs/usage-guides/` is English-only except for the runbook  `[low]`
+
+The bilingual convention in this tree is `docs/modules/en` and `docs/modules/ru`.
+`docs/usage-guides/` has seven English pages and no `en/` directory, so the Russian runbook went to
+`docs/usage-guides/ru/event-operations.md` — English at the top level where every other guide is,
+Russian in a subdirectory the way `docs/modules/ru` does it. It reads as if the other six guides
+have a missing Russian counterpart, and they do not: they never had one.
+
+Owed: either move the seven English guides under `docs/usage-guides/en/` and make the split
+symmetric, or one sentence in `docs/Index.md` saying the guides are English-only and the runbook is
+the exception. Nothing is wrong today; a reader guessing at the shape will guess wrong.
+
+### 69. GAP-1 and GAP-2 of the closing audit are untouched, and both are `[high]`  `[high]`
+
+Recorded here so that they are not read as closed by a round that did not touch them. **GAP-1:**
+nine `[critical]`/`[high]` entries sit open in `## P1 — deferred` and `## P2`, of which the audit
+verified four have had their own stated closure conditions met and were never flipped — items 1, 4,
+6 and 8. **GAP-2:** `Ledger`, `Park` and `Generations` are three interfaces a consumer must
+implement and nothing a consumer can run checks any of them; the defect is measured in this
+repository by `TestFourLedgerDefectsEachBreakTheCaseThatNamesThem`.
+
+Both are the audit's remediation steps 1 and 2 and neither was in this round's brief, which named
+Definition-of-done items 8, 10, 1 and 6. They are blocking severity and they are still open.

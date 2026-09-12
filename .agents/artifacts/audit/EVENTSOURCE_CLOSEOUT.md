@@ -560,3 +560,304 @@ Go fences are compiled by a test. This is not a clumsy surface.
   read `wait.go`, `claim.go` and `repo.go`; I wrote no additional concurrent driver of my own.
 - **`_examples/event-partitions`, `event-generations`, `event-checkpoints-elsewhere`.** Built and
   vetted by `make examples`; I ran only `event-wait` and `event-receipts`.
+
+---
+
+# Round 2 — final closing audit (2026-09-12, clean context)
+
+**Scope.** The four Definition-of-done items the closing round answered (8, 10, 1's second half,
+6's tenancy half), plus all twelve walked again — because a fix can break a neighbour — plus the
+gates. Nothing was fixed. Nine files were mutated and restored; the **whole tree** (2 348 files,
+`.git` excluded) was hashed before and after and the two manifests are **identical**, with
+`git status --porcelain | wc -l` at 21 both times.
+
+**Verdict in one line.** The two not-met items are **closed and I broke both of their checks
+myself to prove they can fail**; the two partials are now **10 met / 2 partial / 0 not met** — but
+the roadmap is **not closed**, because item 1's ADR clause was deliberately declined, item 12's
+`make unit` is red on three foreign arms, and **3 `[critical]` + 7 `[high]` backlog entries remain
+open**, which the delivery policy says block.
+
+## Gate commands, run by me
+
+| Command | Result |
+|---|---|
+| `make check` | **GREEN, 13 arms** — the eleven of round 1 plus `check-event-combinations` (*"ok, 10 names refused across 1686 files and 37 modules"*) and `check-event-consumer`. `CHECK EXIT=0`, 22.7 s |
+| `make vet` | **GREEN**, every workspace module plus `./_examples`. `VET EXIT=0` |
+| `make examples` | **GREEN**, `EXIT=0` |
+| `gofmt -l .` | **silent** (0 lines) |
+| `git diff --check` | clean, exit 0. The five untracked paths scanned separately: 0 trailing-whitespace lines, 0 tabs in the two Markdown pages |
+| `docs/api/surface.md` | `generate_api /tmp/surface_fresh.md` → `diff -u` **0 lines**. The closing round added no exported API |
+| `go test -race ./event/...` | **GREEN** — `event 6.749s`, `eventmemory`, `eventtest`, `projection 6.103s`, `receipt 1.020s` |
+| live suite ×2 | `ok …/event/eventpg 124.374s` then `127.542s`, `-race -count=1 -tags=integration`, both exit 0 |
+| live suite, DSN unset | **FAILS, does not skip**, and prints the command. `FAIL … 0.002s` |
+| `test/eventflow` ×2 untagged, ×2 tagged | **GREEN** all four (`1.006s`–`1.008s`) |
+| `make unit` | **NOT GREEN — exit 2**, on three foreign arms (below) |
+
+### The three foreign red arms, reproduced in a clean worktree
+
+`git worktree add /tmp/vv-head HEAD` — HEAD, **without** the closing round's 21 uncommitted paths:
+
+| Arm | At HEAD | Mine? |
+|---|---|---|
+| `./scripts` `TestNoI18nPackageCostsMoreThanItsErrorSeam` | fails identically: *"the i18n extension reaches github.com/go-json-experiment/json/jsontext outside its error seam"* | **No** |
+| `./i18n` `cmd/vv-i18n` | **29** `--- FAIL:` lines, the same count as in the working tree | **No** |
+| `./test/auditflow` `TestGeneratedAuditProfilesSeparateServingRuntimeFromDeploymentAuthority` | fails identically: *"generated serving health check: audit serving runtime is not ready"* | **No** — and its file (`generated_profile_integration_test.go`) imports `app/module`, `audit`, `health` and the two local fixture packages, and contains the string `event` **zero** times |
+
+`make unit` still aborts at the root module, so it reports one and never reaches the other two; I ran
+those two by hand. The two audit×event composition proofs in that red package
+(`TestApplicationTranslatesExactEventCommitAndJobAttemptAtOneBoundary`,
+`TestApplicationCapturesLogicalStorageAndActivatedProfileAsIndependentEvidence`) **pass individually
+under `-race`** — the red is beside them, not under them.
+
+## Definition of done, walked again
+
+| # | Round 1 | Now | What settled it |
+|---|---|---|---|
+| 1 | partial | **partial** | names met and falsified four ways; **no ADR names an aggregate** and the roadmap now records the refusal with a reason |
+| 2 | met | **met** | `find event -name go.mod` → 1; and the names are now checked, not just the direction |
+| 3 | met | **met** | live ×2 |
+| 4 | met | **met** | unchanged, live |
+| 5 | met (vacuously) | **met (vacuously)** | no base adapter shipped |
+| 6 | partial | **met** | audit fixture passes individually; tenancy fixture exists, and I broke it |
+| 7 | met | **met** | unchanged |
+| 8 | **not met** | **met** | `scripts/event-consumer.sh` + `check-event-consumer`; three graphs, six breakages each loud |
+| 9 | met | **met** | unchanged, green |
+| 10 | **not met** | **met** | runbook EN+RU; the v2-writes/v1-reads rehearsal is live and I proved it bites |
+| 11 | met | **met** | surface 0-diff; the runbook is inside the doc walk (proved by mutation) |
+| 12 | partial | **partial** | four of five sub-commands green; `make unit` red on three foreign arms |
+
+**10 met, 2 partial, 0 not met.**
+
+## Every check I broke, and what it said
+
+Each mutation was applied, run, and reverted from a `/tmp` copy; every restore was verified by
+`sha256sum`, and `check-event-kernel` was re-run after the one inside `event/`.
+
+| # | What I broke | Arm | What it answered |
+|---|---|---|---|
+| 1 | `mkdir eventotel && echo 'package eventotel' > eventotel/doc.go` | `check-event-combinations` | named the directory **and** the package clause; `make check` **exit 2** |
+| 2 | `tmpbridge/doc.go` declaring `package eventaudit` | same | *"these files declare a combination package this repository refuses to have: ./tmpbridge/doc.go"* |
+| 3 | `tmpmod/go.mod` = `module github.com/frostgrove/vv/eventkafka` | same | *"./tmpmod/go.mod: github.com/frostgrove/vv/eventkafka"* |
+| 4 | ran it in a tree with a `go.mod`, a README and no Go file | same | *"found 0 Go files and 1 modules, so the names it refuses were compared against nothing"*, exit 1 — **the vacuity guard is real** |
+| 5 | neutered the directory arm in `checks.sh` (`-name "zzz-$name"`) | `go test ./scripts` | `TestACombinationPackageNameIsRefusedWhereverItIsWritten/a_directory_named_for_a_combination` **FAILED**: *"a directory named eventotel was admitted with 0"* |
+| 6 | root-only fixture imports `event/eventpg` | `check-event-consumer` | *"root-only could not resolve its module graph with go mod tidy, so nothing about this graph was measured"* + go's own text |
+| 7 | root-only fixture reduced to `func main() {}` | same | *"root-only resolved **no** github.com/frostgrove/vv module at all, so its graph was never loaded and nothing below it was measured"* |
+| 8 | root-only fixture importing only `event` | same | *"links 4 packages … and this graph is written to link at least 8"* — the floor bites |
+| 9 | event-only fixture blank-imports `pgx/v5/stdlib` | same | listed **29** third-party packages it must not link, pgx and x/text included |
+| 10 | expected module set for event-only given a fourth module | same | a unified diff of expected vs resolved |
+| 11 | `GOMODCACHE=$(mktemp -d)` — a cold cache | same | *"could not resolve its module graph … module lookup disabled by GOPROXY=off"*, exit 1 — **a graph that cannot load is loud, never quiet** |
+| 12 | `test/eventflow`: `repo()` reads the tenant from the context instead of `authority.Scope` | `go test ./test/eventflow` | **4 subtests FAILED** — unbound, foreign-authority, out-of-generation and suspended each answered `<nil>` where they must refuse |
+| 13 | `event/fact.go`: `revision > len(chain.links)` replaced by a clamp to the last link | live suite | `TestARolledBackBuildMeetingRevisionTwoRefusesRatherThanFolding` **FAILED** on two subtests: *"a build that retains one revision read a stream holding revision 2 and answered &lt;nil&gt;"* |
+| 14 | appended a citation of a test that does not exist to the runbook | `go test ./scripts` | `TestEveryTestNameTheDocsCiteExists` **FAILED**, naming `docs/usage-guides/event-operations.md:402` — **the new page is inside the doc walk** |
+| 15 | deleted `check_event_combinations` **and** `check_event_consumer` from the `all)` case | `make check` | **exit 0**, and the whole `./scripts` suite reported only the pre-existing foreign failure — see GAP-6 |
+
+## The three isolated graphs, resolved by hand
+
+Not the script's word: I built two of them myself in `/tmp`, outside the repository,
+`GOWORK=off GOPROXY=off GOTOOLCHAIN=local`.
+
+| Graph | `go list -m all` | linked, non-stdlib | third party linked |
+|---|---|---|---|
+| root-only | `example.com/…` + `github.com/frostgrove/vv` only. **No `go.sum` is written at all** | 8: `utils`, `crud`, `errs`, `event`, `eventmemory`, `runtime`, `projection`, `receipt` | **none** |
+| event-only | 8 modules: the two vv ones plus pgx, pgpassfile, pgservicefile, puddle, x/sync, x/text. `go.sum` = 12 lines | 14 | **none** |
+| composed | 24 modules | 29 | 15, and one of them is **`github.com/cespare/xxhash/v2`**, not OTel (GAP-9) |
+
+The event-only row is the interesting one and the script's own comment says it: `eventpg` requires
+pgx **for its live fixtures** and imports none of it, so a consumer's `go mod tidy` fetches pgx,
+records its sums and links nothing — `go: … eventpg tested by eventpg.test imports pgx/v5/pgconn`.
+A consumer behind a proxy allowlist needs pgx allowed for a binary that contains no pgx.
+
+## Capacity — consistent, and the number round 1 reported was the wrong one
+
+I counted the statements in the code rather than trusting either page.
+
+- `waiter.parked` (`event/projection/wait.go:443-465`): **one** `Park.Sequences`, then
+  `if count == 0 { return false, nil }` — **`Holds` is never called while the queue is empty**.
+- `surveyed` (`event/projection/generation.go:158-191`): **one** `Load` per cover member, plus one
+  more per member whose row is `Fresh()`, through `neverHandedDown` → `retired`
+  (`event/projection/topology.go:205-218`, exactly one `Load`).
+- `waiter.resolves`: `Generations.Active` **twice over the whole wait** — poll 1 and the reaching
+  poll — never per poll.
+
+So a four-member cover at `Every`=50 ms: **5 reads a poll = 100/s** healthy, 6 = 120/s with a
+non-empty queue, 9 = 180/s rebuilding, 10 = 200/s both. Fifty waiters = 5 000/s. The same four
+numbers appear in `docs/modules/en/projection.md:587-602`, `docs/modules/ru/projection.md:609-624`,
+`docs/usage-guides/event-sourcing.md:324-332`, `docs/usage-guides/event-operations.md:281-302` and
+`docs/usage-guides/ru/event-operations.md:296-315` — **five places, identical**, EN and RU. No `80`
+and no *"about a thousand a second"* survives anywhere under `docs/`.
+
+They are also what the tests measure: `TestAWaitStartsNothingAndSavesNothing` asserts **4** loads for
+one poll over a recorded four-member cover and **8** for a fresh one, and
+`TestAHealthyWaitAsksSequencesAndNeverHoldsOrHoles` asserts **3** `Sequences` and **0** `Holds` over
+three polls.
+
+**Round 1's GAP-3 arithmetic (120/200) was itself wrong** — it charged a `Holds` per poll that the
+code gates behind a non-zero count. The delivered numbers are right and the correction that produced
+them is right; the closing round improved on its own brief here rather than following it.
+
+## Findings
+
+### GAP-6 [medium][deferred] Both new arms are in `make check` and nothing holds them there
+
+- **Where:** `scripts/checks.sh:742-743` (the `all)` case); the absent test in `scripts/`
+- **Scale:** local (2 arms, 1 script with no test of any kind)
+- **Confidence:** CONFIRMED — I deleted both lines from the `all)` case: `make check` exited **0**,
+  and `go test -count=1 ./scripts/` reported exactly one failure, the pre-existing foreign one. The
+  precedent is in the same directory: `scripts/otel_release_test.go:28` asserts
+  `"$SCRIPT_DIR/otel-consumer.sh"` appears in `release.sh` and `:62` asserts that script's source
+  still carries `GOWORK=off`, `GOENV=off`, `GOMODCACHE=`, `GOCACHE=`, `GOPATH=`, `GOFLAGS=-mod=mod`
+  and its fixture path; `scripts/i18n_release_test.go:15,28` do the same for `i18n-consumer.sh`.
+  `event-consumer.sh` is named by no test at all.
+- **What / Why this severity:** Definition-of-done item 8 is met *because that arm runs*. Remove the
+  line — in a merge, in a rebase, in a tidy-up of the `all)` case — and item 8 silently un-meets
+  with a green `make check`. `check-event-combinations` is half-protected: `TestThisRepositoryCarries
+  NoExtensionCombinationPackage` still invokes it directly, so the property survives its removal
+  from `make check` (in a `./scripts` arm that is red today for a foreign reason). The consumer arm
+  has no such second holder.
+- **Why this timing:** it does not change a contract and nothing is wrong today. It is one test on a
+  template that already exists twice in the same package.
+- **Close criteria:**
+  - [ ] a test asserts `check_event_consumer` and `check_event_combinations` are in `checks.sh`'s
+        `all)` case, on the `otel_release_test.go:28` model;
+  - [ ] a test asserts `event-consumer.sh` still carries `GOWORK=off`, `GOPROXY=off` and its three
+        fixture paths.
+
+### GAP-7 [medium][deferred] `check-event-consumer` needs a warm module cache, and `make check` is offline
+
+- **Where:** `scripts/event-consumer.sh:27` (`consumer_environment=(GOWORK=off GOPROXY=off …)`),
+  which does **not** set `GOMODCACHE` — unlike `scripts/otel-consumer.sh:17-21`, which gives the
+  consumer a private one
+- **Scale:** local (2 of the 3 graphs — event-only and composed)
+- **Confidence:** CONFIRMED — `GOMODCACHE=$(mktemp -d) ./scripts/event-consumer.sh` → *"event-only
+  could not resolve its module graph with go mod tidy … module lookup disabled by GOPROXY=off"*,
+  exit 1, after root-only passed.
+- **What / Why this severity:** a fresh clone whose module cache has never seen pgx or the OTel SDK
+  gets a **red `make check` on a green tree**. The failure is loud and names the cause, which is
+  exactly the property the brief demanded, so this is a usability cost and not a correctness one —
+  but `make check` is the command this repository tells a contributor to run before reporting a task
+  done, and its first run on a new machine will fail here.
+- **Why this timing:** it is a trade the script's own header argues for (offline `make check` before
+  a tag exists) and changing it means choosing between offline and cold-start.
+- **Close criteria:**
+  - [ ] either one sentence in the script's header and in `docs/` saying the arm needs a warmed
+        cache and what warms it, or a refusal that distinguishes *"this graph is wrong"* from
+        *"this machine has never downloaded pgx"*.
+
+### GAP-8 [medium][deferred] The first incident in the runbook branches on facts it never says how to read
+
+- **Where:** `docs/usage-guides/event-operations.md:316-333` and its Russian counterpart at
+  `:331-352`
+- **Scale:** local (1 of the 4 incidents; the other three are actionable)
+- **Confidence:** CONFIRMED — `rg -n 'checkpoints|Observer|State\.' docs/usage-guides/event-operations.md`
+  returns one line, `State.Parked` in a table of meanings. The page gives SQL for the `xmin` stall
+  (`:144-149`) and for the park queue (`:185-191`) — the second over a table that is the
+  **consumer's own** — and none for the `checkpoints` table, which is **`eventpg`'s** and whose
+  columns are fixed and knowable: `event/eventpg/schema.go:311-330` declares `projection`, `cursor`,
+  `advance`, `highest`, `applied`, `quarantined`.
+- **What / Why this severity:** step 1 is *"Is `Highest` moving at all, for **every** projection over
+  the schema?"* — the single most valuable question on the page, because a yes sends the operator
+  straight to Part 2 — and an operator holding psql at 03:00 is not told the one-line `SELECT` that
+  answers it. Steps 2–4 (`PhaseBlocked`, halted, two writers of one name) branch on in-process state
+  with no stated observation path; `Observer`/`State` is documented on `projection.md` and the
+  runbook never sends the reader there for this.
+- **Why this timing:** documentation only, no contract moves.
+- **Close criteria:**
+  - [ ] a `SELECT` over the `checkpoints` table beside the two queries already on the page, in both
+        languages;
+  - [ ] one sentence saying where a phase is read from and that a deployment must expose it.
+
+### GAP-9 [low][deferred] `FL-037` says the composed graph's only third party is OpenTelemetry
+
+- **Where:** `docs/ai/flows/FL-037-a-recorded-fact-becomes-a-postgresql-row.md`, the composed row of
+  the three-graph table
+- **Confidence:** CONFIRMED — resolved by hand: 15 third-party packages, of which
+  `github.com/cespare/xxhash/v2` is not under `go.opentelemetry.io`. The script is right and says so
+  (`links_nothing_but "$label" "$prepared" go.opentelemetry.io github.com/cespare/xxhash/v2`); only
+  the flow's prose rounds it away.
+- **Close criteria:** - [ ] the row names xxhash, or says "the OTel API and what it pulls".
+
+### GAP-10 [low][deferred] A timestamp is compared with a position
+
+- **Where:** `docs/usage-guides/event-operations.md:332` — *"Then `At` moves and `Highest` does not
+  lag it by much"*
+- **Confidence:** CONFIRMED — `Progress.At` is a `time.Time` (`event/checkpoint.go:40`) and
+  `Progress.Highest` is a `Position` (`:25`). Part 0's *"alert on the pair"* uses them correctly; the
+  incident step reads as if one lags the other.
+- **Close criteria:** - [ ] say what `Highest` should not lag by much — the log's head.
+
+### GAP-11 [low][deferred] The rebuild recipe has a runnable program and does not name it
+
+- **Where:** `docs/usage-guides/event-operations.md:42-64` (the recipe) and `:391-400` (where to go
+  next)
+- **Confidence:** CONFIRMED — I ran `GOWORK=off go run ./event-generations` unmodified and it printed
+  the recipe's five steps and the rollback in order: *"generation 2 rebuilt beside it … reached=true
+  behind=0 holes=0, and it staged nothing"*, *"the read target moved … in one fenced write"*, *"the
+  rollback is the same call with From and To exchanged"*. `_examples/event-partitions` and
+  `event-checkpoints-elsewhere` also ran first time. Separately, the runbook's one Go fence is
+  outside `TestEveryGoFenceInTheEventSourcingGuideIsCompiled`, which names only
+  `../docs/usage-guides/event-sourcing.md` (`scripts/docs_test.go:1829`) — the two calls it shows are
+  correct today (`Redrive.Sequence`/`Any` at `event/projection/redrive.go:194,202`, returning
+  `Retried` at `:64`), but nothing keeps them so.
+- **Close criteria:** - [ ] the recipe names `_examples/event-generations`; - [ ] the fence is
+  compiled or the page says it is illustrative.
+
+### Foreign, and not this round's: two dead links in a file this round edited
+
+`docs/Index.md:9` and `:11` point at `decisions/Index.md` and `flows/Index.md`; the directories are
+`docs/ai/decisions/` and `docs/ai/flows/`. `git diff docs/Index.md` shows those lines untouched — the
+round added two usage-guide bullets and nothing else — so this is pre-existing and outside the
+dimension. It is recorded because the round had the file open. Every link in **both** runbooks and
+every link the round added resolves.
+
+## Is the roadmap closed?
+
+**No — and nothing the closing round delivered is why.** Three things are between this and closed:
+
+1. **Item 1's ADR clause.** *"one accepted ADR names the aggregate"* is unmet and was **declined on
+   product grounds**, recorded in the roadmap's own table: *"inventing one to satisfy the clause
+   would put a fictional domain in an accepted ADR"*. That is the right call and it is written down.
+   The item is still not met by its own text.
+2. **Item 12.** `make unit` is red on three arms, all three foreign, all three reproduced at HEAD in
+   a clean worktree.
+3. **The backlog, which the delivery policy makes the deciding instrument.** `.agents/artifacts/gaps/
+   EVENTSOURCE_BACKLOG.md` now holds **308** items: `{critical: 3, high: 10, medium: 158, low: 134,
+   untagged: 3}`. Removing the four entries already marked `CLOSED`/`REFUSED` leaves **3 critical and
+   7 high open**, and the policy defers only medium and low. All of them are pre-policy P1/P2 debt
+   plus the round's own item 69 — the round recorded its own blockers rather than hiding them, which
+   is the artifact working — but a policy that says high blocks and ten highs that are open cannot
+   both be true at once.
+
+Round 1's GAP-1 (four of nine blocking entries have had their stated closure conditions met and were
+never flipped) and GAP-2 (nothing a consumer can run checks `Ledger`, `Park` or `Generations`) are
+**untouched and still open**, by design: neither was in this round's brief, and the round says so at
+`## Closeout` item 69.
+
+## Remediation order
+
+1. **GAP-1 of round 1 — triage the nine pre-policy blocking entries.** S. Everything is scheduled
+   through that file and several of its yeses are false.
+2. **GAP-2 of round 1 — a runnable harness for `Ledger` / `Park` / `Generations`.** L. The single
+   largest thing between this library and a consumer who cannot silently double-append.
+3. **GAP-6 — hold the two new arms with a test.** S, blast radius: whether item 8 stays met.
+4. **Backlog 67 — an event arm in `release.sh`** on the `i18n-consumer.sh` `git archive` + `file://`
+   proxy model, which needs no published tag and proves the half `check-event-consumer` cannot:
+   resolution with **no replace**, from a proxy, outside this tree. M.
+5. **GAP-8 — the checkpoint query in the runbook.** S.
+6. **GAP-7, GAP-9, GAP-10, GAP-11.** S each, no dependencies.
+
+## What I did not check, this round
+
+- **`make integration` as a whole**, and `make tidy`, `make vuln`, `make generate`, `make api`'s
+  write path. `check-tidy` and `check-replaces` ran green inside `make check`; I generated the
+  surface to `/tmp` rather than letting `make api` write. `make integration` would be red on the
+  foreign `test/auditflow` arm regardless; I ran `test/eventflow` under the integration tag twice
+  instead.
+- **The composed consumer graph by hand for its vv module set** — the script asserts it and I read
+  its output; I resolved root-only and event-only myself and only listed composed's third party.
+- **The Russian runbook line by line.** I verified its structure (21 headings against 21), its five
+  capacity numbers, its links and that it is inside the doc walk; I did not read it against the
+  English sentence by sentence.
+- **`event/eventtest`'s internal detection power**, the phase-4 appendices at their Russian source,
+  and the three foreign reds' causes — all as round 1, unchanged.
+- **Concurrency beyond the live suite.** Two `-race` runs of the tagged suite and four of
+  `test/eventflow`; I wrote no driver of my own.

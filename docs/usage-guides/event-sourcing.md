@@ -322,9 +322,14 @@ default:
    `WaitOf` supplies it from the spec, which is the reason to use `WaitOf`.
 
 **What it costs.** One park count plus one checkpoint load per cover member, per
-poll, per waiting caller, at `Every` (50 ms by default). Four members at the
-default is 80 small indexed `SELECT`s a second per waiter. The lever is `Every`,
-and a request path that wants 200 ms writes 200 ms.
+poll, per waiting caller, at `Every` (50 ms by default) — and **two** loads per
+member while that member has recorded no row yet. So `1 + |cover|` reads a poll
+healthy and `1 + 2 x |cover|` during a rebuild: four members at the default is
+**100** small indexed `SELECT`s a second per waiter, **180** while that generation
+is still rebuilding, and one more per poll while its park queue is not empty. The
+lever is `Every`, and a request path that wants 200 ms writes 200 ms. The full
+derivation, including the two `Generations.Active` reads a whole wait pays, is on
+[projection](../modules/en/projection.md).
 
 ---
 
@@ -426,6 +431,10 @@ a recorded instant is a database clock and not an ordering.
 
 ## Part VIII — the operational edges, before you meet them
 
+The procedures — restore, rollback, redrive, capacity and the four incidents —
+are on their own page: [event-operations.md](event-operations.md). These are the
+edges you decide about before you ever run one.
+
 - **Set `idle_in_transaction_session_timeout`** on the application role. The
   PostgreSQL log walk waits on the cluster's oldest running transaction id, so one
   leaked connection anywhere stalls every projection over the schema — and, if you
@@ -454,6 +463,7 @@ a recorded instant is a database clock and not an ordering.
 
 | You want | Read |
 |---|---|
+| to run it: restore, rollback, the DLQ, capacity, incidents | [event-operations.md](event-operations.md) — the operator's page |
 | the whole API, one page per package | [event](../modules/en/event.md) · [projection](../modules/en/projection.md) · [receipt](../modules/en/receipt.md) · [eventmemory](../modules/en/eventmemory.md) · [eventpg](../modules/en/eventpg.md) · [eventtest](../modules/en/eventtest.md) |
 | to write your own store or checkpoint store | [eventtest](../modules/en/eventtest.md) — the contract as a suite you run |
 | a runnable program | [`_examples/event-wait`](../../_examples/event-wait/) · [`_examples/event-receipts`](../../_examples/event-receipts/) · [`_examples/event-partitions`](../../_examples/event-partitions/) · [`_examples/event-generations`](../../_examples/event-generations/) · [`_examples/event-checkpoints-elsewhere`](../../_examples/event-checkpoints-elsewhere/) |

@@ -374,6 +374,8 @@ runner — это отдельный проход по всему журналу
   сертифицировано
 - [`MIGRATIONS.md`](https://github.com/frostgrove/vv/blob/main/event/eventpg/MIGRATIONS.md)
   — путь оператора, тринадцать операторов и строка v1→v2
+- [event-operations.md](../../usage-guides/ru/event-operations.md) — runbook: что
+  делать с затором выше и четыре инцидента, один из которых он и есть
 - [[D-091]] · [[D-101]] · [[D-118]] · [[D-121]] · [[D-126]] · [[D-127]] ·
   [[D-128]] · [[D-132]] · [[D-133]] · [[FL-036]] · [[FL-037]] · [[FL-038]] ·
   [[UC-032]]

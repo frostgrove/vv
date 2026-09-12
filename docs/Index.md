@@ -73,6 +73,13 @@ Both lead with what you get and only then how to set it up.
   ordinary Go models and generate DTOs, metamodels and repository blueprints
 - [usage-guides/tenancy.md](usage-guides/tenancy.md) — serve many tenants from
   one deployment: the control plane, the bind, the ownership column, the indexes
+- [usage-guides/event-sourcing.md](usage-guides/event-sourcing.md) — record what
+  happened and read it back: the aggregate, the store, projections, the wait,
+  receipts
+- [usage-guides/event-operations.md](usage-guides/event-operations.md) — and then
+  run it: restore and replay, the `xmin` stall, the dead-letter queue, capacity
+  and four incidents. Russian:
+  [usage-guides/ru/event-operations.md](usage-guides/ru/event-operations.md)
 
 ## Roadmap
 

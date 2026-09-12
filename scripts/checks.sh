@@ -25,6 +25,18 @@ SUBSYSTEMS=(crud auth port remote storage app tenancy event)
 # the one that disappeared — and it needs no git, so the arm runs from a tarball
 # or a vendor directory.
 EVENT_KERNEL_MANIFEST=scripts/event_kernel.sha256
+
+# The combination package names the PostgreSQL event-sourcing roadmap forbids,
+# plus the two spellings D-121 and Roadmap.md use for the same pair. The
+# direction of the import graph is already held — by
+# TestNoBaseSubsystemDependsOnTheEventExtension and by each package's charging
+# row — and neither of those sees a name. A top-level eventotel/ that imported
+# nothing forbidden would pass every graph test in the repository, and the first
+# thing it would do is make the combination look sanctioned.
+EVENT_COMBINATIONS=(
+	tenancyevent eventtenancy auditevent eventaudit eventotel
+	eventstorage eventkafka eventnats eventpgotel eventpgaudit
+)
 TRIPLETS=(
 	'crud/http/crudnet,crud/http/crudgin,crud/http/crudfiber'
 	'auth/http/authnet,auth/http/authgin,auth/http/authfiber'
@@ -653,6 +665,66 @@ event_kernel_moved() {
 	echo 'event-kernel-moved: ok'
 }
 
+check_event_consumer() {
+	"$SCRIPT_DIR/event-consumer.sh"
+}
+
+# A name is refused in the three places it can be written: a directory, a package
+# clause and a module path. Prose is deliberately not read — the roadmap, D-121
+# and this file all have to be able to say the names out loud.
+#
+# The walk refuses rather than reporting ok when it finds nothing to walk. A
+# combination check run where there are no Go files and no modules is a green
+# line nobody earned, and that is exactly how it would read from the wrong
+# directory.
+check_event_combinations() {
+	local pattern sources modules name found failed=0
+	pattern=$(IFS='|'; echo "${EVENT_COMBINATIONS[*]}")
+	sources=$(find . -type f -name '*.go' -not -path './.git/*' | wc -l)
+	modules=$(all_modules | wc -l)
+	if (( sources == 0 || modules == 0 )); then
+		echo "check-event-combinations found $sources Go files and $modules modules, so the names it refuses were compared against nothing"
+		return 1
+	fi
+	for name in "${EVENT_COMBINATIONS[@]}"; do
+		found=$(find . -type d -name "$name" -not -path './.git/*' | LC_ALL=C sort)
+		if [[ -n $found ]]; then
+			echo "$name is a combination package this repository refuses to have, and it is a directory here:"
+			printf '%s\n' "$found" | sed 's/^/  /'
+			failed=1
+		fi
+	done
+	found=$(grep -rlE "^package ($pattern)(_test)?\$" --include='*.go' --exclude-dir=.git . | LC_ALL=C sort || true)
+	if [[ -n $found ]]; then
+		echo 'these files declare a combination package this repository refuses to have:'
+		printf '%s\n' "$found" | sed 's/^/  /'
+		failed=1
+	fi
+	found=$(all_modules | while IFS= read -r module; do
+		awk -v pattern="^($pattern)\$" -v module="$module" '
+			$1 == "module" {
+				count = split($2, part, "/")
+				for (index_ = 1; index_ <= count; index_++) {
+					if (part[index_] ~ pattern) print module "/go.mod: " $2
+				}
+				exit
+			}
+		' "$module/go.mod"
+	done | LC_ALL=C sort)
+	if [[ -n $found ]]; then
+		echo 'these modules are named for a combination this repository refuses to have:'
+		printf '%s\n' "$found" | sed 's/^/  /'
+		failed=1
+	fi
+	if (( failed != 0 )); then
+		echo '  an extension adapts a neutral seam or it is an application composition fixture.'
+		echo '  A package named for two extensions is neither, and the roadmap names these by'
+		echo '  name so that the first one to be written is refused rather than reviewed.'
+		return 1
+	fi
+	echo "check-event-combinations: ok, ${#EVENT_COMBINATIONS[@]} names refused across $sources files and $modules modules"
+}
+
 case ${1:-} in
 	all)
 		check_deps
@@ -667,6 +739,8 @@ case ${1:-} in
 		check_otel_operations
 		check_workspace
 		check_event_kernel
+		check_event_combinations
+		check_event_consumer
 		;;
 	deps) check_deps ;;
 	tiers) check_tiers ;;
@@ -682,5 +756,7 @@ case ${1:-} in
 	event-kernel) check_event_kernel ;;
 	event-kernel-baseline) event_kernel_baseline ;;
 	event-kernel-moved) shift; event_kernel_moved "$@" ;;
+	event-combinations) check_event_combinations ;;
+	event-consumer) check_event_consumer ;;
 	*) echo "unknown check: ${1:-}" >&2; exit 2 ;;
 esac

@@ -354,3 +354,106 @@ func sameRows(before, after []storedRow) bool {
 	}
 	return true
 }
+
+// The other direction of the same mixed release, and it is the one a rollback
+// takes: the v2 build wrote while a v1 build was still serving. An old reader
+// meeting revision 2 must refuse loudly and fold nothing, because the rows it
+// can read are a prefix of a history whose tail it cannot — and a state folded
+// from that prefix is a balance that is simply wrong, with no refusal anywhere
+// to say so.
+//
+// What the v1 build keeps is the bounded read: the prefix up to the version
+// before the first revision-2 row still folds, because every row in it is a
+// revision this build retains. That is the one thing an operator can still do
+// during a rollback, and it is asked here rather than assumed.
+func TestARolledBackBuildMeetingRevisionTwoRefusesRatherThanFolding(t *testing.T) {
+	schema := deployed(t, "eventpg_rollback")
+	store := prepared(t, schema)
+	const family = "eventpg.rollback.wallet"
+	ctx := t.Context()
+
+	old, oldCredited := declareWalletV1(t, family)
+	v1, err := event.Bind(event.Open(store), old)
+	if err != nil {
+		t.Fatalf("binding the v1 declaration answered %v", err)
+	}
+	_, at, err := v1.Load(ctx, "a")
+	if err != nil {
+		t.Fatalf("loading a fresh stream answered %v", err)
+	}
+	for _, amount := range []int64{1, 2} {
+		if at, _, err = v1.Append(ctx, at, oldCredited.New("a", walletV1{Amount: amount})); err != nil {
+			t.Fatalf("appending a v1 credit of %d answered %v", amount, err)
+		}
+	}
+	stale := at
+
+	current, currentCredited := declareWalletV2(t, family)
+	v2, err := event.Bind(event.Open(store), current)
+	if err != nil {
+		t.Fatalf("binding the v2 declaration answered %v", err)
+	}
+	state, ahead, err := v2.Load(ctx, "a")
+	if err != nil {
+		t.Fatalf("the v2 build could not read the two v1 rows: %v", err)
+	}
+	if state.Balance != 3 {
+		t.Fatalf("the v2 build folded the two v1 credits to %+v", state)
+	}
+	if _, _, err = v2.Append(ctx, ahead, currentCredited.New("a", walletV2{Amount: 4, Currency: "usd"})); err != nil {
+		t.Fatalf("the v2 build could not append at revision 2: %v", err)
+	}
+
+	written := stored(t, schema, aStream(family, "a"))
+	if len(written) != 3 {
+		t.Fatalf("two v1 credits and one v2 credit left %d rows", len(written))
+	}
+	if written[2].revision != 2 {
+		t.Fatalf("the credit the v2 build wrote was stored at revision %d, so the case below meets nothing new", written[2].revision)
+	}
+
+	t.Run("the v1 build refuses the whole stream and folds nothing", func(t *testing.T) {
+		folded, reached, err := v1.Load(ctx, "a")
+		if !errors.Is(err, event.ErrRevision) {
+			t.Fatalf("a build that retains one revision read a stream holding revision 2 and answered %v", err)
+		}
+		if folded != (wallet{}) {
+			t.Fatalf("the refused load handed back %+v, and a partially folded balance is the one answer a rollback may not produce", folded)
+		}
+		if reached.Version() != 0 {
+			t.Fatalf("the refused load handed back version %d, and a version from a refused read is the first half of a write", reached.Version())
+		}
+	})
+
+	t.Run("the v1 build cannot append over what it could not read", func(t *testing.T) {
+		if _, _, err := v1.Append(ctx, stale, oldCredited.New("a", walletV1{Amount: 8})); !errors.Is(err, event.ErrConflict) {
+			t.Fatalf("an append decided at the version this build last saw answered %v, and the stream has moved past it", err)
+		}
+		if after := stored(t, schema, aStream(family, "a")); len(after) != 3 {
+			t.Fatalf("the refused append left %d rows where the stream held 3", len(after))
+		}
+	})
+
+	t.Run("the v1 build still reads the prefix written before the rollback", func(t *testing.T) {
+		folded, err := v1.StateAt(ctx, "a", event.Version(2))
+		if err != nil {
+			t.Fatalf("the prefix of two revision-1 rows answered %v to the build that wrote them", err)
+		}
+		if folded.Balance != 3 {
+			t.Fatalf("the prefix folded to %+v where its two credits sum to 3", folded)
+		}
+		if _, err := v1.StateAt(ctx, "a", event.Version(3)); !errors.Is(err, event.ErrRevision) {
+			t.Fatalf("a prefix reaching the revision-2 row answered %v", err)
+		}
+	})
+
+	t.Run("nothing the v1 build did rewrote a row", func(t *testing.T) {
+		if after := stored(t, schema, aStream(family, "a")); !sameRows(written, after) {
+			t.Fatalf("the stored rows changed while an older build failed to read them: %v then %v", payloads(written), payloads(after))
+		}
+		state, _, err := v2.Load(ctx, "a")
+		if err != nil || state.Balance != 7 || state.Currency != "usd" {
+			t.Fatalf("the v2 build reads %+v (%v) after the v1 build's refusals, where its three credits sum to 7", state, err)
+		}
+	})
+}
