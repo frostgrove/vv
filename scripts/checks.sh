@@ -620,6 +620,26 @@ check_event_kernel() {
 # INV-041 and the claim set exist to close, and doc.go says which two clauses of
 # the transactions section a store certified before this is asked. Nothing under
 # event/projection/ or event/receipt/ moved, and no signature anywhere did.
+#
+# The round that closed that measurement's own findings moved eight files and one
+# refusal. event/receipt/claim.go moves for the first time since phase 5, and it
+# is a sentence rather than a rule: claimAnswered's fresh-row check is a switch
+# over its three arms, so a row that is complete beside no range at all — the row
+# an EMPTY COMMIT writes — is refused in its own words instead of sharing the
+# sentence about a range it does not carry. No signature moved, and the condition
+# admits and refuses exactly what it did. event/eventtest/sections_ledger.go
+# re-partitions the repeat section: a loser is now claimed twice, once with the
+# fingerprint the row holds and once with another operation's, because a ledger
+# that answers the fingerprint it was handed makes every collision read as a
+# repeat and the old section compared that value with itself.
+# defects_ledger.go and defects_checkpoints.go carry the two inventory rows that
+# falsify it and the durability section — echoesPrint and kept — and
+# checkpoints_test.go loses the durability exemption the second one made
+# unnecessary. sections_generations.go stops receiving from one channel twice, so
+# deleting the locking read's assertion fails in a second rather than deadlocking
+# to the package timeout. event/eventmemory/transaction.go gains a comment and no
+# code: Tx.revalidate has no reachable input while a claim dies with its holder,
+# and an arm nothing can reach reads exactly like an arm nothing tested.
 event_kernel_baseline() {
 	local computed
 	if ! command -v sha256sum >/dev/null 2>&1; then

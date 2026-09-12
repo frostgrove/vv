@@ -1,5 +1,20 @@
 # EVENTSOURCE — detection measurement — GAPS
 
+## Round 2 — dispositions — 2026-09-13
+
+All six are dispositioned below, each against the reproduction that came first. GAP-1, GAP-2 and
+GAP-3 are **fixed**; GAP-4 and GAP-6 were cheap once the code was open and are **fixed** too;
+GAP-5's documentation half is **fixed** and its inventory half is **scheduled** in
+`EVENTSOURCE_BACKLOG.md` item 1, which now names the four thin sections and the ceiling.
+
+One close criterion was **refused with its argument**: GAP-3's suggestion that the three refusals
+carry the row they saw. `event/refusalmessages_test.go` forbids a refusal from rendering a `Version`
+— "a version, a position and a cursor are the three numbers an operator's log would let anybody
+replay a history from" — and the first attempt at it turned that gate red. The three sentences are
+distinct by naming the *field* that was not fresh instead: already complete, a first version, a last
+version. GAP-3's second question — whether an empty commit's range deserves a representation of its
+own — is answered by [[D-143]] and declined below.
+
 ## Round 1 — test reviewer (independent measurement) — 2026-09-13
 
 Nothing in this round was fixed. Sixty-five implementation mutations and fourteen assertion
@@ -23,8 +38,8 @@ same mutation set against that tree.
 | The 47 of those that also exist at `07b681e`, current tree | **44 / 47 = 94%** |
 | The same 47, pre-stage tree (`07b681e`, stages discarded) | **42 / 47 = 89%** |
 | Assertion neutralisation in the seven `Run` section files (sample of 14) | **1 / 14 = 7%** |
-| Sections named by no defect row | **1 of 52** (`RunCheckpoints`/`durability`) |
-| Sections whose body can be emptied with the tree green | **1 of 52** (the same one) |
+| Sections named by no defect row | **1 of 52** (`RunCheckpoints`/`durability`) — **0 of 52 after round 2** |
+| Sections whose body can be emptied with the tree green | **1 of 52** (the same one) — **0 after round 2** |
 | Consumer harnesses that fail against a defective implementation | **3 of 3**, each naming the obligation |
 | `event/` suite runtime | 14 s wall (`event` 7.5 · `eventmemory` 1.5 · `eventtest` 13.4 · `projection` 6.1 · `receipt` 1.0, parallel) |
 | Live tagged suite | 134.7 s then 139.9 s, both green |
@@ -63,14 +78,25 @@ are of the second kind; my 94% is of the first. Neither number supersedes the ot
   and why this one slips past it. Verified: `probeReturningOnly` (a loser answered no row) **is**
   caught, by `sameRow`'s key arm — so the section is not inert, it is partitioned wrong.
 - **Close criteria:**
-  - [ ] `ledgerRepeatSection`, or a new `collision` section, claims one key with two fingerprints
-        that differ and refuses a ledger whose loser answers the asked fingerprint.
-  - [ ] A defect row `answers the fingerprint it was handed rather than the one its table holds`
-        exists in `ledgerDefects()` and `TestTheLedgerHarnessStillDetectsEveryDefectItWasBuiltToDetect`
-        reports its section `failed`, with the plain row `passed` beside it.
-  - [ ] The row's control proves the new section fails for the new defect and not for `echoes`.
-  - [ ] `event/eventpg`'s `applicationMutations()` gains the live spelling and stays at 6 of 6.
-- **Status:** open
+  - [x] `ledgerRepeatSection` now drives **two** losers through one helper, `receipts.lost`: one
+        claiming with the fingerprint the row holds and one with another operation's. The section is
+        partitioned rather than given a seventh rule — `sameRow`'s fingerprint arm was always the
+        right assertion and had nothing to compare.
+  - [x] `ledgerDefects()` carries `answers the fingerprint it was handed rather than the one its
+        table holds` (`echoesPrint`), inventory 10 → 11, and
+        `TestTheLedgerHarnessStillDetectsEveryDefectItWasBuiltToDetect` reports `repeat: failed` for
+        it with the plain ledger `passed` beside it.
+  - [x] `TestTheEchoedFingerprintIsCaughtByTheFingerprintAndTheEchoedRowByItsRange` reads the
+        *reason*: `echoes` is refused by the range arm and `echoesPrint` by the fingerprint arm, so
+        neither answers for the other and the second loser is doing the work.
+  - [x] `applicationMutations()` gains `echoes-the-fingerprint-it-was-handed` (5 → 6, the live
+        `liveLedger.echoesPrint` flag), and the live run is 6 of 6.
+- **Status:** **fixed 2026-09-13.** Reproduced first: a probe ledger echoing the asked fingerprint,
+  through `RunLedger` over the reference — all seven sections `passed`, exit 0. After the fix the
+  same probe reports `repeat: failed — a claim of that same key made under another operation's
+  fingerprint answered the fingerprint sha256:0909… where the row holds sha256:0202…`, in memory and
+  again against live PostgreSQL. The probe file was deleted; `echoesPrint` is its permanent
+  replacement in the inventory.
 
 ---
 
@@ -91,13 +117,18 @@ are of the second kind; my 94% is of the first. Neither number supersedes the ot
 - **Why this timing:** the exemption is written down as "the list can only shrink", which reads as
   a bounded concession. It is not bounded today: nothing fails if the section becomes empty.
 - **Close criteria:**
-  - [ ] Either a `CheckpointDefect` row names `durability` (a factory whose `Sibling` builds a value
-        with none of what the first wrote, as `defects.go:112` already spells for the store suite),
-        or a named control asserts the section `failed` for such a factory.
-  - [ ] Neutralising `sections_checkpoints.go:517` turns `./event/eventtest/` red.
-  - [ ] `undecorated` in `checkpoints_test.go` is empty, or its remaining member carries a control
-        that fails when the section's body is emptied.
-- **Status:** open
+  - [x] A `CheckpointDefect` row names `durability`: `kept`, a decorator that answers only for the
+        rows the value that wrote them holds — a store whose map is a field, or a write-back cache
+        nothing flushed. The exemption's stated ground (*"no decorator can falsify a property about
+        a value built afterwards"*) was wrong, which is why it had to be load-bearing.
+  - [x] Neutralising `sections_checkpoints.go:517` turns `./event/eventtest/` red:
+        *"the suite no longer detects a checkpoint store that answers only for the rows the value
+        that wrote them holds: its durability section was reported "passed""*.
+  - [x] `undecorated` is gone, with `sortedNames` and the exemption-staleness loop that served it.
+        Inventory 14 → 15; `checkpointGuarded` now requires a defect for every section without an
+        escape.
+- **Status:** **fixed 2026-09-13.** Reproduced first: line 517 deleted, `go test -race ./event/...`
+  green on all five packages, exit 0.
 
 ---
 
@@ -117,12 +148,27 @@ are of the second kind; my 94% is of the first. Neither number supersedes the ot
   over a key that is already spent. That is a duplicate append under one idempotency key — the
   exact failure the closeout names as the top risk.
 - **Close criteria:**
-  - [ ] The `TestALedgerThatAnswersSomethingNoLedgerAnswersIsRefused` table drives three rows, one
-        per arm: `Complete` alone, `First` alone, `Last` alone.
-  - [ ] Each is refused with `ErrLedger` and the three refusals are distinct sentences (the table's
-        existing `said` rule already enforces that).
-  - [ ] Rewriting `||` as `&&` turns `./event/receipt/` red.
-- **Status:** open
+  - [x] The table drives three rows, one per arm, built by `wonWith`: `Complete` alone, `First`
+        alone, `Last` alone.
+  - [x] Each is refused with `ErrLedger` and the three sentences are distinct — **by naming the
+        field rather than the row**. Rendering the row itself (`%d..%d complete=%v`) was written
+        first and turned `./event` red on `TestNoRefusalRendersAnIdentityAPayloadAKeyOrACursor`
+        (*"receipt/claim.go:268:27 in claimAnswered: a Version is rendered into a refusal"*), which
+        is a binding rule and a good one. The one `if` became a three-arm `switch`: already
+        complete · a range that carries a first version · one that carries a last version.
+  - [x] `||` rewritten as `&&` turns `./event/receipt/` red, and so does deleting any one of the
+        three arms on its own — four mutations, four distinct failures, each naming its own row.
+- **The representation question, answered rather than left open.** Three zeroes do **not** mean two
+  things: `Complete` is the discriminator and [[D-143]] says so in as many words — *"`0..0` is also
+  the honest range of a decision that yielded no changes, which is why the discriminator is
+  `Receipt.Complete` and never the range"*. A distinguishable range (a NULL pair, an `Empty` flag)
+  would add a column to every consumer's table for a state the pair already spells, and
+  `receipt.Receipt` is the shape a ledger author maps to columns — so changing it is a contract move
+  against a binding decision, for no information gained. **Declined**, and the fix instead makes the
+  refusal say which of the three it saw, which is where the ambiguity actually was: the old sentence
+  said *"already carries a range"* about a row carrying none.
+- **Status:** **fixed 2026-09-13.** Reproduced first: `||` → `&&` at `claim.go:266`,
+  `go test -race ./event/...` green on all five packages, exit 0.
 
 ---
 
@@ -138,12 +184,19 @@ are of the second kind; my 94% is of the first. Neither number supersedes the ot
   the file does not say so, and an arm nothing can reach reads exactly like an arm nothing tested.
   A later change that makes claims sweepable rather than weak would silently remove the defence.
 - **Close criteria:**
-  - [ ] Either a test drives a staged version that moved between `stage` and `Commit` and asserts
-        `errStaleClaim`, or the comment at `transaction.go:163-165` states that the check has no
-        reachable input today and names what would give it one.
-  - [ ] If the second: a test asserts the property the check would otherwise hold — an autocommit
-        append into a claimed stream is refused — so the defence's *purpose* stays pinned.
-- **Status:** open
+  - [x] The second option: the comment now states that nothing reaches `errStaleClaim` today, why
+        (publish is the only writer of a stream's history, every other writer of a claimed stream is
+        refused at `append.go:46`, a claim dies only with a transaction nothing can reach and one
+        nothing can reach never reaches `Commit`), and what would give it an input — a claim that
+        can be swept rather than one that dies with its holder.
+  - [x] The property it would otherwise be the last line of is already pinned, and the comment names
+        it: `TestAStreamIsClaimedOnlyWhileSomethingCanStillCommitIt`, whose first subtest refuses an
+        autocommit append into a live transaction's claimed stream and whose second is the control
+        that the same claim clears once nothing can reach the transaction.
+  - The comment also separates it from its neighbour: `revalidateSaves` **does** have inputs, because
+    no claim covers a checkpoint row.
+- **Status:** **fixed 2026-09-13.** Not removed: an arm with no input today is a defence against the
+  change that gives it one, and the change that would is named.
 
 ---
 
@@ -166,11 +219,18 @@ are of the second kind; my 94% is of the first. Neither number supersedes the ot
   (`durability`, `monotone visibility`, `store failure classification`) have one defect or none
   against one assertion or none.
 - **Close criteria:**
-  - [ ] The backlog entry states the ceiling and reports `killed / inventoried-reachable` rather
-        than `killed / all assertions`.
-  - [ ] The four sections above reach at least one inventory row per two assertion sites, or the
-        residue is named as assertions no store can falsify (a factory contract, not a store one).
-- **Status:** open
+  - [x] `EVENTSOURCE_BACKLOG.md` item 1 now states the ~24% ceiling, reports the rate against what
+        the method can reach, says the lever is inventory rows and never assertions, and carries the
+        per-section table below. `EVENTSOURCE_CLOSEOUT.md` carries the same correction beside the
+        three mutations it ran, and its "what I did not check" bullet no longer leaves the 16%
+        unqualified.
+  - [ ] The four thin sections — `binding` 2/11, `expected version` 1/10, `stream identity` 2/8,
+        `payload ownership` 4/8 — reach one inventory row per two assertion sites, or their residue
+        is named as assertions no store can falsify. **Scheduled**, in the backlog entry, which now
+        names them as the work it keeps.
+- **Status:** **documentation half fixed 2026-09-13; inventory half scheduled** in the backlog. The
+  two are separable: the misreported metric was actively misleading and is corrected now; writing
+  eight or ten more defect decorators is ordinary work with no gate behind it.
 
 ---
 
@@ -184,9 +244,15 @@ are of the second kind; my 94% is of the first. Neither number supersedes the ot
 - **Why this severity:** it is caught, so nothing ships wrong. A maintainer who breaks that line
   gets a goroutine dump instead of the sentence the house rule asks for.
 - **Close criteria:**
-  - [ ] The section reads `answered` once into a variable and branches on it, so the deleted
-        assertion leaves a clean failure or a clean pass rather than a second receive.
-- **Status:** open
+  - [x] The channel is received from in one arm or the other and never in both: the wait's tail —
+        the rollback, the second receive and the cutover's answer — moved inside the `time.After`
+        arm, so the arm that already received never receives again.
+- **Status:** **fixed 2026-09-13.** Reproduced first, on the shape as it stood: the assertion
+  deleted, `go test -race -timeout 45s -run TestTheOwnershipHarnessStillDetects…` panicked with
+  *"test timed out after 45s … goroutine 1 [chan receive]"* after 46s wall. On the fixed shape the
+  same deletion fails in **1.0s** with the sentence the rule asks for: *"the harness no longer
+  detects an ownership row that reads the ownership row without taking a lock on it: its locking
+  read section was reported "passed""*.
 
 ---
 
@@ -366,6 +432,9 @@ The backlog's "nine of twenty" is stale for the `Run` suite: it is now zero of t
 remainder is the checkpoint suite's `durability`, explicitly exempted at `checkpoints_test.go:328`
 — and M61 shows the exemption is load-bearing, so it is a real hole, not a bookkeeping one (GAP-2).
 
+**Round 2:** that remainder is closed. The checkpoint inventory is 15 rows over 14 sections, the
+ledger's is 11 over 7, and no section of the fifty-two is named by no defect row.
+
 ---
 
 ## Consumer-harness falsification — three of three fail, naming the obligation
@@ -433,3 +502,250 @@ it was asked with** is certified by all seven sections.
 - `git status --porcelain` identical to the starting 65 lines.
 - The pre-stage comparison ran on a clone at `/tmp/before_tree`, since deleted; the working tree was
   never checked out or stashed.
+
+---
+
+## Round 3 — independent verification of the round-2 fixes — 2026-09-13
+
+Nothing here was fixed and nothing was read for credit. Every claim below is a command I ran. The
+tree was hashed before the first mutation and after the last: **2367 files,
+`sha256(manifest) = db9eef13255b268f88b8baab7bdd72ea5f90a1645dc107ad847c2b7fa39e73cb`, identical**,
+`git status --porcelain` unchanged at 26 lines, three probe packages created and deleted.
+
+### Verdict
+
+| Finding | Round-2 status | My verdict |
+|---|---|---|
+| GAP-1 `[critical]` the ledger harness certifies an echoing ledger | fixed | **CLOSED** — proved with a `Ledger` of my own, written from nothing |
+| GAP-2 `[high]` the durability body can be emptied green | fixed | **CLOSED** — body emptied, tree red; exemption gone, guard names durability |
+| GAP-3 `[high]` `claimAnswered` widens on a shape this package writes | fixed | **CLOSED** — four mutations, four distinct deaths; the escaping shape driven end to end |
+| GAP-4 `[medium][deferred]` `Tx.revalidate` unreachable | fixed (documented) | accepted — the comment names the input that would give it one |
+| GAP-5 `[medium][immediate]` the metric's ceiling | doc half fixed | accepted — ceiling and per-section table in both documents; residue scheduled |
+| GAP-6 `[low][deferred]` detection by deadlock | fixed | **CLOSED** — 1.0 s with a sentence, measured |
+| — | — | **NEW GAP-7 `[medium][deferred]`** — see below |
+
+Detection rate has not fallen: **12 of 12 viable mutations of my own killed**, two further mutations
+rejected as non-viable because they do not compile.
+
+---
+
+### GAP-1 — closed. Proved with a ledger of my own, not the fix round's fixture.
+
+I wrote a complete `receipt.Ledger` from nothing in an external package
+(`event/eventtest/gap1probe`, since deleted): its own table, its own per-key latch standing in for
+the primary-key index, its own unit of work, `Find` and `Horizon` on no unit at all — the insert
+first and the read after it, in one unit, the way the contract describes. One flag, `echo`, is the
+one thing written wrong: when the claim loses, `found.Fingerprint = row.Fingerprint`. It shares no
+line with `echoesPrint` and is not a decorator over anything.
+
+- `RunLedger` over it: **`repeat: failed`** — *"a claim of that same key made under another
+  operation's fingerprint answered the fingerprint sha256:0909… where the row holds sha256:0202…"*.
+  The other six sections pass, so the refusal is the defect's and not the fixture's.
+- The **control**, the identical ledger with `echo` off: all seven sections `passed`, exit 0.
+- The **reproduction**, so the fix is what catches it: with only
+  `event/eventtest/sections_ledger.go` reverted to `HEAD` (the pre-fix partition, one loser) and
+  everything else as it stands, the same echoing ledger is certified — `ok`, exit 0. Restored
+  byte-identically (`b1462754…`, the kernel baseline).
+- The repository's own reference: `TestTheReferenceLedgerIsCertified` — seven of seven `passed`.
+- **Live PostgreSQL 17.9**: `TestTheLiveLedgerSatisfiesTheContract` — seven of seven `passed`;
+  `TestTheApplicationHarnessesCatchADefectiveImplementation` — six of six, the new
+  `echoes-the-fingerprint-it-was-handed` among them, on the `repeat` section, 2.15 s.
+
+**The consequence, checked at `event/receipt/claim.go` rather than reasoned about.** A second probe
+package (`event/receipt/gap1collision`, since deleted) wired `eventmemory` plus a ledger of my own
+and drove `receipt.Once`:
+
+- a key spent on one operation, claimed again by a different one → `errors.Is(err, ErrCollision)`
+  true, the stream unmoved. **`ErrCollision` is reachable and returned.**
+- controls: the identical operation retried under its own key → `Repeated`, nothing appended; a
+  fresh key → appends. So the refusal is about the key and not about everything.
+- the mirror, under the echoing ledger: the same collision answers **nil**, the append is
+  suppressed, and `Resolve` reports the first operation's range to the second caller. The
+  consequence GAP-1 named is real, and the `repeat` section is the only thing standing in front
+  of it.
+
+### GAP-2 — closed. The body was emptied and the tree went red.
+
+`event/eventtest/sections_checkpoints.go:517` deleted (the section's only assertion):
+`go test -race ./event/...` → **`--- FAIL: TestEveryCheckpointDefectIsReportedByItsOwnSection`**,
+*"the suite no longer detects a checkpoint store that answers only for the rows the value that wrote
+them holds: its durability section was reported "passed""*. Restored byte-identically
+(`d7df40ef…`), suite green.
+
+The exemption is gone rather than moved: `undecorated`, `sortedNames` and the staleness loop are
+deleted, and `checkpointGuarded` has no escape. Removing the `kept` inventory row alone turns
+`./event/eventtest/` red twice — *"the checkpoint suite carries 14 defects where its inventory is 15
+rows"* and *"no defect in this suite's inventory breaks the durability section"*. And the section
+still asserts through the **second** value: rewriting `unchangedRow(ctx, restarted, …)` to
+`unchangedRow(ctx, held, …)` is killed. The old exemption's stated ground — that no decorator can
+falsify a property about a value built afterwards — was simply wrong, and the fix says so.
+
+### GAP-3 — closed. Four mutations, four deaths, and the escaping shape driven.
+
+`claimAnswered`'s three arms are now a `switch`. The equivalent of M43 — collapsing it back to
+`if held.Complete && held.First != 0 && held.Last != 0` — is **killed**:
+*"a ledger that reports a win beside a row an empty commit already completed answered <nil>"*.
+Deleting each arm on its own is killed too, each with its own sentence: `already complete`,
+`a first version`, `a last version`. Four for four, restored byte-identically each time
+(`4491c93d…`).
+
+**Driven end to end** in a third probe package (`event/receipt/gap3empty`, since deleted):
+
+- an operation that yields no changes leaves a row with `Complete = true, First = 0, Last = 0` —
+  asserted on the ledger's own row, so the premise is measured and not assumed;
+- a **retry** over that key against a conformant ledger → `Repeated`, nothing appended;
+- the same retry against a ledger whose `won` is a rowcount while its read picked up the row already
+  there → refused with `ErrLedger`, verdict **not** `Recorded`, the stream unmoved;
+- the **control**: the same defect over a key whose operation wrote a range, refused by a different
+  arm. Under the `&&` mutant the control still passes while the empty-commit case fails — which is
+  exactly the asymmetry GAP-3 named.
+
+Under the `&&` mutant my own probe reports *"a retry over a key an empty commit had already spent
+was handed Recorded, so the work ran a second time under one operation key"*.
+
+**One correction to my own method, recorded because it nearly produced a false green.** My first
+version of that probe had the second caller submit a *different* operation. It passed under the
+`&&` mutant — not because the check held, but because the **fingerprint** arm fired first. A probe
+that passes for the wrong reason is the same liability as a test that does. The published shape
+above claims with the fingerprint the row holds, so the completion arm is the only thing left.
+
+The representation question is answered, not deferred, and the answer is grounded: `D-143` line 72
+does say *"`0..0` is also the honest range of a decision that yielded no changes, which is why the
+discriminator is `Receipt.Complete`"*. Declining a contract move against a binding decision for no
+information gained is right.
+
+### GAP-6 — closed, and I timed it.
+
+Deleting the locking-read `refuse` fails in **1.0 s** (2.7 s wall for the whole `-run`) with
+*"the harness no longer detects an ownership row that reads the ownership row without taking a lock
+on it: its locking read section was reported "passed""*, against the ten-minute package timeout
+round 1 measured. The `select`'s tail assertions still run on the passing arm — the section did not
+become weaker by moving them.
+
+---
+
+### NEW — GAP-7 `[medium][deferred]` two of `sameRow`'s five arms are reached by no inventory row
+
+- **Where:** `event/eventtest/ledger.go:204-217` (`receipts.sameRow`), arms `found.Key != want.Key`
+  and `found.Complete != want.Complete`.
+- **What:** neutralising either arm (`case false && (…)`) leaves `go test -race ./event/eventtest/`
+  green. The fingerprint arm and the range arm are both killed, by
+  `TestTheEchoedFingerprintIsCaughtByTheFingerprintAndTheEchoedRowByItsRange` — so the partition the
+  fix installed is real and load-bearing; these two are its uncovered neighbours.
+- **Not a regression, measured:** both survive on the pre-fix tree too (`git stash -u`, same two
+  neutralisations, both green, then `stash pop`). Adding an inventory row and a second loser can
+  only have increased detection.
+- **Why it is worth a row anyway:** round 1 reported that a ledger answering a loser **no row at
+  all** is caught by `sameRow`'s key arm. That is still true of the shipped code and is exactly the
+  single-statement claim `D-142` warns about — but nothing in the inventory drives it, so the arm
+  that would report it can be deleted unnoticed. `sameRow` is a helper, and the per-section table
+  GAP-5 recorded counts only the seven `Run` section files: the four application harnesses'
+  **helpers** are outside every measurement taken so far.
+- **Close criteria:**
+  - [ ] `ledgerDefects()` carries a row for a ledger that answers a loser no row at all (a
+        single-statement claim, one snapshot) and one that answers a loser a row for another key,
+        both on the `repeat` or `claim order` section.
+  - [ ] Each of `sameRow`'s five arms dies on its own neutralisation, read by a test that names
+        which arm reported — the shape `TestTheEchoedFingerprintIsCaughtBy…` already has.
+  - [ ] The per-section pressure table is extended to the four application harnesses, helpers
+        included, so `RunLedger`'s residue is visible the way `Run`'s now is.
+
+---
+
+### Mutation log — round 3
+
+`go test -race -count=1` over `./event/ ./event/eventmemory/ ./event/eventtest/ ./event/projection/
+./event/receipt/`, applied and reverted one at a time, every file restored by writing the original
+bytes back and every hash checked against `scripts/event_kernel.sha256`.
+
+**The three closures, re-driven.**
+
+| # | What was broken | Verdict |
+|---|---|---|
+| R01 | `sections_ledger.go` reverted to `HEAD` (pre-fix repeat section), my echoing ledger through `RunLedger` | **certified — exit 0.** The reproduction; the fix is what catches it |
+| R02 | the fixed tree, my echoing ledger through `RunLedger` | **`repeat: failed`**, naming the fingerprint it answered and the one the row holds |
+| R03 | the same ledger with the echo off | all seven `passed` — the control |
+| R04 | `sections_checkpoints.go:517` deleted (durability's only assertion) | **killed** — `TestEveryCheckpointDefectIsReportedByItsOwnSection` |
+| R05 | the `kept` durability row removed from `checkpointDefects()` | **killed**, twice: the inventory size and the per-section guard |
+| R06 | `claim.go` `claimAnswered`: the three arms collapsed to one `&&` | **killed** — the empty-commit row |
+| R07 | `claim.go`: the `held.Complete` arm deleted | **killed** — *"already complete"* |
+| R08 | `claim.go`: the `held.First != 0` arm deleted | **killed** — *"a first version"* |
+| R09 | `claim.go`: the `held.Last != 0` arm deleted | **killed** — *"a last version"* |
+| R10 | `sections_generations.go`: the locking-read `refuse` deleted | **killed in 1.0 s** with a sentence — GAP-6 |
+
+**Twelve of my own, across `event/receipt` and `event/eventtest`.**
+
+| # | File · what was broken | Verdict |
+|---|---|---|
+| N01 | `receipt/claim.go` `verdictOf` — the fingerprint comparison negated | killed — `TestACompletionThatIsNotTheClaimsIsRefusedFiveWays` |
+| N02 | `receipt/claim.go` `claimAnswered` — the no-row-at-all refusal dropped | killed — `TestALedgerThatAnswersSomethingNoLedgerAnswersIsRefused` |
+| N03 | `receipt/claim.go` `Claim` — the incomplete-row refusal never fires | killed — `TestAClaimAnAppendAndACompletionAreOneTransaction` |
+| N04 | `receipt/claim.go` `Held.Complete` — the row is completed as not complete | killed — `TestOnceRunsTheWorkOnlyOnRecordedAndCompletesIt` |
+| N05 | `receipt/claim.go` `sameUnit` — ledger and store transactions no longer compared | killed — `TestAClaimIsRefusedUnlessTheLedgerAndTheStoreAreOneTransaction` |
+| N06 | `receipt/claim.go` `Held.Complete` — the empty-commit guard on the range dropped | killed — `TestOnceRunsTheWorkOnlyOnRecordedAndCompletesIt` |
+| N07 | `eventtest/sections_ledger.go` `lost` — the `sameRow` call deleted | **NOT VIABLE** — `found` declared and not used; it does not compile |
+| N07b | `eventtest/sections_ledger.go` `lost` — the row compared with itself | killed — both `TestTheLedgerHarnessStillDetects…` and `TestTheEchoedFingerprint…` |
+| N08 | `eventtest/sections_ledger.go` — the second loser claims with the row's own fingerprint (the pre-fix partition) | killed — `TestTheLedgerHarnessStillDetectsEveryDefectItWasBuiltToDetect` |
+| N09 | `eventtest/defects_ledger.go` `echoesPrint` — the defect no longer echoes | killed — same |
+| N10 | `eventtest/sections_checkpoints.go` `durability` — read back through the value that wrote | killed — `TestEveryCheckpointDefectIsReportedByItsOwnSection` |
+| N11 | `eventtest/ledger.go` `sameRow` — the fingerprint arm neutralised | killed — `TestTheEchoedFingerprint…` |
+| N12 | `eventtest/defects_checkpoints.go` `kept.Load` — the row-hiding arm deleted | **NOT VIABLE** — `written` declared and not used |
+| N13 | `eventtest/ledger.go` `sameRow` — the range arm neutralised | killed — `TestTheEchoedFingerprint…` |
+| N14 | `eventtest/ledger.go` `sameRow` — the key arm neutralised | **SURVIVED** — GAP-7, pre-existing |
+| N15 | `eventtest/ledger.go` `sameRow` — the completion arm neutralised | **SURVIVED** — GAP-7, pre-existing |
+
+**12 viable of 14 attempted excluding the two GAP-7 arms; 12 killed = 100%.** Counting N14 and N15,
+**12 / 14 = 86%** over a set deliberately weighted toward the two files the fix round touched. The
+two non-viable ones are worth their own sentence: an assertion in `lost` and the hiding arm in
+`kept` cannot be *deleted* at all, because Go refuses the unused variable that is left. That is a
+real property of those two sites and not a measurement failure.
+
+**Read as a diff, looking for what a fix introduces.** Nothing widened: `switch {case A; case B;
+case C}` refuses exactly the set `A || B || C` did. Nothing weakened: `checkpointGuarded` lost an
+escape rather than gaining one, and the staleness loop it dropped only guarded a list that no
+longer exists. No control asserts less: `ledgerRepeatSection` went from one loser to two with the
+same assertion on both, and `lockingReadSection` moved its tail into the arm that had not already
+drained the channel, so both assertions still run on the passing path. No section passes for a new
+wrong reason — N10 and N08 are the two mutations that would have shown one, and both die.
+
+---
+
+### Gate runs — round 3
+
+| Command | Result |
+|---|---|
+| `make check` | **GREEN, 13 arms**, `CHECK EXIT=0`; `check-event-kernel: ok`, `check-event-combinations: ok, 10 names refused across 1704 files and 37 modules`, `check-event-consumer: ok` |
+| `make vet` | **GREEN**, `VET EXIT=0`, every workspace module plus `./_examples` |
+| `make examples` | **GREEN**, `EXAMPLES EXIT=0` |
+| `gofmt -l .` | **silent** |
+| `go test -race -count=1 ./event/...` | **GREEN** — `event 7.1s · eventmemory 1.5s · eventtest 13.4s · projection 6.1s · receipt 1.0s`, 14 s wall |
+| live tagged suite ×2 | `ok … 143.268s` then `ok … 143.413s`, `-race -count=1 -tags=integration ./...` inside `event/eventpg`, both exit 0 |
+| live tagged suite, DSN unset | **FAILS rather than skips**, and prints the command to run — `FROSTGROVE_EVENTPG_TEST_DSN is not set, and this suite proves nothing without a database` |
+
+`go test -race ./event/...` does **not** reach `event/eventpg`: it is its own module, so the live
+suite is run from inside it. Round 2's figure of 134–140 s was over the same package.
+
+### The three foreign reds — reproduced with the whole fix round stashed
+
+`git stash push -u` (0 dirty lines), all three re-run, `git stash pop` (26 dirty lines back), tree
+manifest identical afterwards:
+
+| Arm | With the fix round stashed | Verdict |
+|---|---|---|
+| `./scripts` `TestNoI18nPackageCostsMoreThanItsErrorSeam` | `FAIL` | **foreign** |
+| `./i18n/cmd/vv-i18n` | `FAIL`, 36 `--- FAIL` lines (`./i18n` itself green) | **foreign** |
+| `./test/auditflow` | `FAIL` | **foreign** |
+
+No file the fix round touched is under `i18n/`, `test/` or `scripts/i18n*`. `make unit` is **not**
+green and is not reported as such. Nothing under `event/` is red.
+
+### Tree restoration — round 3
+
+- 26 mutations applied and reverted one at a time, each by writing the original bytes back and
+  confirming the file's sha256 against `scripts/event_kernel.sha256`.
+- Three probe packages created under `event/eventtest/gap1probe`, `event/receipt/gap1collision` and
+  `event/receipt/gap3empty`, and removed.
+- Two `git stash push -u` / `stash pop` cycles, with the manifest re-verified after each.
+- Whole-tree `sha256sum` manifest over **2367** files before the first mutation and after the last:
+  identical, `db9eef13255b268f88b8baab7bdd72ea5f90a1645dc107ad847c2b7fa39e73cb`.
+- `git status --porcelain` unchanged at 26 lines.

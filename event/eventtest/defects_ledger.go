@@ -14,7 +14,7 @@ import (
 // no row names has no control that can fail, so its assertions can be deleted one
 // at a time with every run still green.
 //
-// Four of the ten are ledgers rather than decorators, and that is not a
+// Four of the eleven are ledgers rather than decorators, and that is not a
 // preference. Writing a claim outside the caller's unit, making a completion
 // visible before that unit commits, answering a lookup on the connection the
 // claim is open on and taking a horizon from the newest row are all decisions
@@ -32,6 +32,8 @@ func ledgerDefects() []ledgerDefect {
 			func(held receipt.Ledger) receipt.Ledger { return selectsFirst{overLedger{held}} }},
 		{"answers the row it was handed rather than the row its table holds", "repeat",
 			func(held receipt.Ledger) receipt.Ledger { return echoes{overLedger{held}} }},
+		{"answers the fingerprint it was handed rather than the one its table holds", "repeat",
+			func(held receipt.Ledger) receipt.Ledger { return echoesPrint{overLedger{held}} }},
 		{"reports that every claim took the key", "repeat",
 			func(held receipt.Ledger) receipt.Ledger { return alwaysWon{overLedger{held}} }},
 		{"answers a claim with a row carrying no instant", "claim",
@@ -83,6 +85,23 @@ func (this echoes) Claim(ctx context.Context, row receipt.Receipt) (receipt.Rece
 	}
 	row.RecordedAt = held.RecordedAt
 	return row, false, nil
+}
+
+// The row the table holds with the one field the caller compares taken from the
+// question instead: a RETURNING list that binds a parameter where it means a
+// column, or a mapper that fills its struct from the request and overwrites only
+// the fields it recognises. Every loser then carries the fingerprint it asked
+// with, so no fingerprint ever differs, every collision reads as a repeat and
+// receipt.ErrCollision is unreachable.
+type echoesPrint struct{ overLedger }
+
+func (this echoesPrint) Claim(ctx context.Context, row receipt.Receipt) (receipt.Receipt, bool, error) {
+	held, won, err := this.Ledger.Claim(ctx, row)
+	if err != nil || won {
+		return held, won, err
+	}
+	held.Fingerprint = row.Fingerprint
+	return held, false, nil
 }
 
 type alwaysWon struct{ overLedger }

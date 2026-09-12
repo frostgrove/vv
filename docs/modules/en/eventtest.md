@@ -166,7 +166,7 @@ silent.
 
 | Run | Certifies | The obligation nothing else can check |
 |---|---|---|
-| `RunLedger` | `receipt.Ledger` | the claim is `INSERT … ON CONFLICT DO NOTHING` and **then** a `SELECT`, in that order and in one unit. Reversed, two callers both answer `Recorded` and both append under one operation key |
+| `RunLedger` | `receipt.Ledger` | the claim is `INSERT … ON CONFLICT DO NOTHING` and **then** a `SELECT`, in that order and in one unit. Reversed, two callers both answer `Recorded` and both append under one operation key. And what a loser is answered is the row the **table** holds, its fingerprint included: hand back the fingerprint the claim asked with and every collision reads as a repeat, so the work is skipped and `ErrCollision` is unreachable |
 | `RunGenerations` | `projection.Generations` | `Active` is a **locking** read. Plain, a cutover commits between that read and the unit's commit, and a retired generation stages the effect anyway |
 | `RunPark` | `projection.Park` | which of the four methods needs the caller's unit, and what `Holds` answers **outside** one — where a wait asks it |
 
@@ -250,30 +250,31 @@ one that reuses a position, one that admits every append whatever version it was
 decided at, one that hands back pooled buffers, one that reports it refused after
 it had already written — and a test asserts that **each defect fails the section
 named for it**. Gut a section and that test goes red rather than the suite going
-quiet. The checkpoint runner has its own fourteen, one per section but `durability` —
+quiet. The checkpoint runner has its own fifteen, at least one per section —
 among them one that ignores the fence, one that answers the cursor saved before
 the last one, one whose `Load` ignores its `projection` argument, one that saves
 outside the caller's transaction, one that forgets outside it, one that creates a
-row at advance 1 over a live one, and one that binds a cursor to the name that
-saved it. A second test asserts the other direction, which is the one that
+row at advance 1 over a live one, one that binds a cursor to the name that
+saved it, and one that answers only for the rows the value that wrote them holds.
+A second test asserts the other direction, which is the one that
 matters when a section is gutted rather than a store broken: **every section is
-named by a defect that breaks it**, and the one exemption — `durability`, whose
-defect is a factory rather than a decorator — is written down so the list can
-only shrink.
+named by a defect that breaks it**, with no section exempted.
 
 The three application harnesses ship the same two tests over inventories of
-their own — ten ledgers, six ownership rows and eight queues, each one thing
+their own — eleven ledgers, six ownership rows and eight queues, each one thing
 written wrong. Among them: a claim that reads the key before it inserts it and
-decides from the read, a ledger that reports every claim took the key, an
-ownership row that reads the row and then writes it rather than moving it with
-one fenced statement, one that reads on a handle of its own while its write rides
-in the caller's unit, one that takes no lock at all, a queue that answers the
-blocking test from the snapshot it took the first time it was asked, and one that
-counts the letters it was handed rather than the rows its table holds. Each is
-asserted to fail the section named for it, with the same implementation minus the
-defect as that section's control. Five of them are driven again through live
-PostgreSQL in `eventpg`'s own suite, in a subprocess, so what is measured there
-is a real index, a real row lock and a real snapshot rather than a model of one.
+decides from the read, a ledger that reports every claim took the key, one that
+answers a loser the fingerprint it was handed rather than the one its table
+holds, an ownership row that reads the row and then writes it rather than moving
+it with one fenced statement, one that reads on a handle of its own while its
+write rides in the caller's unit, one that takes no lock at all, a queue that
+answers the blocking test from the snapshot it took the first time it was asked,
+and one that counts the letters it was handed rather than the rows its table
+holds. Each is asserted to fail the section named for it, with the same
+implementation minus the defect as that section's control. Six of them are driven
+again through live PostgreSQL in `eventpg`'s own suite, in a subprocess, so what
+is measured there is a real index, a real row lock and a real snapshot rather
+than a model of one.
 
 ## The three proxies
 

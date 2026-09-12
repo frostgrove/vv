@@ -128,6 +128,14 @@ SELECT key, fingerprint, family, stream_key, first_version, last_version, comple
 In that order, in the caller's one transaction. `won` is the insert's
 affected-row count and nothing else.
 
+**What a loser is answered is what the `SELECT` read**, column for column. A
+`RETURNING` list that binds a parameter where it means a column, or a mapper that
+fills the struct from the request and overwrites only the fields it recognises,
+hands every loser back the fingerprint it asked with — so no fingerprint ever
+differs, every collision reads as a repeat, `Once` skips the work, and
+`ErrCollision` is unreachable. `eventtest.RunLedger`'s `repeat` section claims one
+key under two fingerprints for exactly that reason.
+
 **The insert is what blocks.** PostgreSQL's speculative insertion makes `DO
 NOTHING` wait on a conflicting uncommitted tuple and then insert or not on that
 transaction's outcome — which is why a claim never has to answer "unresolved" and

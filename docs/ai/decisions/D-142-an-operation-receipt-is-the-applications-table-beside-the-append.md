@@ -305,13 +305,13 @@ here so the comparison this decision draws is against `jobs` as it actually is.
 - `TestTheReferenceLedgerIsCertified` and
   `TestTheLedgerHarnessStillDetectsEveryDefectItWasBuiltToDetect`
   (`event/eventtest`) — the two statements and their order as a section a
-  consumer can run over its own `Ledger`, and the ten defects the seven sections
-  are falsified against.
+  consumer can run over its own `Ledger`, and the eleven defects the seven
+  sections are falsified against.
 - `TestTheLiveLedgerSatisfiesTheContract` and
   `TestTheApplicationHarnessesCatchADefectiveImplementation` (`event/eventpg`,
   live) — the same seven sections over PostgreSQL, and `select-before-insert`,
-  `horizon-from-the-newest-row` and `find-on-the-claiming-connection` each
-  reported by the section that names it.
+  `echoes-the-fingerprint-it-was-handed`, `horizon-from-the-newest-row` and
+  `find-on-the-claiming-connection` each reported by the section that names it.
 - `TestEveryRefusalClaimHasIsReachableThroughOnce` — every refusal `Claim` has is
   reachable through `Once` with the same sentinel.
 - `TestOneKeyTwoStreamsAndTheKeyPerAppendControl` — one key covers one append,

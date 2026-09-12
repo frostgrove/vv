@@ -263,8 +263,13 @@ func claimAnswered(spec ClaimSpec, held Receipt, won bool) error {
 	if !held.Fingerprint.Equal(spec.Fingerprint) || held.Stream != spec.Stream {
 		return fmt.Errorf("%w: it reported that this claim took the key and answered a row whose fingerprint or stream is not the one it was handed", ErrLedger)
 	}
-	if held.Complete || held.First != 0 || held.Last != 0 {
-		return fmt.Errorf("%w: it reported that this claim took the key and answered a row that already carries a range, which is a row some other operation wrote", ErrLedger)
+	switch {
+	case held.Complete:
+		return fmt.Errorf("%w: it reported that this claim took the key and answered a row that is already complete, which is a row some other operation wrote — an empty commit completes a row at the zero range, so completion beside no range at all is that operation and not this claim", ErrLedger)
+	case held.First != 0:
+		return fmt.Errorf("%w: it reported that this claim took the key and answered a row whose range already carries a first version, which is a row some other operation wrote", ErrLedger)
+	case held.Last != 0:
+		return fmt.Errorf("%w: it reported that this claim took the key and answered a row whose range already carries a last version, which is a row some other operation wrote", ErrLedger)
 	}
 	return nil
 }

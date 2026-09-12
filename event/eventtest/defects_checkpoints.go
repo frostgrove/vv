@@ -14,11 +14,12 @@ import (
 // because a count kept in prose is what drifts: a test runs the section each row
 // names against the store that row describes and fails when the section passes.
 //
-// All eight are decorators over a checkpoint store that is otherwise correct, and
-// each is a shape a real implementation reaches by writing one statement wrong —
-// a read-then-write instead of a conditional update, a Load whose parameter is
-// the wrong one, a save issued on a pool while a caller holds a transaction, an
-// ON CONFLICT DO UPDATE where the row that is there is the answer.
+// All fifteen are decorators over a checkpoint store that is otherwise correct,
+// and each is a shape a real implementation reaches by writing one statement
+// wrong — a read-then-write instead of a conditional update, a Load whose
+// parameter is the wrong one, a save issued on a pool while a caller holds a
+// transaction, an ON CONFLICT DO UPDATE where the row that is there is the
+// answer, a row that never leaves the value that wrote it.
 type checkpointDefect struct {
 	name    string
 	section string
@@ -59,6 +60,10 @@ func checkpointDefects() []checkpointDefect {
 			func(held event.Checkpoints) event.Checkpoints { return adopting{held} }},
 		{"forgets outside the caller's transaction", "topology handoff",
 			func(held event.Checkpoints) event.Checkpoints { return retiring{held} }},
+		{"answers only for the rows the value that wrote them holds", "durability",
+			func(held event.Checkpoints) event.Checkpoints {
+				return &kept{Checkpoints: held, wrote: map[string]bool{}}
+			}},
 	}
 }
 
@@ -342,6 +347,38 @@ func (this retiring) Forget(ctx context.Context, projection string) error {
 	beside, stop := beside(ctx)
 	defer stop()
 	return this.Checkpoints.Forget(beside, projection)
+}
+
+// The rows kept in the value rather than in what the value writes to: a store
+// whose map is a field, or a write-back cache in front of a table nothing ever
+// flushed to. Read back through the value that wrote them every row is exact, so
+// every other section of this suite passes, and a value built afterwards over the
+// same backing finds nothing — which is the whole of what a restart is.
+type kept struct {
+	event.Checkpoints
+
+	mutex sync.Mutex
+	wrote map[string]bool
+}
+
+func (this *kept) Save(ctx context.Context, checkpoint event.Checkpoint) error {
+	if err := this.Checkpoints.Save(ctx, checkpoint); err != nil {
+		return err
+	}
+	this.mutex.Lock()
+	defer this.mutex.Unlock()
+	this.wrote[checkpoint.Projection] = true
+	return nil
+}
+
+func (this *kept) Load(ctx context.Context, projection string) (event.Checkpoint, error) {
+	this.mutex.Lock()
+	written := this.wrote[projection]
+	this.mutex.Unlock()
+	if !written {
+		return event.Checkpoint{}, nil
+	}
+	return this.Checkpoints.Load(ctx, projection)
 }
 
 func beside(ctx context.Context) (context.Context, context.CancelFunc) {

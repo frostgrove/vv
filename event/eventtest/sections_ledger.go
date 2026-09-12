@@ -42,6 +42,15 @@ func ledgerClaimSection(this *receipts) {
 	this.commit(inside, tx)
 }
 
+// A claim that loses answers the row its TABLE holds, and the fingerprint on it
+// is part of that row rather than an echo of the question. The caller compares
+// the two to tell a retry of one operation from a second operation under one
+// key, so a ledger that hands back what it was asked with makes every collision
+// read as a repeat: the work is skipped, the receipt names the first operation's
+// range, and a caller is told an append that never happened already had.
+//
+// Both losers run here because only the second discriminates. A claim made with
+// the fingerprint the row already holds compares a value with itself.
 func ledgerRepeatSection(this *receipts) {
 	ctx := this.context()
 	held := this.held()
@@ -56,13 +65,18 @@ func ledgerRepeatSection(this *receipts) {
 	this.complete(first, held, taken)
 	this.commit(first, tx)
 
-	second, beside := this.begin(ctx, held)
-	found, again := this.claim(second, held, this.receipt("repeat", 2))
+	this.lost(ctx, held, this.receipt("repeat", 2), taken, "a second claim of a key a committed row already holds")
+	this.lost(ctx, held, this.receipt("repeat", 9), taken, "a claim of that same key made under another operation's fingerprint")
+}
+
+func (this *receipts) lost(ctx context.Context, held receipt.Ledger, want, row receipt.Receipt, doing string) {
+	inside, tx := this.begin(ctx, held)
+	found, again := this.claim(inside, held, want)
 	if again {
-		this.refuse("a second claim of a key a committed row already holds answered that it took it, and both callers would append under one operation key")
+		this.refuse("%s answered that it took it, and both callers would append under one operation key", doing)
 	}
-	this.sameRow(found, taken, "the claim that found a committed row")
-	this.rollback(second, beside)
+	this.sameRow(found, row, doing)
+	this.rollback(inside, tx)
 }
 
 // The one section this harness exists for. The claim is an insert that DOES

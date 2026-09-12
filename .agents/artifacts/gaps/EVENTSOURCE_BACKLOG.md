@@ -73,8 +73,53 @@ What changed, and what it bought:
   of `Run`'s reporting arms were confirmed dead when gutted (the section failure, the unreported
   verdict and the certified-nothing rule), each caught by the case written for it.
 
-**Status: worked, not closed.** 251 assertions still survive their own deletion. The honest reading
-is above: most of them are one half of a pair, and the residue is the work this entry keeps.
+**The rate above has a ceiling and it is not 100%. Corrected 2026-09-13.** The suite is falsified
+by running each inventoried defect and requiring the section that names it to fail. At most one
+assertion per defect can be *the first* to report it, so at most as many assertion sites can ever be
+killed by that method as the inventory has rows: 43 rows against 179 `if … { this.refuse(…) }` sites
+in the seven `Run` section files is a ceiling of **~24%**, not 100%. Read against that ceiling,
+`19/185 = 10.3%` is 43% of what the method can reach, and `37/289 = 12.8%` is the same figure over a
+wider denominator. **136 of the 179 sites are, by construction, outside the reach of this method** —
+they are the second, third and fourth assertion of a section whose first one already reported.
+
+So the number to report is `killed / inventoried-reachable`, and the lever is **inventory rows,
+never more assertions**. An independent measurement on 2026-09-13 (`EVENTSOURCE_DETECTION.md`) drew
+14 sites at random and killed 1 (7%), which is consistent with the ceiling and refutes nothing.
+That measurement's other half is the number that does mean something: **61 of 65 implementation
+mutations killed = 94%**, up from 89% re-derived on a clean pre-stage clone.
+
+Where the inventory is thin, computed from the source rather than remembered — defect rows against
+`refuse` sites in the section's own function:
+
+| Section | Defect rows | `refuse` sites |
+|---|---|---|
+| binding | 2 | 11 |
+| expected version | 1 | 10 |
+| stream identity | 2 | 8 |
+| payload ownership | 4 | 8 |
+| lifecycle | 2 | 7 |
+| resumption | 3 | 6 |
+| bounds | 2 | 6 |
+| cancellation | 3 | 6 |
+| refusal classes | 1 | 5 |
+| dense versions | 1 | 4 |
+| conservation | 2 | 4 |
+| global paging | 1 | 4 |
+| concurrency | 2 | 4 |
+| shared backing | 1 | 4 |
+| global order | 3 | 2 |
+| stream paging | 4 | 2 |
+| transactions | 6 | 2 |
+| durability | 1 | 1 |
+| monotone visibility | 1 | 1 |
+| store failure classification | 1 | 0 |
+| **total** | **43** | **95** (plus 84 in helpers) |
+
+**Status: worked, not closed, and the residue is now named.** The work this entry keeps is the four
+thin sections at the top — `binding`, `expected version`, `stream identity`, `payload ownership` —
+each to reach at least one inventory row per two assertion sites, or to have its residue written
+down as assertions no store can falsify (a factory contract rather than a store one). Adding
+assertions cannot move the number and is not the work.
 
 ### 2. `eventmemory` conformance holes  `[critical]` — **closed 2026-09-12**
 

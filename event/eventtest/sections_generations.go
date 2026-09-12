@@ -166,6 +166,10 @@ func lockingReadSection(this *generations) {
 	}()
 	<-entered
 
+	// The channel is received from in one arm or the other and never in both: a
+	// second receive here is a deadlock rather than a refusal the moment the
+	// assertion above it is deleted, and this section's own falsification is what
+	// deletes it.
 	select {
 	case err := <-answered:
 		this.rollback(reader, staging)
@@ -175,12 +179,12 @@ func lockingReadSection(this *generations) {
 		this.refuse("a cutover moved the ownership row of %q while the unit that had read it was still open, so this read takes no lock: the retiring generation commits the effect it staged under a row that no longer names it, and no isolation level this contract leaves to a caller closes that",
 			name)
 	case <-time.After(waiting):
+		this.rollback(reader, staging)
+		if err := <-answered; err != nil {
+			this.refuse("the cutover answered %v once the unit that had read the row ended, where what was waiting for that unit was a row lock", err)
+		}
 	}
 
-	this.rollback(reader, staging)
-	if err := <-answered; err != nil {
-		this.refuse("the cutover answered %v once the unit that had read the row ended, where what was waiting for that unit was a row lock", err)
-	}
 	this.commit(writer, cutting)
 	if found := this.reads(ctx, held, name); found != 2 {
 		this.refuse("the cutover committed and the ownership row reads %d", found)

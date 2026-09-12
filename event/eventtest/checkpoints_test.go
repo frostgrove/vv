@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -274,7 +273,7 @@ func TestEveryCheckpointDefectIsReportedByItsOwnSection(t *testing.T) {
 	}
 }
 
-const checkpointDefects = 14
+const checkpointDefects = 15
 
 // A section no defect names has no control that can fail: every assertion in it
 // can be deleted and every run stays green, which is the one failure a
@@ -283,6 +282,13 @@ const checkpointDefects = 14
 // section whose body was gutted was reported by nothing. The control is one run
 // of the same assertion per section, over an inventory with that section's rows
 // taken out.
+//
+// Durability was exempted here until 2026-09-13 on the ground that a decorator
+// cannot falsify a property about a value the factory builds afterwards. It can:
+// a decorator that answers only for the rows it wrote itself is exactly a store
+// that keeps them in the value. The exemption was load-bearing while it stood —
+// the section's only assertion could be deleted with the whole tree green — so
+// there is no exemption list any more.
 func TestEveryCheckpointSectionIsNamedByADefectThatBreaksIt(t *testing.T) {
 	names := eventtest.CheckpointSectionNames()
 	defects := eventtest.CheckpointDefects()
@@ -290,9 +296,6 @@ func TestEveryCheckpointSectionIsNamedByADefectThatBreaksIt(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, unguarded := range names {
-		if undecorated[unguarded] {
-			continue
-		}
 		kept := []eventtest.CheckpointDefect{}
 		for _, defect := range defects {
 			if defect.Section != unguarded {
@@ -303,37 +306,6 @@ func TestEveryCheckpointSectionIsNamedByADefectThatBreaksIt(t *testing.T) {
 			t.Fatalf("an inventory naming no defect of the %s section passed the assertion that every section carries one", unguarded)
 		}
 	}
-
-	for _, exempt := range sortedNames(undecorated) {
-		for _, defect := range defects {
-			if defect.Section == exempt {
-				t.Fatalf("the %s section is exempted from carrying a defect and the defect %q names it, so the exemption is stale and the list only ever shrinks", exempt, defect.Name)
-			}
-		}
-		if !slices.Contains(names, exempt) {
-			t.Fatalf("the %s section is exempted from carrying a defect and this suite has no such section", exempt)
-		}
-	}
-}
-
-// The one section of the fourteen that no decorator over a correct store can
-// falsify, and the reason is the harness rather than the section: a defect here
-// is a func(Checkpoints) Checkpoints wrapped around the value the factory built,
-// and what durability asserts is that a value the factory builds AFTERWARDS
-// reads what the first one wrote. The store suite spells that defect as a
-// factory ("claims persistence and builds a second value over its backing that
-// has none of what the first wrote"), and the checkpoint harness has no shape
-// for one. It is named here rather than passed over, so the list can only
-// shrink: a defect that names durability fails the test above.
-var undecorated = map[string]bool{"durability": true}
-
-func sortedNames(held map[string]bool) []string {
-	names := make([]string, 0, len(held))
-	for name := range held {
-		names = append(names, name)
-	}
-	slices.Sort(names)
-	return names
 }
 
 // The store suite's guarded, over the checkpoint suite's two types. It is
@@ -346,7 +318,7 @@ func checkpointGuarded(names []string, defects []eventtest.CheckpointDefect) err
 		naming[defect.Section]++
 	}
 	for _, name := range names {
-		if naming[name] == 0 && !undecorated[name] {
+		if naming[name] == 0 {
 			return fmt.Errorf("no defect in this suite's inventory breaks the %s section, so nothing here can tell whether that section still asserts anything", name)
 		}
 	}

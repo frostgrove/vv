@@ -49,6 +49,8 @@ func liveLedgerFactory(t *testing.T, name string) eventtest.LedgerFactory {
 		stand.ledger.optimistic = true
 	case "find-on-the-claiming-connection":
 		stand.ledger.dirty = true
+	case "echoes-the-fingerprint-it-was-handed":
+		stand.ledger.echoesPrint = true
 	}
 	return eventtest.LedgerFactory{
 		New: func(*testing.T) receipt.Ledger { return stand.ledger },
@@ -112,7 +114,7 @@ func beginBound(t *testing.T, ctx context.Context, db *sql.DB, source crud.Sourc
 	return crud.BindExecutor(ctx, source, tx), tx
 }
 
-// The falsifying half, live. Five defects of the reference implementations, each
+// The falsifying half, live. Six defects of the reference implementations, each
 // run through the harness that certifies it in a subprocess of this binary, and
 // each one must be reported by the section named beside it. A defect the harness
 // does not catch is a finding against the harness and never a pass — which is
@@ -123,11 +125,12 @@ type applicationDefectRow struct {
 	section string
 }
 
-const applicationDefects = 5
+const applicationDefects = 6
 
 func applicationMutations() []applicationDefectRow {
 	return []applicationDefectRow{
 		{"select-before-insert", "^TestTheLiveLedgerSatisfiesTheContract$", "claim order"},
+		{"echoes-the-fingerprint-it-was-handed", "^TestTheLiveLedgerSatisfiesTheContract$", "repeat"},
 		{"horizon-from-the-newest-row", "^TestTheLiveLedgerSatisfiesTheContract$", "horizon"},
 		{"find-on-the-claiming-connection", "^TestTheLiveLedgerSatisfiesTheContract$", "unit of work"},
 		{"plain-ownership-read", "^TestTheLiveOwnershipRowSatisfiesTheContract$", "locking read"},

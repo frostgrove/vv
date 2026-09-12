@@ -713,12 +713,16 @@ func TestALedgerThatAnswersSomethingNoLedgerAnswersIsRefused(t *testing.T) {
 		return held, true, nil
 	}
 
-	settled := newLedger(stand.store)
-	settled.onClaim = func(_ context.Context, held receipt.Receipt) (receipt.Receipt, bool, error) {
-		held.First, held.Last, held.Complete = 1, 2, true
-		held.RecordedAt = settled.clock.now()
-		return held, true, nil
-	}
+	// One ledger per arm of the fresh-row check, because a row that sets all three
+	// is refused under an && as readily as under an ||. The shape that escapes a
+	// narrowed check is completion beside no range at all, and it is the row this
+	// package writes for an empty commit: a ledger whose won comes from a rowcount
+	// while its RETURNING picked up the row already there certifies clean whenever
+	// the operation that spent the key appended nothing, and a second caller is
+	// handed Recorded over a key that is spent.
+	completed := wonWith(stand, receipt.Receipt{Complete: true})
+	opened := wonWith(stand, receipt.Receipt{First: 1})
+	closed := wonWith(stand, receipt.Receipt{Last: 2})
 
 	optimistic := newLedger(stand.store)
 	optimistic.onFind = func(context.Context, receipt.Key) (receipt.Receipt, bool, error) {
@@ -743,7 +747,9 @@ func TestALedgerThatAnswersSomethingNoLedgerAnswersIsRefused(t *testing.T) {
 		{"a ledger that reports a win beside another key's row", stranger, "another key"},
 		{"a ledger that reports a repeat beside no row at all", silent, "no row at all"},
 		{"a ledger that reports a win beside a fingerprint it was not handed", misread, "fingerprint or stream"},
-		{"a ledger that reports a win beside a row that already carries a range", settled, "already carries a range"},
+		{"a ledger that reports a win beside a row an empty commit already completed", completed, "already complete"},
+		{"a ledger that reports a win beside a row whose range carries a first version", opened, "a first version"},
+		{"a ledger that reports a win beside a row whose range carries a last version", closed, "a last version"},
 	} {
 		err := stand.unit(ctx, func(inner context.Context) error {
 			spec := claiming(t, stand, inner, "req-zulu", "A-17")
@@ -754,12 +760,13 @@ func TestALedgerThatAnswersSomethingNoLedgerAnswersIsRefused(t *testing.T) {
 		if !errors.Is(err, receipt.ErrLedger) {
 			t.Fatalf("%s answered %v where an answer no ledger gives is refused before it is compared", one.what, err)
 		}
-		// The two are separate sentences because they are separate defects: a row
-		// for another key is a lookup written wrong, and no row at all beside a
-		// repeat is the single-statement claim, whose one snapshot answers the
-		// loser zero rows. A ledger author reads which one it was.
+		// Every arm is a separate sentence because every arm is a separate defect:
+		// a row for another key is a lookup written wrong, no row at all beside a
+		// repeat is the single-statement claim whose one snapshot answers the loser
+		// zero rows, and the last three are three ways for a row to be somebody
+		// else's. A ledger author reads which one it was.
 		if !strings.Contains(err.Error(), one.names) {
-			t.Fatalf("%s answered %q, which does not say which of the two answers it gave", one.what, err)
+			t.Fatalf("%s answered %q, which does not say which of the answers it gave", one.what, err)
 		}
 		if earlier, told := said[err.Error()]; told {
 			t.Fatalf("%s and %s were refused with the same sentence, so one arm answers for the other and either could be removed unnoticed", one.what, earlier)
@@ -794,6 +801,16 @@ func TestALedgerThatAnswersSomethingNoLedgerAnswersIsRefused(t *testing.T) {
 			t.Fatalf("the conformant ledger's completed row resolved to %v", found.Standing)
 		}
 	})
+}
+
+func wonWith(stand *stand, row receipt.Receipt) *ledger {
+	held := newLedger(stand.store)
+	held.onClaim = func(_ context.Context, taken receipt.Receipt) (receipt.Receipt, bool, error) {
+		taken.First, taken.Last, taken.Complete = row.First, row.Last, row.Complete
+		taken.RecordedAt = held.clock.now()
+		return taken, true, nil
+	}
+	return held
 }
 
 func printOf(t *testing.T, seed byte) receipt.Fingerprint {

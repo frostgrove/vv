@@ -342,6 +342,18 @@ are byte-identical, `git status --short` unchanged at 77 entries.
 Three for three, and M-B is the one that matters: it was caught by a *control* subtest rather than a
 positive one, which is the shape this repository's own test doctrine asks for.
 
+**Corrected 2026-09-13, after an independent measurement (`.agents/artifacts/gaps/EVENTSOURCE_DETECTION.md`).**
+Two numbers are quoted around this subsystem and they measure different things. The **16%** /
+**10.3%** figures the backlog carries are *assertion neutralisation inside the conformance suite*,
+and that method has a structural ceiling of about **24%** — the suite is falsified by running each
+inventoried defect and requiring its section to fail, so at most one assertion per inventory row can
+ever be the first to report, which is 43 rows against 179 assertion sites. Quoted against an implied
+ceiling of 100% they overstate the deficiency and hide the actionable half of it: 136 sites are out
+of that method's reach by construction, and the only lever is inventory rows. The number that
+measures what a reader expects is *implementation* mutation: **61 of 65 killed = 94%**, against 89%
+re-derived on a clean pre-stage clone. The per-section inventory pressure is tabulated in the
+backlog's item 1.
+
 ---
 
 ## Findings
@@ -560,6 +572,8 @@ Go fences are compiled by a test. This is not a clumsy surface.
   items 5 and 7 name specific surviving mutations inside `eventtest`, `comparison.go`, the reader
   and the analysers. I verified only that items 1, 4, 6 and 8 have had their stated conditions met;
   I did not re-drive the 165-assertion neutralisation measurement that produced the 16 % number.
+  **Driven on 2026-09-13 by an independent measurement**, which also showed that number has a ~24 %
+  ceiling and must not be read as a detection rate — see the correction above.
 - **The phase-4 appendices at their source.** ES-01…ES-04 and ES-06 I checked by artifact presence
   (files, ADRs, flows, live tests) and by the phase-4 gate's record, not sentence by sentence
   against the Russian originals — the roadmap has removed them, so the originals are no longer in

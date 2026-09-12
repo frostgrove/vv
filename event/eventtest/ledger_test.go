@@ -3,6 +3,7 @@ package eventtest_test
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/frostgrove/vv/event/eventtest"
@@ -47,7 +48,7 @@ func TestTheLedgerHarnessStillDetectsEveryDefectItWasBuiltToDetect(t *testing.T)
 	}
 }
 
-const ledgerInventoried = 10
+const ledgerInventoried = 11
 
 func TestTheLedgerDefectInventoryIsTheSizeItSaysItIs(t *testing.T) {
 	defects := eventtest.LedgerDefects()
@@ -64,6 +65,46 @@ func sizedLedger(defects []eventtest.LedgerDefect) error {
 		return fmt.Errorf("the ledger harness carries %d defects where its inventory is %d rows", len(defects), ledgerInventoried)
 	}
 	return nil
+}
+
+// The repeat section's two losers are two assertions and a ledger trips one
+// without the other: the one that answers the whole row it was handed is caught
+// by the range the completed row carries, and the one that answers the table's
+// row with the fingerprint replaced is caught by nothing until a claim is made
+// under a fingerprint the row does not hold. Reading which arm reported is what
+// says the second loser is doing the work rather than the first — without it
+// both rows pass over a section driving one claim, and every collision reads as
+// a repeat.
+func TestTheEchoedFingerprintIsCaughtByTheFingerprintAndTheEchoedRowByItsRange(t *testing.T) {
+	for _, one := range []struct{ defect, says string }{
+		{"answers the row it was handed rather than the row its table holds", "answered the range"},
+		{"answers the fingerprint it was handed rather than the one its table holds", "answered the fingerprint"},
+	} {
+		over := ledgerDefectNamed(t, one.defect).Over
+		verdicts := eventtest.CertifyLedger(t, ledgerFactory(t, newMemoryLedger(t), over), "repeat")
+		if len(verdicts) != 1 {
+			t.Fatalf("running the repeat section alone reported %d verdicts", len(verdicts))
+		}
+		if verdicts[0].Word != "failed" {
+			t.Errorf("a ledger that %s was reported %q by the repeat section", one.defect, verdicts[0].Word)
+			continue
+		}
+		if !strings.Contains(verdicts[0].Reason, one.says) {
+			t.Errorf("a ledger that %s was refused with %q, which is not the arm that reports it — so one of the section's two claims is answering for the other and either could be removed unnoticed",
+				one.defect, verdicts[0].Reason)
+		}
+	}
+}
+
+func ledgerDefectNamed(t *testing.T, name string) eventtest.LedgerDefect {
+	t.Helper()
+	for _, defect := range eventtest.LedgerDefects() {
+		if defect.Name == name {
+			return defect
+		}
+	}
+	t.Fatalf("the ledger inventory names no defect %q", name)
+	return eventtest.LedgerDefect{}
 }
 
 // A section no defect names has no control that can fail: every assertion in it

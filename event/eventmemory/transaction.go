@@ -163,6 +163,17 @@ func (this *Tx) Rollback(context.Context) error {
 // What the claim taken at Append promises, checked where the records are
 // published rather than assumed: every staged record still lands at the version
 // it was admitted at, densely, on a stream nobody else advanced.
+//
+// NOTHING REACHES errStaleClaim TODAY, and that is the claim working rather than
+// a path nobody tested: the only writer of a stream's history is publish, every
+// other writer of a claimed stream is refused at append.go, and a claim is
+// released by its own transaction's commit or rollback alone — held weakly, it
+// dies only with a transaction nothing can reach, and one nothing can reach
+// never reaches Commit. What would give this an input is a claim that can be
+// swept rather than one that dies with its holder. The property it would then be
+// the last line of is pinned beside it, by
+// TestAStreamIsClaimedOnlyWhileSomethingCanStillCommitIt. Its neighbour below is
+// a different matter: no claim covers a checkpoint row, so that one has inputs.
 func (this *Tx) revalidate() error {
 	staged := map[event.Stream]event.Version{}
 	for _, envelope := range this.staged {

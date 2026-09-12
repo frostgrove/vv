@@ -84,11 +84,12 @@ func receiptTable(t *testing.T, name string) string {
 // context, and the lookup and the horizon run on the pool, because the whole
 // point of resolving is that the first connection is gone.
 //
-// The four flags are the four ledger defects, each one thing written wrong.
-// With all four off this is the reference implementation, and
+// The flags are the ledger defects, each one thing written wrong. With all of
+// them off this is the reference implementation, and
 // TestFourLedgerDefectsEachBreakTheCaseThatNamesThem is what keeps the positive
 // cases from passing whether or not the statements are the ones the contract
-// describes.
+// describes. The fifth, echoesPrint, is driven only through the harness — a
+// ledger it certified is the one defect eventtest was measured to miss.
 type liveLedger struct {
 	source    crud.Source
 	backing   event.Backing
@@ -100,6 +101,7 @@ type liveLedger struct {
 	processClock bool
 	optimistic   bool
 	dirty        bool
+	echoesPrint  bool
 	skew         time.Duration
 
 	claims    atomic.Int64
@@ -151,6 +153,12 @@ func (this *liveLedger) Claim(ctx context.Context, held receipt.Receipt) (receip
 	found, taken, err := this.read(ctx, tx, held.Key)
 	if err != nil || !taken {
 		return receipt.Receipt{}, won, err
+	}
+	// The fifth defect: the RETURNING list that binds the parameter where it means
+	// the column. Every loser then carries the fingerprint it asked with, and a
+	// collision is answered as a repeat.
+	if this.echoesPrint && !won {
+		found.Fingerprint = held.Fingerprint
 	}
 	return found, won, nil
 }

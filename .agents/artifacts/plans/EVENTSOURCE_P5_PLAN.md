@@ -2116,7 +2116,7 @@ compile (`_ = authority`, `_ = held`) so that what caught them is a `--- FAIL:` 
 | a ledger answering no row at all is trusted | `TestALedgerThatAnswersSomethingNoLedgerAnswersIsRefused` — **a survivor on the first pass**, see below |
 | a ledger answering another key's row is trusted | `TestALedgerThatAnswersSomethingNoLedgerAnswersIsRefused` |
 | a ledger reporting a win beside a row it was not handed is trusted | `TestALedgerThatAnswersSomethingNoLedgerAnswersIsRefused` |
-| a ledger reporting a win beside a row that already carries a range is trusted | `TestALedgerThatAnswersSomethingNoLedgerAnswersIsRefused` |
+| a ledger reporting a win beside a row that is already complete, or that carries either end of a range, is trusted | `TestALedgerThatAnswersSomethingNoLedgerAnswersIsRefused` — one row per arm since 2026-09-13, the completion-alone one being the shape an empty commit writes (EVENTSOURCE_DETECTION GAP-3) |
 | the resolve's placement question removed | `TestAResolveInsideTheWritingTransactionIsRefused`, and two more |
 | the resolve no longer asks the ledger where it is | `TestAResolveInsideTheWritingTransactionIsRefused` |
 | a caller that cannot date its key is answered `Expired` | `TestAnAbsentRowIsUnresolvedAndAHorizonDecidesExpired` |
