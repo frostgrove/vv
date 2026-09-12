@@ -18,12 +18,12 @@ func TestEverySectionInTheInventoryWasReported(t *testing.T) {
 	if len(names) != 20 {
 		t.Fatalf("the suite carries %d sections where its inventory names twenty", len(names))
 	}
-	if err := reported(names, eventtest.Certify(t, stagingFactory(false, nil))); err != nil {
+	if err := reported(names, eventtest.Certify(t, stagingFactory(faults{}, nil))); err != nil {
 		t.Fatal(err)
 	}
 
 	shortened := names[:len(names)-1]
-	if err := reported(names, eventtest.Certify(t, stagingFactory(false, nil), shortened...)); err == nil {
+	if err := reported(names, eventtest.Certify(t, stagingFactory(faults{}, nil), shortened...)); err == nil {
 		t.Fatalf("a run that never dispatched %q passed the assertion that every section is reported exactly once", names[len(names)-1])
 	}
 }

@@ -120,11 +120,11 @@ import _ "github.com/x/ext"
 		prefix:    "github.com/x/ext",
 		root:      "ext",
 		contracts: []string{"./contract"},
-		charged:   map[string]string{"github.com/x/ext/charged": ""},
+		charged:   map[string][]string{"github.com/x/ext/charged": nil},
 		core:      func(reached string) string { return "the core reaches " + reached },
 		uncharged: func(path string) string { return path + " says nothing about what it costs" },
-		overreach: func(path, reached, allowance string) string {
-			return path + " reaches " + reached + ", and its row names " + allowance
+		overreach: func(path, reached string, allowance []string) string {
+			return path + " reaches " + reached + ", and its row names " + strings.Join(allowance, " and ")
 		},
 	}
 
@@ -146,9 +146,9 @@ import _ "github.com/x/ext"
 
 	stated := understated
 	stated.contracts = []string{"./contract", "./outside"}
-	stated.charged = map[string]string{
-		"github.com/x/ext/charged": "./seam",
-		"github.com/x/ext/unnamed": "",
+	stated.charged = map[string][]string{
+		"github.com/x/ext/charged": {"./seam"},
+		"github.com/x/ext/unnamed": nil,
 	}
 	if overruns := costOverruns(t, tree, stated); len(overruns) != 0 {
 		t.Fatalf("every package costs what its row allows and %v came back, so a correct table is reported and the check gets loosened", overruns)

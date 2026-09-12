@@ -1,6 +1,9 @@
 package scripts
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 const eventExtension = "github.com/frostgrove/vv/event"
 
@@ -31,8 +34,9 @@ func TestNoBaseSubsystemDependsOnTheEventExtension(t *testing.T) {
 // The rest of the closure is `crud`, `vvdb/lock`, `crud/catalog`,
 // `crud/sqlfault`, `errs`, `errs/sqlerr` and `utils` — everything a PostgreSQL
 // store needs and nothing more, which is why `health` and `port` stay outside
-// it. Charging the adapter directly and the lock separately is not available:
-// a row names one allowance, and the lock is the one that needs arguing.
+// it. Charging the adapter directly and the lock separately would say less: what
+// a row names is what that package may add, and the lock is the one that needs
+// arguing.
 //
 // `projection` reaches `runtime`, because a consumer that follows a log
 // continuously is a background activity the process owns and this repository has
@@ -41,6 +45,15 @@ func TestNoBaseSubsystemDependsOnTheEventExtension(t *testing.T) {
 // is the composition root's to name, and `port` stays outside it because this
 // package writes no line at all — a halt reaches an operator through `Ready` and
 // every transition through the `Observer`.
+//
+// `eventtest` is the conformance half and reaches `projection` and `receipt`,
+// which is the only row that names two: it certifies three interfaces those two
+// packages declare and a consumer implements — a `Ledger`, a `Generations` and a
+// `Park` — and a harness cannot be written against a contract it may not name.
+// `runtime` arrives inside `projection`'s own closure and nothing here imports
+// it. What the row still refuses is the one that matters: `eventtest` may not
+// reach `eventmemory`, so the suite cannot be written against the store it
+// certifies.
 //
 // `receipt` is a durable record beside an append, so it costs `event` for the
 // `Commit`, the `Authority` and the `Stream` it records, and `crud`/`errs`
@@ -52,12 +65,12 @@ func TestNoEventPackageCostsMoreThanTheSeamItNames(t *testing.T) {
 		prefix:    eventExtension,
 		root:      "event",
 		contracts: []string{"./crud", "./errs"},
-		charged: map[string]string{
-			eventExtension + "/eventmemory": "",
-			eventExtension + "/eventpg":     "./vvdb/lock/locksql",
-			eventExtension + "/eventtest":   "",
-			eventExtension + "/projection":  "./runtime",
-			eventExtension + "/receipt":     "",
+		charged: map[string][]string{
+			eventExtension + "/eventmemory": nil,
+			eventExtension + "/eventpg":     {"./vvdb/lock/locksql"},
+			eventExtension + "/eventtest":   {"./event/projection", "./event/receipt"},
+			eventExtension + "/projection":  {"./runtime"},
+			eventExtension + "/receipt":     nil,
 		},
 		core: func(reached string) string {
 			return "the vocabulary reaches " + reached + " — a deployment that wants a fact history and no subsystem of ours compiles it anyway"
@@ -65,11 +78,11 @@ func TestNoEventPackageCostsMoreThanTheSeamItNames(t *testing.T) {
 		uncharged: func(path string) string {
 			return path + " is a package of the extension and says nothing about what it costs — the vocabulary and one store each is the whole layout, and what a package costs is written down here"
 		},
-		overreach: func(path, reached, allowance string) string {
-			if allowance == "" {
+		overreach: func(path, reached string, allowance []string) string {
+			if len(allowance) == 0 {
 				return path + " reaches " + reached + ", and its row here says it costs the vocabulary and nothing else"
 			}
-			return path + " reaches " + reached + ", and its row here says it costs the vocabulary and " + allowance
+			return path + " reaches " + reached + ", and its row here says it costs the vocabulary and " + strings.Join(allowance, " and ")
 		},
 	})
 }

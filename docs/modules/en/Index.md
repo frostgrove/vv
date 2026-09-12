@@ -118,7 +118,7 @@ the exception ([[D-048]], [[D-055]]).
 | [eventmemory](eventmemory.md) | `vv/event/eventmemory` | A complete in-memory store, transactions included. Not a test double |
 | [eventpg](eventpg.md) | `vv/event/eventpg` | **Module** — the store on PostgreSQL: one-statement append, three-level schema verification, an append-only history and a settled-watermark log walk |
 | [projection](projection.md) | `vv/event/projection` | A log becomes a read model: a supervised checkpointed consumer, two advance modes, a typed router, envelope-granular quarantine, and a fence that makes two live instances take turns |
-| [eventtest](eventtest.md) | `vv/event/eventtest` | The store contract as a conformance suite, plus three proxies an application runs over its own declaration |
+| [eventtest](eventtest.md) | `vv/event/eventtest` | Five conformance suites: the store contract, the checkpoint contract, and the three interfaces an application implements — `Ledger`, `Generations`, `Park` — plus three proxies it runs over its own declaration |
 | [receipt](receipt.md) | `vv/event/receipt` | A durable operation receipt beside the append, in the caller's own transaction and the application's own table: claim before decide, a fingerprint over the bytes, three verdicts and four standings — and an absent row that is never a rollback |
 
 ## Audit evidence — declared before it is stored

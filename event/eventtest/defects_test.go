@@ -44,7 +44,7 @@ func TestTheSuiteStillDetectsEveryDefectItWasBuiltToDetect(t *testing.T) {
 // asserted rather than left to whatever the slice holds: a row dropped in a
 // refactor takes a section's only control with it and reports nothing. The
 // control is the same assertion over an inventory one row shorter.
-const inventoried = 29
+const inventoried = 43
 
 func TestTheDefectInventoryIsTheSizeItSaysItIs(t *testing.T) {
 	defects := eventtest.Defects()
@@ -109,7 +109,7 @@ func oneVerdict(t *testing.T, factory eventtest.Factory, section string) string 
 	return verdicts[0].Word
 }
 
-// The four defects that are stores rather than decorators, each with the pair of
+// The eight defects that are stores rather than decorators, each with the pair of
 // factories it is built from: one that has the defect and one that does not.
 // Everything else in the inventory wraps the store its row describes.
 func storeShaped() map[string]func(broken bool) eventtest.Factory {
@@ -118,7 +118,19 @@ func storeShaped() map[string]func(broken bool) eventtest.Factory {
 			return sliceFactory(broken, nil)
 		},
 		"leaves a rolled-back transaction's events readable": func(broken bool) eventtest.Factory {
-			return stagingFactory(broken, nil)
+			return stagingFactory(faults{leaks: broken}, nil)
+		},
+		"answers the second commit of one transaction as it answered the first": func(broken bool) eventtest.Factory {
+			return stagingFactory(faults{commitsTwice: broken}, nil)
+		},
+		"releases one of the two streams a committed transaction wrote to and keeps the other claimed": func(broken bool) eventtest.Factory {
+			return stagingFactory(faults{strandsAClaim: broken}, nil)
+		},
+		"answers no unit of work through a second store value over the backing one was begun on": func(broken bool) eventtest.Factory {
+			return stagingFactory(faults{namesNoUnitBeside: broken}, nil)
+		},
+		"names a unit of work through a second store value over one backing and writes outside it there": func(broken bool) eventtest.Factory {
+			return stagingFactory(faults{writesOutsideUnits: broken}, nil)
 		},
 		"claims persistence and builds a second value over its backing that has none of what the first wrote": persistentFactory,
 		"reads from the beginning of its log for a cursor it could not parse":                                 lenientFactory,
@@ -128,7 +140,7 @@ func storeShaped() map[string]func(broken bool) eventtest.Factory {
 func factoriesFor(t *testing.T, defect eventtest.Defect) (plain, broken eventtest.Factory) {
 	t.Helper()
 	if defect.Over != nil {
-		return stagingFactory(false, nil), stagingFactory(false, defect.Over)
+		return stagingFactory(faults{}, nil), stagingFactory(faults{}, defect.Over)
 	}
 	build, known := storeShaped()[defect.Name]
 	if !known {

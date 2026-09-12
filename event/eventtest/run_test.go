@@ -109,26 +109,26 @@ func namedReporting(t *testing.T, what string) reporting {
 // harness's.
 func reportings(t *testing.T) []reporting {
 	t.Helper()
-	beginless := stagingFactory(false, nil)
+	beginless := stagingFactory(faults{}, nil)
 	beginless.Begin = nil
-	unstated := stagingFactory(false, func(store event.Store) event.Store { return sayingNothing{store} })
+	unstated := stagingFactory(faults{}, func(store event.Store) event.Store { return sayingNothing{store} })
 	return []reporting{
 		{
 			what:   "a store that satisfies the contract",
-			build:  func(*testing.T) eventtest.Factory { return stagingFactory(false, nil) },
+			build:  func(*testing.T) eventtest.Factory { return stagingFactory(faults{}, nil) },
 			reads:  true,
 			silent: []string{eventtest.CertifiedNothing},
 		},
 		{
 			what:  "a store that fails one section",
-			build: func(t *testing.T) eventtest.Factory { return stagingFactory(false, defectOn(t, "lifecycle")) },
+			build: func(t *testing.T) eventtest.Factory { return stagingFactory(faults{}, defectOn(t, "lifecycle")) },
 			fails: true,
 			reads: true,
 		},
 		{
 			what: "a section whose factory hook leaves the run",
 			build: func(*testing.T) eventtest.Factory {
-				factory := stagingFactory(false, nil)
+				factory := stagingFactory(faults{}, nil)
 				factory.Begin = func(t *testing.T, _ context.Context, _ event.Store) (context.Context, eventtest.Tx) {
 					t.SkipNow()
 					return nil, nil
@@ -150,13 +150,13 @@ func reportings(t *testing.T) []reporting {
 			what:  "a store that claims transactions and a factory that begins none",
 			build: func(*testing.T) eventtest.Factory { return beginless },
 			fails: true,
-			says:  []string{"eventtest: " + eventtest.Missing(newStagingStore(t, false, limits()).Capabilities(), beginless)},
+			says:  []string{"eventtest: " + eventtest.Missing(newStagingStore(t, faults{}, limits()).Capabilities(), beginless)},
 		},
 		{
 			what:  "a store that states nothing about its transactions",
 			build: func(*testing.T) eventtest.Factory { return unstated },
 			fails: true,
-			says:  []string{"eventtest: " + eventtest.Missing(sayingNothing{newStagingStore(t, false, limits())}.Capabilities(), unstated)},
+			says:  []string{"eventtest: " + eventtest.Missing(sayingNothing{newStagingStore(t, faults{}, limits())}.Capabilities(), unstated)},
 		},
 		{
 			what:  "a factory that builds no store",
@@ -174,7 +174,7 @@ func reportings(t *testing.T) []reporting {
 		},
 		{
 			what:  "a store whose MaxKey leaves this suite no room for its own names",
-			build: func(*testing.T) eventtest.Factory { return stagingFactoryAt(narrowestKey(), false, nil) },
+			build: func(*testing.T) eventtest.Factory { return stagingFactoryAt(narrowestKey(), faults{}, nil) },
 			fails: true,
 			says:  []string{eventtest.NarrowKey(narrowestKey().MaxKey)},
 		},

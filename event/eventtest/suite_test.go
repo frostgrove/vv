@@ -16,7 +16,7 @@ func TestATrivialStoreNeedsNoInternalAccess(t *testing.T) {
 }
 
 func TestATransactionCapableStoreSatisfiesTheContract(t *testing.T) {
-	eventtest.Run(t, stagingFactory(false, nil))
+	eventtest.Run(t, stagingFactory(faults{}, nil))
 }
 
 // The precondition of anti-vacuity rule 2 and not the rule itself: three
@@ -53,7 +53,7 @@ func TestAGatedSectionIsReportedNotCertified(t *testing.T) {
 // reports the row rather than counting it is watched by
 // TestTheRunReportsWhatItFound.
 func TestTheVerdictOfASectionThatNeverReturnedIsNotPassed(t *testing.T) {
-	factory := stagingFactory(false, nil)
+	factory := stagingFactory(faults{}, nil)
 	factory.Begin = func(t *testing.T, _ context.Context, _ event.Store) (context.Context, eventtest.Tx) {
 		t.SkipNow()
 		return nil, nil
@@ -90,8 +90,8 @@ func TestAClaimWithNoHookAndACapabilityNobodyStatedAreBothNamed(t *testing.T) {
 	}
 
 	whole := eventtest.Factory{
-		Begin:   stagingFactory(false, nil).Begin,
-		Sibling: stagingFactory(false, nil).Sibling,
+		Begin:   stagingFactory(faults{}, nil).Begin,
+		Sibling: stagingFactory(faults{}, nil).Sibling,
 	}
 	if broken := eventtest.Missing(claimed(event.Supported, event.Supported), whole); broken != "" {
 		t.Fatalf("a store that claims both capabilities and a factory that supplies both hooks was refused: %s", broken)
@@ -113,7 +113,7 @@ func claimed(transactions, sharedBacking event.Support) event.Capabilities {
 // watches the four doors that take one.
 func TestEveryStoreCallASectionMakesCarriesADeadline(t *testing.T) {
 	watching := &deadlines{}
-	eventtest.Certify(t, stagingFactory(false, func(store event.Store) event.Store {
+	eventtest.Certify(t, stagingFactory(faults{}, func(store event.Store) event.Store {
 		return timed{Store: store, watching: watching}
 	}))
 	seen, open := watching.counts()
@@ -140,7 +140,7 @@ func TestASectionWalksItsOwnTailOfALogSomebodyElseFilled(t *testing.T) {
 			t.Errorf("the %s section was reported failed over a store whose only difference is a log it did not write: %s", given.Section, given.Reason)
 		}
 	}
-	if eventtest.Certified(verdicts) != eventtest.Certified(eventtest.Certify(t, stagingFactory(false, nil))) {
+	if eventtest.Certified(verdicts) != eventtest.Certified(eventtest.Certify(t, stagingFactory(faults{}, nil))) {
 		t.Error("the same store certified a different number of sections with a log somebody else filled in front of it, so what a section reads depends on what it does not own")
 	}
 }
@@ -161,7 +161,7 @@ func TestEverySectionIsCertifiedAtTheNarrowestLimitsAStoreMayPublish(t *testing.
 			t.Errorf("the %s section was reported failed over a store whose only difference is the legal numbers it publishes: %s", given.Section, given.Reason)
 		}
 	}
-	if eventtest.Certified(narrow) != eventtest.Certified(eventtest.Certify(t, stagingFactory(false, nil))) {
+	if eventtest.Certified(narrow) != eventtest.Certified(eventtest.Certify(t, stagingFactory(faults{}, nil))) {
 		t.Error("the same store certified a different number of sections at a MaxBatch of one, a page of one and a MaxKey of forty, so what a section certifies is decided by numbers the store is free to choose")
 	}
 }
@@ -180,7 +180,7 @@ func TestASectionReachesAVerdictOverALogSomebodyElseIsStillWritingTo(t *testing.
 			t.Errorf("the %s section was reported failed over a store whose only difference is that somebody else is appending to its log: %s", given.Section, given.Reason)
 		}
 	}
-	if eventtest.Certified(verdicts) != eventtest.Certified(eventtest.Certify(t, stagingFactory(false, nil))) {
+	if eventtest.Certified(verdicts) != eventtest.Certified(eventtest.Certify(t, stagingFactory(faults{}, nil))) {
 		t.Error("the same store certified a different number of sections while another writer was appending to its log")
 	}
 }
@@ -205,11 +205,11 @@ func TestAStoreThatKeepsWhatItWroteIsCertifiedForDurability(t *testing.T) {
 // this is the subtler one, which has no column at all and fills the field when
 // the row is read, so one event has as many instants as it has readers.
 func TestAStoreThatMintsTheRecordedInstantWhenAnEventIsReadIsNotCertified(t *testing.T) {
-	broken := stagingFactory(false, func(s event.Store) event.Store { return &reminting{Store: s} })
+	broken := stagingFactory(faults{}, func(s event.Store) event.Store { return &reminting{Store: s} })
 	if word := oneVerdict(t, broken, "dense versions"); word != "failed" {
 		t.Errorf("a store that mints the recorded instant at read time was reported %q for dense versions, and an audit trail regenerated on every read is worse than a missing one", word)
 	}
-	if word := oneVerdict(t, stagingFactory(false, nil), "dense versions"); word != "passed" {
+	if word := oneVerdict(t, stagingFactory(faults{}, nil), "dense versions"); word != "passed" {
 		t.Errorf("the same store recording its own instants was reported %q for dense versions, so the failure above is not the store's", word)
 	}
 }
@@ -229,11 +229,11 @@ func TestAStoreWhoseCapabilitiesOrBackingChangeUnderOneValueIsNotCertified(t *te
 		{"claims transactions on one call and not on the next", func(s event.Store) event.Store { return &wavering{Store: s} }},
 		{"names a fresh backing on every call", func(s event.Store) event.Store { return &repointing{Store: s} }},
 	} {
-		if word := oneVerdict(t, stagingFactory(false, store.over), "binding"); word != "failed" {
+		if word := oneVerdict(t, stagingFactory(faults{}, store.over), "binding"); word != "failed" {
 			t.Errorf("a store that %s was reported %q for binding", store.what, word)
 		}
 	}
-	if word := oneVerdict(t, stagingFactory(false, nil), "binding"); word != "passed" {
+	if word := oneVerdict(t, stagingFactory(faults{}, nil), "binding"); word != "passed" {
 		t.Errorf("the same store answering one value to every call was reported %q for binding, so the failures above are not the two stores'", word)
 	}
 }
@@ -275,7 +275,7 @@ func TestACursorAStoreCannotParseIsRefusedRatherThanReadFromTheBeginning(t *test
 		t.Errorf("the same store refusing what it cannot parse was reported %q for resumption, so the failure above is not the store's", word)
 	}
 
-	silent := stagingFactory(false, nil)
+	silent := stagingFactory(faults{}, nil)
 	silent.Unparsable = nil
 	if word := oneVerdict(t, silent, "resumption"); word != "not certified" {
 		t.Errorf("a factory that answers no cursor its store cannot parse was reported %q for resumption, so a clause nothing asked about was counted as one the store kept", word)

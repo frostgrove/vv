@@ -210,10 +210,11 @@ broken.
    The claim is the two statements above in that order; the horizon is monotone
    and comes from the database's clock; `Find` sees committed rows only; and
    `Claim` and `Complete` run inside the caller's transaction while `Find` and
-   `Horizon` run outside one. There is no published conformance harness for a
-   `Ledger` today — what stands in its place is four injected defects against the
-   reference implementation, each asserted to break the case that names it
-   (`TestFourLedgerDefectsEachBreakTheCaseThatNamesThem`).
+   `Horizon` run outside one. **Run `eventtest.RunLedger` against yours** — it is
+   the published conformance harness for a `Ledger`, it reports seven sections in
+   the same three words the store suite uses, and its `claim order` section is
+   the only thing that will tell you the two statements are in the right order
+   before a retry tells you in production. See [eventtest](eventtest.md).
 
 ## Three answers at the write door, and two of them are refusals
 

@@ -587,6 +587,15 @@ phase 3 landed FL-014 and before phase 5 landed FL-015.
 | `event/eventtest/sections_topology.go` | FL-036, FL-038 |
 | `event/eventtest/defects_checkpoints.go` | FL-036, FL-038 |
 | `event/eventtest/stores.go` | FL-036 |
+| `event/eventtest/ledger.go` | FL-036, FL-043 |
+| `event/eventtest/sections_ledger.go` | FL-036, FL-043 |
+| `event/eventtest/defects_ledger.go` | FL-036, FL-043 |
+| `event/eventtest/generations.go` | FL-036, FL-042 |
+| `event/eventtest/sections_generations.go` | FL-036, FL-042 |
+| `event/eventtest/defects_generations.go` | FL-036, FL-042 |
+| `event/eventtest/park.go` | FL-036, FL-038 |
+| `event/eventtest/sections_park.go` | FL-036, FL-038 |
+| `event/eventtest/defects_park.go` | FL-036, FL-038 |
 | `event/eventpg/doc.go` | FL-037 |
 | `event/eventpg/schema.go` | FL-037 |
 | `event/eventpg/config.go` | FL-037 |

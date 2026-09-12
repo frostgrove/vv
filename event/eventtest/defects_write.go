@@ -2,6 +2,7 @@ package eventtest
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"time"
 
@@ -54,6 +55,59 @@ func cutTo(stream event.Stream) event.Stream {
 		return stream
 	}
 	return event.Stream{Family: stream.Family, Key: stream.Key[:truncatedKeyBytes]}
+}
+
+// A key column under an accent-insensitive collation — `unaccent` in
+// PostgreSQL, `utf8mb4_general_ci` in MySQL — which is what two identities
+// spelling one grapheme composed and decomposed collide under. Every read
+// answers the key it was asked for and every version is dense, and one
+// aggregate folds the other's facts.
+type foldedAccents struct{ over }
+
+func (this foldedAccents) Append(ctx context.Context, request event.AppendRequest) error {
+	request.Stream = folded(request.Stream)
+	return this.Store.Append(ctx, request)
+}
+
+func (this foldedAccents) ReadStream(ctx context.Context, stream event.Stream, after event.Version) ([]event.Envelope, error) {
+	page, err := this.Store.ReadStream(ctx, folded(stream), after)
+	for index := range page {
+		page[index].Stream = stream
+	}
+	return page, err
+}
+
+func folded(stream event.Stream) event.Stream {
+	return event.Stream{Family: stream.Family, Key: event.Key(strings.Map(unaccented, string(stream.Key)))}
+}
+
+func unaccented(held rune) rune {
+	const accented = "àáâãäåçèéêëìíîïñòóôõöùúûüý"
+	const plain = "aaaaaaceeeeiiiinooooouuuuy"
+	for at, letter := range []rune(accented) {
+		if letter == held {
+			return []rune(plain)[at]
+		}
+	}
+	if held >= 0x0300 && held <= 0x036f {
+		return -1
+	}
+	return held
+}
+
+// A store that reports every append it refused as one that certainly did not
+// land, which is what a driver error read as a write failure rather than as a
+// unique-violation is. The caller's branch on a write that did not land is to
+// issue the same decision again, and that is the one thing a lost optimistic
+// append may not do: the decision it carries was taken from a state that does
+// not hold the winner's.
+type lostAsNotWritten struct{ over }
+
+func (this lostAsNotWritten) Append(ctx context.Context, request event.AppendRequest) error {
+	if err := this.Store.Append(ctx, request); err != nil {
+		return event.Failure(event.NotWritten, err)
+	}
+	return nil
 }
 
 // The column a migration added after the insert path was written, or a select
@@ -113,6 +167,18 @@ func (this *lastWriteWins) height(ctx context.Context, stream event.Stream) (eve
 			return at, nil
 		}
 	}
+}
+
+// A store that writes the first record of a batch and drops the rest — an
+// insert issued per record where only the first one's error is read, or a
+// statement bound to one row. The append answers nothing, the token the caller
+// carries is the one the whole batch decided, and the stream is short of every
+// record after the first.
+type clipsBatches struct{ over }
+
+func (this clipsBatches) Append(ctx context.Context, request event.AppendRequest) error {
+	request.Records = request.Records[:1]
+	return this.Store.Append(ctx, request)
 }
 
 // A read cache one store value fills and nothing invalidates, which is what a

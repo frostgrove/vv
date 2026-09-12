@@ -409,7 +409,13 @@ and each has a stated edge:
   is `ErrPayload`.
 - **Non-aliasing** — the same bytes are decoded twice and the two answers are
   searched for a slice or a map they share, and the codec is made to decode a
-  second payload between two encodings of the first answer.
+  second payload between two encodings of the first answer. Two payloads, in
+  fact: the reader type's own zero value, and — where that moved nothing — the
+  sample's own payload with one byte changed, which is as wide as what the first
+  answer points at and is what finds a codec that fills its buffer to the
+  payload's width and clears nothing. Nothing is asked of your codec for the
+  second one: a payload it refuses, or panics on, is one the probe learned
+  nothing from and the verdict is the first one's.
 
 Two facts the second half cannot be run for: a **marker** fact, whose reader
 type holds one value — `struct{}` — because its only sample encodes as its own

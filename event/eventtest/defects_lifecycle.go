@@ -54,6 +54,38 @@ func (this *closesOnce) Close() error {
 	return this.Store.Close()
 }
 
+// A store that leaves the cancellation to its driver and issues the statement
+// anyway, which is what a store passing a context of its own — a background one,
+// one it built from a pool's — down to the driver does. The write lands after
+// the caller gave up on it, and the caller has no error to recognise it by.
+type deafToCancellation struct{ over }
+
+func (this deafToCancellation) Append(ctx context.Context, request event.AppendRequest) error {
+	return this.Store.Append(context.WithoutCancel(ctx), request)
+}
+
+// The same deafness on the way back: a read served under a context that was
+// already cancelled, so a request that was abandoned goes on costing a
+// connection and answers a caller that is no longer there.
+type servesTheCancelled struct{ over }
+
+func (this servesTheCancelled) ReadStream(ctx context.Context, stream event.Stream, after event.Version) ([]event.Envelope, error) {
+	return this.Store.ReadStream(context.WithoutCancel(ctx), stream, after)
+}
+
+func (this servesTheCancelled) ReadAll(ctx context.Context, after event.Cursor) ([]event.Envelope, event.Cursor, error) {
+	return this.Store.ReadAll(context.WithoutCancel(ctx), after)
+}
+
+// A Close that answers as a close does and closes nothing — a store whose
+// closure is a field its own operations never read, or one that closes a handle
+// it no longer owns. Every door it was shut behind goes on serving, so a
+// composition root that shut a tenant's store down is still writing that
+// tenant's history.
+type closesNothing struct{ over }
+
+func (this closesNothing) Close() error { return nil }
+
 // A store that hands its driver's error back without saying what it means. It is
 // the most ordinary store defect there is, and the one no reader of an error
 // message can recover from: the classification is the store's own half of the

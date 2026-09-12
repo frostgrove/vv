@@ -26,6 +26,76 @@ func atOnePosition(page []event.Envelope) []event.Envelope {
 	return page
 }
 
+// A log whose positions are computed by the read rather than carried by the row
+// — a row number over a view, an offset into a page. Every walk answers them in
+// order and no two walks agree, so a consumer that checkpointed at one of them
+// resumes somewhere else in the log, or never reads the events under it again.
+type movingPositions struct {
+	over
+	mutex sync.Mutex
+	away  event.Position
+}
+
+func (this *movingPositions) ReadAll(ctx context.Context, after event.Cursor) ([]event.Envelope, event.Cursor, error) {
+	page, cursor, err := this.Store.ReadAll(ctx, after)
+	if err != nil {
+		return page, cursor, err
+	}
+	this.mutex.Lock()
+	defer this.mutex.Unlock()
+	this.away += 1 << 20
+	for index := range page {
+		page[index].Position += this.away
+	}
+	return page, cursor, nil
+}
+
+// A global read with no order of its own within a page — the rows an index
+// happened to hand back. The positions ascend, every event this run wrote is
+// there, and one stream's own two events arrive in the log in the order opposite
+// to its own, so a projector that folds per stream off the log folds the second
+// decision before the first.
+type reorderedStreams struct{ over }
+
+func (this reorderedStreams) ReadAll(ctx context.Context, after event.Cursor) ([]event.Envelope, event.Cursor, error) {
+	page, cursor, err := this.Store.ReadAll(ctx, after)
+	if err != nil {
+		return page, cursor, err
+	}
+	held := map[event.Stream][]int{}
+	for index, envelope := range page {
+		held[envelope.Stream] = append(held[envelope.Stream], index)
+	}
+	for _, places := range held {
+		for left, right := 0, len(places)-1; left < right; left, right = left+1, right-1 {
+			page[places[left]].Version, page[places[right]].Version = page[places[right]].Version, page[places[left]].Version
+		}
+	}
+	return page, cursor, nil
+}
+
+// A store that reads a stream from its beginning whatever version it was asked
+// to read after — a query whose WHERE clause lost its bound, or one paging by a
+// limit alone. One page holds the whole of a short stream, so a reader whose
+// first page is the whole stream never sees it; a fold that takes its pages
+// narrower reads the first of them again and again.
+type ignoresTheVersionRead struct{ over }
+
+func (this ignoresTheVersionRead) ReadStream(ctx context.Context, stream event.Stream, _ event.Version) ([]event.Envelope, error) {
+	return this.Store.ReadStream(ctx, stream, 0)
+}
+
+// A page beside no position to resume from: a store whose cursor is minted by
+// something other than the read that answered the page — a watermark it polls,
+// a column that is null until a background job fills it. The events are right
+// and nothing about the walk can be persisted.
+type cursorlessPages struct{ over }
+
+func (this cursorlessPages) ReadAll(ctx context.Context, after event.Cursor) ([]event.Envelope, event.Cursor, error) {
+	page, _, err := this.Store.ReadAll(ctx, after)
+	return page, "", err
+}
+
 // A log written beside the insert rather than by it — a trigger, an outbox, a
 // second table a batch is copied into — that half the time does not run. Every
 // stream answers every decision it holds, so the only reader that can see the

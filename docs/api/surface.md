@@ -6009,6 +6009,9 @@ type CheckpointFactory struct {
 	Instant func(minted time.Time) time.Time
 	Window time.Duration
 }
+type Closure uint8
+func (Closure) String() string
+const ClosureUnstated Closure = 0
 type Factory struct {
 	New func(t *testing.T) github.com/frostgrove/vv/event.Store
 	Begin func(t *testing.T, ctx context.Context, s github.com/frostgrove/vv/event.Store) (context.Context, Tx)
@@ -6019,10 +6022,33 @@ type Factory struct {
 	Window time.Duration
 }
 func Families(*testing.T, ...github.com/frostgrove/vv/event.Declaration)
+type GenerationsFactory struct {
+	New func(t *testing.T) github.com/frostgrove/vv/event/projection.Generations
+	Begin func(t *testing.T, ctx context.Context, g github.com/frostgrove/vv/event/projection.Generations) (context.Context, Tx)
+	Closes Closure
+	Window time.Duration
+}
 func Keys[S any, ID any](*testing.T, *github.com/frostgrove/vv/event.Aggregate[S, ID], ...ID)
+type LedgerFactory struct {
+	New func(t *testing.T) github.com/frostgrove/vv/event/receipt.Ledger
+	Begin func(t *testing.T, ctx context.Context, l github.com/frostgrove/vv/event/receipt.Ledger) (context.Context, Tx)
+	Window time.Duration
+}
+const LockingRead Closure = 1
+type ParkFactory struct {
+	New func(t *testing.T) github.com/frostgrove/vv/event/projection.Park
+	Begin func(t *testing.T, ctx context.Context, p github.com/frostgrove/vv/event/projection.Park) (context.Context, Tx)
+	Sequences int
+	Letters int
+	Window time.Duration
+}
 func RoundTrip[S any, ID any, E any](*testing.T, *github.com/frostgrove/vv/event.Fact[S, ID, E], ...any)
 func Run(*testing.T, Factory)
 func RunCheckpoints(*testing.T, CheckpointFactory)
+func RunGenerations(*testing.T, GenerationsFactory)
+func RunLedger(*testing.T, LedgerFactory)
+func RunPark(*testing.T, ParkFactory)
+const SerializableUnit Closure = 2
 type Tx interface {
 	Commit(context.Context) error
 	Rollback(context.Context) error

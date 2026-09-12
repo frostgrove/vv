@@ -181,6 +181,12 @@ moved: `Sequences`'s outside-a-unit rule is unchanged, `Park` itself is still a
 pass's write, and **`Holes` is asked by no wait at all**. The `Sequences`-first
 gate means a projection that has parked nothing never reaches the widened clause.
 
+**The clause is now checkable.** `eventtest.RunPark`'s `committed state` section
+parks a letter in a unit, commits it and asks `Holds` with no unit bound; the
+defect it is falsified against is a queue that answers from the snapshot it took
+the first time it was asked, which is exactly the implementation the widened
+sentence was written for.
+
 ### What the phase that adds a base state must not re-derive
 
 ES-08 and ES-09 are one design and this phase implements one half of one clause,
@@ -248,6 +254,14 @@ what this phase added.
   `TestTheUnreadableEventTableLive` — the same three live.
 - `TestADigestIsTheBytesThisAppendWouldWrite` — the recording store asserting
   `Digest` made no store call of any kind.
+- `TestTheReferenceQueueIsCertified` and
+  `TestTheQueueHarnessStillDetectsEveryDefectItWasBuiltToDetect`
+  (`event/eventtest`) — the widened sentence as a section, and the eight defects
+  the six sections are falsified against.
+- `TestTheLiveQueueSatisfiesTheContract` and
+  `TestTheApplicationHarnessesCatchADefectiveImplementation` (`event/eventpg`,
+  live) — the same six sections over PostgreSQL, and a queue writing on the pool
+  reported by the section that names it.
 
 ## See also
 

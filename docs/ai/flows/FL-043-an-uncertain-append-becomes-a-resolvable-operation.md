@@ -188,6 +188,9 @@ role is the deployment's lever that bounds it.
 | `event/errors.go` | `ErrUncertain`, the answer this flow exists to make resolvable |
 | `scripts/event_test.go` | the `event/receipt` row of `charged`: this package costs `crud`, `errs` and `utils` and nothing else |
 | `_examples/event-receipts/main.go` | the reference `Ledger` — both claim statements in order, the completing `UPDATE`, a SQL-side `Horizon` from a configured retention, a `jobs` periodic that sweeps, and both refusals branched on |
+| `event/eventtest/ledger.go` | `LedgerFactory`, `RunLedger`, `claiming`, `receipts`, `admitLedger`, `ledgerKey` — the runner a consumer's own `Ledger` is proved by, under the store suite's three anti-vacuity rules |
+| `event/eventtest/sections_ledger.go` | `waiting`, `ledgerInventory`, `ledgerClaimSection`, `ledgerRepeatSection`, `ledgerClaimOrderSection`, `claimed`, `receipts.raced`, `ledgerUnitSection`, `ledgerCompletionSection`, `ledgerHorizonSection`, `receipts.recorded`, `ledgerTransactionSection` — seven sections, of which `claim order` races two units for one key and is the only thing that measures the order of the two statements |
+| `event/eventtest/defects_ledger.go` | `ledgerDefect`, `ledgerDefects`, `overLedger`, `selectsFirst`, `echoes`, `alwaysWon`, `undated`, `completesNothing`, `oneAuthority` — the ten broken ledgers the runner is falsified with, `selectsFirst` among them |
 
 Every non-test `.go` file under `event/receipt/` has a row above, `doc.go`
 included: the reverse index in `docs/ai/flows/Index.md` is what an agent reads
@@ -199,13 +202,19 @@ flow.
 Untagged, in `make unit`: `event/digest_test.go` (the fingerprint and its frozen
 preimage), `event/receipt/key_test.go`, `event/receipt/errors_test.go`,
 `event/receipt/receipt_test.go`, `event/receipt/claim_test.go` and
-`event/receipt/resolve_test.go`.
+`event/receipt/resolve_test.go`. The harness a consumer runs over its own
+`Ledger` is proved in `event/eventtest/ledger_test.go`, against the reference
+implementation in `event/eventtest/fixtures_ledger_test.go` and the ten defects
+its seven sections are falsified with.
 
 Behind `//go:build integration`, against a live PostgreSQL:
 `event/eventpg/receipt_integration_test.go` — the two-caller race at three
 isolation levels, the lost-connection retry with its naive control, the
 held-open transaction that makes `Unresolved` indistinguishable from a rollback,
-and the four ledger defects. The gate names its own command:
+and the four ledger defects, beside
+`event/eventpg/application_integration_test.go`, which runs `eventtest.RunLedger`
+over that same live ledger and then drives three of its defects through the
+harness in a subprocess. The gate names its own command:
 
 ```sh
 FROSTGROVE_EVENTPG_TEST_DSN='postgres://vv:vv@localhost:55432/vv?sslmode=disable' \

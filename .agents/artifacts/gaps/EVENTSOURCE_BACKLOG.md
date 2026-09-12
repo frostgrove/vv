@@ -34,18 +34,90 @@ suite in the abstract now, P2's own gate carries a mutation check: the suite mus
 defects *while exercising the real PostgreSQL store*. That is cheaper and tests the thing that
 actually ships. This entry stays open until that check exists.
 
-### 2. `eventmemory` conformance holes  `[critical]`
+**Worked, 2026-09-12, and re-measured rather than asserted.** The method: every `refuse` and
+`unable` call site in `event/eventtest/sections_*.go` is neutralised one at a time — the call is
+replaced by a no-op of the same signature, which is the call site's own `if` block deleted — and
+`go test ./event/eventtest/ ./event/eventmemory/` is run over the mutant. A mutant that leaves that
+green is an assertion nothing in the tree depends on. The same method, before and after.
+
+| | Before | After |
+|---|---|---|
+| the `Run` suite's own six section files | 12 / 176 = 6.8% | **19 / 185 = 10.3%** |
+| every section file the package ships | 30 / 280 = 10.7% | **37 / 289 = 12.8%** |
+
+The two numbers are lower than the 27/165 above because the method is stricter: it mutates the
+assertion rather than the implementation under it, so an assertion whose defect a *sibling*
+assertion also reports counts as surviving. That is most of what survives, and it is measured
+rather than guessed: each of the inventory's 43 rows is run against its section and the reason it
+reports is read back, which names the assertion that fires first. 42 distinct assertions are the
+first thing to report an inventoried defect and 19 of them are the only thing that does — the rest
+are pairs, most often a property and the control beside it.
+
+What changed, and what it bought:
+
+- The inventory went from 29 rows to 43. The eleven new decorators are a store that answers one
+  event at two positions on two walks, one that answers a stream's own events in the log in the
+  order opposite to its own, one under an accent-insensitive collation, one that reports every
+  append it refused as a write that did not land, one that clips a batch to its first record, one
+  that reads a stream from its beginning whatever version it was asked for, one that answers a page
+  beside no cursor, two that are deaf to a cancelled context at the write door and at the read
+  door, one whose `Close` closes nothing, and — as fixture stores, because a decorator that claims
+  to forward cannot commit them — one that answers the second commit of a transaction as it
+  answered the first, one that releases one of the two streams a committed unit took, one that
+  names no unit of work through a second store value over its backing, and one that names it there
+  and writes outside it anyway.
+- Seven assertions that could be deleted with the tree green now cannot.
+- The claim about the nine unnamed sections was already stale: `TestEverySectionIsNamedByADefectThatBreaksIt`
+  names all twenty and carries its own control. So was "`Run` has no test at all" —
+  `TestTheRunReportsWhatItFound` drives a run one process out and reads what it said, and all three
+  of `Run`'s reporting arms were confirmed dead when gutted (the section failure, the unreported
+  verdict and the certified-nothing rule), each caught by the case written for it.
+
+**Status: worked, not closed.** 251 assertions still survive their own deletion. The honest reading
+is above: most of them are one half of a pair, and the residue is the work this entry keeps.
+
+### 2. `eventmemory` conformance holes  `[critical]` — **closed 2026-09-12**
 
 No transaction is ever driven through a second store value over the same log, so keying the
 transaction by the `*Store` instead of the `*Log` survives — which is exactly the escape INV-041
 exists to close. Every transaction in the suite claims exactly one stream, so the claim set is
 untested in both directions: a two-stream commit can leave a stream permanently unwritable.
 
-### 3. The value walk's absence arms are unpinned  `[critical]`
+**Closed with the two mutations that used to survive.** `TestATransactionIsFoundThroughEveryStoreValueOverItsLog`
+begins a unit of work on one store value over a log, names it through a second, appends through the
+second inside it, reads it back through the first, finds nothing of it through a third outside, and
+takes it all back with a rollback — with a value over another log beside it as the control.
+`TestAClaimCoversEveryStreamOfATransactionAndIsReleasedOnEveryOne` stages to two streams, asserts an
+autocommit append is refused on each of the two and admitted on a third, and that a commit and a
+rollback each free both. Measured: R2-N1 (the doors finding their unit by the value that began it),
+R2-N7 (`stage` claiming only the first stream) and R2-N9 (`release` freeing only one) each leave the
+package green before those tests and each turn red on them afterwards, in the test written for it.
+
+The same two escapes are now the conformance suite's, so every store is asked: `transactions` gained
+`claimed` and `joined`, and the inventory gained three fixture stores that commit exactly them. Live
+`eventpg` passes both unchanged.
+
+### 3. The value walk's absence arms are unpinned  `[critical]` — **closed 2026-09-12**
 
 `event/comparison.go` — the walk's *absence* arms survive deletion: `sameEntries` comparing a map
 key with itself, `same`'s invalid-value arm, and a codec that fills a decode buffer to the payload's
 width and exposes it only through an unexported field passes `RoundTrip` with nil.
+
+**Two of the three were already closed, and it was measured rather than believed.** `sameEntries`
+rewritten to compare a map key with itself, and `same`'s invalid-value arm rewritten to `return
+true`, each turn `./event/` red today — both at `TestACodecThatDecodesIntoAReusedBufferIsCaught`'s
+*a value read back somewhere else* case, which the `rekeyingCodec` row drives.
+
+**The third was real and is now refused.** A codec that copies the payload's own width into a buffer
+it never clears and hands the value out through an unexported field passed `RoundTrip` with nil: the
+address walk skips the unexported half, and the disturbance behind it decodes the reader type's
+*zero value*, which is narrower than any sample and never reaches the bytes the first answer points
+at. `reusesItsBuffer` now takes a second disturbance when the first moves nothing —
+`disturbedAtItsOwnWidth`, the sample's own payload with one byte changed, which such a codec writes
+over the whole of what it already answered. Nothing is asked of the codec for it: a payload it
+refuses, or panics on, is one the probe learned nothing from and the verdict stays the narrower
+probe's, so no correct codec can be refused by it. Pinned by the `keptNote`/`keepingCodec` case with
+`copyingCodec` as its control, and deleting the second disturbance turns exactly that case red.
 
 ### 4. Kernel enum and seam contract unpinned  `[high]`
 
@@ -3658,7 +3730,7 @@ separate processes on purpose. What changes the calculation is a deployment that
 partition count where the read traffic, rather than the handler, is the binding cost — and this
 line is what that deployment will be compared against.
 
-### 70. There is no `parktest`-style conformance harness for a `Park`/`Redriver`  `[medium]`
+### 70. There is no `parktest`-style conformance harness for a `Park`/`Redriver`  `[medium]` — **CLOSED for `Park` by the conformance round, 2026-09-12**
 
 *Raised by S6, 2026-09-12.* A `Checkpoints` implementation is proved by `eventtest.RunCheckpoints`
 and its fourteen sections; a `Park` is proved by whatever its author happened to write. The
@@ -3671,6 +3743,13 @@ section, and a section nobody could run reported as `not certified` rather than 
 not in this phase because the shape of the suite is a decision of its own — in particular whether
 the harness may write letters directly, which is the only way to reach a bound without driving a
 projection to it first.
+
+**Closed for the `Park` half, 2026-09-12.** `eventtest.RunPark` writes letters directly — that was
+the decision — and reports `outside a unit`, `inside the unit`, `committed state`, `counts`,
+`identity` and `bounds`, one per tier the four methods run at. The two count bounds are driven
+through `ParkFactory.Sequences`/`Letters`, declared by the implementation and reported *not
+certified* when it declares neither, and the byte bound is still the example's alone. `Redriver`
+and `Claim` are not certified by it.
 
 ### 71. A second store's topology certification  `[low]`
 
@@ -4766,7 +4845,7 @@ suite's fixture byte for byte and in order, with a swapped-fixture control. The 
 `event/eventpg/receipt_integration_test.go:32-35` is now true about itself. Sub-items 2 and 3 and
 the unnamed sixth `Held.Complete` state stay open and are still `[low]`.
 
-### 54. A `receipttest` conformance harness for a `Ledger` is owed and is not in this phase  `[medium]`
+### 54. A `receipttest` conformance harness for a `Ledger` is owed and is not in this phase  `[medium]` — **CLOSED by the conformance round, 2026-09-12**
 
 *Source: S6, per [PLAN] § *The conformance extension*.*
 
@@ -4792,6 +4871,16 @@ phase 4 (`## P4` item 70).
 Owed: `receipttest.Run(t, factory)` with one section per obligation, its own defect inventory, and
 the two anti-vacuity rules `eventtest` already applies — or, if the answer is the wider one, a
 phase that publishes harnesses for all four application interfaces at once.
+
+**Closed with the wider answer, minus `Effects`.** `eventtest.RunLedger` publishes seven sections —
+`claim`, `repeat`, `claim order`, `unit of work`, `completion`, `horizon`, `transaction` — with a
+ten-row defect inventory and both anti-vacuity rules, beside `RunGenerations` (five sections, six
+defects) and `RunPark` (six sections, eight defects). They live in `eventtest` rather than in a
+`receipttest` of their own because the runner, the three words and the three anti-vacuity rules are
+already there and a second copy of those would be a second account of one rule; `scripts/event_test.go`
+records what that costs the import graph. `Effects` is still uncertified and is a one-method sink
+whose obligation ("what you do here must roll back with the unit") is not observable from outside
+it — see the closeout's GAP-2 note.
 
 ### 55. A store's first position has no published origin, and the zero-`Mark` discriminator rests on it  `[low]`
 

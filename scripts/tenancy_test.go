@@ -1,6 +1,9 @@
 package scripts
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 const tenancyExtension = "github.com/frostgrove/vv/tenancy"
 
@@ -22,12 +25,12 @@ func TestNoTenancyPackageCostsMoreThanTheSeamItNames(t *testing.T) {
 		prefix:    tenancyExtension,
 		root:      "tenancy",
 		contracts: []string{"./crud"},
-		charged: map[string]string{
-			tenancyExtension + "/tenancyrow":     "./crud/decorators/security",
-			tenancyExtension + "/tenancydb":      "./crud",
-			tenancyExtension + "/tenancyjobs":    "./jobs",
-			tenancyExtension + "/tenancystorage": "./storage",
-			tenancyExtension + "/tenancycache":   "./cache",
+		charged: map[string][]string{
+			tenancyExtension + "/tenancyrow":     {"./crud/decorators/security"},
+			tenancyExtension + "/tenancydb":      {"./crud"},
+			tenancyExtension + "/tenancyjobs":    {"./jobs"},
+			tenancyExtension + "/tenancystorage": {"./storage"},
+			tenancyExtension + "/tenancycache":   {"./cache"},
 		},
 		core: func(reached string) string {
 			return "the core reaches " + reached + " — a deployment that wants tenants and no seam of ours compiles it anyway"
@@ -35,8 +38,8 @@ func TestNoTenancyPackageCostsMoreThanTheSeamItNames(t *testing.T) {
 		uncharged: func(path string) string {
 			return path + " is a package of the extension and names no seam — the core and one seam each is the whole layout, and what a package costs is written down here"
 		},
-		overreach: func(path, reached, seam string) string {
-			return path + " reaches " + reached + ", which is neither the core nor " + seam + " — an adapter costs one seam"
+		overreach: func(path, reached string, seam []string) string {
+			return path + " reaches " + reached + ", which is neither the core nor " + strings.Join(seam, " nor ") + " — an adapter costs one seam"
 		},
 	})
 }

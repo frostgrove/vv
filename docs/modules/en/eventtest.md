@@ -4,8 +4,9 @@
 import "github.com/frostgrove/vv/event/eventtest"
 ```
 
-**Module:** in the root module — standard library, `testing` and `event` only
-· **Depends on:** [event](event.md) · **Depended on by:** nothing
+**Module:** in the root module — standard library, `testing` and the three
+packages whose contracts it certifies · **Depends on:** [event](event.md) ·
+[projection](projection.md) · [receipt](receipt.md) · **Depended on by:** nothing
 
 Writing an event store is not the hard part. Knowing whether it is *correct* is,
 because every way of getting it wrong is silent: a short page truncates a
@@ -30,6 +31,12 @@ each of them in one of three words.
 | `Families(t, declarations…)` | one family per aggregate, across your own declarations |
 | `RunCheckpoints(t, factory)` | the fourteen-section suite for an `event.Checkpoints`, one `t.Run` per section |
 | `CheckpointFactory` | `New`, `Begin`, `Sibling`, `Cursor`, `Instant`, `Window` |
+| `RunLedger(t, factory)` | the seven-section suite for a `receipt.Ledger` |
+| `LedgerFactory` | `New`, `Begin`, `Window` |
+| `RunGenerations(t, factory)` | the five-section suite for a `projection.Generations` |
+| `GenerationsFactory` | `New`, `Begin`, `Closes`, `Window` |
+| `RunPark(t, factory)` | the six-section suite for a `projection.Park` |
+| `ParkFactory` | `New`, `Begin`, `Sequences`, `Letters`, `Window` |
 | `RoundTrip(t, fact, byRevision…)` | your payload survives its own codec, per retained revision |
 
 ```go
@@ -147,6 +154,67 @@ func TestMyCheckpointsSatisfyTheContract(t *testing.T) {
 }
 ```
 
+## The three interfaces your application implements
+
+A store and a checkpoint store are ours to certify because we ship two of each.
+`receipt.Ledger`, `projection.Generations` and `projection.Park` are the other
+half of this extension and **nothing in this repository implements them**: the
+row, the table, the statements and the sweep are the application's. Each of the
+three carries an obligation that is stated in prose, enforced by no signature and
+checkable at run time by nothing — and each of those obligations, got wrong, is
+silent.
+
+| Run | Certifies | The obligation nothing else can check |
+|---|---|---|
+| `RunLedger` | `receipt.Ledger` | the claim is `INSERT … ON CONFLICT DO NOTHING` and **then** a `SELECT`, in that order and in one unit. Reversed, two callers both answer `Recorded` and both append under one operation key |
+| `RunGenerations` | `projection.Generations` | `Active` is a **locking** read. Plain, a cutover commits between that read and the unit's commit, and a retired generation stages the effect anyway |
+| `RunPark` | `projection.Park` | which of the four methods needs the caller's unit, and what `Holds` answers **outside** one — where a wait asks it |
+
+`RunLedger` reports `claim` · `repeat` · `claim order` · `unit of work` ·
+`completion` · `horizon` · `transaction`. `RunGenerations` reports
+`ungenerated` · `activation` · `fenced activation` · `unit of work` ·
+`locking read`. `RunPark` reports `outside a unit` · `inside the unit` ·
+`committed state` · `counts` · `identity` · `bounds`. The three words are the
+store suite's three, and so are the anti-vacuity rules.
+
+```go
+func TestMyLedgerSatisfiesTheContract(t *testing.T) {
+	eventtest.RunLedger(t, eventtest.LedgerFactory{
+		New: func(t *testing.T) receipt.Ledger { return open(t) },
+		Begin: func(t *testing.T, ctx context.Context, l receipt.Ledger) (context.Context, eventtest.Tx) {
+			tx := begin(t)
+			return withTransaction(ctx, tx), tx
+		},
+	})
+}
+```
+
+**`Begin` is required by all three and is called twice at once.** What the
+ledger's `claim order` section and the ownership row's `locking read` section
+measure is one unit **waiting** behind another, so a factory whose units come
+from a pool of one blocks until the section window expires.
+
+**Two declarations, and neither may be left at its zero value.**
+`GenerationsFactory.Closes` says what closes the window between the ownership
+read and the unit's commit — `eventtest.LockingRead` or
+`eventtest.SerializableUnit` — and stating neither **fails the run before any
+section starts**. Declaring `SerializableUnit` reports `locking read` as *not
+certified*, with the reason: at that level the abort that closes the window comes
+from the cutover reading the checkpoint rows the staging unit writes, and a
+harness holding two methods and no checkpoints writes none of them. That is a
+decline and it is not a pass.
+
+`ParkFactory.Sequences` and `ParkFactory.Letters` are the two bounds the queue
+refuses at — the numbers are the implementation's, `ErrParkFull` is what the
+framework declares. Declaring neither reports `bounds` as *not certified*.
+Declaring one wider than 64 does too: the harness will not write a thousand rows
+into somebody's queue to reach a bound, so it is certified over a park configured
+smaller.
+
+**These harnesses write rows they do not remove.** Every key, projection name and
+identity carries a run identity of its own, so two runs against one table never
+read each other's rows; the sweep is the application's, here as everywhere else.
+
 ## The twenty sections
 
 `binding` · `stream identity` · `expected version` · `dense versions` ·
@@ -157,6 +225,21 @@ func TestMyCheckpointsSatisfyTheContract(t *testing.T) {
 
 The last five are gated on a capability or a hook; the first fifteen run against
 every store.
+
+**`transactions` widened after phase 5, and a store certified before it may go
+red on the two clauses that arrived.** The first gives one unit of work **two
+streams** and asks that an append to each of them is admitted once that unit has
+committed: a store that tracks the streams a transaction took in one variable
+rather than in a set commits both and frees one, and the other is held by a claim
+nothing will ever release — every later writer of it is refused a conflict there
+is no longer a competitor for. The second, which runs only for a store supplying
+`Sibling`, carries the unit of work through **a second store value over one
+backing**: two values over one backing are one store, so both must answer the
+same authority for it and a write issued through either must be inside it. A
+store that finds its transaction by the value that opened it leaves every write
+a second value makes on autocommit — admitted, invisible to the rollback the
+caller believes in, and reported by nothing. Neither clause is a new rule;
+nothing in the suite exercised either before.
 
 ## The suite is falsified against itself
 
@@ -177,6 +260,20 @@ matters when a section is gutted rather than a store broken: **every section is
 named by a defect that breaks it**, and the one exemption — `durability`, whose
 defect is a factory rather than a decorator — is written down so the list can
 only shrink.
+
+The three application harnesses ship the same two tests over inventories of
+their own — ten ledgers, six ownership rows and eight queues, each one thing
+written wrong. Among them: a claim that reads the key before it inserts it and
+decides from the read, a ledger that reports every claim took the key, an
+ownership row that reads the row and then writes it rather than moving it with
+one fenced statement, one that reads on a handle of its own while its write rides
+in the caller's unit, one that takes no lock at all, a queue that answers the
+blocking test from the snapshot it took the first time it was asked, and one that
+counts the letters it was handed rather than the rows its table holds. Each is
+asserted to fail the section named for it, with the same implementation minus the
+defect as that section's control. Five of them are driven again through live
+PostgreSQL in `eventpg`'s own suite, in a subprocess, so what is measured there
+is a real index, a real row lock and a real snapshot rather than a model of one.
 
 ## The three proxies
 
@@ -210,5 +307,8 @@ other symptom is a wrong answer months later.
 
 - [event](event.md) — the vocabulary and the two seams these suites are written for
 - [eventmemory](eventmemory.md) — the store that ships, and the first to run it
-- [projection](projection.md) — the consumer a certified checkpoint store serves
-- [[D-121]] · [[D-128]] · [[D-133]] · [[FL-036]] · [[FL-038]] · [[UC-032]]
+- [projection](projection.md) — the consumer a certified checkpoint store serves, and
+  where `Generations` and `Park` are declared
+- [receipt](receipt.md) — where `Ledger` is declared
+- [[D-121]] · [[D-126]] · [[D-128]] · [[D-133]] · [[D-141]] · [[D-142]] ·
+  [[FL-036]] · [[FL-038]] · [[FL-042]] · [[FL-043]] · [[UC-032]]

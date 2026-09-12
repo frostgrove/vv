@@ -4,6 +4,8 @@ import (
 	"testing"
 
 	"github.com/frostgrove/vv/event"
+	"github.com/frostgrove/vv/event/projection"
+	"github.com/frostgrove/vv/event/receipt"
 )
 
 // What the suite's own tests reach it by, and the reason there is a seam at all:
@@ -166,3 +168,99 @@ func KeysAnswers[S, ID any](a *event.Aggregate[S, ID], ids ...ID) error {
 func FamiliesAnswers(declarations ...event.Declaration) error {
 	return familiesDiffer(declarations...)
 }
+
+// The three application-interface harnesses, through the same seam and for the
+// same reason: their defect inventories and section lists are unexported here,
+// and the reference implementations they are run against live in this package's
+// external test package.
+
+type LedgerDefect struct {
+	Name    string
+	Section string
+	Over    func(receipt.Ledger) receipt.Ledger
+}
+
+func LedgerDefects() []LedgerDefect {
+	held := make([]LedgerDefect, 0, len(ledgerDefects()))
+	for _, found := range ledgerDefects() {
+		held = append(held, LedgerDefect{Name: found.name, Section: found.section, Over: found.over})
+	}
+	return held
+}
+
+func CertifyLedger(t *testing.T, factory LedgerFactory, named ...string) []Verdict {
+	return answered(sweep(t, chosen(t, ledgerInventory(), named), claiming(t, factory), quietly))
+}
+
+func LedgerSectionNames() []string {
+	held := make([]string, 0, len(ledgerInventory()))
+	for _, one := range ledgerInventory() {
+		held = append(held, one.name)
+	}
+	return held
+}
+
+type GenerationsDefect struct {
+	Name    string
+	Section string
+	Over    func(projection.Generations) projection.Generations
+}
+
+func GenerationsDefects() []GenerationsDefect {
+	held := make([]GenerationsDefect, 0, len(generationsDefects()))
+	for _, found := range generationsDefects() {
+		held = append(held, GenerationsDefect{Name: found.name, Section: found.section, Over: found.over})
+	}
+	return held
+}
+
+func CertifyGenerations(t *testing.T, factory GenerationsFactory, named ...string) []Verdict {
+	return answered(sweep(t, chosen(t, generationsInventory(), named), owning(t, factory), quietly))
+}
+
+func GenerationsSectionNames() []string {
+	held := make([]string, 0, len(generationsInventory()))
+	for _, one := range generationsInventory() {
+		held = append(held, one.name)
+	}
+	return held
+}
+
+type ParkDefect struct {
+	Name    string
+	Section string
+	Over    func(projection.Park) projection.Park
+}
+
+func ParkDefects() []ParkDefect {
+	held := make([]ParkDefect, 0, len(parkDefects()))
+	for _, found := range parkDefects() {
+		held = append(held, ParkDefect{Name: found.name, Section: found.section, Over: found.over})
+	}
+	return held
+}
+
+func CertifyPark(t *testing.T, factory ParkFactory, named ...string) []Verdict {
+	return answered(sweep(t, chosen(t, parkInventory(), named), parking(t, factory), quietly))
+}
+
+func ParkSectionNames() []string {
+	held := make([]string, 0, len(parkInventory()))
+	for _, one := range parkInventory() {
+		held = append(held, one.name)
+	}
+	return held
+}
+
+const (
+	BuildsNoLedger       = buildsNoLedger
+	AnswersNoLedger      = answersNoLedger
+	OpensNoUnit          = opensNoUnit
+	BuildsNoGenerations  = buildsNoGenerations
+	AnswersNoGenerations = answersNoGenerations
+	OpensNoOwnershipUnit = opensNoOwnershipUnit
+	StatesNoClosure      = statesNoClosure
+	BuildsNoPark         = buildsNoPark
+	AnswersNoPark        = answersNoPark
+	OpensNoParkUnit      = opensNoParkUnit
+)

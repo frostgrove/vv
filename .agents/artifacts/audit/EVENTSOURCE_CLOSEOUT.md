@@ -374,6 +374,15 @@ positive one, which is the shape this repository's own test doctrine asks for.
   - item 2 `[critical]`'s "no second store value over one log" is also now exercised
     (`event/eventtest/sections_write.go:320`, `sections_resumption.go:36`). Items 3, 5 and 7 I did
     not verify.
+
+    **Corrected 2026-09-12, by measurement:** that last bullet was wrong, and wrong in the way a
+    conformance suite is always wrong — the two sections it names use a second store value for
+    *reads*, and item 2 is about a **unit of work** carried through one. The mutation it names
+    (the store finding its transaction by the value that began it) left `./event/eventmemory/`
+    green as written. It is closed now, in `eventmemory`'s own suite and in the conformance suite
+    both; see the backlog entry. Item 3 measured the same way: two of its three arms were already
+    closed and the third — an opaque value over a buffer filled to the payload's width — really did
+    pass `RoundTrip` with nil, and is refused now.
 - **Why this severity:** the backlog is the scheduling instrument the whole delivery policy rests
   on. A reader asking *"is anything blocking still open?"* gets nine yeses, of which several are
   false, and cannot tell which. That is worse than nine true yeses, because it teaches the next
@@ -413,9 +422,15 @@ positive one, which is the shape this repository's own test doctrine asks for.
   statements with the live suite's byte for byte, `docs/modules/en/receipt.md:213` admits the
   missing harness, and backlog `[medium]` items 54 and 70 schedule it.
 - **Close criteria:**
-  - [ ] `receipt`'s and `projection`'s obligations get an exported harness on the `eventtest.Run`
+  - [x] `receipt`'s and `projection`'s obligations get an exported harness on the `eventtest.Run`
         model, or the module pages say in capitals that a consumer must copy the reference and
         cannot verify a variant.
+        **Done, 2026-09-12:** `eventtest.RunLedger` (7 sections, 10 defects), `RunGenerations`
+        (5 sections, 6 defects) and `RunPark` (6 sections, 8 defects), each falsified against its
+        own inventory in `event/eventtest` and five of them again through live PostgreSQL in
+        `event/eventpg/application_integration_test.go`. `Effects` remains uncertified: it is a
+        one-method sink whose obligation is that what it does rolls back with the unit, and a
+        harness holding the interface cannot see what an implementation wrote.
 
 ### GAP-3 [medium][deferred] The wait's stated cost is understated on both module pages and in the guide
 

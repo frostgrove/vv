@@ -262,6 +262,16 @@ comes second.
   locking arm, the plain-read control, and the no-ownership-row fixture in which
   both senders stage.
 - `TestAnOwnershipRowOverASecondPoolLeavesTwoSenders` (`event/eventpg`, live).
+- `TestTheReferenceOwnershipRowIsCertified`,
+  `TestTheOwnershipHarnessStillDetectsEveryDefectItWasBuiltToDetect` and
+  `TestASerializableUnitIsDeclinedRatherThanCertified` (`event/eventtest`) — the
+  locking read as a section a consumer can run over its own implementation, the
+  six defects the five sections are falsified against, and the declaration that
+  is declined rather than skipped.
+- `TestTheLiveOwnershipRowSatisfiesTheContract` and
+  `TestTheApplicationHarnessesCatchADefectiveImplementation` (`event/eventpg`,
+  live) — the same five sections over PostgreSQL, and `plain-ownership-read`
+  reported by `locking read`.
 - `TestAnInterruptedWarmUpResumesSuppressed` (`event/eventpg`, live) — with the
   fresh-generation control and the dropped-barrier arm.
 - `TestAStraddlingPageStagesExactlyThePastBarrierEnvelopesLive`

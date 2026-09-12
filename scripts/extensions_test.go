@@ -27,10 +27,10 @@ type extensionCost struct {
 	prefix    string
 	root      string
 	contracts []string
-	charged   map[string]string
+	charged   map[string][]string
 	core      func(reached string) string
 	uncharged func(path string) string
-	overreach func(path, reached, allowance string) string
+	overreach func(path, reached string, allowance []string) string
 }
 
 func costsNoMoreThanItNames(t *testing.T, cost extensionCost) {
@@ -65,10 +65,7 @@ func costOverruns(t *testing.T, tree string, cost extensionCost) []string {
 			complaints = append(complaints, cost.uncharged(found.path))
 			continue
 		}
-		named := []string{"./" + cost.root}
-		if allowance != "" {
-			named = append(named, allowance)
-		}
+		named := append([]string{"./" + cost.root}, allowance...)
 		allowed := firstPartyDependenciesIn(t, tree, ".", named...)
 		for reached := range reaches {
 			if allowed[reached] || reached == found.path {

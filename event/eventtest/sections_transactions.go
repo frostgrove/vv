@@ -27,7 +27,83 @@ func transactionsSection(this *probe) {
 	this.crossed(ctx, store, repo, held)
 	this.aftermath(ctx, store, repo, held)
 	this.unbound(ctx, store, repo, held)
+	this.claimed(ctx, store, repo, held)
+	this.joined(ctx, store, repo, held)
 	this.chained(ctx, held)
+}
+
+// The ordinary unit of work is two streams — an aggregate and the audit entry
+// beside it — and what it holds while it is live it frees when it finishes. A
+// store that tracks the streams of a transaction in one variable rather than in
+// a set commits both and then releases one of them: the other stays held by a
+// claim nothing will ever release, and every later writer of it is refused a
+// conflict there is no longer a competitor for. Nothing else in this suite gives
+// one transaction two streams, so nothing else can see it.
+func (this *probe) claimed(ctx context.Context, store event.Store, repo *event.Repo[ledger, accountID], held declaration) {
+	credits := []struct {
+		id     accountID
+		amount int64
+	}{{this.account("h"), 1}, {this.account("i"), 2}}
+
+	inside, tx := this.begin(ctx, store)
+	for _, credit := range credits {
+		_, at := this.load(inside, repo, credit.id)
+		this.append(inside, repo, at, held.credited.New(credit.id, credited{Amount: credit.amount}))
+	}
+	this.commit(ctx, tx)
+
+	for _, credit := range credits {
+		state, at := this.load(ctx, repo, credit.id)
+		if state.Balance != credit.amount {
+			this.refuse("a stream one transaction wrote to beside another folds to %d after that transaction committed, where the decision taken inside it credited %d", state.Balance, credit.amount)
+		}
+		if _, _, err := repo.Append(ctx, at, held.credited.New(credit.id, credited{Amount: 3})); err != nil {
+			this.refuse("an append to a stream a committed transaction wrote to, beside one other stream, answered %v — a unit of work that frees one of the streams it took leaves the other held by a claim nothing will ever release, and every writer of it after is refused for a competitor that has finished", err)
+		}
+	}
+}
+
+// A unit of work is the backing's and not the value that opened it: two store
+// values over one backing are one store, and a request that composes a
+// repository per feature module opens a transaction through one of them and
+// writes through the others. A store that finds its transaction by the value
+// that began it leaves every one of those writes on this store's autocommit —
+// admitted, invisible to the rollback the caller believes in, and reported by
+// nothing at any point.
+func (this *probe) joined(ctx context.Context, store event.Store, repo *event.Repo[ledger, accountID], held declaration) {
+	sibling := this.beside(store, held)
+	if sibling == nil {
+		this.unable("this factory builds no second store value over one backing, so no unit of work was carried through a value other than the one that opened it")
+		return
+	}
+	if !sibling.Backing().Equal(store.Backing()) {
+		this.refuse("the second store value this factory built writes to another backing, so nothing here was two values of one store")
+	}
+	elsewhere := this.bind(sibling, held)
+
+	id := this.account("j")
+	inside, tx := this.begin(ctx, store)
+	here, err := repo.Authority(inside)
+	if err != nil || !here.Valid() {
+		this.refuse("the value that began the unit of work answered %v for it", err)
+	}
+	there, err := elsewhere.Authority(inside)
+	if err != nil || !there.Valid() {
+		this.refuse("a second store value over one backing answered %v for the unit of work the value beside it began, so a repository composed per feature module cannot tell it is inside one", err)
+	}
+	if !here.Same(there) {
+		this.refuse("two store values over one backing answered two different authorities for one unit of work, so two subsystems writing through their own repositories cannot prove they wrote together")
+	}
+
+	_, at := this.load(inside, elsewhere, id)
+	this.append(inside, elsewhere, at, held.credited.New(id, credited{Amount: 4}))
+	if outside, _ := this.load(ctx, repo, id); outside.Balance != 0 {
+		this.refuse("a reader outside the unit of work folds the stream to %d after a second store value over one backing appended inside it, so that append ran on this store's autocommit and no rollback can take it back", outside.Balance)
+	}
+	this.rollback(ctx, tx)
+	if state, _ := this.load(ctx, repo, id); state.Balance != 0 {
+		this.refuse("the stream folds to %d after the unit of work a second value appended inside rolled back", state.Balance)
+	}
 }
 
 // One transaction, two appends and a load between them: the second is admitted

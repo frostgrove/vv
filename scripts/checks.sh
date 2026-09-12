@@ -593,6 +593,33 @@ check_event_kernel() {
 # join a checkpoint save inside a unit of work needs. And event/projection/ is
 # the consumer itself, a package of the root module because phase 3 adds no
 # module.
+#
+# The conformance round after phase 5 moved it again, and every file it moved is
+# under event/eventtest/. Nine of them are the harnesses for the three interfaces
+# a CONSUMER implements — ledger.go, sections_ledger.go, defects_ledger.go and
+# the same three for generations and park — and they live beside the store suite
+# rather than beside the contracts they certify because the runner, the three
+# words and the three anti-vacuity rules are already there: a second copy of
+# those would be a second account of one rule. Nothing under event/projection/ or
+# event/receipt/ moved, which is the point — a harness is written against a
+# published contract or it is not a harness. export_test.go gains the seam those
+# three are driven through, and the fixtures beside it are the reference
+# implementations they are driven against.
+#
+# The detection round after that one moved fifteen files and no contract. Two
+# are the kernel: event/comparison.go gains a second, wider disturbance behind
+# the aliasing walk — the sample's own payload with a byte changed, which is what
+# finds a codec that fills its decode buffer to the payload's width and clears
+# nothing, where the zero value is too narrow to reach the bytes the first answer
+# points at — and event/roundtrip_test.go carries the codec that used to pass
+# with nil beside the one that allocates. The suite gains what nothing in it
+# exercised: sections_transactions.go asks a unit of work for two streams and
+# carries one through a second store value over one backing, defects*.go and
+# fixtures_test.go carry the eleven stores those and six other sections are
+# falsified with, and event/eventmemory/transaction_test.go pins the two escapes
+# INV-041 and the claim set exist to close, and doc.go says which two clauses of
+# the transactions section a store certified before this is asked. Nothing under
+# event/projection/ or event/receipt/ moved, and no signature anywhere did.
 event_kernel_baseline() {
 	local computed
 	if ! command -v sha256sum >/dev/null 2>&1; then

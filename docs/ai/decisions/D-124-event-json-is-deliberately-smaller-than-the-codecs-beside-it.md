@@ -292,13 +292,14 @@ nothing extracted from three private analysers may promote it into the kernel.
   until the ninth arm took it past the 400-line budget.
 - `event/fact.go` — `Fact.RoundTrip`: the runnable proxy for obligation 2 and
   for fidelity.
-- `event/comparison.go` — `valueWalk` and the two walks it makes over an
+- `event/comparison.go` — `valueWalk`, the two walks it makes over an
   application's own decoded values, `valueWalkNodes` (the budget they run under,
   which is **not** the type walk's — that one bounds a type and one type has any
   number of values), `sameOpaque` with its three answers in order,
   `equalByMethod`, `sameNumber` (the one type difference that is not a
-  substitution), and `singleValued`, which is what keeps a marker fact
-  round-trippable.
+  substitution), `disturbedAtItsOwnWidth` (the second disturbance, as wide as
+  the sample's own payload, which asks nothing of a codec that cannot read it),
+  and `singleValued`, which is what keeps a marker fact round-trippable.
 - `event/store.go` and `event/repo.go` — the byte cap that is the actual trust
   boundary.
 
@@ -324,7 +325,11 @@ nothing extracted from three private analysers may promote it into the kernel.
   cannot encode its own reader type, and one that panics when asked, both refused
   at declaration and both naming the revision.
 - `TestACodecThatDecodesIntoAReusedBufferIsCaught` — obligation 2, including the
-  re-encode arm that reaches a reused buffer the value walk cannot see through,
+  re-encode arm that reaches a reused buffer the value walk cannot see through
+  and the second, wider disturbance behind it — the sample's own payload with one
+  byte changed, which is what finds a codec that fills that buffer to the
+  payload's width and clears nothing, where the zero value is too narrow to reach
+  the bytes the first answer points at,
   and the nine subtests that hold the comparison itself: *a pointer field is not
   asked its own type's `Equal` through a nil* (which panicked out of `RoundTrip`
   before), *an application's own `Equal` does not decide whether the codec kept

@@ -117,6 +117,121 @@ func TestAReadInsideATransactionSeesItsOwnStagedAppends(t *testing.T) {
 	}
 }
 
+// A unit of work is the log's and not the value that began it. Two store values
+// over one log are one store, and the deployment that makes it matter is the
+// ordinary one: a store constructed per request, per repository, over a log the
+// composition root holds. A store that found its transaction by the value that
+// opened it would leave every operation issued through a second value on
+// autocommit — admitted, invisible to the rollback that follows, and reported by
+// nothing. The last case is the control: a value over another log finds nothing
+// here, so what is asserted above is the log's identity rather than every
+// context's.
+func TestATransactionIsFoundThroughEveryStoreValueOverItsLog(t *testing.T) {
+	ctx := context.Background()
+	log, opened := openStore(t)
+	beside, third := newStore(t, eventmemory.Spec{Log: log}), newStore(t, eventmemory.Spec{Log: log})
+	stream := streamOf("orders.order", "acme/A-17")
+	inside, tx := begin(t, ctx, opened)
+
+	t.Run("both values name the one transaction the log carries", func(t *testing.T) {
+		here, err := opened.Transaction(inside)
+		if err != nil || !here.Valid() {
+			t.Fatalf("the value that began the transaction answered %v and %v for it", here, err)
+		}
+		there, err := beside.Transaction(inside)
+		if err != nil || !there.Valid() {
+			t.Fatalf("a second value over the same log answered %v and %v for a transaction of that log", there, err)
+		}
+		if !here.Same(there) {
+			t.Fatalf("the value that began the transaction and a second value over its log named two different units of work, so two repositories a request composes cannot prove they wrote together")
+		}
+	})
+
+	appendTo(t, inside, beside, stream, 0, "staged through the second value")
+
+	t.Run("an append through the second value is staged and not committed", func(t *testing.T) {
+		if got := payloadsOf(readStream(t, inside, opened, stream, 0)); !slices.Equal(got, []string{"staged through the second value"}) {
+			t.Fatalf("the value that began the transaction reads %v of what a second value appended inside it", got)
+		}
+		if page := readStream(t, ctx, third, stream, 0); len(page) != 0 {
+			t.Fatalf("a third value over the log reads %v outside the transaction, so an append issued through a value that did not begin it ran on this store's autocommit and no rollback can take it back", payloadsOf(page))
+		}
+	})
+
+	if err := tx.Rollback(ctx); err != nil {
+		t.Fatalf("rolling back a transaction a second value appended inside answered %v", err)
+	}
+
+	t.Run("the rollback takes back what the second value appended", func(t *testing.T) {
+		if page := readStream(t, ctx, opened, stream, 0); len(page) != 0 {
+			t.Fatalf("the stream holds %v after the transaction that staged it rolled back", payloadsOf(page))
+		}
+	})
+
+	t.Run("a value over another log finds nothing of this one", func(t *testing.T) {
+		_, elsewhere := openStore(t)
+		named, err := elsewhere.Transaction(inside)
+		if err != nil {
+			t.Fatalf("a store over another log answered %v for a transaction that is none of its own", err)
+		}
+		if named.Valid() {
+			t.Fatalf("a store over another log named a transaction of this one, so the two values above found each other's unit of work by carrying one rather than by sharing a log")
+		}
+	})
+}
+
+// The claim set, in both directions. A transaction that writes to two streams
+// holds both while it is live and frees both when it finishes: a store that
+// claims only the first leaves the second unprotected, and one that releases only
+// the first leaves a stream no later writer can ever append to again. The
+// untouched stream is the control — a claim that covered everything would refuse
+// there too, and the two assertions above it would prove nothing.
+func TestAClaimCoversEveryStreamOfATransactionAndIsReleasedOnEveryOne(t *testing.T) {
+	ctx := context.Background()
+	_, store := openStore(t)
+	account, audit := streamOf("accounts.account", "acme/A-17"), streamOf("audit.entry", "acme/A-17")
+	untouched := streamOf("audit.entry", "acme/A-18")
+
+	inside, tx := begin(t, ctx, store)
+	appendTo(t, inside, store, account, 0, "credited 10")
+	appendTo(t, inside, store, audit, 0, "credited once")
+
+	t.Run("an autocommit append is refused on each of the two and admitted on a stream neither was", func(t *testing.T) {
+		for _, stream := range []event.Stream{account, audit} {
+			err := store.Append(ctx, event.AppendRequest{Stream: stream, Expected: 0, Records: records("from outside")})
+			classifiedAs(t, err, event.Conflict, "an autocommit append to "+string(stream.Key)+" of "+stream.Family+", which a live transaction staged to")
+		}
+		appendTo(t, ctx, store, untouched, 0, "from outside")
+	})
+
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatalf("committing a transaction that staged to two streams answered %v", err)
+	}
+
+	t.Run("the commit releases the claim on each of the two", func(t *testing.T) {
+		for _, stream := range []event.Stream{account, audit} {
+			if err := store.Append(ctx, event.AppendRequest{Stream: stream, Expected: 1, Records: records("after the commit")}); err != nil {
+				t.Fatalf("an append to %v after the transaction that staged to it and to one other stream committed answered %v, so a stream a unit of work wrote to is held by a claim nothing will ever release", stream, err)
+			}
+		}
+	})
+
+	t.Run("a rollback releases every claim as well", func(t *testing.T) {
+		first, second := streamOf("accounts.account", "acme/A-20"), streamOf("audit.entry", "acme/A-20")
+		rolling, discarded := begin(t, ctx, store)
+		appendTo(t, rolling, store, first, 0, "staged")
+		appendTo(t, rolling, store, second, 0, "staged")
+		if err := discarded.Rollback(ctx); err != nil {
+			t.Fatalf("rolling back a transaction that staged to two streams answered %v", err)
+		}
+		for _, stream := range []event.Stream{first, second} {
+			if err := store.Append(ctx, event.AppendRequest{Stream: stream, Expected: 0, Records: records("after the rollback")}); err != nil {
+				t.Fatalf("an append to %v after the transaction that staged to it and to one other stream rolled back answered %v", stream, err)
+			}
+		}
+	})
+}
+
 func TestATransactionThatStagesToTwoStreamsNeverCrossesThem(t *testing.T) {
 	ctx := context.Background()
 	_, store := openStore(t)

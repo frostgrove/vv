@@ -357,6 +357,12 @@ of the same key, in the caller's one transaction. `_examples/event-receipts` is
 the reference implementation and a test compares its statements with the ones the
 live suite ran, byte for byte.
 
+Then prove yours: `eventtest.RunLedger(t, eventtest.LedgerFactory{New: …, Begin: …})`
+reports seven sections, and its `claim order` section races two units for one key
+and is the only thing that will tell you the two statements are the wrong way
+round before a retry tells you in production. The same package publishes
+`RunGenerations` and `RunPark` for the two interfaces a projection asks of you.
+
 Then the command becomes:
 
 ```go

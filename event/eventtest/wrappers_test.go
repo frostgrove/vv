@@ -110,7 +110,7 @@ func (this unclaiming) Capabilities() event.Capabilities {
 }
 
 func shiftingFactory(later func(event.Store) event.Store) eventtest.Factory {
-	factory := stagingFactory(false, nil)
+	factory := stagingFactory(faults{}, nil)
 	built, made := factory.New, 0
 	factory.New = func(t *testing.T) event.Store {
 		store := built(t)

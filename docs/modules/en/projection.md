@@ -655,7 +655,11 @@ no longer names commits the effect it staged anyway. `REPEATABLE READ` does not
 close it either. What goes wrong when it is not met is a retiring pass committing
 a staged effect under a row that already names the arriving generation, with both
 units committing and neither rolling back. The two-sender boundary is stated only
-with this sentence beside it.
+with this sentence beside it. **`eventtest.RunGenerations` measures it** — its
+`locking read` section holds one unit open over the row and asserts that a
+concurrent `Activate` waits, and a factory that declares
+`eventtest.SerializableUnit` is told what the harness cannot measure rather than
+passed for it.
 
 **3. `Spec.EffectsAfter` is a deployment-held constant, and only half of the
 barrier is durable.** The envelope's side is where the resumed checkpoint left
@@ -817,7 +821,9 @@ a wait needs no ordering, only a committed answer, and the `Sequences`-first gat
 means a projection that has parked nothing never reaches the widened clause. **One
 sentence, and it is `Holds`'s** — `Sequences`'s outside-a-unit rule is unchanged,
 `Park` is still a pass's write, and `Holes` is asked by no wait at all
-([[D-144]]).
+([[D-144]]). **`eventtest.RunPark` certifies all of it** — six sections, one per
+tier the four methods run at, with `committed state` for the widened clause and
+`bounds` for the two numbers that are yours. See [eventtest](eventtest.md).
 
 **A healthy projection pays nothing.** `Park.Sequences` is read once per resume —
 a process start, or an overtaken that adopted another instance's row — and again

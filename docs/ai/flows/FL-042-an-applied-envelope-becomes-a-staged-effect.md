@@ -170,6 +170,9 @@ everything it reaches and asserts that no package on that path imports `net`,
 | `event/projection/pass.go` | `Projection.staging`, `Projection.claimed` — where the gate is reached from, and why it sits directly after the handler in both orders |
 | `event/projection/redrive.go` | `RedriveSpec.Effects`, `RedriveSpec.Generations`, `refusedBarrier`, `Redrive.staging` — the letter's own effect, staged in the unit that applies and evicts it |
 | `event/projection/page.go` | `Batch`, which carries no route to an `Effects` |
+| `event/eventtest/generations.go` | `Closure`, `ClosureUnstated`, `LockingRead`, `SerializableUnit`, `GenerationsFactory`, `RunGenerations`, `owning`, `generations`, `admitGenerations`, `generationsName` — the runner a consumer's own ownership row is proved by, and the field it declares its closure in |
+| `event/eventtest/sections_generations.go` | `generationsInventory`, `needsALockingRead`, `ungeneratedSection`, `activationSection`, `fencedActivationSection`, `generations.contended`, `generationsUnitSection`, `lockingReadSection` — five sections, of which `locking read` holds one unit open over the row and asserts the cutover waits |
+| `event/eventtest/defects_generations.go` | `generationsDefect`, `generationsDefects`, `overGenerations`, `refusesAnAbsentRow`, `movesNothing`, `readThenWrite` — the six broken ownership rows the runner is falsified with, among them the plain read that leaves two senders |
 | `scripts/projection_test.go` | `TestNoPackageOnTheProjectionPathCanDispatch` and its `net/http` fixture control |
 | `_examples/event-generations/main.go` | the ownership row, the barrier, the cutover and the rollback, with the sink that stages a job and says what it may not be |
 
@@ -177,11 +180,17 @@ everything it reaches and asserts that no package on that path imports `net`,
 
 Untagged, in `make unit`: `event/projection/effect_test.go` and
 `event/projection/generation_test.go`; `scripts/projection_test.go` for the
-import walk.
+import walk; and `event/eventtest/generations_test.go`, which proves the harness
+a consumer runs over its own ownership row against the reference implementation
+in `event/eventtest/fixtures_generations_test.go` and the six defects its five
+sections are falsified with.
 
 Behind `//go:build integration`, against a live PostgreSQL:
-`event/eventpg/effect_integration_test.go` and
-`event/eventpg/generation_integration_test.go`.
+`event/eventpg/effect_integration_test.go`,
+`event/eventpg/generation_integration_test.go` and
+`event/eventpg/application_integration_test.go` — the last runs
+`eventtest.RunGenerations` over the live ownership row and drives the plain read
+through the harness in a subprocess.
 
 ```sh
 FROSTGROVE_EVENTPG_TEST_DSN='postgres://vv:vv@localhost:55432/vv?sslmode=disable' \

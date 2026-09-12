@@ -34,7 +34,45 @@ func reusesItsBuffer[V any](carried roundTripping[V], own any, walk *valueWalk) 
 	if err != nil {
 		return false, err
 	}
-	return !bytes.Equal(before, after), nil
+	if !bytes.Equal(before, after) {
+		return true, nil
+	}
+	return disturbedAtItsOwnWidth(carried, own, before), nil
+}
+
+// The second disturbance, and the wider one. The zero value's encoding is
+// narrower than the sample's wherever a payload carries anything, so a decode of
+// it reaches the front of a reused buffer and never the bytes an answer of the
+// sample's own width points at — which leaves a codec that fills its buffer to
+// the payload's width and reaches it through a field no walk over exported
+// fields compares seen by neither half. This one is the sample's own payload
+// with one byte changed, which such a codec writes over the whole of what it
+// already answered.
+//
+// Nothing is asked of the codec for it: a payload it refuses, or panics on, is
+// one this probe learned nothing from, and the answer is then the narrower
+// probe's. That is why a refusal here is not the caller's error and why the
+// panic is swallowed rather than carried out — this is a question the round trip
+// asks of its own accord, about a payload no store will ever hold.
+func disturbedAtItsOwnWidth[V any](carried roundTripping[V], own any, before []byte) (moved bool) {
+	if len(carried.written) == 0 {
+		return false
+	}
+	defer func() {
+		if recover() != nil {
+			moved = false
+		}
+	}()
+	disturbing := bytes.Clone(carried.written)
+	disturbing[len(disturbing)-1]++
+	if _, err := carried.read.selfDecode(disturbing); err != nil {
+		return false
+	}
+	after, err := carried.read.selfEncode(own)
+	if err != nil {
+		return false
+	}
+	return !bytes.Equal(before, after)
 }
 
 // What the codec read back, put back on the wire and compared with the bytes the

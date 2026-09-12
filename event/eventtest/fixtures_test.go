@@ -44,6 +44,7 @@ type held struct {
 	global   []event.Envelope
 	position event.Position
 	live     []*stagingTx
+	stranded map[event.Stream]bool
 	minter   string
 }
 
@@ -73,7 +74,7 @@ func (this *held) forget(tx *stagingTx) {
 }
 
 func newHeld() *held {
-	return &held{streams: map[event.Stream][]event.Envelope{}, minter: strconv.FormatInt(time.Now().UnixNano(), 36)}
+	return &held{streams: map[event.Stream][]event.Envelope{}, stranded: map[event.Stream]bool{}, minter: strconv.FormatInt(time.Now().UnixNano(), 36)}
 }
 
 func (this *held) publish(envelopes []event.Envelope) {
@@ -324,6 +325,22 @@ func recorded(request event.AppendRequest, at event.Version) []event.Envelope {
 	return envelopes
 }
 
+// What a staging fixture is broken in, one field per row of the inventory that
+// is a store rather than a decorator. The zero value is the store that satisfies
+// the contract and is the control every one of those rows is read against. They
+// are fields of a store rather than decorators for the reason the inventory
+// gives: keeping a rolled-back transaction's events readable, releasing one
+// claim of two and answering a unit of work through one store value and not
+// through the value beside it are all things a decorator that claims to forward
+// is forbidden.
+type faults struct {
+	leaks              bool
+	commitsTwice       bool
+	strandsAClaim      bool
+	namesNoUnitBeside  bool
+	writesOutsideUnits bool
+}
+
 // The transaction-capable fixture, and the one whose second instantiation leaves
 // a rolled-back transaction's events readable. A store with no transactions
 // cannot commit that defect, and the transactions section would not run against
@@ -332,7 +349,7 @@ type stagingStore struct {
 	held      *held
 	backing   event.Backing
 	published event.Limits
-	leaks     bool
+	broken    faults
 	persists  bool
 	lenient   bool
 	closed    bool
@@ -349,18 +366,18 @@ type stagingTx struct {
 
 type stagingKey struct{ held *held }
 
-func newStagingStore(t *testing.T, leaks bool, published event.Limits) *stagingStore {
+func newStagingStore(t *testing.T, broken faults, published event.Limits) *stagingStore {
 	t.Helper()
 	holding := newHeld()
 	backing, err := event.NewBacking(holding)
 	if err != nil {
 		t.Fatalf("the fixture cannot name what it writes to: %v", err)
 	}
-	return &stagingStore{held: holding, backing: backing, published: published, leaks: leaks}
+	return &stagingStore{held: holding, backing: backing, published: published, broken: broken}
 }
 
 func (this *stagingStore) beside() *stagingStore {
-	return &stagingStore{held: this.held, backing: this.backing, published: this.published, leaks: this.leaks, persists: this.persists, lenient: this.lenient}
+	return &stagingStore{held: this.held, backing: this.backing, published: this.published, broken: this.broken, persists: this.persists, lenient: this.lenient}
 }
 
 func (this *stagingStore) Capabilities() event.Capabilities {
@@ -387,14 +404,30 @@ func (this *stagingStore) begin() *stagingTx {
 	return &stagingTx{store: this, counts: map[event.Stream]int{}, claimed: map[event.Stream]bool{}}
 }
 
-func (this *stagingStore) inside(ctx context.Context) *stagingTx {
+func (this *stagingStore) carried(ctx context.Context) *stagingTx {
 	tx, _ := ctx.Value(stagingKey{held: this.held}).(*stagingTx)
 	return tx
 }
 
+// The unit of work a door acts inside. A store that finds it by the value that
+// began it rather than by the backing they share leaves every operation issued
+// through a second value on autocommit — admitted, invisible to the rollback the
+// caller believes in, and answered for by a Transaction that names the unit all
+// the same.
+func (this *stagingStore) inside(ctx context.Context) *stagingTx {
+	tx := this.carried(ctx)
+	if tx != nil && this.broken.writesOutsideUnits && tx.store != this {
+		return nil
+	}
+	return tx
+}
+
 func (this *stagingStore) Transaction(ctx context.Context) (event.Authority, error) {
-	tx := this.inside(ctx)
+	tx := this.carried(ctx)
 	if tx == nil {
+		return event.Authority{}, nil
+	}
+	if this.broken.namesNoUnitBeside && tx.store != this {
 		return event.Authority{}, nil
 	}
 	if tx.done.Load() {
@@ -453,6 +486,9 @@ func (this *stagingStore) Append(ctx context.Context, request event.AppendReques
 }
 
 func (this *stagingStore) claimedByAnother(stream event.Stream, tx *stagingTx) bool {
+	if this.held.stranded[stream] {
+		return true
+	}
 	for _, live := range this.held.live {
 		if live != tx && live.claimed[stream] {
 			return true
@@ -479,20 +515,41 @@ func (this *stagingStore) ready(ctx context.Context) error {
 
 func (this *stagingTx) Commit(context.Context) error { return this.finish(true) }
 
-func (this *stagingTx) Rollback(context.Context) error { return this.finish(this.store.leaks) }
+func (this *stagingTx) Rollback(context.Context) error { return this.finish(this.store.broken.leaks) }
 
 func (this *stagingTx) finish(publish bool) error {
 	this.store.held.mutex.Lock()
 	defer this.store.held.mutex.Unlock()
 	if !this.done.CompareAndSwap(false, true) {
+		if this.store.broken.commitsTwice {
+			return nil
+		}
 		return errors.New("eventtest_test: this transaction has already been committed or rolled back")
 	}
 	if publish {
 		this.store.held.publish(this.staged)
 	}
 	this.staged = nil
+	if this.store.broken.strandsAClaim {
+		this.strandAllButOneClaim()
+	}
 	this.store.held.forget(this)
 	return nil
+}
+
+// What a store that tracks the streams of a unit of work in one variable rather
+// than in a set does when it finishes: one stream is freed and every other one it
+// wrote to stays held by a claim nothing will ever release, so every later writer
+// of that stream is refused for a competitor that is already gone.
+func (this *stagingTx) strandAllButOneClaim() {
+	freed := false
+	for stream := range this.claimed {
+		if !freed {
+			freed = true
+			continue
+		}
+		this.store.held.stranded[stream] = true
+	}
 }
 
 func (this *stagingTx) stage(stream event.Stream, envelopes []event.Envelope) {
@@ -684,15 +741,15 @@ func support(claimed bool) event.Support {
 	return event.Unsupported
 }
 
-func stagingFactory(leaks bool, over func(event.Store) event.Store) eventtest.Factory {
-	return stagingFactoryAt(limits(), leaks, over)
+func stagingFactory(broken faults, over func(event.Store) event.Store) eventtest.Factory {
+	return stagingFactoryAt(limits(), broken, over)
 }
 
-func stagingFactoryAt(published event.Limits, leaks bool, over func(event.Store) event.Store) eventtest.Factory {
+func stagingFactoryAt(published event.Limits, broken faults, over func(event.Store) event.Store) eventtest.Factory {
 	built := newFixtures(over)
 	return eventtest.Factory{
 		New: func(t *testing.T) event.Store {
-			store := newStagingStore(t, leaks, published)
+			store := newStagingStore(t, broken, published)
 			t.Cleanup(func() {
 				_ = store.Close()
 				if live := store.held.liveCount(); live != 0 {
@@ -732,7 +789,7 @@ func stagingFactoryAt(published event.Limits, leaks bool, over func(event.Store)
 // run did not write, more of them than the walk's own bound used to allow, put
 // there by another deployment, another process or this suite's own last run.
 func prefilledFactory(events int) eventtest.Factory {
-	factory := stagingFactory(false, nil)
+	factory := stagingFactory(faults{}, nil)
 	built := factory.New
 	factory.New = func(t *testing.T) event.Store {
 		store := built(t)
@@ -763,7 +820,7 @@ func prefill(store *stagingStore, events int) {
 // a projector whose persisted cursor was truncated silently re-applies every
 // event this store ever wrote.
 func lenientFactory(lenient bool) eventtest.Factory {
-	factory := stagingFactory(false, nil)
+	factory := stagingFactory(faults{}, nil)
 	built := factory.New
 	factory.New = func(t *testing.T) event.Store {
 		store := built(t)
@@ -776,7 +833,7 @@ func lenientFactory(lenient bool) eventtest.Factory {
 // The same store publishing the narrowest numbers the kernel admits, so a suite
 // whose counts are fitted to the numbers above reports a correct store failed.
 func narrowFactory() eventtest.Factory {
-	return stagingFactoryAt(narrowLimits(), false, nil)
+	return stagingFactoryAt(narrowLimits(), faults{}, nil)
 }
 
 func stagingOf(t *testing.T, s event.Store) *stagingStore {
@@ -797,7 +854,7 @@ func persistentFactory(forgets bool) eventtest.Factory {
 	return eventtest.Factory{
 		New: func(t *testing.T) event.Store {
 			if shared == nil {
-				shared = newStagingStore(t, false, limits())
+				shared = newStagingStore(t, faults{}, limits())
 				shared.persists = true
 			}
 			store := shared.beside()
@@ -813,7 +870,7 @@ func persistentFactory(forgets bool) eventtest.Factory {
 			if !forgets {
 				return stagingOf(t, s).beside()
 			}
-			empty := newStagingStore(t, false, limits())
+			empty := newStagingStore(t, faults{}, limits())
 			empty.persists, empty.backing = true, stagingOf(t, s).backing
 			return empty
 		},
@@ -830,7 +887,7 @@ func persistentFactory(forgets bool) eventtest.Factory {
 // that reaches a verdict at all reaches one because what it walks is bounded by
 // what it wrote.
 func busyFactory() eventtest.Factory {
-	factory := stagingFactory(false, func(store event.Store) event.Store {
+	factory := stagingFactory(faults{}, func(store event.Store) event.Store {
 		return &busy{Store: store, of: store.(*stagingStore)}
 	})
 	factory.Tail = func(t *testing.T, s event.Store) event.Cursor {

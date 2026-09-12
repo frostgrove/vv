@@ -460,6 +460,9 @@ save ever created.
 | `event/projection/page.go` | `Batch` and its `Identity`, `Handler`, `HandlerFunc`, `copyOf` — the page per attempt, which is §INV-021's eighth hand-off |
 | `event/projection/classify.go` | `Verdict`, `Retryable`, `Permanent`, `Classifier`, `Classify`, `Failure`, `Halt`, `ParkSequence` — the history class and `ErrUnrouted` are permanent and everything else is retryable, and the second verdict parks the sequence rather than the envelope. A `RedriveSpec` carries no `Classifier`: a letter that fails again is requeued with its new cause whichever class it is in, because giving up on one removes it without applying it and that is an operator's act through `Evict` |
 | `event/projection/park.go` | `Letter`, `Park` — the queue a permanent failure parks a whole sequence in, keyed by `Identity.Whole()` so a split moves nothing, bounded per sequence rather than per queue, and counted once per resume so a healthy projection pays nothing |
+| `event/eventtest/park.go` | `ParkFactory`, `RunPark`, `parking`, `park`, `admitPark`, `parkName`, `widestBound` — the runner a consumer's own queue is proved by, and the two bounds it declares |
+| `event/eventtest/sections_park.go` | `parkInventory`, `needsADeclaredBound`, `outsideAUnitSection`, `parkUnitSection`, `committedStateSection`, `parkCountsSection`, `parkIdentitySection`, `parkBoundsSection`, `park.full` — six sections, one per tier the four methods run at, with `committed state` for the clause the wait widened |
+| `event/eventtest/defects_park.go` | `parkDefect`, `parkDefects`, `queue`, `overPark`, `staleHolds`, `holesAreSequences`, `dropsTheGeneration`, `ungenerated`, `bareRefusal`, `cachedCount` — the eight broken queues the runner is falsified with |
 | `event/projection/redrive.go` | `Claim`, `Redriver`, `Retried`, `RedriveSpec`, `Redrive`, `NewRedrive`, `errLetterRanTwice`, `refusedBarrier`, `refusedDestination`, `Redrive.Sequence`, `Redrive.Any`, `Redrive.claimed`, `Redrive.drain`, `Redrive.sequenced`, `Redrive.letter`, `Redrive.apply`, `Redrive.requeued`, `Redrive.checkUnit` — the operator's half: one unit per letter, in insert order, stopping at the first that fails again, claimed rather than read, and touching no checkpoint |
 | `event/projection/state.go` | `Phase` and its seven values, `PhaseDegraded` and `PhaseBlocked` among them, `State` and its `Parked`, `State.Identity`, `Observer`, `ObserverFunc`, `observing`, `Projection.State`, `Projection.transition`, `Projection.progressed`, `Projection.counting`, `Projection.seed`, `Projection.publish` — published on a change and never on every pass, and a panicking observer does not take the loop down |
 | `event/projection/router.go` | `Foreign`, `SkipForeign`, `RefuseForeign`, `routeKey`, `Router`, `NewRouter`, `On`, `TryOn`, `Ignore`, `TryIgnore`, `Router.declare`, `Router.ignore`, `Router.unclaimed`, `Router.Apply`, `Router.claims`, `Router.foreignTo`, `Router.unrouted`, `Router.seal`, `Router.Skipped`, `refusedName` |
@@ -489,7 +492,9 @@ Untagged, in `make unit`: `event/checkpoint_test.go` and `event/tracker_test.go`
 seam), `event/reader_test.go` (the page and the cursor checked together),
 `event/eventmemory/checkpoints_test.go` and `event/eventmemory/transaction_test.go`
 (the memory store and its staging), `event/eventtest/checkpoints_test.go` (the
-runner's own falsification), and the files of `event/projection` — including
+runner's own falsification), `event/eventtest/park_test.go` (the queue harness's,
+against the reference queue in `event/eventtest/fixtures_park_test.go`), and the
+files of `event/projection` — including
 `event/projection/mark_test.go` and `event/projection/wait_test.go`, which drive
 the wait against a fake clock so no test of it sleeps either.
 

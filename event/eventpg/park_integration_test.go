@@ -43,6 +43,7 @@ type livePark struct {
 
 	maxSequences int
 	maxLetters   int
+	elsewhere    bool
 
 	sequences atomic.Int64
 	holds     atomic.Int64
@@ -88,7 +89,14 @@ type parkExecutor interface {
 
 var errParkOutsideAUnit = errors.New("eventpg_test: this park method was called with no transaction of its own source bound, and a queue written beside the read model is two opinions about what is parked")
 
+// Under elsewhere the statements run on the pool, which is the third way to
+// lose the ordering a unit of work buys: the framework holds a method set and no
+// resource, so it cannot tell that this value is writing its letters and
+// answering its blocking test beside the transaction the pass is in.
 func (this *livePark) inUnit(ctx context.Context) (parkExecutor, error) {
+	if this.elsewhere {
+		return this.pool, nil
+	}
 	held, found := crud.ExecutorFor(ctx, this.source)
 	if !found {
 		return nil, errParkOutsideAUnit

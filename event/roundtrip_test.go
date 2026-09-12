@@ -113,6 +113,47 @@ func (*sealingCodec) Decode(payload []byte) (sealedNote, error) {
 	return sealedNote{body: bytes.Clone(payload[1 : 1+width])}, nil
 }
 
+// The sealed pair's shape with the one line that hides it from both halves
+// taken out: the buffer is filled to the payload's width and never cleared, so
+// the zero value — one byte, and the narrowest payload this format has — writes
+// over nothing an answer of the sample's width points at. Nothing here is
+// exported, nothing declares an Equal and a slice forbids ==, so the walk over
+// two answers has no field to compare either.
+type keptNote struct{ body []byte }
+
+type keepingCodec struct{ scratch [64]byte }
+
+func (*keepingCodec) CanEncode() error { return nil }
+
+func (*keepingCodec) Encode(value keptNote) ([]byte, error) { return writeKept(value) }
+
+func (this *keepingCodec) Decode(payload []byte) (keptNote, error) {
+	width, err := prefixWidth(payload)
+	if err != nil {
+		return keptNote{}, err
+	}
+	copy(this.scratch[:width], payload[1:])
+	return keptNote{body: this.scratch[:width]}, nil
+}
+
+type copyingCodec struct{}
+
+func (copyingCodec) CanEncode() error { return nil }
+
+func (copyingCodec) Encode(value keptNote) ([]byte, error) { return writeKept(value) }
+
+func (copyingCodec) Decode(payload []byte) (keptNote, error) {
+	width, err := prefixWidth(payload)
+	if err != nil {
+		return keptNote{}, err
+	}
+	return keptNote{body: bytes.Clone(payload[1 : 1+width])}, nil
+}
+
+func writeKept(value keptNote) ([]byte, error) {
+	return append([]byte{byte(len(value.body))}, value.body...), nil
+}
+
 // A reader that unescapes in place, which is what a codec written for speed does
 // with a buffer it was told it owns. Every Decode the kernel makes is given a
 // buffer of the kernel's own — at the fold and twice inside the round trip — so
@@ -1117,6 +1158,24 @@ func TestACodecThatDecodesIntoAReusedBufferIsCaught(t *testing.T) {
 			func(this int, event sealedNote) int { return this + len(event.body) })
 		if _, err := fresh.RoundTrip(sealedNote{body: []byte("twelve")}); err != nil {
 			t.Fatalf("the same wire format over a codec that allocates per decode was refused (%v), so the case above passes by refusing every payload whose contents no walk can see", err)
+		}
+	})
+
+	t.Run("a codec that fills its buffer to the payload's width and clears nothing is caught too", func(t *testing.T) {
+		reusing := Define[int]("notes.kept.reusing", accountKey)
+		held := Declare(reusing, "notes.kept", From[keptNote](&keepingCodec{}),
+			func(this int, event keptNote) int { return this + len(event.body) })
+		if _, err := held.RoundTrip(keptNote{body: []byte("twelve")}); !errors.Is(err, ErrPayload) {
+			t.Fatalf("a codec that copies the payload's own width into a buffer it never clears answered %v; it is the shape a reader written for speed takes, its value is reached through a field no walk over exported fields compares, and the zero value is narrower than any sample and never reaches the bytes the first answer points at — so the only disturbance that finds it is the sample's own payload with a byte changed", err)
+		}
+		allocating := Define[int]("notes.kept.allocating", accountKey)
+		fresh := Declare(allocating, "notes.kept", From[keptNote](copyingCodec{}),
+			func(this int, event keptNote) int { return this + len(event.body) })
+		if _, err := fresh.RoundTrip(keptNote{body: []byte("twelve")}); err != nil {
+			t.Fatalf("the same wire format over a codec that allocates per decode was refused (%v), so the case above passes by refusing every codec a second disturbed decode is asked of", err)
+		}
+		if _, err := declareNotes(t, "notes.kept.json", JSON[note]()).RoundTrip(note{Body: []byte("twelve")}); err != nil {
+			t.Fatalf("the shipped JSON codec was refused (%v), and it refuses the disturbed payload rather than reading it — so a codec that cannot read what this probe hands it must lose nothing by it", err)
 		}
 	})
 

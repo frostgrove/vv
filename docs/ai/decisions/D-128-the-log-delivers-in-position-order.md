@@ -200,7 +200,13 @@ would not.
   last envelopes of a real page and requires `ErrBackend`.
 - `probe.ascending`, run twice per store by `globalOrderSection` and
   `globalPagingSection`, and `probe.subsequence`, run by `globalOrderSection` —
-  the conformance halves, ungated for every store.
+  the conformance halves, ungated for every store. Each of the two is named by a
+  defect of its own in the inventory, so neither can be deleted quietly:
+  `reorderedStreams` answers one stream's two events in the log in the order
+  opposite to its own with the positions still ascending, which only
+  `probe.subsequence` sees, and `movingPositions` answers one event at one
+  position on one walk and at another on the next, which only the re-read arm
+  does.
 - `TestVersionsAreDenseAndPositionsAscendWhateverTheClockSays` and
   `TestManyWritersLeaveOneDenseHistoryAndAMonotoneLog` — the write-side half the
   read-side law rests on.
